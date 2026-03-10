@@ -201,85 +201,83 @@ function activateSidebarItem(item) {
 }
 
 function showSection(sectionName, skipLoad = false) {
-    // Tüm sectionları gizle
-    Object.values(sections).forEach(el => el && el.classList.add("hidden"));
+    const otherSections = document.getElementById("otherSections");
+    const statusBar = document.getElementById("statusBar");
 
-    // Tüm tab'ları deaktif yap
+    Object.values(sections).forEach(el => {
+        if (el && el !== sections.dialog) el.classList.add("hidden");
+    });
+
     if (mainTabs.dialog) mainTabs.dialog.classList.remove("active");
-
     if (mainTabs.history) mainTabs.history.classList.remove("active");
 
-    // Header ve Tab bar'ı sadece Ana Sayfa sekmelerinde göster
     const mainTabBar = document.getElementById("mainTabBar");
-    const topBar = document.getElementById("topBar"); // Üst bar (logo + header + bildirim)
+    const topBar = document.getElementById("topBar");
     const showHomeElements = ["dialog", "history"].includes(sectionName);
 
-    // topBar ve mainTabBar'ı göster/gizle
     if (topBar) {
-        if (showHomeElements) {
-            topBar.classList.remove("hidden");
-        } else {
-            topBar.classList.add("hidden");
-        }
+        if (showHomeElements) topBar.classList.remove("hidden");
+        else topBar.classList.add("hidden");
     }
     if (mainTabBar) {
-        if (showHomeElements) {
-            mainTabBar.classList.remove("hidden");
-        } else {
-            mainTabBar.classList.add("hidden");
-        }
+        if (showHomeElements) mainTabBar.classList.remove("hidden");
+        else mainTabBar.classList.add("hidden");
     }
 
-    // v2.21.9: Dialog sekmesinden çıkılıyorsa deactivate et (session kapat)
     if (sectionName !== "dialog" && window.DialogChatModule && typeof window.DialogChatModule.deactivate === 'function') {
         window.DialogChatModule.deactivate();
     }
 
-    // Section göster
     if (sectionName === "dialog") {
         sections.dialog.classList.remove("hidden");
+        sections.dialog.style.display = "";
+        if (otherSections) otherSections.classList.add("hidden");
+        if (statusBar) statusBar.classList.remove("hidden");
         if (mainTabs.dialog) mainTabs.dialog.classList.add("active");
-        // v2.24.6: skipLoad=true ise init atla (notification'dan dialog ID ile yüklenecek)
         if (!skipLoad) {
-            // Dialog modülünü başlat
             if (window.DialogChatModule && typeof window.DialogChatModule.init === 'function') {
                 window.DialogChatModule.init();
             }
         }
-    } else if (sectionName === "parameters") {
-        sections.parameters.classList.remove("hidden");
-    } else if (sectionName === "knowledgeBase") {
-        sections.knowledgeBase.classList.remove("hidden");
-        if (mainTabs.knowledgeBase) mainTabs.knowledgeBase.classList.add("active");
-        // RAG modülünü başlat
-        if (window.RAGUpload && typeof window.RAGUpload.init === 'function') {
-            window.RAGUpload.init();
-        }
-    } else if (sectionName === "authorization") {
-        sections.authorization.classList.remove("hidden");
-        // Yetkilendirme modülünü yükle - sıralı (roller ve org'lar önce yüklenmeli)
-        if (window.authorizationModule) {
-            window.authorizationModule.loadAuthData();  // Tek fonksiyon ile sıralı yükleme
-        }
-    } else if (sectionName === "organizations") {
-        sections.organizations.classList.remove("hidden");
-        // Organizasyon modülünü yükle
-        if (window.orgModule) {
-            window.orgModule.loadOrganizations();
-        }
-    } else if (sectionName === "profile") {
-        sections.profile.classList.remove("hidden");
-        // Profil modülünü yükle
-        if (window.authorizationModule) {
-            window.authorizationModule.loadProfile();
-        }
-
     } else if (sectionName === "history") {
-        sections.history.classList.remove("hidden");
+        sections.dialog.classList.add("hidden");
+        sections.dialog.style.display = "none";
+        if (otherSections) otherSections.classList.remove("hidden");
+        if (statusBar) statusBar.classList.remove("hidden");
+        if (sections.history) sections.history.classList.remove("hidden");
         if (mainTabs.history) mainTabs.history.classList.add("active");
-        // Ticket history'yi yükle (tek noktadan)
         if (typeof loadTicketHistoryDebounced === 'function') {
             loadTicketHistoryDebounced();
+        }
+    } else {
+        sections.dialog.classList.add("hidden");
+        sections.dialog.style.display = "none";
+        if (otherSections) otherSections.classList.remove("hidden");
+        if (statusBar) statusBar.classList.add("hidden");
+
+        if (sectionName === "parameters") {
+            if (sections.parameters) sections.parameters.classList.remove("hidden");
+        } else if (sectionName === "knowledgeBase") {
+            if (sections.knowledgeBase) sections.knowledgeBase.classList.remove("hidden");
+            if (mainTabs.knowledgeBase) mainTabs.knowledgeBase.classList.add("active");
+            if (window.RAGUpload && typeof window.RAGUpload.init === 'function') {
+                window.RAGUpload.init();
+            }
+        } else if (sectionName === "authorization") {
+            if (sections.authorization) sections.authorization.classList.remove("hidden");
+            if (window.authorizationModule) {
+                window.authorizationModule.loadAuthData();
+            }
+        } else if (sectionName === "organizations") {
+            if (sections.organizations) sections.organizations.classList.remove("hidden");
+            if (window.orgModule) {
+                window.orgModule.loadOrganizations();
+            }
+        } else if (sectionName === "profile") {
+            if (sections.profile) sections.profile.classList.remove("hidden");
+            if (window.authorizationModule) {
+                window.authorizationModule.loadProfile();
+            }
         }
     }
 }
@@ -287,8 +285,8 @@ function showSection(sectionName, skipLoad = false) {
 // Event Listeners: Sidebar
 if (sidebar.newTicket) {
     sidebar.newTicket.addEventListener("click", () => {
-        // Ana sayfaya git - tüm state'leri sıfırla
-        window.location.href = 'home.html';
+        activateSidebarItem(sidebar.newTicket);
+        showSection("dialog");
     });
 }
 
@@ -310,9 +308,8 @@ if (sidebar.parameters) {
 
 // Event Listeners: Tabs (Ana Sayfa İçinde)
 // Modern tab yapısı - event delegation ile
-document.querySelectorAll('.modern-tab').forEach(tab => {
+document.querySelectorAll('.modern-tab, .n-tab-btn').forEach(tab => {
     tab.addEventListener('click', (e) => {
-        // Eğer fav butonuna tıklandıysa section değiştirme
         if (e.target.closest('.tab-fav-btn')) return;
 
         const tabId = tab.dataset.tab;

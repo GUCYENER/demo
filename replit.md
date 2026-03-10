@@ -27,7 +27,7 @@ app/
   services/          - Business logic (RAG, dialog, tickets, ML training, etc.)
 frontend/
   login.html         - Login page (NGSSAI branded, self-contained with inline CSS/JS)
-  home.html          - Main app page
+  home.html          - Main app page (NGSSAI chat-centric design, inline CSS, sidebar+topbar+tabs+chat+status bar)
   assets/            - JS, CSS, images, vendor libs
   partials/          - HTML partial templates
   build.mjs          - esbuild bundle builder (config.js must be first in JS_FILES)
@@ -53,4 +53,7 @@ tests/               - Pytest test suite
 - Redis is optional; app falls back to in-memory caching
 - Frontend is served directly by FastAPI (no separate frontend server needed)
 - Login page is self-contained (inline CSS/JS) with the NGSSAI modern design (dark/light theme toggle, brand panel with feature cards)
+- Home page is self-contained (inline CSS) with the NGSSAI chat-centric design: sidebar (nav, user info, session timer), topbar (agent info, action buttons), tabs (Bilgi Tabani / Gecmis Cozumler), chat area with input zone, status bar
+- Sidebar and section_dialog are built directly into home.html (not loaded as partials); partial_loader.js loads 7 remaining partials (section_history, section_parameters, section_knowledge, section_auth, section_org, section_profile, modals)
+- Section switching: dialog section = chat area (main view); other sections load into #otherSections wrapper; topBar/mainTabBar shown only for dialog/history views
 - The `window.VYRA_API` global variable name is kept for internal compatibility across many JS modules

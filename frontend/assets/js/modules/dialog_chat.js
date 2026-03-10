@@ -105,7 +105,7 @@ window.DialogChatModule = (function () {
 
     function navigateToDialogTab() {
         // Tab'ı aktif et
-        const dialogTab = document.querySelector('[data-tab="dialog-chat"]');
+        const dialogTab = document.querySelector('[data-tab="dialog"]') || document.querySelector('[data-tab="dialog-chat"]');
         if (dialogTab) {
             dialogTab.click();
         }

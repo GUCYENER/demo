@@ -1,93 +1,528 @@
 <!DOCTYPE html>
-<html lang="tr">
-
+<html lang="tr" data-theme="dark">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NGSSAI — AIOps Platform</title>
-    <link rel="icon" type="image/png" href="/api/assets/favicon" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NGSSAI — AIOps Platform</title>
+<link rel="icon" type="image/png" href="/api/assets/favicon" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Geist:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/vendor/fontawesome/all.min.css" />
+<style>
+:root[data-theme="dark"] {
+  --bg:#0d0f14;--bg-sidebar:rgba(11,13,20,0.96);--bg-surface:rgba(22,26,36,0.80);
+  --bg-card:rgba(22,26,36,0.90);--bg-input:rgba(16,20,30,0.95);
+  --bg-hover:rgba(255,255,255,0.04);--bg-chip:rgba(255,255,255,0.05);
+  --bg-msg-user:rgba(77,153,255,0.10);--bg-msg-bot:rgba(22,26,36,0.88);
+  --border:rgba(255,255,255,0.07);--border-strong:rgba(255,255,255,0.12);
+  --border-accent:rgba(77,153,255,0.30);
+  --accent:#4D99FF;--accent-2:#7C3AED;--accent-glow:rgba(77,153,255,0.15);
+  --accent-subtle:rgba(77,153,255,0.08);
+  --green:#34D399;--green-dim:rgba(52,211,153,0.12);
+  --amber:#FBBF24;--amber-dim:rgba(251,191,36,0.10);
+  --red:#F87171;--red-dim:rgba(248,113,113,0.10);
+  --text-1:#F1F5FF;--text-2:#9DAAC4;--text-3:#3D4A63;--text-acc:#7DB8FF;
+  --orb-1:rgba(77,153,255,0.10);--orb-2:rgba(124,58,237,0.07);--orb-3:rgba(52,211,153,0.05);
+  --grad-logo:linear-gradient(135deg,#4D99FF,#7C3AED);
+  --grad-acc:linear-gradient(135deg,#4D99FF,#7C3AED);
+  --grad-send:linear-gradient(135deg,#4D99FF,#7C3AED);
+  --shadow-sm:0 1px 4px rgba(0,0,0,0.4);
+  --shadow-card:0 0 0 1px rgba(255,255,255,0.06),0 4px 20px rgba(0,0,0,0.4);
+  --shadow-input:0 0 0 1px rgba(77,153,255,0.38),0 0 18px rgba(77,153,255,0.07);
+}
+:root[data-theme="light"] {
+  --bg:#F4F6FC;--bg-sidebar:rgba(255,255,255,0.97);--bg-surface:rgba(255,255,255,0.90);
+  --bg-card:rgba(255,255,255,0.95);--bg-input:rgba(255,255,255,0.99);
+  --bg-hover:rgba(0,0,0,0.03);--bg-chip:rgba(0,0,0,0.04);
+  --bg-msg-user:rgba(37,99,235,0.07);--bg-msg-bot:rgba(255,255,255,0.95);
+  --border:rgba(0,0,0,0.07);--border-strong:rgba(0,0,0,0.12);
+  --border-accent:rgba(37,99,235,0.22);
+  --accent:#2563EB;--accent-2:#7C3AED;--accent-glow:rgba(37,99,235,0.12);
+  --accent-subtle:rgba(37,99,235,0.06);
+  --green:#059669;--green-dim:rgba(5,150,105,0.09);
+  --amber:#D97706;--amber-dim:rgba(217,119,6,0.09);
+  --red:#DC2626;--red-dim:rgba(220,38,38,0.08);
+  --text-1:#0F172A;--text-2:#475569;--text-3:#94A3B8;--text-acc:#2563EB;
+  --orb-1:rgba(37,99,235,0.05);--orb-2:rgba(124,58,237,0.04);--orb-3:rgba(5,150,105,0.03);
+  --grad-logo:linear-gradient(135deg,#2563EB,#7C3AED);
+  --grad-acc:linear-gradient(135deg,#2563EB,#7C3AED);
+  --grad-send:linear-gradient(135deg,#2563EB,#7C3AED);
+  --shadow-sm:0 1px 4px rgba(0,0,0,0.07);
+  --shadow-card:0 0 0 1px rgba(0,0,0,0.06),0 4px 16px rgba(0,0,0,0.06);
+  --shadow-input:0 0 0 2px rgba(37,99,235,0.28),0 0 14px rgba(37,99,235,0.06);
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{height:100%;font-size:14px}
+body{
+  font-family:'Geist',sans-serif;
+  background:var(--bg);color:var(--text-1);
+  height:100vh;overflow:hidden;
+  display:flex;transition:background .35s,color .3s;
+}
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(ellipse 900px 700px at 20% 15%,var(--orb-1),transparent 65%),
+    radial-gradient(ellipse 600px 550px at 85% 80%,var(--orb-2),transparent 65%),
+    radial-gradient(ellipse 500px 400px at 60% 105%,var(--orb-3),transparent 65%);
+  transition:all .5s;
+}
+.hidden{display:none!important}
 
-    <!-- CSS Bundle (esbuild) -->
-    <link rel="stylesheet" href="dist/bundle.min.css?v=2.52.0" />
+.n-sidebar{
+  width:200px;min-width:200px;height:100vh;
+  display:flex;flex-direction:column;
+  background:var(--bg-sidebar);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  border-right:1px solid var(--border);
+  position:relative;z-index:10;transition:background .35s;
+}
+.sb-logo{
+  padding:18px 16px 16px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:10px;flex-shrink:0;
+}
+.sb-logo-icon{
+  width:30px;height:30px;border-radius:7px;
+  background:var(--grad-logo);
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  box-shadow:0 0 16px var(--accent-glow);
+}
+.sb-logo-icon svg{width:16px;height:16px;fill:white}
+.sb-logo-name{
+  font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:500;
+  letter-spacing:.12em;color:var(--text-1);
+}
+.sb-user{padding:14px 14px 12px;border-bottom:1px solid var(--border);flex-shrink:0}
+.sb-user-row{
+  display:flex;align-items:center;gap:9px;
+  padding:7px 8px;border-radius:8px;cursor:pointer;transition:background .12s;
+}
+.sb-user-row:hover{background:var(--bg-hover)}
+.sb-avatar{
+  width:32px;height:32px;border-radius:50%;
+  background:var(--grad-logo);
+  display:flex;align-items:center;justify-content:center;
+  font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:500;
+  color:#fff;flex-shrink:0;box-shadow:0 0 10px var(--accent-glow);
+}
+.sb-user-info{flex:1;min-width:0}
+.sb-uname{font-size:12px;font-weight:500;color:var(--text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-urole{
+  display:inline-flex;align-items:center;gap:4px;margin-top:2px;padding:2px 7px;border-radius:4px;
+  background:var(--accent-subtle);font-family:'IBM Plex Mono',monospace;font-size:9px;
+  font-weight:500;letter-spacing:.06em;color:var(--text-acc);
+}
+.sb-timer{
+  font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--text-3);margin-top:3px;
+  display:flex;align-items:center;gap:4px;
+}
+.timer-dot{width:5px;height:5px;border-radius:50%;background:var(--green);animation:blink 2s ease-in-out infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
 
-    <!-- Icons - Local FontAwesome -->
-    <link rel="stylesheet" href="assets/vendor/fontawesome/all.min.css" />
+.sb-nav{flex:1;padding:8px 8px;overflow-y:auto}
+.sb-nav::-webkit-scrollbar{width:2px}
+.sb-nav::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:2px}
+.nav-section-label{
+  padding:10px 10px 5px;font-family:'IBM Plex Mono',monospace;font-size:9px;
+  letter-spacing:.12em;color:var(--text-3);text-transform:uppercase;
+}
+.nav-item{
+  display:flex;align-items:center;gap:10px;
+  padding:9px 10px;border-radius:8px;cursor:pointer;transition:background .12s;margin-bottom:1px;
+}
+.nav-item:hover{background:var(--bg-hover)}
+.nav-item.active{background:var(--accent-subtle)}
+.nav-item svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.7;flex-shrink:0}
+.nav-item .ni-label{font-size:13px;color:var(--text-2)}
+.nav-item.active .ni-label{color:var(--text-1);font-weight:500}
+.nav-item.active svg{color:var(--accent)}
+.nav-badge{
+  margin-left:auto;padding:1px 7px;border-radius:10px;
+  background:var(--accent-subtle);font-family:'IBM Plex Mono',monospace;
+  font-size:9.5px;color:var(--text-acc);font-weight:500;
+}
+.sb-footer{padding:10px 12px 14px;border-top:1px solid var(--border);flex-shrink:0}
+.n-logout-btn{
+  width:100%;padding:9px 14px;border-radius:8px;border:1px solid var(--border);
+  background:var(--bg-chip);color:var(--text-2);font-family:'Geist',sans-serif;font-size:12.5px;
+  cursor:pointer;display:flex;align-items:center;gap:9px;transition:all .15s;
+}
+.n-logout-btn:hover{background:var(--red-dim);border-color:rgba(248,113,113,.2);color:var(--red)}
+.n-logout-btn svg{width:14px;height:14px;stroke:currentColor;fill:none;flex-shrink:0}
+.sb-version{
+  text-align:center;margin-top:8px;font-family:'IBM Plex Mono',monospace;
+  font-size:9px;color:var(--text-3);letter-spacing:.06em;
+}
+
+.n-main{flex:1;display:flex;flex-direction:column;height:100vh;overflow:hidden;position:relative;z-index:5}
+
+.topbar{
+  height:52px;flex-shrink:0;display:flex;align-items:center;padding:0 20px;gap:12px;
+  background:var(--bg-sidebar);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  border-bottom:1px solid var(--border);
+}
+.tb-agent{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
+.tb-agent-avatar{
+  width:28px;height:28px;border-radius:7px;background:var(--grad-logo);
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  box-shadow:0 0 10px var(--accent-glow);
+}
+.tb-agent-avatar svg{width:14px;height:14px;fill:white}
+.tb-agent-info{display:flex;flex-direction:column;line-height:1}
+.tb-agent-name{font-size:13.5px;font-weight:500;color:var(--text-1)}
+.tb-agent-status{
+  display:flex;align-items:center;gap:4px;margin-top:2px;
+  font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--green);
+}
+.status-dot{width:5px;height:5px;border-radius:50%;background:var(--green);animation:blink 2.5s infinite}
+.tb-actions{display:flex;align-items:center;gap:7px}
+.tb-btn{
+  height:30px;padding:0 12px;border-radius:7px;border:1px solid var(--border);
+  background:var(--bg-chip);color:var(--text-2);font-family:'Geist',sans-serif;font-size:12px;
+  cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .15s;white-space:nowrap;
+}
+.tb-btn:hover{background:var(--bg-hover);color:var(--text-1);border-color:var(--border-strong)}
+.tb-btn svg{width:12px;height:12px;stroke:currentColor;fill:none}
+.tb-btn.primary{background:var(--accent-subtle);border-color:var(--border-accent);color:var(--text-acc)}
+.tb-btn.primary:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
+.theme-btn{
+  width:32px;height:32px;border-radius:8px;border:1px solid var(--border);
+  background:var(--bg-chip);color:var(--text-2);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;transition:all .15s;
+}
+.theme-btn:hover{background:var(--bg-hover);color:var(--text-1)}
+.theme-btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8}
+.notif-btn{
+  width:32px;height:32px;border-radius:8px;border:1px solid var(--border);
+  background:var(--bg-chip);color:var(--text-2);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;position:relative;transition:all .15s;
+}
+.notif-btn:hover{background:var(--bg-hover);color:var(--text-1)}
+.notif-btn svg{width:15px;height:15px;stroke:currentColor;fill:none}
+.notif-pip{
+  position:absolute;top:6px;right:6px;width:6px;height:6px;border-radius:50%;
+  background:var(--accent);border:1.5px solid var(--bg);
+}
+
+.tabs-bar{
+  display:flex;align-items:center;padding:0 20px;
+  border-bottom:1px solid var(--border);background:var(--bg-sidebar);flex-shrink:0;gap:2px;
+}
+.n-tab-btn{
+  padding:11px 16px;display:flex;align-items:center;gap:7px;
+  font-size:13px;color:var(--text-3);border:none;background:none;cursor:pointer;
+  position:relative;transition:color .15s;white-space:nowrap;
+}
+.n-tab-btn svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.7}
+.n-tab-btn:hover{color:var(--text-2)}
+.n-tab-btn.active{color:var(--text-1);font-weight:500}
+.n-tab-btn.active::after{
+  content:'';position:absolute;bottom:0;left:0;right:0;height:2px;
+  background:var(--accent);border-radius:2px 2px 0 0;
+}
+.n-tab-btn.active svg{color:var(--accent)}
+.tab-count{
+  padding:1px 6px;border-radius:4px;background:var(--accent-subtle);
+  font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--text-acc);font-weight:500;
+}
+.tabs-spacer{flex:1}
+
+.chat-area{flex:1;display:flex;flex-direction:column;overflow:hidden}
+
+.dialog-messages-wrap{
+  flex:1;overflow-y:auto;padding:24px 0 12px;scroll-behavior:smooth;
+}
+.dialog-messages-wrap::-webkit-scrollbar{width:3px}
+.dialog-messages-wrap::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:3px}
+
+.msg-row{max-width:820px;margin:0 auto 18px;padding:0 24px;animation:msgIn .28s ease both}
+@keyframes msgIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+.msg-user{display:flex;justify-content:flex-end}
+.user-bubble{
+  max-width:66%;background:var(--bg-msg-user);border:1px solid var(--border-strong);
+  border-radius:14px 14px 3px 14px;padding:11px 15px;
+  font-size:13.5px;color:var(--text-1);line-height:1.6;
+  box-shadow:var(--shadow-sm);backdrop-filter:blur(10px);position:relative;
+}
+.user-meta{
+  text-align:right;margin-top:5px;
+  font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--text-3);
+}
+
+.msg-bot{display:flex;flex-direction:column;gap:8px}
+.bot-header{display:flex;align-items:center;gap:9px}
+.bot-avatar{
+  width:28px;height:28px;border-radius:7px;background:var(--grad-logo);
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  box-shadow:0 0 12px var(--accent-glow);
+}
+.bot-avatar svg{width:14px;height:14px;fill:white}
+.bot-name{
+  font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:500;
+  background:var(--grad-acc);-webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  letter-spacing:.08em;
+}
+.bot-ts{font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--text-3);margin-left:auto}
+
+.bot-bubble{
+  background:var(--bg-msg-bot);border:1px solid var(--border);
+  border-radius:3px 14px 14px 14px;padding:13px 16px;
+  font-size:13.5px;color:var(--text-2);line-height:1.72;
+  box-shadow:var(--shadow-sm);backdrop-filter:blur(12px);position:relative;
+}
+.bot-bubble p{margin-bottom:8px}
+.bot-bubble p:last-child{margin:0}
+.bot-bubble strong{color:var(--text-1);font-weight:600}
+.bot-bubble code{
+  font-family:'IBM Plex Mono',monospace;font-size:12px;
+  background:var(--bg-chip);border:1px solid var(--border);
+  padding:1px 6px;border-radius:4px;color:var(--accent);
+}
+.bot-bubble ul,.bot-bubble ol{margin:6px 0;padding-left:18px}
+.bot-bubble li{margin-bottom:4px}
+
+.typing-wrap{display:flex;align-items:center;gap:4px;padding:2px 0}
+.t-dot{width:5px;height:5px;border-radius:50%;background:var(--accent);animation:tbounce 1.4s ease-in-out infinite}
+.t-dot:nth-child(2){animation-delay:.2s}
+.t-dot:nth-child(3){animation-delay:.4s}
+@keyframes tbounce{0%,100%{transform:translateY(0);opacity:.3}40%{transform:translateY(-5px);opacity:1}}
+
+.n-input-zone{
+  flex-shrink:0;padding:12px 20px 14px;background:var(--bg-sidebar);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-top:1px solid var(--border);
+}
+.n-input-shell{
+  max-width:820px;margin:0 auto;background:var(--bg-input);
+  border:1px solid var(--border-strong);border-radius:13px;
+  display:flex;flex-direction:column;transition:border-color .2s,box-shadow .2s;
+  box-shadow:var(--shadow-sm);overflow:hidden;position:relative;
+}
+.n-input-shell:focus-within{border-color:var(--accent);box-shadow:var(--shadow-input)}
+.n-input-shell textarea{
+  width:100%;min-height:44px;max-height:160px;
+  background:transparent;border:none;outline:none;resize:none;
+  font-family:'Geist',sans-serif;font-size:13.5px;
+  color:var(--text-1);padding:10px 14px;line-height:1.55;caret-color:var(--accent);
+}
+.n-input-shell textarea::placeholder{color:var(--text-3)}
+.input-foot{display:flex;align-items:center;gap:6px;padding:6px 10px 10px}
+.i-btn{
+  width:30px;height:30px;border-radius:7px;border:1px solid var(--border);
+  background:transparent;color:var(--text-3);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;transition:all .12s;
+}
+.i-btn:hover{background:var(--bg-hover);color:var(--text-2);border-color:var(--border-strong)}
+.i-btn svg{width:13px;height:13px;stroke:currentColor;fill:none}
+.i-spacer{flex:1}
+.model-pill{
+  display:flex;align-items:center;gap:5px;padding:4px 9px;border-radius:6px;
+  border:1px solid var(--border);background:var(--bg-chip);
+  font-family:'IBM Plex Mono',monospace;font-size:10px;
+  color:var(--text-2);cursor:pointer;transition:all .12s;
+}
+.model-pill:hover{border-color:var(--border-strong);color:var(--text-1)}
+.model-live{width:5px;height:5px;border-radius:50%;background:var(--green);animation:blink 3s infinite}
+.n-send-btn{
+  width:34px;height:34px;border-radius:9px;background:var(--grad-send);border:none;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;
+  color:#fff;transition:opacity .15s,transform .12s;box-shadow:0 2px 12px var(--accent-glow);
+}
+.n-send-btn:hover{opacity:.85;transform:scale(.96)}
+.n-send-btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.n-send-btn svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2}
+
+.status-bar{
+  display:flex;align-items:center;gap:12px;padding:5px 20px;
+  border-top:1px solid var(--border);background:var(--bg-sidebar);
+  backdrop-filter:blur(16px);flex-shrink:0;
+}
+.s-item{display:flex;align-items:center;gap:5px;font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--text-3)}
+.s-dot{width:5px;height:5px;border-radius:50%;background:var(--green)}
+.s-dot.warn{background:var(--amber)}
+.s-sep{width:1px;height:10px;background:var(--border)}
+.s-spacer{flex:1}
+
+.other-sections{flex:1;overflow-y:auto;padding:20px}
+
+@media(max-width:660px){.n-sidebar{display:none}}
+</style>
+<link rel="stylesheet" href="dist/bundle.min.css?v=2.52.0" />
 </head>
+<body>
 
-<body class="bg-[#0f1116] text-gray-200">
+<div id="globalNotificationArea" class="global-notification-container"></div>
 
-    <!-- GLOBAL NOTIFICATION (Her sayfada sağ üst köşede görünür) -->
-    <div id="globalNotificationArea" class="global-notification-container">
-        <!-- VyraNotification.init() burada dinamik bell ikonu oluşturacak -->
+<aside class="n-sidebar" id="sidebar">
+  <div class="sb-logo">
+    <div class="sb-logo-icon">
+      <svg viewBox="0 0 24 24"><path d="M4 4 L4 20 L10 12 L16 20 L16 4 L14 4 L14 16 L10 10 L6 16 L6 4 Z"/></svg>
+    </div>
+    <span class="sb-logo-name">NGSSAI</span>
+  </div>
+
+  <div class="sb-user">
+    <div class="sb-user-row" id="sidebarProfileArea">
+      <img id="sidebarAvatarImg" src="" alt="Profil" class="sb-avatar hidden" style="object-fit:cover" />
+      <div class="sb-avatar" id="sidebarAvatarInitials"><span>?</span></div>
+      <div class="sb-user-info">
+        <div class="sb-uname" id="sidebarUserName">Yukleniyor...</div>
+        <div class="sb-urole hidden" id="sidebarUserRole"></div>
+        <div class="sb-timer">
+          <div class="timer-dot"></div>
+          <span id="sessionTimer">00:00:00</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <nav class="sb-nav">
+    <div class="nav-item active" id="menuNewTicket">
+      <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      <span class="ni-label">Ana Sayfa</span>
     </div>
 
-    <!-- ANA KAPSAYICI -->
-    <div class="flex h-screen overflow-hidden">
+    <div class="nav-section-label">Yonetim</div>
 
-        <!-- SIDEBAR (partial) -->
-        <div id="sidebar-slot"></div>
-
-        <!-- ANA İÇERİK -->
-        <main class="flex-1 px-5 pb-8 overflow-y-auto relative">
-
-            <!-- Üst Bar: Logo Sol - Yazı Orta - Notification Sağ -->
-            <div id="topBar" class="flex items-center justify-between pt-4 mt-2 mb-2">
-                <!-- Sol: Logo -->
-                <div id="topLogoArea" class="flex-shrink-0">
-                    <img src="assets/images/vyra_logo_new.png" alt="NGSSAI Logo" class="top-logo-main" />
-                </div>
-
-                <!-- Orta: Başlıklar -->
-                <div id="homeHeader" class="flex-1 text-center px-4">
-                    <h1 class="text-2xl font-bold mb-0">Çözüme mi ihtiyacın var?</h1>
-                    <h2 class="text-xl font-extrabold text-yellow-400 mb-0">
-                        NGSSAI AIOps Platform
-                    </h2>
-                    <p class="welcome-tagline mb-4">
-                        <span class="tagline-text">Hadi başlayalım</span>
-                        <span class="tagline-brand">NGSSAI</span>
-                        <span class="tagline-emoji">😊</span>
-                    </p>
-                </div>
-
-                <!-- Sağ: Notification -->
-                <div id="notificationArea" class="flex-shrink-0">
-                    <!-- VyraNotification.init() burada dinamik bell ikonu oluşturacak -->
-                </div>
-            </div>
-
-            <!-- SEKME ALANI - Modern SaaS Tab -->
-            <div id="mainTabBar" class="modern-tab-container">
-                <div class="modern-tab active" id="tabDialog" data-tab="dialog">
-                    <span class="tab-text">📚 Bilgi Tabanı</span>
-                    <button type="button" class="tab-fav-btn" data-tab="dialog" title="Varsayılan yap">
-                        <i class="fa-solid fa-star"></i>
-                    </button>
-                </div>
-
-                <div class="modern-tab" id="tabHistory" data-tab="history">
-                    <span class="tab-text">Geçmiş Çözümler</span>
-                    <button type="button" class="tab-fav-btn" data-tab="history" title="Varsayılan yap">
-                        <i class="fa-solid fa-star"></i>
-                    </button>
-                </div>
-            </div>
-
-            <!-- SECTIONS (partials) -->
-            <div id="sections-slot"></div>
-
-        </main>
-
-        <!-- MODALS (partial — main dışında) -->
-        <div id="modals-slot"></div>
-
+    <div class="nav-item" id="menuParameters">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 010 14.14M4.93 4.93a10 10 0 000 14.14"/></svg>
+      <span class="ni-label">Parametreler</span>
+    </div>
+    <div class="nav-item" id="menuKnowledgeBase">
+      <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+      <span class="ni-label">Bilgi Tabani</span>
+    </div>
+    <div class="nav-item admin-only hidden" id="menuAuthorization">
+      <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+      <span class="ni-label">Yetkilendirme</span>
+    </div>
+    <div class="nav-item admin-only hidden" id="menuOrganizations">
+      <svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2"/></svg>
+      <span class="ni-label">Organizasyonlar</span>
     </div>
 
-    <!-- 1. Partial Loader: HTML partials'ı SENKRON yükler (bundle'dan ayrı) -->
-    <script src="assets/js/partial_loader.js?v=2.52.0"></script>
+    <div class="nav-section-label">Hesap</div>
 
-    <!-- 2. JS Bundle (esbuild — tüm modüller birleştirilmiş + minify) -->
-    <script defer src="dist/bundle.min.js?v=2.52.0"></script>
+    <div class="nav-item" id="menuProfile">
+      <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span class="ni-label">Profilim</span>
+    </div>
+  </nav>
+
+  <div class="sb-footer">
+    <button class="n-logout-btn" id="logoutBtn">
+      <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      Oturumu Kapat
+    </button>
+    <div class="sb-version">NGSSAI <span id="appVersion">...</span></div>
+  </div>
+</aside>
+
+<main class="n-main">
+
+  <div class="topbar" id="topBar">
+    <div class="tb-agent">
+      <div class="tb-agent-avatar">
+        <svg viewBox="0 0 24 24"><path d="M4 4 L4 20 L10 12 L16 20 L16 4 L14 4 L14 16 L10 10 L6 16 L6 4 Z"/></svg>
+      </div>
+      <div class="tb-agent-info">
+        <div class="tb-agent-name">NGSSAI Asistan</div>
+        <div class="tb-agent-status" id="wsConnectionStatus">
+          <div class="status-dot"></div>
+          <span class="status-text">Cevrimici</span>
+        </div>
+      </div>
+    </div>
+    <div class="tb-actions">
+      <button class="tb-btn" id="chatModeToggleBtn" onclick="if(window.DialogChatModule)DialogChatModule.toggleChatMode()" title="Sohbet modu">
+        <svg viewBox="0 0 24 24" id="chatModeIcon"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        <span id="chatModeLabel">Sohbet</span>
+      </button>
+      <button class="tb-btn" id="dialogTicketBtn">
+        <svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81 19.79 19.79 0 01.12 1.18 2 2 0 012.11 0h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 7.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
+        Cagri Ac
+      </button>
+      <button class="tb-btn primary" id="dialogNewBtn">
+        <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Yeni Soru Sor
+      </button>
+      <div id="notificationArea"></div>
+      <button class="theme-btn" id="themeToggleBtn">
+        <svg id="theme-ico" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="tabs-bar" id="mainTabBar">
+    <button class="n-tab-btn active" id="tabDialog" data-tab="dialog">
+      <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+      Bilgi Tabani
+    </button>
+    <button class="n-tab-btn" id="tabHistory" data-tab="history">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Gecmis Cozumler
+    </button>
+    <div class="tabs-spacer"></div>
+  </div>
+
+  <div id="homeHeader" class="hidden"></div>
+
+  <section id="sectionDialog" class="chat-area">
+    <div class="dialog-messages-wrap" id="dialogMessages"></div>
+
+    <div class="n-input-zone">
+      <div class="n-input-shell">
+        <textarea id="dialogInput" placeholder="Mesajinizi yazin..." rows="1"
+          oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,160)+'px'"></textarea>
+        <div class="input-foot">
+          <button class="i-btn" id="dialogAttachBtn" title="Dosya ekle">
+            <svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+          </button>
+          <button class="i-btn" id="dialogVoiceBtn" title="Sesli mesaj">
+            <svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+          </button>
+          <div class="i-spacer"></div>
+          <div class="model-pill" id="llmModelPill">
+            <div class="model-live"></div>
+            <span id="llmModelName">AI Model</span>
+          </div>
+          <button class="n-send-btn" id="dialogSendBtn" disabled>
+            <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div id="otherSections" class="other-sections hidden">
+    <div id="sections-slot"></div>
+  </div>
+
+  <div class="status-bar" id="statusBar">
+    <div class="s-item"><div class="s-dot"></div> <span id="statusKb">Bilgi Tabani Aktif</span></div>
+    <div class="s-sep"></div>
+    <div class="s-item"><div class="s-dot" id="statusWsDot"></div> <span id="statusWs">Baglanti Aktif</span></div>
+    <div class="s-spacer"></div>
+    <div class="s-item"><span id="statusVersion">NGSSAI Platform</span></div>
+  </div>
+
+</main>
+
+<input type="file" id="dialogFileInput" accept="image/*" class="hidden" multiple title="Gorsel secin" />
+<div id="modals-slot"></div>
+
+<script src="assets/js/config.js?v=2.52.0"></script>
+<script src="assets/js/partial_loader.js?v=2.52.0"></script>
+<script defer src="dist/bundle.min.js?v=2.52.0"></script>
+<script>
+document.getElementById('themeToggleBtn').addEventListener('click', function() {
+  var html = document.documentElement;
+  var isLight = html.getAttribute('data-theme') === 'light';
+  html.setAttribute('data-theme', isLight ? 'dark' : 'light');
+  var sun  = '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>';
+  var moon = '<path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>';
+  document.getElementById('theme-ico').innerHTML = isLight ? moon : sun;
+});
+</script>
 </body>
-
 </html>

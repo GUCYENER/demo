@@ -11,8 +11,6 @@
     'use strict';
 
     const PARTIALS = [
-        { slot: 'sidebar-slot', src: 'partials/sidebar.html' },
-        { slot: 'sections-slot', src: 'partials/section_dialog.html' },
         { slot: 'sections-slot', src: 'partials/section_history.html' },
         { slot: 'sections-slot', src: 'partials/section_parameters.html' },
         { slot: 'sections-slot', src: 'partials/section_knowledge.html' },
