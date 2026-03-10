@@ -41,6 +41,9 @@ const CSS_FILES = [
 ];
 
 const JS_FILES = [
+    // 0. Config (API URL detection — must be first)
+    'assets/js/config.js',
+
     // 1. Partial Loader (senkron — ayrı kalmalı, bundle'a dahil edilmez)
     // partial_loader.js bundle'dan HARIC tutulur, HTML'de ayrı yüklenir
 

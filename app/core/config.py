@@ -35,19 +35,36 @@ class Settings(BaseSettings):
     # CORS için kullanılan origin listesi
     # Production'da .env'den oku: CORS_ORIGINS=https://vyra.company.com
     # Birden fazla origin virgülle ayrılarak tanımlanabilir
-    CORS_ORIGINS: str = ""  # .env'den okunur (örn: "https://vyra.company.com,https://admin.vyra.company.com")
+    CORS_ORIGINS: str = ""
     
-    # Default development origins + .env'den okunan production origins
     backend_cors_origins: List[str] = [
         "http://localhost:5500",
         "http://127.0.0.1:5500",
         "http://localhost:8002",
         "http://127.0.0.1:8002",
+        "http://localhost:5000",
+        "http://127.0.0.1:5000",
     ]
 
     @model_validator(mode='after')
     def _merge_cors_origins(self) -> 'Settings':
-        """Production .env'den CORS_ORIGINS varsa listeye ekle."""
+        """Production .env'den CORS_ORIGINS varsa listeye ekle. Replit domain otomatik eklenir."""
+        import os
+        replit_domain = os.environ.get("REPLIT_DEV_DOMAIN", "")
+        if replit_domain:
+            for scheme in ["https://", "http://"]:
+                origin = f"{scheme}{replit_domain}"
+                if origin not in self.backend_cors_origins:
+                    self.backend_cors_origins.append(origin)
+        replit_domains = os.environ.get("REPLIT_DOMAINS", "")
+        if replit_domains:
+            for domain in replit_domains.split(","):
+                domain = domain.strip()
+                if domain:
+                    for scheme in ["https://", "http://"]:
+                        origin = f"{scheme}{domain}"
+                        if origin not in self.backend_cors_origins:
+                            self.backend_cors_origins.append(origin)
         if self.CORS_ORIGINS:
             extra_origins = [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
             for origin in extra_origins:

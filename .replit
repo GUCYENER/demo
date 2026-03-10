@@ -1,9 +1,10 @@
-modules = ["python-3.11"]
+modules = ["python-3.11", "nodejs-20"]
 [agent]
 expertMode = true
 
 [nix]
 channel = "stable-25_05"
+packages = ["cargo", "dos2unix", "hdf5", "libiconv", "libxcrypt", "openssl", "pkg-config", "poppler_utils", "rapidfuzz-cpp", "rustc", "taskflow"]
 
 [userenv]
 
@@ -24,3 +25,37 @@ RAG_MIN_SCORE = "0.4"
 SCHEDULER_INTERVAL_SECONDS = "300"
 debug = "True"
 CORS_ORIGINS = ""
+JWT_SECRET = "aI10dj_adTBxRchNK7cM8KV6kGRXn3smoUCKsjhM15IEuq3XCMqOTyl9oE3LeiM6"
+DB_PASSWORD = "password"
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python3 -m uvicorn app.api.main:app --host 0.0.0.0 --port 5000"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[deployment]
+deploymentTarget = "autoscale"
+run = ["python3", "-m", "uvicorn", "app.api.main:app", "--host=0.0.0.0", "--port=5000"]

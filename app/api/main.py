@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import auth, chat, health, rag as rag_routes, tickets, llm_config, prompts, users, system, websocket as ws_routes, organizations, feedback, dialog, permissions, assets, ldap_settings, domain_org_api
 from app.core.config import settings
@@ -243,6 +244,35 @@ def create_app() -> FastAPI:
     app.include_router(assets.router, prefix="/api/assets", tags=["assets"])  # v2.22.0 - System Assets
     app.include_router(ldap_settings.router)  # v2.46.0 - LDAP/AD Integration
     app.include_router(domain_org_api.router, prefix="/api")  # v2.46.0 - Domain Org Permissions
+
+    import os
+    from pathlib import Path
+    from fastapi.responses import FileResponse
+
+    frontend_dir = Path(__file__).resolve().parents[2] / "frontend"
+    if frontend_dir.exists():
+        @app.get("/")
+        async def serve_index():
+            return FileResponse(str(frontend_dir / "login.html"))
+
+        @app.get("/home.html")
+        async def serve_home():
+            return FileResponse(str(frontend_dir / "home.html"))
+
+        @app.get("/login.html")
+        async def serve_login():
+            return FileResponse(str(frontend_dir / "login.html"))
+
+        @app.get("/organization_management.html")
+        async def serve_org():
+            return FileResponse(str(frontend_dir / "organization_management.html"))
+
+        app.mount("/assets", StaticFiles(directory=str(frontend_dir / "assets")), name="assets")
+        app.mount("/partials", StaticFiles(directory=str(frontend_dir / "partials")), name="partials")
+
+        dist_dir = frontend_dir / "dist"
+        if dist_dir.exists():
+            app.mount("/dist", StaticFiles(directory=str(dist_dir)), name="dist")
 
     return app
 
