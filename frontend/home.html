@@ -193,6 +193,31 @@ body::before{
 }
 #dialogNewBtn:hover{background:var(--accent)!important;color:#fff!important;border-color:var(--accent)!important}
 #dialogNewBtn.chat-active{background:var(--accent-subtle)!important;color:var(--text-acc)!important}
+.mode-selector{max-width:820px;margin:0 auto 4px;padding:12px 24px 0;animation:msgIn .38s ease both}
+.mode-cards{display:flex;gap:8px}
+.mode-card{
+  padding:10px 14px;border-radius:10px;border:1px solid var(--border);
+  background:var(--bg-card);backdrop-filter:blur(14px);cursor:pointer;
+  transition:all .18s;position:relative;overflow:hidden;
+  display:flex;align-items:center;gap:10px;flex:1;
+}
+.mode-card::before{content:'';position:absolute;top:0;left:0;right:0;height:1.5px;border-radius:10px 10px 0 0;transition:opacity .18s}
+.mode-card.kb::before{background:linear-gradient(90deg,#4D99FF,#7C3AED);opacity:.5}
+.mode-card.chat::before{background:linear-gradient(90deg,#7C3AED,#34D399);opacity:.5}
+.mode-card:hover{border-color:var(--border-accent);box-shadow:0 4px 16px rgba(77,153,255,.08)}
+.mode-card:hover::before{opacity:1}
+.mode-card.selected{border-color:var(--accent);background:var(--accent-subtle)}
+.mode-card.selected::before{opacity:1}
+.mc-icon{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.mc-icon svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.7}
+.mode-card.kb .mc-icon{background:rgba(77,153,255,.12);color:var(--accent)}
+.mode-card.chat .mc-icon{background:rgba(124,58,237,.12);color:#A78BFA}
+.mode-card.kb.selected .mc-icon{background:var(--accent);color:#fff}
+.mode-card.chat.selected .mc-icon{background:#7C3AED;color:#fff}
+.mode-card.selected .mc-icon svg{stroke:#fff}
+.mc-body{flex:1;min-width:0}
+.mc-title{font-size:12.5px;font-weight:500;color:var(--text-1);letter-spacing:-.01em}
+.mc-desc{font-size:11.5px;color:var(--text-3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .notif-area{display:flex;align-items:center;flex-shrink:0;position:relative}
 .notif-area .notification-center{position:relative!important;display:inline-flex!important;align-items:center}
 .notif-area .notification-bell{
@@ -492,6 +517,28 @@ body::before{
   <div id="homeHeader" class="hidden"></div>
 
   <section id="sectionDialog" class="chat-area">
+    <div class="mode-selector" id="modeSelectorPanel">
+      <div class="mode-cards">
+        <div class="mode-card kb selected" id="modeKb" onclick="window.selectChatMode('kb')">
+          <div class="mc-icon">
+            <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+          </div>
+          <div class="mc-body">
+            <div class="mc-title">Bilgi Tabanında Ara</div>
+            <div class="mc-desc">Dokümanlar, prosedürler ve makaleler</div>
+          </div>
+        </div>
+        <div class="mode-card chat" id="modeChat" onclick="window.selectChatMode('chat')">
+          <div class="mc-icon">
+            <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+          </div>
+          <div class="mc-body">
+            <div class="mc-title">NGSSAI ile Sohbet Et</div>
+            <div class="mc-desc">Yapay zeka asistanıyla serbest konuşun</div>
+          </div>
+        </div>
+      </div>
+    </div>
     <div class="dialog-messages-wrap" id="dialogMessages"></div>
 
     <div class="n-input-zone">
@@ -546,6 +593,24 @@ document.getElementById('themeToggleBtn').addEventListener('click', function() {
   var moon = '<path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>';
   document.getElementById('theme-ico').innerHTML = isLight ? moon : sun;
 });
+
+window.selectChatMode = function(mode) {
+  var kb = document.getElementById('modeKb');
+  var ch = document.getElementById('modeChat');
+  if (mode === 'kb') {
+    kb.classList.add('selected');
+    ch.classList.remove('selected');
+    if (window.DialogChatModule && window.DialogChatModule.switchToRagMode) {
+      window.DialogChatModule.switchToRagMode();
+    }
+  } else {
+    ch.classList.add('selected');
+    kb.classList.remove('selected');
+    if (window.DialogChatModule && window.DialogChatModule.switchToCorpixMode) {
+      window.DialogChatModule.switchToCorpixMode();
+    }
+  }
+};
 </script>
 </body>
 </html>

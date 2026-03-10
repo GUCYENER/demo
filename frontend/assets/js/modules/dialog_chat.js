@@ -2004,6 +2004,10 @@ window.DialogChatModule = (function () {
             chatMode = 'corpix';
             updateChatModeUI();
             updateHeaderModeBtn();
+            const mkb = document.getElementById('modeKb');
+            const mch = document.getElementById('modeChat');
+            if (mkb) mkb.classList.remove('selected');
+            if (mch) mch.classList.add('selected');
             showToast('info', '💬 Vyra sohbet modu aktif');
             addSystemMessage('💬 Vyra ile sohbet moduna geçildi.');
         },
@@ -2011,6 +2015,10 @@ window.DialogChatModule = (function () {
             chatMode = 'rag';
             updateChatModeUI();
             updateHeaderModeBtn();
+            const mkb = document.getElementById('modeKb');
+            const mch = document.getElementById('modeChat');
+            if (mkb) mkb.classList.add('selected');
+            if (mch) mch.classList.remove('selected');
             showToast('info', '📚 Bilgi tabanında arama modu aktif');
             addSystemMessage('📚 Bilgi tabanında arama modu aktif.');
         },
