@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────────
-   VYRA – Organization Permissions Module
+   NGSSAI — Organization Permissions Module
    Parametreler → Organizasyon Yetki sekmesi
    Domain ↔ Organizasyon yetki CRUD yönetimi
    v2.46.0
@@ -296,8 +296,8 @@ window.OrgPermissionsModule = (function () {
 
     // ── Toast Helper ──
     function showToast(message, type) {
-        if (window.VyraNotification && typeof window.VyraNotification.add === 'function') {
-            window.VyraNotification.add(message, type === 'error' ? 'error' : 'success');
+        if (window.NgssNotification && typeof window.NgssNotification.add === 'function') {
+            window.NgssNotification.add(message, type === 'error' ? 'error' : 'success');
         } else {
             console.log(`[OrgPermissions] ${type}: ${message}`);
         }

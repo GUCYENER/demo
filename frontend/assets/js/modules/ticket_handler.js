@@ -1,12 +1,12 @@
 /* ─────────────────────────────────────────────
-   VYRA – Ticket Handler Module
+   NGSSAI — Ticket Handler Module
    v2.30.0 · home_page.js'den ayrıştırıldı
    Ticket hata işleme, async sonuç, sıfırlama
    ───────────────────────────────────────────── */
 
 // 🆘 Ticket hatası işle
 function handleTicketError(error, suggestBtn, problemTextArea) {
-    console.error('[VYRA] Ticket hatası:', error);
+    console.error('[NGSSAI] Ticket hatası:', error);
     const loadingBox = document.getElementById("loadingBox");
     if (loadingBox) loadingBox.classList.add("hidden");
 
@@ -70,7 +70,7 @@ function handleAsyncTicketResult(result) {
     // 🎫 Ticket ID'yi SolutionDisplayModule'a kaydet (LLM değerlendirmesi için)
     if (result.id && window.SolutionDisplayModule?.setTicketInfo) {
         window.SolutionDisplayModule.setTicketInfo(result.id, [], problemTextAreaSource?.value || '');
-        console.log('[VYRA] Ticket ID kaydedildi:', result.id);
+        console.log('[NGSSAI] Ticket ID kaydedildi:', result.id);
     }
 
     // ✅ Çözüm verildi - butonu "Yeni Soru" olarak değiştir (v2.24.0)

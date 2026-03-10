@@ -53,7 +53,7 @@ window.LLMModule = (function() {
         }
 
         if (!el.grid) {
-            console.warn('[VYRA] llmGrid elementi bulunamadı');
+            console.warn('[NGSSAI] llmGrid elementi bulunamadı');
             return;
         }
 
@@ -63,7 +63,7 @@ window.LLMModule = (function() {
             const data = await window.VYRA_API.request("/llm-config/");
 
             if (!data || !Array.isArray(data)) {
-                console.log('[VYRA] LLM config verisi boş veya geçersiz:', data);
+                console.log('[NGSSAI] LLM config verisi boş veya geçersiz:', data);
                 render([]);
                 return;
             }
@@ -71,7 +71,7 @@ window.LLMModule = (function() {
             render(data);
 
         } catch (err) {
-            console.error('[VYRA] LLM config yükleme hatası:', err);
+            console.error('[NGSSAI] LLM config yükleme hatası:', err);
 
             let errorMessage = 'LLM listesi yüklenemedi.';
             let messageClass = 'text-red-500';
@@ -228,7 +228,7 @@ window.LLMModule = (function() {
         }
 
         try {
-            console.log('[VYRA] LLM kayıt işlemi başlatılıyor...', { id, payload: { ...payload, api_token: payload.api_token ? '***' : null } });
+            console.log('[NGSSAI] LLM kayıt işlemi başlatılıyor...', { id, payload: { ...payload, api_token: payload.api_token ? '***' : null } });
 
             if (id && id.trim() !== '') {
                 await window.VYRA_API.request(`/llm-config/${id}`, {
@@ -252,7 +252,7 @@ window.LLMModule = (function() {
             loadConfigs();
 
         } catch (err) {
-            console.error('[VYRA] LLM kayıt hatası:', err);
+            console.error('[NGSSAI] LLM kayıt hatası:', err);
 
             let errorMsg = 'İşlem başarısız';
             if (err.message && err.message.includes('Failed to fetch')) {

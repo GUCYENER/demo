@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────
-   VYRA – RAG File Org Edit Module
+   NGSSAI — RAG File Org Edit Module
    v2.30.1 · rag_upload.js'den ayrıştırıldı
    Dosya org grupları düzenleme
    ───────────────────────────────────────────── */

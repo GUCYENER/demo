@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────
-   VYRA – RAG Org Modal Module
+   NGSSAI — RAG Org Modal Module
    v2.30.1 · rag_upload.js'den ayrıştırıldı
    Org gruplarını yükleme, modal açma/kapama, seçim
    ───────────────────────────────────────────── */

@@ -7,6 +7,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Geist:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
+
+/* ════════════════════════════════════════════
+   DESIGN TOKENS
+   ════════════════════════════════════════════ */
 :root[data-theme="dark"] {
   --bg:             #0C0D12;
   --bg-panel:       rgba(14,16,24,0.92);
@@ -14,37 +18,46 @@
   --bg-input:       rgba(16,19,30,0.95);
   --bg-hover:       rgba(255,255,255,0.04);
   --bg-chip:        rgba(255,255,255,0.05);
+
   --border:         rgba(255,255,255,0.07);
   --border-md:      rgba(255,255,255,0.11);
   --border-accent:  rgba(77,153,255,0.30);
+
   --gold:           #4D99FF;
   --gold-2:         #7C3AED;
   --gold-dim:       rgba(77,153,255,0.12);
   --gold-glow:      rgba(77,153,255,0.18);
   --gold-subtle:    rgba(77,153,255,0.07);
+
   --blue:           #3B82F6;
   --blue-dim:       rgba(59,130,246,0.10);
+
   --green:          #34D399;
   --green-dim:      rgba(52,211,153,0.10);
   --red:            #F87171;
   --red-dim:        rgba(248,113,113,0.10);
+
   --text-1:         #EEF0F8;
   --text-2:         #8E99B8;
   --text-3:         #3A4460;
   --text-gold:      #7DB8FF;
+
   --orb-a:          rgba(77,153,255,0.12);
   --orb-b:          rgba(124,58,237,0.08);
   --orb-c:          rgba(52,211,153,0.05);
+
   --grad-logo:      linear-gradient(135deg, #4D99FF 0%, #7C3AED 100%);
   --grad-btn:       linear-gradient(135deg, #4D99FF 0%, #7C3AED 100%);
   --grad-acc:       linear-gradient(135deg, #4D99FF, #7C3AED);
   --grad-surface:   linear-gradient(160deg, rgba(77,153,255,0.04) 0%, transparent 55%);
+
   --shadow-sm:      0 1px 4px rgba(0,0,0,0.45);
   --shadow-md:      0 4px 20px rgba(0,0,0,0.40), 0 1px 4px rgba(0,0,0,0.30);
   --shadow-card:    0 0 0 1px rgba(255,255,255,0.05), 0 6px 24px rgba(0,0,0,0.45);
   --shadow-btn:     0 4px 20px rgba(77,153,255,0.25), 0 0 0 1px rgba(77,153,255,0.12);
   --shadow-input:   0 0 0 2px rgba(77,153,255,0.35), 0 0 16px rgba(77,153,255,0.08);
 }
+
 :root[data-theme="light"] {
   --bg:             #F4F6FC;
   --bg-panel:       rgba(255,255,255,0.94);
@@ -52,37 +65,49 @@
   --bg-input:       rgba(255,255,255,0.99);
   --bg-hover:       rgba(0,0,0,0.03);
   --bg-chip:        rgba(0,0,0,0.04);
+
   --border:         rgba(0,0,0,0.07);
   --border-md:      rgba(0,0,0,0.12);
   --border-accent:  rgba(37,99,235,0.25);
+
   --gold:           #2563EB;
   --gold-2:         #7C3AED;
   --gold-dim:       rgba(37,99,235,0.08);
   --gold-glow:      rgba(37,99,235,0.12);
   --gold-subtle:    rgba(37,99,235,0.05);
+
   --blue:           #2563EB;
   --blue-dim:       rgba(37,99,235,0.08);
+
   --green:          #059669;
   --green-dim:      rgba(5,150,105,0.08);
   --red:            #DC2626;
   --red-dim:        rgba(220,38,38,0.08);
+
   --text-1:         #0F172A;
   --text-2:         #4A5878;
   --text-3:         #8A96B0;
   --text-gold:      #1D4ED8;
+
   --orb-a:          rgba(37,99,235,0.06);
   --orb-b:          rgba(124,58,237,0.05);
   --orb-c:          rgba(5,150,105,0.04);
+
   --grad-logo:      linear-gradient(135deg, #2563EB 0%, #7C3AED 100%);
   --grad-btn:       linear-gradient(135deg, #2563EB 0%, #7C3AED 100%);
   --grad-acc:       linear-gradient(135deg, #2563EB, #7C3AED);
   --grad-surface:   linear-gradient(160deg, rgba(37,99,235,0.03) 0%, transparent 55%);
+
   --shadow-sm:      0 1px 4px rgba(0,0,0,0.07);
   --shadow-md:      0 4px 20px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04);
   --shadow-card:    0 0 0 1px rgba(0,0,0,0.06), 0 6px 24px rgba(0,0,0,0.06);
   --shadow-btn:     0 4px 20px rgba(37,99,235,0.20), 0 0 0 1px rgba(37,99,235,0.10);
   --shadow-input:   0 0 0 2px rgba(37,99,235,0.28), 0 0 12px rgba(37,99,235,0.06);
 }
+
+/* ════════════════════════════════════════════
+   BASE
+   ════════════════════════════════════════════ */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; font-size: 14px; }
 body {
@@ -95,6 +120,8 @@ body {
   overflow: hidden;
   transition: background 0.4s, color 0.3s;
 }
+
+/* ── Ambient orbs ── */
 body::before {
   content: '';
   position: fixed; inset: 0; pointer-events: none; z-index: 0;
@@ -109,7 +136,17 @@ body::before {
   from { opacity: 1; transform: scale(1); }
   to   { opacity: 0.75; transform: scale(1.06) translate(12px, -8px); }
 }
-.page { display: flex; width: 100%; height: 100vh; position: relative; z-index: 1; }
+
+/* ════════════════════════════════════════════
+   LAYOUT
+   ════════════════════════════════════════════ */
+.page {
+  display: flex;
+  width: 100%; height: 100vh;
+  position: relative; z-index: 1;
+}
+
+/* ── Theme toggle ── */
 .theme-toggle {
   position: fixed; top: 22px; right: 22px; z-index: 100;
   width: 38px; height: 38px; border-radius: 10px;
@@ -123,12 +160,20 @@ body::before {
 }
 .theme-toggle:hover { color: var(--text-1); border-color: var(--border-accent); background: var(--bg-hover); }
 .theme-toggle svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+
+/* ════════════════════════════════════════════
+   LEFT — BRANDING PANEL
+   ════════════════════════════════════════════ */
 .brand-panel {
-  flex: 1; position: relative;
+  flex: 1;
+  position: relative;
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
-  padding: 60px 72px; overflow: hidden;
+  padding: 60px 72px;
+  overflow: hidden;
 }
+
+/* Geometric grid */
 .brand-panel::after {
   content: '';
   position: absolute; inset: 0;
@@ -139,12 +184,15 @@ body::before {
   mask-image: radial-gradient(ellipse 85% 85% at 55% 50%, black 30%, transparent 70%);
   pointer-events: none;
 }
+
 .brand-content {
   position: relative; z-index: 2;
   display: flex; flex-direction: column;
   align-items: flex-start; gap: 44px;
   max-width: 460px; width: 100%;
 }
+
+/* ── NGSSAI Logo ── */
 .ngssai-logo-block {
   display: flex; align-items: center; gap: 18px;
   animation: slideUp 0.7s cubic-bezier(0.22,1,0.36,1) both;
@@ -153,6 +201,7 @@ body::before {
   from { opacity: 0; transform: translateY(24px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
 .ngssai-icon {
   width: 60px; height: 60px; border-radius: 16px;
   background: var(--grad-logo);
@@ -166,7 +215,10 @@ body::before {
   0%,100% { box-shadow: 0 0 0 1px rgba(255,255,255,0.10), 0 0 40px var(--gold-glow), 0 8px 28px rgba(0,0,0,0.4); }
   50%     { box-shadow: 0 0 0 1px rgba(255,255,255,0.15), 0 0 60px rgba(77,153,255,0.30), 0 8px 28px rgba(0,0,0,0.4); }
 }
+
+/* V-checkmark SVG icon */
 .ngssai-icon svg { width: 32px; height: 32px; }
+
 .ngssai-wordmark { display: flex; flex-direction: column; line-height: 1; }
 .ngssai-name {
   font-family: 'Geist', sans-serif;
@@ -181,6 +233,8 @@ body::before {
   font-size: 10px; letter-spacing: 0.14em;
   color: var(--text-3); text-transform: uppercase; margin-top: 6px;
 }
+
+/* ── Headline ── */
 .brand-headline {
   display: flex; flex-direction: column; gap: 10px;
   animation: slideUp 0.7s cubic-bezier(0.22,1,0.36,1) 0.08s both;
@@ -195,7 +249,11 @@ body::before {
   background: var(--grad-acc);
   -webkit-background-clip: text; -webkit-text-fill-color: transparent;
 }
-.brand-sub { font-size: 14px; color: var(--text-2); line-height: 1.7; max-width: 360px; }
+.brand-sub {
+  font-size: 14px; color: var(--text-2); line-height: 1.7; max-width: 360px;
+}
+
+/* ── Feature cards ── */
 .feature-stack {
   display: flex; flex-direction: column; gap: 10px; width: 100%;
   animation: slideUp 0.7s cubic-bezier(0.22,1,0.36,1) 0.16s both;
@@ -220,6 +278,8 @@ body::before {
 .feat-body { flex: 1; }
 .feat-title { font-size: 13.5px; font-weight: 500; color: var(--text-1); }
 .feat-desc  { font-size: 12px; color: var(--text-2); margin-top: 1px; }
+
+/* ── Stats row ── */
 .stats-row {
   display: flex; gap: 12px; flex-wrap: wrap;
   animation: slideUp 0.7s cubic-bezier(0.22,1,0.36,1) 0.24s both;
@@ -240,12 +300,24 @@ body::before {
   -webkit-background-clip: text; -webkit-text-fill-color: transparent;
 }
 .stat-lbl { font-size: 11px; color: var(--text-3); margin-top: 4px; letter-spacing: 0.02em; }
-.vdivider { width: 1px; flex-shrink: 0; background: var(--border); position: relative; }
+
+/* ════════════════════════════════════════════
+   DIVIDER
+   ════════════════════════════════════════════ */
+.vdivider {
+  width: 1px; flex-shrink: 0;
+  background: var(--border);
+  position: relative;
+}
 .vdivider::before {
   content: '';
   position: absolute; top: 20%; bottom: 20%; left: 0; width: 1px;
   background: linear-gradient(180deg, transparent, var(--border-accent), transparent);
 }
+
+/* ════════════════════════════════════════════
+   RIGHT — FORM PANEL
+   ════════════════════════════════════════════ */
 .form-panel {
   width: 460px; min-width: 420px;
   display: flex; flex-direction: column;
@@ -255,7 +327,8 @@ body::before {
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border-left: 1px solid var(--border);
-  position: relative; overflow-y: auto;
+  position: relative;
+  overflow-y: auto;
 }
 .form-panel::before {
   content: '';
@@ -263,6 +336,7 @@ body::before {
   background: var(--grad-surface);
   pointer-events: none;
 }
+
 .form-card {
   width: 100%; max-width: 360px;
   position: relative; z-index: 2;
@@ -272,10 +346,20 @@ body::before {
   from { opacity: 0; transform: translateY(18px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+/* ── Header ── */
 .fc-header { margin-bottom: 28px; }
-.fc-title { font-size: 22px; font-weight: 600; color: var(--text-1); letter-spacing: -0.01em; line-height: 1.2; }
+.fc-title {
+  font-size: 22px; font-weight: 600; color: var(--text-1);
+  letter-spacing: -0.01em; line-height: 1.2;
+}
 .fc-sub { font-size: 13.5px; color: var(--text-2); margin-top: 7px; line-height: 1.6; }
-.tab-row { display: flex; gap: 0; margin-bottom: 26px; border-bottom: 1px solid var(--border); }
+
+/* ── Tabs ── */
+.tab-row {
+  display: flex; gap: 0; margin-bottom: 26px;
+  border-bottom: 1px solid var(--border);
+}
 .tab {
   padding: 9px 20px; font-size: 13.5px; font-weight: 500;
   color: var(--text-3); cursor: pointer; position: relative;
@@ -286,11 +370,19 @@ body::before {
 .tab.active::after {
   content: '';
   position: absolute; bottom: -1px; left: 0; right: 0; height: 2px;
-  background: var(--gold); border-radius: 2px 2px 0 0;
+  background: var(--gold);
+  border-radius: 2px 2px 0 0;
 }
+
+/* ── Form groups ── */
 .fg { margin-bottom: 16px; }
-.fg-label { display: block; font-size: 12.5px; font-weight: 500; color: var(--text-2); margin-bottom: 7px; letter-spacing: 0.01em; }
+.fg-label {
+  display: block; font-size: 12.5px; font-weight: 500;
+  color: var(--text-2); margin-bottom: 7px; letter-spacing: 0.01em;
+}
 .fg-wrap { position: relative; }
+
+/* Select */
 .fg-select {
   width: 100%; padding: 11px 38px 11px 42px;
   border-radius: 10px; border: 1px solid var(--border-md);
@@ -301,6 +393,8 @@ body::before {
   backdrop-filter: blur(8px);
 }
 .fg-select:focus { border-color: var(--gold); box-shadow: var(--shadow-input); }
+
+/* Input */
 .fg-input {
   width: 100%; padding: 11px 14px 11px 42px;
   border-radius: 10px; border: 1px solid var(--border-md);
@@ -312,17 +406,23 @@ body::before {
 }
 .fg-input:focus { border-color: var(--gold); box-shadow: var(--shadow-input); }
 .fg-input::placeholder { color: var(--text-3); }
+
+/* Field icon */
 .fi {
   position: absolute; left: 13px; top: 50%; transform: translateY(-50%);
   width: 16px; height: 16px; stroke: var(--text-3); fill: none;
   pointer-events: none; transition: stroke 0.15s;
 }
 .fg-wrap:focus-within .fi { stroke: var(--gold); }
+
+/* Select arrow */
 .sa {
   position: absolute; right: 13px; top: 50%; transform: translateY(-50%);
   width: 14px; height: 14px; stroke: var(--text-3); fill: none;
   pointer-events: none;
 }
+
+/* Eye toggle */
 .eye-btn {
   position: absolute; right: 13px; top: 50%; transform: translateY(-50%);
   background: none; border: none; cursor: pointer;
@@ -331,6 +431,8 @@ body::before {
 }
 .eye-btn:hover { color: var(--text-2); }
 .eye-btn svg { width: 15px; height: 15px; stroke: currentColor; fill: none; }
+
+/* Error */
 .fc-error {
   display: none; align-items: center; gap: 9px;
   padding: 10px 14px; border-radius: 9px; margin-bottom: 14px;
@@ -343,15 +445,35 @@ body::before {
 @keyframes shake {
   0%,100%{transform:translateX(0)} 20%,60%{transform:translateX(-5px)} 40%,80%{transform:translateX(5px)}
 }
-.fc-success {
-  display: none; align-items: center; gap: 9px;
-  padding: 10px 14px; border-radius: 9px; margin-bottom: 14px;
-  background: var(--green-dim); border: 1px solid rgba(52,211,153,0.22);
-  font-size: 12.5px; color: var(--green);
+
+/* ── Divider ── */
+.or-row {
+  display: flex; align-items: center; gap: 12px; margin: 4px 0 18px;
+  font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+  color: var(--text-3); letter-spacing: 0.08em;
 }
-.fc-success.show { display: flex; }
-.meta-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; }
-.cb-row { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.or-row::before, .or-row::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+/* ── SSO buttons ── */
+.sso-row { display: flex; gap: 8px; margin-bottom: 22px; }
+.sso-btn {
+  flex: 1; padding: 10px 12px;
+  border-radius: 10px; border: 1px solid var(--border-md);
+  background: var(--bg-card); backdrop-filter: blur(10px);
+  color: var(--text-2); font-family: 'Geist', sans-serif; font-size: 12.5px;
+  cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 7px;
+  transition: all 0.18s; position: relative; overflow: hidden;
+}
+.sso-btn:hover { border-color: var(--border-accent); color: var(--text-1); transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+.sso-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
+
+/* ── Remember / Forgot ── */
+.meta-row {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px;
+}
+.cb-row {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+}
 .cb-box {
   width: 15px; height: 15px; border-radius: 4px;
   border: 1.5px solid var(--border-md); background: var(--bg-input);
@@ -365,6 +487,10 @@ body::before {
   transform: rotate(-45deg) translate(1px, -1px);
 }
 .cb-label { font-size: 13px; color: var(--text-2); user-select: none; }
+.forgot { font-size: 13px; color: var(--gold); cursor: pointer; background: none; border: none; padding: 0; }
+.forgot:hover { text-decoration: underline; }
+
+/* ── Submit ── */
 .submit-btn {
   width: 100%; padding: 13px;
   border-radius: 11px; border: none;
@@ -390,10 +516,13 @@ body::before {
 .submit-btn.loading { pointer-events: none; opacity: 0.8; }
 .spinner { width: 17px; height: 17px; border: 2.5px solid rgba(255,255,255,0.3); border-top-color: #ffffff; border-radius: 50%; animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Footer ── */
 .fc-footer { margin-top: 24px; text-align: center; }
 .fc-footer-txt { font-size: 12px; color: var(--text-3); }
 .fc-footer-txt a { color: var(--gold); cursor: pointer; }
 .fc-footer-txt a:hover { text-decoration: underline; }
+
 .version-badge {
   margin-top: 28px; display: flex; align-items: center;
   justify-content: center; gap: 7px;
@@ -402,8 +531,14 @@ body::before {
 }
 .vb-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--green); animation: blink 3s ease-in-out infinite; }
 @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+/* Register tab content */
 .tab-content { display: none; }
 .tab-content.active { display: block; }
+
+/* ════════════════════════════════════════════
+   RESPONSIVE
+   ════════════════════════════════════════════ */
 @media (max-width: 820px) {
   .brand-panel, .vdivider { display: none; }
   .form-panel { width: 100%; min-width: 0; border-left: none; }
@@ -414,15 +549,19 @@ body::before {
 
 <div class="page">
 
-  <button class="theme-toggle" onclick="toggleTheme()" aria-label="Tema degistir">
+  <!-- ── Theme toggle ── -->
+  <button class="theme-toggle" onclick="toggleTheme()" aria-label="Tema değiştir">
     <svg id="theme-ico" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
   </button>
 
+  <!-- ════ LEFT — BRAND PANEL ════ -->
   <div class="brand-panel">
     <div class="brand-content">
 
+      <!-- Logo -->
       <div class="ngssai-logo-block">
         <div class="ngssai-icon">
+          <!-- V with checkmark concept -->
           <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M6 10 L15 30 L20 18 L25 30 L34 10" stroke="rgba(26,12,0,0.5)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
             <path d="M6 10 L15 30 L20 18 L25 30 L34 10" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -432,27 +571,29 @@ body::before {
         </div>
         <div class="ngssai-wordmark">
           <span class="ngssai-name">NGSSAI</span>
-          <span class="ngssai-version" id="brandVersion">v1.0 · AIOps Platform</span>
+          <span class="ngssai-version">v1.0 · AIOps Platform</span>
         </div>
       </div>
 
+      <!-- Headline -->
       <div class="brand-headline">
         <div class="brand-h1">
-          <em>Akilli izleme</em>,<br>
-          <strong>anlik karar destegi</strong>
+          <em>Akıllı izleme</em>,<br>
+          <strong>anlık karar desteği</strong>
         </div>
         <div class="brand-sub">
-          Anomali tespitinden kok neden analizine — yapay zeka destekli operasyonel zeka platformu.
+          Anomali tespitinden kök neden analizine — yapay zeka destekli operasyonel zeka platformu.
         </div>
       </div>
 
+      <!-- Features -->
       <div class="feature-stack">
         <div class="feat">
           <div class="feat-ic accent">
             <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
           </div>
           <div class="feat-body">
-            <div class="feat-title">Gercek Zamanli Anomali Analizi</div>
+            <div class="feat-title">Gerçek Zamanlı Anomali Analizi</div>
             <div class="feat-desc">Elasticsearch ML · Dynatrace entegrasyonu</div>
           </div>
         </div>
@@ -462,7 +603,7 @@ body::before {
           </div>
           <div class="feat-body">
             <div class="feat-title">4 Boyutlu Rapor Motoru</div>
-            <div class="feat-desc">Log · Tespit · Risk · Aksiyon kartlari</div>
+            <div class="feat-desc">Log · Tespit · Risk · Aksiyon kartları</div>
           </div>
         </div>
         <div class="feat">
@@ -470,12 +611,13 @@ body::before {
             <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           </div>
           <div class="feat-body">
-            <div class="feat-title">Kurumsal Erisim Yonetimi</div>
-            <div class="feat-desc">LDAP · SSO · Rol tabanli yetkilendirme</div>
+            <div class="feat-title">Kurumsal Erişim Yönetimi</div>
+            <div class="feat-desc">LDAP · SSO · Rol tabanlı yetkilendirme</div>
           </div>
         </div>
       </div>
 
+      <!-- Stats -->
       <div class="stats-row">
         <div class="stat-pill">
           <span class="stat-val">&lt;10dk</span>
@@ -487,7 +629,7 @@ body::before {
         </div>
         <div class="stat-pill">
           <span class="stat-val">24/7</span>
-          <span class="stat-lbl">Izleme</span>
+          <span class="stat-lbl">İzleme</span>
         </div>
         <div class="stat-pill">
           <span class="stat-val">3Z</span>
@@ -498,53 +640,86 @@ body::before {
     </div>
   </div>
 
+  <!-- ── Divider ── -->
   <div class="vdivider"></div>
 
+  <!-- ════ RIGHT — FORM PANEL ════ -->
   <div class="form-panel">
     <div class="form-card">
 
+      <!-- Header -->
       <div class="fc-header">
-        <div class="fc-title">Hesabiniza giris yapin</div>
-        <div class="fc-sub">Yetkili kurumsal hesabinizla devam edin.</div>
+        <div class="fc-title">Hesabınıza giriş yapın</div>
+        <div class="fc-sub">Yetkili kurumsal hesabınızla devam edin.</div>
       </div>
 
+      <!-- Tabs -->
       <div class="tab-row">
-        <button class="tab active" onclick="switchTab('login', this)">Giris Yap</button>
-        <button class="tab" onclick="switchTab('register', this)">Kayit Ol</button>
+        <button class="tab active" onclick="switchTab('login', this)">Giriş Yap</button>
+        <button class="tab" onclick="switchTab('register', this)">Kayıt Ol</button>
       </div>
 
+      <!-- ── LOGIN TAB ── -->
       <div id="tab-login" class="tab-content active">
 
-        <div class="fc-error" id="loginError">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          <span id="loginErrorText"></span>
+        <!-- SSO -->
+        <div class="sso-row">
+          <button class="sso-btn" onclick="ssoLogin('Microsoft')">
+            <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
+              <rect x="1"  y="1"  width="10" height="10" fill="#F25022"/>
+              <rect x="13" y="1"  width="10" height="10" fill="#7FBA00"/>
+              <rect x="1"  y="13" width="10" height="10" fill="#00A4EF"/>
+              <rect x="13" y="13" width="10" height="10" fill="#FFB900"/>
+            </svg>
+            Microsoft
+          </button>
+          <button class="sso-btn" onclick="ssoLogin('LDAP')">
+            <svg viewBox="0 0 24 24" stroke="currentColor" fill="none" width="16" height="16">
+              <rect x="3" y="11" width="18" height="11" rx="2"/>
+              <path d="M7 11V7a5 5 0 0110 0v4"/>
+            </svg>
+            LDAP / SSO
+          </button>
         </div>
 
+        <div class="or-row">ya da</div>
+
+        <!-- Error -->
+        <div class="fc-error" id="loginError">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          Kullanıcı adı veya şifre hatalı.
+        </div>
+
+        <!-- Login type -->
         <div class="fg">
-          <label class="fg-label">Giris Turu</label>
+          <label class="fg-label">Giriş Türü</label>
           <div class="fg-wrap">
             <svg class="fi" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
             <select class="fg-select" id="loginType">
-              <option value="">Lokal Kullanici (Admin)</option>
+              <option>Lokal Kullanıcı (Admin)</option>
+              <option>Kurumsal LDAP</option>
+              <option>SSO / Azure AD</option>
             </select>
             <svg class="sa" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
         </div>
 
+        <!-- Username -->
         <div class="fg">
-          <label class="fg-label">Kullanici Adi</label>
+          <label class="fg-label">Kullanıcı Adı</label>
           <div class="fg-wrap">
             <svg class="fi" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            <input id="loginUser" class="fg-input" type="text" placeholder="kullanici.adi" autocomplete="username"
+            <input id="loginUser" class="fg-input" type="text" placeholder="kullanici.adi"
               onkeydown="if(event.key==='Enter')document.getElementById('loginPass').focus()">
           </div>
         </div>
 
+        <!-- Password -->
         <div class="fg">
-          <label class="fg-label">Sifre</label>
+          <label class="fg-label">Şifre</label>
           <div class="fg-wrap">
             <svg class="fi" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-            <input id="loginPass" class="fg-input" type="password" placeholder="••••••••" autocomplete="current-password"
+            <input id="loginPass" class="fg-input" type="password" placeholder="••••••••"
               style="padding-right:42px"
               onkeydown="if(event.key==='Enter')doLogin()">
             <button class="eye-btn" onclick="togglePwd('loginPass','eyeIco')" type="button">
@@ -553,29 +728,30 @@ body::before {
           </div>
         </div>
 
+        <!-- Meta -->
         <div class="meta-row">
           <div class="cb-row" onclick="toggleCheck('remCb')">
-            <div class="cb-box" id="remCb"></div>
-            <span class="cb-label">Beni hatirla</span>
+            <div class="cb-box checked" id="remCb"></div>
+            <span class="cb-label">Beni hatırla</span>
           </div>
+          <button class="forgot" onclick="alert('Yöneticinizle iletişime geçin.')">Şifremi unuttum</button>
         </div>
 
+        <!-- Submit -->
         <button class="submit-btn" id="loginBtn" onclick="doLogin()">
           <svg viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
-          Giris Yap
+          Giriş Yap
         </button>
 
-      </div>
+      </div><!-- /tab-login -->
 
+      <!-- ── REGISTER TAB ── -->
       <div id="tab-register" class="tab-content">
 
+        <!-- Error -->
         <div class="fc-error" id="regError">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          <span id="regErrorText"></span>
-        </div>
-
-        <div class="fc-success" id="regSuccess">
-          <span id="regSuccessText"></span>
+          Lütfen tüm alanları doldurun.
         </div>
 
         <div class="fg">
@@ -583,14 +759,6 @@ body::before {
           <div class="fg-wrap">
             <svg class="fi" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
             <input class="fg-input" type="text" placeholder="Ad Soyad" id="regName">
-          </div>
-        </div>
-
-        <div class="fg">
-          <label class="fg-label">Kullanici Adi</label>
-          <div class="fg-wrap">
-            <svg class="fi" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            <input class="fg-input" type="text" placeholder="kullanici.adi" id="regUsername">
           </div>
         </div>
 
@@ -603,15 +771,7 @@ body::before {
         </div>
 
         <div class="fg">
-          <label class="fg-label">Telefon</label>
-          <div class="fg-wrap">
-            <svg class="fi" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
-            <input class="fg-input" type="tel" placeholder="5XX XXX XXXX" id="regPhone" maxlength="10">
-          </div>
-        </div>
-
-        <div class="fg">
-          <label class="fg-label">Sifre</label>
+          <label class="fg-label">Şifre</label>
           <div class="fg-wrap">
             <svg class="fi" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
             <input class="fg-input" type="password" placeholder="En az 8 karakter" id="regPass" style="padding-right:42px">
@@ -622,299 +782,145 @@ body::before {
         </div>
 
         <div class="fg" style="margin-bottom:22px">
-          <label class="fg-label">Sifre Tekrar</label>
+          <label class="fg-label">Rol / Departman</label>
           <div class="fg-wrap">
-            <svg class="fi" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-            <input class="fg-input" type="password" placeholder="Sifrenizi dogrulayin" id="regPassConfirm" style="padding-right:42px">
-            <button class="eye-btn" onclick="togglePwd('regPassConfirm','eyeIco3')" type="button">
-              <svg id="eyeIco3" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-            </button>
+            <svg class="fi" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2"/></svg>
+            <select class="fg-select">
+              <option>SRE / DevOps</option>
+              <option>NOC Operatör</option>
+              <option>Güvenlik Analisti</option>
+              <option>Yönetici</option>
+            </select>
+            <svg class="sa" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
         </div>
 
-        <button class="submit-btn" id="regBtn" onclick="doRegister()">
+        <button class="submit-btn" onclick="doRegister()">
           <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
-          Kayit Ol
+          Kayıt Talebi Gönder
         </button>
 
-      </div>
+      </div><!-- /tab-register -->
 
+      <!-- Footer -->
       <div class="fc-footer">
         <div class="fc-footer-txt">
-          Erisim sorunu mu? <a onclick="alert('Sistem yoneticinizle iletisime gecin.')">Yoneticiye basvurun</a>
+          Erişim sorunu mu? <a onclick="alert('Sistem yöneticinizle iletişime geçin.\nsupport@sirket.com.tr')">Yöneticiye başvurun</a>
         </div>
       </div>
 
       <div class="version-badge">
         <div class="vb-dot"></div>
-        <span id="versionBadge">NGSSAI Platform</span>
+        NGSSAI Platform v1.0 · Tüm hakları saklıdır
       </div>
 
     </div>
   </div>
 
-</div>
+</div><!-- /page -->
 
-<script src="assets/js/config.js?v=2.52.0"></script>
 <script>
-(function() {
-  "use strict";
+/* ── Theme ── */
+function toggleTheme() {
+  const html = document.documentElement;
+  const light = html.getAttribute('data-theme') === 'light';
+  html.setAttribute('data-theme', light ? 'dark' : 'light');
+  const sun  = '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>';
+  const moon = '<path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>';
+  document.getElementById('theme-ico').innerHTML = light ? moon : sun;
+}
 
-  var API_BASE = window.API_BASE_URL || "";
+/* ── Tabs ── */
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+}
 
-  var LOGIN_BTN_HTML = '<svg viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Giris Yap';
-  var REG_BTN_HTML = '<svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg> Kayit Ol';
+/* ── Checkbox ── */
+function toggleCheck(id) {
+  const el = document.getElementById(id);
+  el.classList.toggle('checked');
+}
 
-  window.toggleTheme = function() {
-    var html = document.documentElement;
-    var isLight = html.getAttribute('data-theme') === 'light';
-    html.setAttribute('data-theme', isLight ? 'dark' : 'light');
-    var sun  = '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>';
-    var moon = '<path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>';
-    document.getElementById('theme-ico').innerHTML = isLight ? moon : sun;
-  };
-
-  window.switchTab = function(name, btn) {
-    document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
-    document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
-    btn.classList.add('active');
-    document.getElementById('tab-' + name).classList.add('active');
-    hideErrors();
-  };
-
-  window.toggleCheck = function(id) {
-    document.getElementById(id).classList.toggle('checked');
-  };
-
-  window.togglePwd = function(inputId, icoId) {
-    var inp = document.getElementById(inputId);
-    var ico = document.getElementById(icoId);
-    if (inp.type === 'password') {
-      inp.type = 'text';
-      ico.innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>';
-    } else {
-      inp.type = 'password';
-      ico.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
-    }
-  };
-
-  function hideErrors() {
-    document.querySelectorAll('.fc-error, .fc-success').forEach(function(el) { el.classList.remove('show'); });
+/* ── Eye toggle ── */
+function togglePwd(inputId, icoId) {
+  const inp = document.getElementById(inputId);
+  const ico = document.getElementById(icoId);
+  if (inp.type === 'password') {
+    inp.type = 'text';
+    ico.innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>';
+  } else {
+    inp.type = 'password';
+    ico.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
   }
+}
 
-  function showLoginError(msg) {
-    var el = document.getElementById('loginError');
-    document.getElementById('loginErrorText').textContent = msg;
-    el.classList.add('show');
-  }
+/* ── Login ── */
+function doLogin() {
+  const user = (document.getElementById('loginUser').value || '').trim();
+  const pass = document.getElementById('loginPass').value || '';
+  const err  = document.getElementById('loginError');
+  const btn  = document.getElementById('loginBtn');
+  err.classList.remove('show');
 
-  function showRegError(msg) {
-    var el = document.getElementById('regError');
-    document.getElementById('regErrorText').textContent = msg;
-    el.classList.add('show');
-  }
+  if (!user) { showErr(err, 'Kullanıcı adını girin.'); shakeEl(document.getElementById('loginUser')); return; }
+  if (!pass) { showErr(err, 'Şifrenizi girin.'); shakeEl(document.getElementById('loginPass')); return; }
 
-  function showRegSuccess(msg) {
-    var el = document.getElementById('regSuccess');
-    document.getElementById('regSuccessText').textContent = msg;
-    el.classList.add('show');
-  }
+  btn.classList.add('loading');
+  btn.innerHTML = '<div class="spinner"></div>';
 
-  window.doLogin = async function() {
-    hideErrors();
-    var user = (document.getElementById('loginUser').value || '').trim();
-    var pass = document.getElementById('loginPass').value || '';
-    var domain = document.getElementById('loginType').value || '';
-    var rememberMe = document.getElementById('remCb').classList.contains('checked');
-    var btn = document.getElementById('loginBtn');
-
-    if (!user) { showLoginError('Kullanici adini girin.'); return; }
-    if (!pass) { showLoginError('Sifrenizi girin.'); return; }
-
-    btn.classList.add('loading');
-    btn.innerHTML = '<div class="spinner"></div>';
-
-    var loginBody = { username: user, password: pass };
-    if (domain) loginBody.domain = domain;
-
-    try {
-      var response = await fetch(API_BASE + '/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(loginBody)
-      });
-
-      var data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.detail || 'Giris basarisiz');
-      }
-
-      localStorage.setItem('access_token', data.access_token);
-      localStorage.setItem('refresh_token', data.refresh_token);
-
-      if (rememberMe) {
-        localStorage.setItem('remember_user', user);
-      } else {
-        localStorage.removeItem('remember_user');
-      }
-
-      btn.innerHTML = '<svg viewBox="0 0 24 24" style="stroke:currentColor;fill:none;width:17px;height:17px"><polyline points="20 6 9 17 4 12"/></svg> Giris Basarili';
+  setTimeout(() => {
+    if (pass === 'demo' || user === 'admin') {
+      // success — show a brief success state then reset for demo
+      btn.innerHTML = '<svg viewBox="0 0 24 24" style="stroke:currentColor;fill:none;width:17px;height:17px"><polyline points="20 6 9 17 4 12"/></svg> Giriş Başarılı';
       btn.style.background = 'linear-gradient(135deg,#34D399,#059669)';
-
-      setTimeout(function() { window.location.href = 'home.html'; }, 600);
-
-    } catch (error) {
+      btn.style.color = '#fff';
+      setTimeout(() => {
+        btn.classList.remove('loading');
+        btn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Giriş Yap';
+        btn.style.background = '';
+        btn.style.color = '';
+        alert('Demo: Giriş başarılı!\nKullanıcı: ' + user);
+      }, 1800);
+    } else {
       btn.classList.remove('loading');
-      btn.innerHTML = LOGIN_BTN_HTML;
-      var errorMessage = error.message;
-      if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
-        errorMessage = 'Sunucuya baglanamadi. Backend servisi calisiyor mu?';
-      }
-      showLoginError(errorMessage);
+      btn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Giriş Yap';
+      showErr(err, 'Kullanıcı adı veya şifre hatalı.');
     }
-  };
+  }, 1500);
+}
 
-  window.doRegister = async function() {
-    hideErrors();
-    var fullname = (document.getElementById('regName').value || '').trim();
-    var username = (document.getElementById('regUsername').value || '').trim();
-    var email = (document.getElementById('regEmail').value || '').trim();
-    var phone = (document.getElementById('regPhone').value || '').trim();
-    var password = document.getElementById('regPass').value || '';
-    var passwordConfirm = document.getElementById('regPassConfirm').value || '';
-    var btn = document.getElementById('regBtn');
+function ssoLogin(provider) {
+  document.getElementById('loginUser').value = provider === 'Microsoft' ? 'eren.akdogan' : 'eren@corp';
+  document.getElementById('loginPass').value = 'demo';
+  setTimeout(doLogin, 200);
+}
 
-    if (!fullname || !username || !email || !phone || !password || !passwordConfirm) {
-      showRegError('Lutfen tum alanlari doldurun.'); return;
-    }
+function doRegister() {
+  const name  = (document.getElementById('regName').value || '').trim();
+  const email = (document.getElementById('regEmail').value || '').trim();
+  const pass  = document.getElementById('regPass').value || '';
+  const err   = document.getElementById('regError');
+  err.classList.remove('show');
 
-    var emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) { showRegError('Gecerli bir e-posta adresi girin.'); return; }
-    if (!/^[0-9]{10}$/.test(phone)) { showRegError('Telefon numarasi 10 haneli olmalidir.'); return; }
-    if (password !== passwordConfirm) { showRegError('Sifreler eslesmedi.'); return; }
-    if (password.length < 8) { showRegError('Sifre en az 8 karakter olmalidir.'); return; }
+  if (!name || !email || !pass) { showErr(err, 'Lütfen tüm alanları doldurun.'); return; }
+  if (!email.includes('@')) { showErr(err, 'Geçerli bir e-posta adresi girin.'); return; }
+  alert('Kayıt talebiniz alındı.\nYönetici onayından sonra hesabınız aktifleştirilecektir.');
+}
 
-    btn.classList.add('loading');
-    btn.innerHTML = '<div class="spinner"></div>';
+function showErr(el, msg) {
+  el.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> ' + msg;
+  el.classList.add('show');
+}
 
-    try {
-      var response = await fetch(API_BASE + '/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          full_name: fullname,
-          username: username,
-          email: email,
-          phone: phone,
-          password: password
-        })
-      });
-
-      var data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.detail || 'Kayit basarisiz');
-      }
-
-      showRegSuccess('Kayit basarili! Giris sayfasina yonlendiriliyorsunuz...');
-
-      setTimeout(function() {
-        document.querySelectorAll('.tab')[0].click();
-        document.getElementById('loginUser').value = username;
-      }, 2000);
-
-    } catch (error) {
-      var errorMessage = error.message;
-      if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
-        errorMessage = 'Sunucuya baglanamadi. Backend servisi calisiyor mu?';
-      }
-      showRegError(errorMessage);
-    } finally {
-      btn.classList.remove('loading');
-      btn.innerHTML = REG_BTN_HTML;
-    }
-  };
-
-  function loadVersion() {
-    fetch(API_BASE + '/api/health')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.version) {
-          document.getElementById('versionBadge').textContent = 'NGSSAI Platform v' + data.version;
-          document.getElementById('brandVersion').textContent = 'v' + data.version + ' · AIOps Platform';
-        }
-      })
-      .catch(function() {});
-  }
-
-  function loadRememberedUser() {
-    var remembered = localStorage.getItem('remember_user');
-    if (remembered) {
-      document.getElementById('loginUser').value = remembered;
-      document.getElementById('remCb').classList.add('checked');
-    }
-  }
-
-  function checkExistingAuth() {
-    var token = localStorage.getItem('access_token');
-    if (token) {
-      fetch(API_BASE + '/api/auth/me', {
-        headers: { 'Authorization': 'Bearer ' + token }
-      })
-      .then(function(response) {
-        if (response.ok) { window.location.href = 'home.html'; }
-      })
-      .catch(function() {
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
-      });
-    }
-  }
-
-  function loadLdapDomains() {
-    var domainSelect = document.getElementById('loginType');
-    var maxWaitMs = 30000;
-    var intervalMs = 2000;
-    var startTime = Date.now();
-    var pollTimer = null;
-
-    function tryLoad() {
-      fetch(API_BASE + '/api/auth/ldap-domains')
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          if (data.domains && data.domains.length > 0) {
-            domainSelect.querySelectorAll('option[data-ldap]').forEach(function(o) { o.remove(); });
-            data.domains.forEach(function(d) {
-              var option = document.createElement('option');
-              option.value = d.domain;
-              option.textContent = d.display_name;
-              option.setAttribute('data-ldap', 'true');
-              domainSelect.appendChild(option);
-            });
-            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-          }
-        })
-        .catch(function() {
-          if (Date.now() - startTime < maxWaitMs) {
-            if (!pollTimer) { pollTimer = setInterval(tryLoad, intervalMs); }
-          } else {
-            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-          }
-        });
-    }
-
-    tryLoad();
-  }
-
-  document.addEventListener('DOMContentLoaded', function() {
-    loadVersion();
-    loadRememberedUser();
-    checkExistingAuth();
-    loadLdapDomains();
-  });
-
-})();
+function shakeEl(el) {
+  el.style.animation = 'none';
+  el.getBoundingClientRect();
+  el.style.animation = 'shake 0.35s ease';
+  setTimeout(() => { el.style.animation = ''; }, 400);
+}
 </script>
 </body>
 </html>

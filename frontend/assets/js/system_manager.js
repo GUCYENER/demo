@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────
-   VYRA – Sistem Yönetim Modülü
+   NGSSAI — Sistem Yönetim Modülü
    v2.30.0 · home_page.js'den ayrıştırıldı
    versiyon, session timer, sidebar profil, sistem sıfırlama
    ───────────────────────────────────────────── */
@@ -20,7 +20,7 @@ window.SystemManagerModule = (function () {
                 }
             }
         } catch (err) {
-            console.warn('[VYRA] Versiyon yüklenemedi:', err);
+            console.warn('[NGSSAI] Versiyon yüklenemedi:', err);
         }
     }
 
@@ -122,7 +122,7 @@ window.SystemManagerModule = (function () {
                 }
             }
         } catch (err) {
-            console.warn('[VYRA] Profil bilgisi yüklenemedi:', err);
+            console.warn('[NGSSAI] Profil bilgisi yüklenemedi:', err);
         }
     }
 
@@ -162,7 +162,7 @@ window.SystemManagerModule = (function () {
                 `;
             }
         } catch (err) {
-            console.warn("[VYRA] Sistem bilgisi yüklenemedi:", err);
+            console.warn("[NGSSAI] Sistem bilgisi yüklenemedi:", err);
             if (protectedStats) protectedStats.innerHTML = '<span class="text-gray-500">Bilgi yüklenemedi</span>';
             if (deletableStats) deletableStats.innerHTML = '<span class="text-gray-500">Bilgi yüklenemedi</span>';
         }
@@ -196,7 +196,7 @@ window.SystemManagerModule = (function () {
                         });
                     }
                 } catch (err) {
-                    console.error("[VYRA] Sistem sıfırlama hatası:", err);
+                    console.error("[NGSSAI] Sistem sıfırlama hatası:", err);
                     window.VyraModal.error({
                         title: "Sıfırlama Hatası",
                         message: err.message || "Bilinmeyen bir hata oluştu"

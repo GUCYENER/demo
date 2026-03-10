@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────
-   VYRA – RAG Selection Cards Module
+   NGSSAI — RAG Selection Cards Module
    v2.30.0 · home_page.js'den ayrıştırıldı
    RAG sonuç kartları gösterimi, gruplama ve seçim
    ───────────────────────────────────────────── */
@@ -10,7 +10,7 @@ function showRAGSelectionCards(results, query) {
     const ragSelectionCards = document.getElementById('ragSelectionCards');
 
     if (!ragSelectionBox || !ragSelectionCards) {
-        console.error('[VYRA] RAG seçim elementleri bulunamadı');
+        console.error('[NGSSAI] RAG seçim elementleri bulunamadı');
         return;
     }
 
@@ -251,7 +251,7 @@ async function handleRAGCardSelection(index) {
     const query = window._currentRAGQuery;
 
     if (!groupedResults || index >= groupedResults.length) {
-        console.error('[VYRA] Geçersiz RAG seçimi');
+        console.error('[NGSSAI] Geçersiz RAG seçimi');
         return;
     }
 
@@ -265,7 +265,7 @@ async function handleRAGCardSelection(index) {
         // Gruplu sonuç - tüm chunk'ları birleştir
         allItems = selectedGroup.items.map(item => item.original);
         combinedChunkText = selectedGroup.items.map(item => item.original.chunk_text).join('\n\n---\n\n');
-        console.log(`[VYRA] Gruplu seçim: ${selectedGroup.items.length} chunk birleştirildi`);
+        console.log(`[NGSSAI] Gruplu seçim: ${selectedGroup.items.length} chunk birleştirildi`);
     } else {
         // Tekil sonuç
         allItems = [selectedGroup.original];
@@ -330,7 +330,7 @@ async function handleRAGCardSelection(index) {
     }
 
     // Ticket henüz oluşturulmadı - sadece kullanıcıya gösterildi
-    console.log(`[VYRA] RAG içeriği gösterildi (${allItems.length} chunk). Kullanıcı "Corpix ile Değerlendir" için tıklayabilir.`);
+    console.log(`[NGSSAI] RAG içeriği gösterildi (${allItems.length} chunk). Kullanıcı "Corpix ile Değerlendir" için tıklayabilir.`);
 }
 
 // ⚡ RAG seçimini işle ve ticket oluştur
@@ -365,7 +365,7 @@ async function processRAGSelection(query, selectedResult) {
         }
 
     } catch (err) {
-        console.error('[VYRA] RAG seçim işleme hatası:', err);
+        console.error('[NGSSAI] RAG seçim işleme hatası:', err);
         handleTicketError(err.message, document.getElementById("suggestBtn"), document.getElementById("problemText"));
     }
 }
@@ -415,7 +415,7 @@ async function requestLLMEvaluation() {
         }
 
     } catch (err) {
-        console.error('[VYRA] LLM değerlendirme hatası:', err);
+        console.error('[NGSSAI] LLM değerlendirme hatası:', err);
 
         llmBtn.innerHTML = '<i class="fa-solid fa-brain"></i> <span class="llm-btn-text">Corpix ile Değerlendir</span>';
         llmBtn.disabled = false;

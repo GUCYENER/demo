@@ -1,6 +1,6 @@
 // frontend/assets/js/auth_page.js
 (function () {
-    console.log("[VYRA] auth_page.js loaded");
+    console.log("[NGSSAI] auth_page.js loaded");
 
     function $(sel) {
         return document.querySelector(sel);
@@ -46,7 +46,7 @@
     }
 
     document.addEventListener("DOMContentLoaded", () => {
-        console.log("[VYRA] auth_page DOMContentLoaded");
+        console.log("[NGSSAI] auth_page DOMContentLoaded");
 
         const tabLogin = $("#tab-login");
         const tabRegister = $("#tab-register");
@@ -54,7 +54,7 @@
         const registerForm = $("#register-form");
 
         if (!loginForm || !registerForm) {
-            console.warn("[VYRA] login/register form bulunamadı");
+            console.warn("[NGSSAI] login/register form bulunamadı");
         }
 
         // TAB EVENTS
@@ -87,9 +87,9 @@
                 }
 
                 try {
-                    console.log("[VYRA] login request", { phone });
+                    console.log("[NGSSAI] login request", { phone });
                     const data = await window.VYRA_API.login(phone, password);
-                    console.log("[VYRA] login response", data);
+                    console.log("[NGSSAI] login response", data);
 
                     showMessage(
                         "success",
@@ -102,7 +102,7 @@
                         window.location.href = "home.html";
                     }, 800);
                 } catch (err) {
-                    console.error("[VYRA] login error", err);
+                    console.error("[NGSSAI] login error", err);
                     showMessage(
                         "error",
                         err.message || "Giriş sırasında bir hata oluştu."
@@ -127,14 +127,14 @@
                 }
 
                 try {
-                    console.log("[VYRA] register request", { fullName, phone });
+                    console.log("[NGSSAI] register request", { fullName, phone });
                     const data = await window.VYRA_API.registerUser(
                         fullName,
                         phone,
                         password,
                         "user"
                     );
-                    console.log("[VYRA] register response", data);
+                    console.log("[NGSSAI] register response", data);
 
                     showMessage(
                         "success",
@@ -142,7 +142,7 @@
                     );
                     switchTab("login");
                 } catch (err) {
-                    console.error("[VYRA] register error", err);
+                    console.error("[NGSSAI] register error", err);
                     showMessage(
                         "error",
                         err.message ||

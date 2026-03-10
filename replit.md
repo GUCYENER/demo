@@ -1,7 +1,7 @@
-# VYRA L1 Support API
+# NGSSAI AIOps Platform
 
 ## Overview
-VYRA is a Turkish-language L1 support chatbot platform built with FastAPI (backend) and static HTML/JS/CSS (frontend). It features RAG-based knowledge search, dialog management, ticket handling, ML training, LDAP authentication, and organization management.
+NGSSAI is a Turkish-language AIOps platform (formerly VYRA) built with FastAPI (backend) and static HTML/JS/CSS (frontend). It features RAG-based knowledge search, dialog management, ticket handling, ML training, LDAP authentication, and organization management.
 
 ## Architecture
 - **Backend**: FastAPI (Python 3.11), served via uvicorn on port 5000
@@ -26,10 +26,12 @@ app/
     schemas.py       - Database models
   services/          - Business logic (RAG, dialog, tickets, ML training, etc.)
 frontend/
-  login.html         - Login page (served at /)
+  login.html         - Login page (NGSSAI branded, self-contained with inline CSS/JS)
   home.html          - Main app page
   assets/            - JS, CSS, images, vendor libs
   partials/          - HTML partial templates
+  build.mjs          - esbuild bundle builder (config.js must be first in JS_FILES)
+  dist/              - Built bundles (bundle.min.js, bundle.min.css)
 migrations/          - Alembic database migrations
 tests/               - Pytest test suite
 ```
@@ -38,13 +40,17 @@ tests/               - Pytest test suite
 - Environment variables set via Replit Secrets: DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, JWT_SECRET
 - CORS configured to allow Replit proxy domains automatically
 - Frontend config.js uses `window.location.origin` for API base URL (production mode)
+- Admin credentials: admin / admin1234
 
 ## Running
 - Single workflow: `python3 -m uvicorn app.api.main:app --host 0.0.0.0 --port 5000`
 - Database migrations run automatically on startup via Alembic
 - Default admin user created on first run (username: admin)
+- Frontend rebuild: `cd frontend && node build.mjs`
 
 ## Notes
 - Heavy ML packages (sentence-transformers, catboost, easyocr) are not installed due to disk constraints; RAG/ML features will show warnings but app runs fine
 - Redis is optional; app falls back to in-memory caching
 - Frontend is served directly by FastAPI (no separate frontend server needed)
+- Login page is self-contained (inline CSS/JS) with the NGSSAI modern design (dark/light theme toggle, brand panel with feature cards)
+- The `window.VYRA_API` global variable name is kept for internal compatibility across many JS modules

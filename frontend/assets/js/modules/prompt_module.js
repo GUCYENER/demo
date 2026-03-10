@@ -65,7 +65,7 @@ window.PromptModule = (function () {
         }
 
         if (!el.grid) {
-            console.warn('[VYRA] promptGrid elementi bulunamadı');
+            console.warn('[NGSSAI] promptGrid elementi bulunamadı');
             return;
         }
 
@@ -75,7 +75,7 @@ window.PromptModule = (function () {
             const data = await window.VYRA_API.request("/prompts/");
 
             if (!data || !Array.isArray(data)) {
-                console.log('[VYRA] Prompt verisi boş veya geçersiz:', data);
+                console.log('[NGSSAI] Prompt verisi boş veya geçersiz:', data);
                 render([]);
                 return;
             }
@@ -83,7 +83,7 @@ window.PromptModule = (function () {
             render(data);
 
         } catch (err) {
-            console.error('[VYRA] Prompt yükleme hatası:', err);
+            console.error('[NGSSAI] Prompt yükleme hatası:', err);
 
             let errorMessage = 'Prompt listesi yüklenemedi.';
             let messageClass = 'text-red-500';

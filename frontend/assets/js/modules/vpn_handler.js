@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────
-   VYRA – VPN Handler & Tagline Animation Module
+   NGSSAI — VPN Handler & Tagline Animation Module
    v2.30.0 · home_page.js'den ayrıştırıldı
    ───────────────────────────────────────────── */
 

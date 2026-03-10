@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────
-   VYRA – Ticket Date Range Module
+   NGSSAI — Ticket Date Range Module
    v2.30.1 · ticket_history.js'den ayrıştırıldı
    Tarih aralığı seçim, dropdown, hazır aralıklar
    ───────────────────────────────────────────── */

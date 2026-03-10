@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────
-   VYRA – Dialog Images Module
+   NGSSAI — Dialog Images Module
    v2.30.1 · dialog_chat.js'den ayrıştırıldı
    Görsel yapıştırma, dosya seçme, önizleme
    ───────────────────────────────────────────── */

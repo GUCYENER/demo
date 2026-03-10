@@ -93,7 +93,7 @@ window.DialogChatModule = (function () {
             notification.onclick = () => {
                 // Pencereyi öne getir
                 window.focus();
-                // VYRA'ya Sor sekmesine git
+                // NGSSAI'ye Sor sekmesine git
                 navigateToDialogTab();
                 notification.close();
             };
@@ -642,7 +642,7 @@ window.DialogChatModule = (function () {
 
                 // 🔔 Notification
                 const previewText = finalContent.substring(0, 100) || 'Yanıt hazır';
-                showNotification('🤖 VYRA Yanıtladı', previewText);
+                showNotification('🤖 NGSSAI Yanıtladı', previewText);
             } else {
                 addSystemMessage('❌ Yanıt alınamadı.');
             }

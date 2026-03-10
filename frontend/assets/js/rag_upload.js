@@ -298,8 +298,8 @@ const RAGUpload = {
                 ? fileNames.join(', ')
                 : `${fileNames.slice(0, 2).join(', ')} ve ${fileNames.length - 2} dosya daha`;
 
-            if (window.VyraNotification) {
-                VyraNotification.info('📄 Dosya İşleniyor', `${fileList} — işlem arkaplanda devam ediyor...`);
+            if (window.NgssNotification) {
+                NgssNotification.info('📄 Dosya İşleniyor', `${fileList} — işlem arkaplanda devam ediyor...`);
             } else {
                 this.showToast(`${result.uploaded_count} dosya kaydedildi, işleniyor...`, 'info');
             }
@@ -318,8 +318,8 @@ const RAGUpload = {
         } catch (error) {
             console.error('[RAGUpload] Yükleme hatası:', error);
 
-            if (window.VyraNotification) {
-                VyraNotification.error('Yükleme Hatası', error.message || 'Dosya yüklenirken bir hata oluştu');
+            if (window.NgssNotification) {
+                NgssNotification.error('Yükleme Hatası', error.message || 'Dosya yüklenirken bir hata oluştu');
             } else {
                 this.showToast(error.message || 'Dosya yükleme hatası', 'error');
             }
@@ -489,7 +489,7 @@ const RAGUpload = {
         } else {
             console.log(`[${type.toUpperCase()}] ${message}`);
         }
-        // VyraNotification artık doğrudan çağrılıyor - showToast'tan kaldırıldı
+        // NgssNotification artık doğrudan çağrılıyor - showToast'tan kaldırıldı
     },
 
     /**

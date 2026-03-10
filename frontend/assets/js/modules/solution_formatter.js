@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────
-   VYRA – Solution Formatter Module
+   NGSSAI — Solution Formatter Module
    v2.30.0 · home_page.js'den ayrıştırıldı
    Çözüm formatlama fallback fonksiyonları
    ───────────────────────────────────────────── */
@@ -20,7 +20,7 @@ function formatSolutionForDisplay(solution) {
     }
 
     // Fallback - modül yüklü değilse basit format
-    console.warn('[VYRA] SolutionDisplayModule yüklü değil, basit format kullanılıyor');
+    console.warn('[NGSSAI] SolutionDisplayModule yüklü değil, basit format kullanılıyor');
     return `<p class="solution-text">${escapeHtmlForSolution(solution)}</p>`;
 }
 

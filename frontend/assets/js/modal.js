@@ -1,5 +1,5 @@
 /**
- * VYRA Global Modal System
+ * NGSSAI Global Modal System
  * Modern SaaS Modal Dialogs
  * 
  * Usage:

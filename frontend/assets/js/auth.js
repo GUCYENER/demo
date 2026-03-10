@@ -1,5 +1,5 @@
 /**
- * VYRA L1 Support API - Authentication Module
+ * NGSSAI API - Authentication Module
  */
 
 function isAuthenticated() {

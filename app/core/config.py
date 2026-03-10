@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     #  Genel API ayarları
     # -------------------------------------------------
-    app_name: str = "VYRA Çözümü Burada Ara"
+    app_name: str = "NGSSAI"
     debug: bool = True
     APP_VERSION: str = "2.52.1"  # İlgisiz İçerik Filtreleme + CatBoost Bypass Fix + Enhance API Fix
 

@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────
-   VYRA – Partial Loader (Senkron)
+   NGSSAI — Partial Loader (Senkron)
    v2.30.1 · Performans düzeltmesi
    
    Tüm HTML partials'ı SENKRON XHR ile yükler.
@@ -38,12 +38,12 @@
                     loaded++;
                 }
             } else {
-                console.warn('[VYRA] Partial yüklenemedi: ' + p.src + ' (' + xhr.status + ')');
+                console.warn('[NGSSAI] Partial yüklenemedi: ' + p.src + ' (' + xhr.status + ')');
             }
         } catch (err) {
-            console.error('[VYRA] Partial hata: ' + p.src, err);
+            console.error('[NGSSAI] Partial hata: ' + p.src, err);
         }
     }
 
-    console.log('[VYRA] ' + loaded + '/' + PARTIALS.length + ' partial yüklendi (senkron).');
+    console.log('[NGSSAI] ' + loaded + '/' + PARTIALS.length + ' partial yüklendi (senkron).');
 })();

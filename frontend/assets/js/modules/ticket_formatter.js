@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────
-   VYRA – Ticket Formatter Module
+   NGSSAI — Ticket Formatter Module
    v2.30.1 · ticket_history.js'den ayrıştırıldı
    Markdown/HTML formatlama, çözüm formatlama
    ───────────────────────────────────────────── */

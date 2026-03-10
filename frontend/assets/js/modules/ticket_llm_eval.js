@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────
-   VYRA – Ticket LLM Evaluation Module
+   NGSSAI — Ticket LLM Evaluation Module
    v2.30.1 · ticket_history.js'den ayrıştırıldı
    LLM değerlendirme ve formatlama
    ───────────────────────────────────────────── */
@@ -13,7 +13,7 @@ async function requestLLMEvaluationForHistory(ticketId, buttonEl) {
     // Accordion item'ı bul
     const accordionItem = buttonEl.closest('.accordion-item');
     if (!accordionItem) {
-        console.error('[VYRA] Accordion item bulunamadı');
+        console.error('[NGSSAI] Accordion item bulunamadı');
         return;
     }
 
@@ -67,7 +67,7 @@ async function requestLLMEvaluationForHistory(ticketId, buttonEl) {
         }
 
     } catch (err) {
-        console.error('[VYRA] LLM değerlendirme hatası:', err);
+        console.error('[NGSSAI] LLM değerlendirme hatası:', err);
 
         buttonEl.innerHTML = '<i class="fa-solid fa-brain"></i> <span class="llm-btn-text">Corpix ile Değerlendir</span>';
         buttonEl.disabled = false;
@@ -76,7 +76,7 @@ async function requestLLMEvaluationForHistory(ticketId, buttonEl) {
         // 🌐 VPN/Network hatası kontrolü
         const errorMsg = err?.message || String(err);
         if (window.isVPNNetworkError && window.isVPNNetworkError(errorMsg)) {
-            console.log('[VYRA] VPN/LLM bağlantı hatası tespit edildi - popup gösteriliyor');
+            console.log('[NGSSAI] VPN/LLM bağlantı hatası tespit edildi - popup gösteriliyor');
             if (window.showVPNErrorPopup) {
                 window.showVPNErrorPopup();
             }

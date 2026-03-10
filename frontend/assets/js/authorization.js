@@ -1,5 +1,5 @@
 /**
- * VYRA L1 Support - Authorization & Profile Module
+ * NGSSAI - Authorization & Profile Module
  * Kullanıcı yetkilendirme ve profil yönetimi
  */
 

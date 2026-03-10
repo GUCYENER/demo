@@ -1,15 +1,15 @@
 /**
- * VYRA Notification Center
+ * NGSSAI Notification Center
  * Modern SaaS Notification System
  * 
  * Usage:
- * VyraNotification.success('Başlık', 'Mesaj');
- * VyraNotification.error('Hata', 'Bir şeyler yanlış gitti');
- * VyraNotification.warning('Uyarı', 'Dikkat edilmeli');
- * VyraNotification.info('Bilgi', 'Bilgilendirme');
+ * NgssNotification.success('Başlık', 'Mesaj');
+ * NgssNotification.error('Hata', 'Bir şeyler yanlış gitti');
+ * NgssNotification.warning('Uyarı', 'Dikkat edilmeli');
+ * NgssNotification.info('Bilgi', 'Bilgilendirme');
  */
 
-const VyraNotification = {
+const NgssNotification = {
     container: null,
     dropdown: null,
     badge: null,
@@ -201,8 +201,7 @@ const VyraNotification = {
                 else if (notification.title.includes('Çözüm')) {
                     this.navigateToDialog();
                 }
-                // VYRA yanıtı bildirimiyse dialog sekmesine git
-                else if (notification.title.includes('VYRA')) {
+                else if (notification.title.includes('NGSSAI') || notification.title.includes('VYRA')) {
                     this.navigateToDialog();
                 }
             });
@@ -210,14 +209,14 @@ const VyraNotification = {
     },
 
     /**
-     * v2.24.0: VYRA'ya Sor sekmesine git
+     * v2.24.0: NGSSAI'ye Sor sekmesine git
      */
     navigateToTicket() {
         this.navigateToDialog();
     },
 
     /**
-     * VYRA'ya Sor sekmesine git
+     * NGSSAI'ye Sor sekmesine git
      * v2.24.6: dialogId verilirse o dialog'un mesajlarını yükle
      * v2.26.1: DOM hazır olması için setTimeout eklendi
      */
@@ -240,13 +239,13 @@ const VyraNotification = {
             // v2.26.1: DOM'un hazır olması için kısa gecikme
             setTimeout(() => {
                 DialogChatModule.loadDialogById(dialogId);
-                console.log('[VyraNotification] Dialog #' + dialogId + ' yükleniyor');
+                console.log('[NgssNotification] Dialog #' + dialogId + ' yükleniyor');
             }, 50);
         } else {
             // Normal davranış
             if (typeof showSection === 'function') {
                 showSection('dialog');
-                console.log('[VyraNotification] Dialog sekmesine yönlendirildi');
+                console.log('[NgssNotification] Dialog sekmesine yönlendirildi');
             } else {
                 window.location.href = 'home.html';
             }
@@ -269,7 +268,7 @@ const VyraNotification = {
 
         if (typeof showSection === 'function') {
             showSection('rag');
-            console.log('[VyraNotification] Bilgi Tabanı sekmesine yönlendirildi');
+            console.log('[NgssNotification] Bilgi Tabanı sekmesine yönlendirildi');
         } else {
             window.location.href = 'home.html';
         }
@@ -440,10 +439,10 @@ const VyraNotification = {
 
 // Auto-init
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => VyraNotification.init());
+    document.addEventListener('DOMContentLoaded', () => NgssNotification.init());
 } else {
-    VyraNotification.init();
+    NgssNotification.init();
 }
 
 // Global export
-window.VyraNotification = VyraNotification;
+window.NgssNotification = NgssNotification;

@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────
-   VYRA – RAG File List Module
+   NGSSAI — RAG File List Module
    v2.30.1 · rag_upload.js'den ayrıştırıldı
    Dosya listesi, sayfalama, arama, önizleme
    ───────────────────────────────────────────── */
@@ -203,16 +203,16 @@ window.RAGFileList = {
                     'success'
                 );
                 // Notification'a da ekle
-                if (window.VyraNotification) {
-                    VyraNotification.success('Vektör DB Güncellendi', `${result.processed_files} dosya, ${result.total_chunks} chunk işlendi`);
+                if (window.NgssNotification) {
+                    NgssNotification.success('Vektör DB Güncellendi', `${result.processed_files} dosya, ${result.total_chunks} chunk işlendi`);
                 }
             } else {
                 this.showToast(
                     `Kısmi hata: ${result.errors.join(', ')}`,
                     'warning'
                 );
-                if (window.VyraNotification) {
-                    VyraNotification.warning('Kısmi Hata', result.errors.join(', '));
+                if (window.NgssNotification) {
+                    NgssNotification.warning('Kısmi Hata', result.errors.join(', '));
                 }
             }
 
@@ -253,8 +253,8 @@ window.RAGFileList = {
                     }
 
                     this.showToast(`"${fileName}" silindi`, 'success');
-                    if (window.VyraNotification) {
-                        VyraNotification.info('Dosya Silindi', `"${fileName}" bilgi tabanından kaldırıldı`);
+                    if (window.NgssNotification) {
+                        NgssNotification.info('Dosya Silindi', `"${fileName}" bilgi tabanından kaldırıldı`);
                     }
                     await this.loadFiles();
                     await this.loadStats();

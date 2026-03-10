@@ -1,5 +1,5 @@
 /* -------------------------------
-   VYRA Modern SaaS UI – HOME JS
+   NGSSAI Modern SaaS UI – HOME JS
 -------------------------------- */
 
 // --- GÜVENLİK: Sayfa Erişim Kontrolü ---
@@ -7,7 +7,7 @@
 (function authGuard() {
     const token = localStorage.getItem('access_token');
     if (!token) {
-        console.warn('[VYRA] Token bulunamadı, login sayfasına yönlendiriliyor...');
+        console.warn('[NGSSAI] Token bulunamadı, login sayfasına yönlendiriliyor...');
         window.location.href = 'login.html';
         return;
     }
@@ -17,14 +17,14 @@
         const payload = JSON.parse(atob(token.split('.')[1]));
         const expireTime = payload.exp * 1000; // Unix timestamp to ms
         if (Date.now() > expireTime) {
-            console.warn('[VYRA] Token süresi dolmuş, login sayfasına yönlendiriliyor...');
+            console.warn('[NGSSAI] Token süresi dolmuş, login sayfasına yönlendiriliyor...');
             localStorage.removeItem('access_token');
             localStorage.removeItem('refresh_token');
             window.location.href = 'login.html';
             return;
         }
     } catch (e) {
-        console.error('[VYRA] Token parse hatası:', e);
+        console.error('[NGSSAI] Token parse hatası:', e);
         localStorage.removeItem('access_token');
         localStorage.removeItem('refresh_token');
         window.location.href = 'login.html';
@@ -450,7 +450,7 @@ if (suggestBtn) {
 
             // ⚡ ÇİFT İSTEK KORUMASI: Global flag + disabled kontrolü
             if (isProcessingRequest || suggestBtn.disabled) {
-                console.log("[VYRA] İşlem zaten devam ediyor, duplicate önlendi");
+                console.log("[NGSSAI] İşlem zaten devam ediyor, duplicate önlendi");
                 return;
             }
 
@@ -535,7 +535,7 @@ if (suggestBtn) {
 
                         isProcessingRequest = false;
                         suggestBtn.classList.remove('loading');
-                        console.log('[VYRA] Tek RAG sonucu gösterildi (AI çağrılmadı).');
+                        console.log('[NGSSAI] Tek RAG sonucu gösterildi (AI çağrılmadı).');
 
                     } else {
                         // Sonuç yok - eski asenkron akışa devam et (LLM kullanır)

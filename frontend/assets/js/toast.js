@@ -1,5 +1,5 @@
 /**
- * VYRA L1 Support API - Toast Notifications
+ * NGSSAI API - Toast Notifications
  */
 
 function showToast(message, type = 'info') {

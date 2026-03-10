@@ -1,5 +1,5 @@
 /**
- * VYRA L1 Support - Organization Management Module
+ * NGSSAI - Organization Management Module
  * home.html içinde sağ bölümde çalışır
  */
 

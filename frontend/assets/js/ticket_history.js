@@ -1,5 +1,5 @@
 /**
- * VYRA L1 Support - Ticket History Module
+ * NGSSAI - Ticket History Module
  * Modern SaaS Accordion tasarımı ile geçmiş çözümler
  */
 
@@ -102,7 +102,7 @@ async function loadTicketHistory(forceRefresh = false, page = 1) {
         // Dialog'ları ticket formatına dönüştür
         const dialogItems = (dialogData.items || []).map(d => ({
             id: `dialog-${d.id}`,
-            title: d.title || 'VYRA Çözüm Süreci',
+            title: d.title || 'NGSSAI Analiz Süreci',
             description: d.first_question || 'Talep bilgisi yok',
             final_solution: d.last_answer || 'Cevap yok',
             created_at: d.created_at,
@@ -297,7 +297,7 @@ function createAccordionItem(ticket, index) {
     // Kullanıcı sorgusu (description)
     const userQuery = ticket.description || ticket.query || 'Talep bilgisi yok';
 
-    // v2.24.0: Sadece VYRA'ya Sor badge'i (support ticket kaldırıldı)
+    // v2.24.0: Sadece NGSSAI'ye Sor badge'i (support ticket kaldırıldı)
     const isDialog = ticket._isDialog || ticket.source_type === 'vyra_chat';
     const badgeText = "Bilgi Tabanı";
     const badgeClass = 'badge-vyra';

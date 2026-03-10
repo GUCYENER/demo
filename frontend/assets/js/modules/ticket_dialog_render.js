@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────
-   VYRA – Ticket Dialog Render Module
+   NGSSAI — Ticket Dialog Render Module
    v2.30.1 · ticket_history.js'den ayrıştırıldı
    Dialog mesajları, legacy format, thread render
    ───────────────────────────────────────────── */

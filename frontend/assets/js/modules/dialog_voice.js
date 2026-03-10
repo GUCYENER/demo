@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────
-   VYRA – Dialog Voice & TTS Module
+   NGSSAI — Dialog Voice & TTS Module
    v2.30.1 · dialog_chat.js'den ayrıştırıldı
    Speech Recognition + Text-to-Speech
    ───────────────────────────────────────────── */

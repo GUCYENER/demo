@@ -1,5 +1,5 @@
 /**
- * VYRA L1 Support - Login/Register Module
+ * NGSSAI - Login/Register Module
  * Modern SaaS Authentication
  */
 

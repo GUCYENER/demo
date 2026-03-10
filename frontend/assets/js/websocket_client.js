@@ -1,5 +1,5 @@
 /**
- * VYRA L1 Support - WebSocket Client Module
+ * NGSSAI - WebSocket Client Module
  * ==========================================
  * Asenkron işlem sonuçları için WebSocket bağlantı yönetimi.
  */
@@ -28,26 +28,26 @@
 
     function connect() {
         if (isConnecting || (socket && socket.readyState === WebSocket.OPEN)) {
-            console.log('[VYRA-WS] Zaten bağlı veya bağlanıyor...');
+            console.log('[NGSSAI-WS] Zaten bağlı veya bağlanıyor...');
             return;
         }
 
         const token = getToken();
         if (!token) {
-            console.warn('[VYRA-WS] Token yok, WebSocket bağlantısı yapılamaz');
+            console.warn('[NGSSAI-WS] Token yok, WebSocket bağlantısı yapılamaz');
             return;
         }
 
         isConnecting = true;
         const wsUrl = `${WS_BASE_URL}?token=${encodeURIComponent(token)}`;
 
-        console.log('[VYRA-WS] Bağlanıyor...');
+        console.log('[NGSSAI-WS] Bağlanıyor...');
 
         try {
             socket = new WebSocket(wsUrl);
 
             socket.onopen = function () {
-                console.log('[VYRA-WS] ✅ Bağlantı kuruldu');
+                console.log('[NGSSAI-WS] ✅ Bağlantı kuruldu');
                 isConnecting = false;
                 reconnectAttempts = 0;
                 startHeartbeat();
@@ -64,12 +64,12 @@
                     const data = JSON.parse(event.data);
                     handleMessage(data);
                 } catch (err) {
-                    console.error('[VYRA-WS] Mesaj parse hatası:', err);
+                    console.error('[NGSSAI-WS] Mesaj parse hatası:', err);
                 }
             };
 
             socket.onclose = function (event) {
-                console.log('[VYRA-WS] Bağlantı kapandı:', event.code, event.reason);
+                console.log('[NGSSAI-WS] Bağlantı kapandı:', event.code, event.reason);
                 isConnecting = false;
                 stopHeartbeat();
                 updateConnectionStatus(false);
@@ -77,12 +77,12 @@
             };
 
             socket.onerror = function (error) {
-                console.error('[VYRA-WS] Hata:', error);
+                console.error('[NGSSAI-WS] Hata:', error);
                 isConnecting = false;
             };
 
         } catch (err) {
-            console.error('[VYRA-WS] Bağlantı hatası:', err);
+            console.error('[NGSSAI-WS] Bağlantı hatası:', err);
             isConnecting = false;
             scheduleReconnect();
         }
@@ -99,13 +99,13 @@
 
     function scheduleReconnect() {
         if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-            console.warn('[VYRA-WS] Maksimum yeniden bağlanma denemesi aşıldı');
+            console.warn('[NGSSAI-WS] Maksimum yeniden bağlanma denemesi aşıldı');
             return;
         }
 
         reconnectAttempts++;
         const delay = RECONNECT_DELAY_MS * reconnectAttempts;
-        console.log(`[VYRA-WS] ${delay}ms sonra yeniden bağlanılacak (deneme ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+        console.log(`[NGSSAI-WS] ${delay}ms sonra yeniden bağlanılacak (deneme ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
 
         setTimeout(() => {
             if (!socket || socket.readyState === WebSocket.CLOSED) {
@@ -155,7 +155,7 @@
             socket.send(JSON.stringify(message));
             return true;
         }
-        console.warn('[VYRA-WS] Mesaj gönderilemedi, bağlantı yok');
+        console.warn('[NGSSAI-WS] Mesaj gönderilemedi, bağlantı yok');
         return false;
     }
 
@@ -166,11 +166,11 @@
     // --- MESSAGE HANDLERS ---
 
     function handleMessage(data) {
-        console.log('[VYRA-WS] Mesaj alındı:', data.type);
+        console.log('[NGSSAI-WS] Mesaj alındı:', data.type);
 
         switch (data.type) {
             case 'connected':
-                console.log('[VYRA-WS] Sunucu bağlantı onayı:', data.message);
+                console.log('[NGSSAI-WS] Sunucu bağlantı onayı:', data.message);
                 break;
 
             case 'pong':
@@ -212,17 +212,17 @@
                 break;
 
             case 'error':
-                console.error('[VYRA-WS] Sunucu hatası:', data.message);
+                console.error('[NGSSAI-WS] Sunucu hatası:', data.message);
                 break;
 
             default:
-                console.log('[VYRA-WS] Bilinmeyen mesaj tipi:', data.type);
+                console.log('[NGSSAI-WS] Bilinmeyen mesaj tipi:', data.type);
         }
     }
 
     function handleTaskComplete(data) {
         const { task_id, result } = data;
-        console.log('[VYRA-WS] ✅ Görev tamamlandı:', task_id);
+        console.log('[NGSSAI-WS] ✅ Görev tamamlandı:', task_id);
 
         // Callback varsa çağır
         const callback = pendingTasks.get(task_id);
@@ -249,16 +249,16 @@
     }
 
     /**
-     * v2.24.0: VYRA'ya Sor için browser notification göster
+     * v2.24.0: NGSSAI'ye Sor için browser notification göster
      * Tıklandığında dialog sekmesine yönlendirir
      */
     function showTicketNotification(result) {
         const title = '✅ Çözüm Önerisi Hazır!';
         const body = result?.final_solution?.substring(0, 100) || 'Çözüm öneriniz hazırlandı';
 
-        // 1️⃣ Her durumda VyraNotification ile in-app bildirim göster
-        if (typeof VyraNotification !== 'undefined') {
-            VyraNotification.add('success', title, body);
+        // 1️⃣ Her durumda NgssNotification ile in-app bildirim göster
+        if (typeof NgssNotification !== 'undefined') {
+            NgssNotification.add('success', title, body);
         }
 
         // 2️⃣ Sayfa gizliyse browser notification da göster
@@ -274,7 +274,7 @@
                 // Pencereyi öne getir
                 window.focus();
 
-                // v2.24.0: VYRA'ya Sor (Dialog) sekmesine git
+                // v2.24.0: NGSSAI'ye Sor (Dialog) sekmesine git
                 const dialogTab = document.getElementById('tabDialog');
                 if (dialogTab) {
                     dialogTab.click();
@@ -290,7 +290,7 @@
 
     function handleTaskFailed(data) {
         const { task_id, error } = data;
-        console.error('[VYRA-WS] ❌ Görev başarısız:', task_id, error);
+        console.error('[NGSSAI-WS] ❌ Görev başarısız:', task_id, error);
 
         // Callback varsa çağır
         const callback = pendingTasks.get(task_id);
@@ -313,12 +313,12 @@
     }
 
     function handleTaskStatus(data) {
-        console.log('[VYRA-WS] Görev durumu:', data.task_id, data.status);
+        console.log('[NGSSAI-WS] Görev durumu:', data.task_id, data.status);
     }
 
     function handlePendingTasks(data) {
         const tasks = data.tasks || [];
-        console.log('[VYRA-WS] Bekleyen görevler:', tasks.length);
+        console.log('[NGSSAI-WS] Bekleyen görevler:', tasks.length);
 
         // Bekleyen görev varsa bildir
         if (tasks.length > 0) {
@@ -337,13 +337,13 @@
         const quickReply = data.quick_reply;
         const dialogId = data.dialog_id;
 
-        console.log('[VYRA-WS] 💬 Dialog mesajı alındı:', dialogId);
+        console.log('[NGSSAI-WS] 💬 Dialog mesajı alındı:', dialogId);
 
         // Duplicate önleme: Eğer DialogChatModule HTTP response bekliyorsa, mesajı ekleme
         // (HTTP response zaten ekleyecek)
         const isWaiting = window.DialogChatModule?.isWaitingForResponse?.();
         if (isWaiting) {
-            console.log('[VYRA-WS] HTTP response bekleniyor, WebSocket mesajı atlanıyor (duplicate önleme)');
+            console.log('[NGSSAI-WS] HTTP response bekleniyor, WebSocket mesajı atlanıyor (duplicate önleme)');
             // Ama notification ekle (kullanıcı başka sekmede olabilir)
         } else {
             // DialogChatModule varsa mesajı ekle
@@ -353,10 +353,10 @@
         }
 
         // Notification Center'a bildirim ekle (tıklayınca dialog sekmesine gider)
-        if (typeof VyraNotification !== 'undefined') {
+        if (typeof NgssNotification !== 'undefined') {
             const msgPreview = message?.content?.substring(0, 80) || 'Yeni yanıt hazır';
             // v2.24.6: dialogId parametresi eklendi
-            VyraNotification.add('success', '🤖 VYRA Yanıtladı', msgPreview, dialogId);
+            NgssNotification.add('success', '🤖 NGSSAI Yanıtladı', msgPreview, dialogId);
         }
 
         // Browser notification göster (kullanıcı başka sekmede/browserdayse)
@@ -389,7 +389,7 @@
             return;
         }
 
-        const title = '🤖 VYRA Yanıtladı';
+        const title = '🤖 NGSSAI Yanıtladı';
         const body = message?.content?.substring(0, 100) || 'Yeni yanıt hazır';
 
         const notification = new Notification(title, {
@@ -403,7 +403,7 @@
             // Pencereyi öne getir
             window.focus();
 
-            // VYRA'ya Sor sekmesine git
+            // NGSSAI'ye Sor sekmesine git
             const dialogTab = document.getElementById('tabDialog');
             if (dialogTab) {
                 dialogTab.click();
@@ -428,7 +428,7 @@
         const totalChunks = data.total_chunks || 0;
         const failedFiles = data.failed_files || [];
 
-        console.log('[VYRA-WS] 📄 RAG upload tamamlandı:', processedCount, 'dosya,', totalChunks, 'chunk');
+        console.log('[NGSSAI-WS] 📄 RAG upload tamamlandı:', processedCount, 'dosya,', totalChunks, 'chunk');
 
         // Dosya isimleri özeti
         const fileList = fileNames.length <= 3
@@ -443,9 +443,9 @@
             : `Bilgi tabanına eklendi: ${fileList} (${totalChunks} chunk)`;
         const notifType = hasWarning ? 'warning' : 'success';
 
-        // 1️⃣ VyraNotification ile in-app bildirim (tıklanınca Bilgi Tabanı sekmesine gider)
-        if (typeof VyraNotification !== 'undefined') {
-            VyraNotification.add(notifType, title, body, null, 'rag');
+        // 1️⃣ NgssNotification ile in-app bildirim (tıklanınca Bilgi Tabanı sekmesine gider)
+        if (typeof NgssNotification !== 'undefined') {
+            NgssNotification.add(notifType, title, body, null, 'rag');
         }
 
         // 2️⃣ Dosya listesini yenile (kullanıcı RAG ekranındaysa)
@@ -453,7 +453,7 @@
             RAGUpload.filesCurrentPage = 1;
             RAGUpload.loadFiles();
             RAGUpload.loadStats();
-            console.log('[VYRA-WS] RAG dosya listesi yenilendi');
+            console.log('[NGSSAI-WS] RAG dosya listesi yenilendi');
         }
 
         // 3️⃣ Browser notification (kullanıcı başka sekmede/browserdayse)
@@ -468,8 +468,8 @@
             notification.onclick = () => {
                 window.focus();
                 // Bilgi Tabanı sekmesine git
-                if (typeof VyraNotification !== 'undefined') {
-                    VyraNotification.navigateToRag();
+                if (typeof NgssNotification !== 'undefined') {
+                    NgssNotification.navigateToRag();
                 }
                 notification.close();
             };
@@ -491,11 +491,11 @@
         const failedFiles = data.failed_files || fileNames;
         const message = data.message || 'Dosya işleme hatası';
 
-        console.error('[VYRA-WS] ❌ RAG upload başarısız:', failedFiles);
+        console.error('[NGSSAI-WS] ❌ RAG upload başarısız:', failedFiles);
 
-        // VyraNotification ile hata bildirimi
-        if (typeof VyraNotification !== 'undefined') {
-            VyraNotification.add('error', '❌ Dosya İşleme Hatası', message, null, 'rag');
+        // NgssNotification ile hata bildirimi
+        if (typeof NgssNotification !== 'undefined') {
+            NgssNotification.add('error', '❌ Dosya İşleme Hatası', message, null, 'rag');
         }
 
         // Dosya listesini yenile (failed durumunu görmek için)
@@ -593,7 +593,7 @@
             }
 
             const data = await response.json();
-            console.log('[VYRA-WS] Görev oluşturuldu:', data.task_id);
+            console.log('[NGSSAI-WS] Görev oluşturuldu:', data.task_id);
 
             // Callback'i kaydet
             if (onComplete) {
@@ -608,7 +608,7 @@
             return data;
 
         } catch (err) {
-            console.error('[VYRA-WS] Async ticket hatası:', err);
+            console.error('[NGSSAI-WS] Async ticket hatası:', err);
             if (loadingBox) loadingBox.classList.add('hidden');
             throw err;
         }
@@ -616,7 +616,7 @@
 
     /**
      * RAG araması yap (LLM kullanmadan)
-     * Seçenek A: VYRA'ya Sor gibi hızlı arama
+     * Seçenek A: NGSSAI'ye Sor gibi hızlı arama
      */
     async function searchRAG(query) {
         const token = getToken();
@@ -649,14 +649,14 @@
             }
 
             const data = await response.json();
-            console.log('[VYRA-WS] RAG araması tamamlandı:', data.results?.length, 'sonuç');
+            console.log('[NGSSAI-WS] RAG araması tamamlandı:', data.results?.length, 'sonuç');
 
             if (loadingBox) loadingBox.classList.add('hidden');
 
             return data;
 
         } catch (err) {
-            console.error('[VYRA-WS] RAG arama hatası:', err);
+            console.error('[NGSSAI-WS] RAG arama hatası:', err);
             if (loadingBox) loadingBox.classList.add('hidden');
             throw err;
         }
@@ -691,12 +691,12 @@
             }
 
             const data = await response.json();
-            console.log('[VYRA-WS] Ticket oluşturuldu:', data.id);
+            console.log('[NGSSAI-WS] Ticket oluşturuldu:', data.id);
 
             return data;
 
         } catch (err) {
-            console.error('[VYRA-WS] Ticket oluşturma hatası:', err);
+            console.error('[NGSSAI-WS] Ticket oluşturma hatası:', err);
             throw err;
         }
     }
@@ -739,12 +739,12 @@
             }
 
             const data = await response.json();
-            console.log('[VYRA-WS] LLM değerlendirmesi tamamlandı', ticketId ? `(Ticket #${ticketId}'e kaydedildi)` : '');
+            console.log('[NGSSAI-WS] LLM değerlendirmesi tamamlandı', ticketId ? `(Ticket #${ticketId}'e kaydedildi)` : '');
 
             return data;
 
         } catch (err) {
-            console.error('[VYRA-WS] LLM değerlendirme hatası:', err);
+            console.error('[NGSSAI-WS] LLM değerlendirme hatası:', err);
             throw err;
         }
     }
@@ -759,7 +759,7 @@
             // 🔔 Browser notification izni iste (ilk seferde)
             if ('Notification' in window && Notification.permission === 'default') {
                 Notification.requestPermission().then(permission => {
-                    console.log('[VYRA-WS] Notification izni:', permission);
+                    console.log('[NGSSAI-WS] Notification izni:', permission);
                 });
             }
         }

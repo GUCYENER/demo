@@ -1,6 +1,6 @@
 // frontend/assets/js/api_client.js
 (function () {
-    console.log("[VYRA] api_client.js loaded");
+    console.log("[NGSSAI] api_client.js loaded");
 
     // Backend URL (FastAPI) - Port 8002
     const API_BASE_URL = (window.API_BASE_URL || "http://localhost:8002") + "/api";
@@ -30,7 +30,7 @@
             }
         }
 
-        console.log("[VYRA] API request:", method, url);
+        console.log("[NGSSAI] API request:", method, url);
 
         const res = await fetch(url, {
             method,
@@ -54,7 +54,7 @@
             const err = new Error(msg);
             err.status = res.status;
             err.data = data;
-            console.error("[VYRA] API error:", err);
+            console.error("[NGSSAI] API error:", err);
             throw err;
         }
 

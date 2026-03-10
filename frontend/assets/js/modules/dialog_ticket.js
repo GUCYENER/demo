@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────
-   VYRA – Dialog Ticket & Corpix Module
+   NGSSAI — Dialog Ticket & Corpix Module
    v2.30.1 · dialog_chat.js'den ayrıştırıldı
    Ticket Summary, Corpix Fallback, Chat Mode
    ───────────────────────────────────────────── */

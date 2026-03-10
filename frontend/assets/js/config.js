@@ -1,5 +1,5 @@
 /**
- * VYRA L1 Support API - Configuration
+ * NGSSAI API - Configuration
  * =====================================
  * Merkezi API ve WebSocket URL konfigürasyonu.
  * Tüm modüller bu dosyadaki değerleri kullanmalıdır.

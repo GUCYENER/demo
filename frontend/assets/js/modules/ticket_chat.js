@@ -181,13 +181,13 @@ window.TicketChatModule = (function () {
                 return;
             }
         } catch (orgErr) {
-            console.error('[VYRA] Org kontrol hatası:', orgErr);
+            console.error('[NGSSAI] Org kontrol hatası:', orgErr);
             // Hata durumunda devam et (eski davranış)
         }
 
         // Çift istek koruması
         if (isProcessingRequest || el.suggestBtn?.disabled) {
-            console.log("[VYRA] İşlem zaten devam ediyor, duplicate önlendi");
+            console.log("[NGSSAI] İşlem zaten devam ediyor, duplicate önlendi");
             return;
         }
 
@@ -219,7 +219,7 @@ window.TicketChatModule = (function () {
 
                 await VyraWebSocket.createTicketAsync(problem, (error, result) => {
                     if (error) {
-                        console.error('[VYRA] Async ticket hatası:', error);
+                        console.error('[NGSSAI] Async ticket hatası:', error);
                         if (window.SolutionDisplayModule) {
                             window.SolutionDisplayModule.hide();
                         }

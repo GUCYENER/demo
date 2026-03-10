@@ -1,5 +1,5 @@
 /**
- * VYRA L1 Support API - Organization Management Module
+ * NGSSAI API - Organization Management Module
  * ====================================================
  * Organizasyon grupları yönetimi (Admin Only)
  * - CRUD işlemleri
