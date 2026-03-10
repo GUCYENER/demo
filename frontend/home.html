@@ -194,14 +194,23 @@ body::before{
 #dialogNewBtn:hover{background:var(--accent)!important;color:#fff!important;border-color:var(--accent)!important}
 #dialogNewBtn.chat-active{background:var(--accent-subtle)!important;color:var(--text-acc)!important}
 .notif-area{display:flex;align-items:center;flex-shrink:0;position:relative}
-.notif-area .notification-center{position:relative;display:inline-flex!important;align-items:center}
+.notif-area .notification-center{position:relative!important;display:inline-flex!important;align-items:center}
 .notif-area .notification-bell{
-  width:32px;height:32px;border-radius:8px;border:1px solid var(--border);
-  background:var(--bg-chip);color:var(--text-2);cursor:pointer;
-  display:flex;align-items:center;justify-content:center;transition:all .15s;font-size:14px;
+  width:32px!important;height:32px!important;border-radius:8px!important;border:1px solid var(--border)!important;
+  background:var(--bg-chip)!important;color:var(--text-2)!important;cursor:pointer;
+  display:flex!important;align-items:center!important;justify-content:center!important;
+  transition:all .15s!important;font-size:14px!important;padding:0!important;
+  position:relative!important;
 }
-.notif-area .notification-bell:hover{background:var(--bg-hover);color:var(--text-1)}
-.notif-area .notification-dropdown{right:0;top:38px}
+.notif-area .notification-bell:hover{background:var(--bg-hover)!important;color:var(--text-1)!important}
+.notif-area .notification-bell i{font-size:14px!important;color:inherit!important}
+.notif-area .notification-badge{
+  position:absolute!important;top:4px!important;right:4px!important;
+  width:8px!important;height:8px!important;min-width:unset!important;
+  font-size:0!important;padding:0!important;border-radius:50%!important;
+  background:var(--accent)!important;border:1.5px solid var(--bg)!important;
+}
+.notif-area .notification-dropdown{position:absolute!important;right:0!important;top:38px!important;z-index:999!important}
 .theme-btn{
   width:32px;height:32px;border-radius:8px;border:1px solid var(--border);
   background:var(--bg-chip);color:var(--text-2);cursor:pointer;
