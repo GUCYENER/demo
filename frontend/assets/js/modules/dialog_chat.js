@@ -682,7 +682,10 @@ window.DialogChatModule = (function () {
         const row = document.createElement('div');
         row.className = 'message-row assistant streaming-row';
         row.innerHTML = `
-            <div class="message-avatar vyra">🤖</div>
+            <div class="message-header-row">
+                <div class="message-avatar vyra">N</div>
+                <span class="message-sender-name">NGSSAI</span>
+            </div>
             <div class="message-bubble assistant streaming-bubble">
                 <div class="streaming-status"></div>
                 <div class="streaming-content"></div>
@@ -1219,14 +1222,14 @@ window.DialogChatModule = (function () {
             ).join('')}</div>`;
         }
 
+        const userName = localStorage.getItem('user_full_name') || localStorage.getItem('user_name') || '';
         const html = `
             <div class="message-row user">
                 <div class="message-bubble user">
                     ${imagesHtml}
                     <div class="message-content">${escapeHtml(content)}</div>
-                    <div class="message-time">${time}</div>
                 </div>
-                <div class="message-avatar user">${userInitial}</div>
+                <div class="message-user-meta">${userName ? userName + ' · ' : ''}${time}</div>
             </div>
         `;
 
@@ -1502,7 +1505,11 @@ window.DialogChatModule = (function () {
         const messageId = message.id || '';
         const html = `
             <div class="message-row assistant" data-message-id="${messageId}">
-                <div class="message-avatar vyra">🤖</div>
+                <div class="message-header-row">
+                    <div class="message-avatar vyra">N</div>
+                    <span class="message-sender-name">NGSSAI</span>
+                    <span class="message-time">${time}</span>
+                </div>
                 <div class="message-bubble assistant">
                     <div class="message-content">${cleanedContent}</div>
                     ${quickReplyHtml}
@@ -1512,7 +1519,6 @@ window.DialogChatModule = (function () {
                     ${askMoreHtml}
                     <div class="message-meta">
                         ${ragScoreHtml}
-                        <span class="message-time">${time}</span>
                         ${responseTimeHtml}
                     </div>
                 </div>
@@ -1567,7 +1573,10 @@ window.DialogChatModule = (function () {
 
         const html = `
             <div class="message-row assistant">
-                <div class="message-avatar vyra">🤖</div>
+                <div class="message-header-row">
+                    <div class="message-avatar vyra">N</div>
+                    <span class="message-sender-name">NGSSAI</span>
+                </div>
                 <div class="message-bubble assistant">
                     <div class="message-content">${content}</div>
                 </div>
@@ -1592,7 +1601,10 @@ window.DialogChatModule = (function () {
 
         const html = `
             <div class="message-row assistant typing-row">
-                <div class="message-avatar vyra">🤖</div>
+                <div class="message-header-row">
+                    <div class="message-avatar vyra">N</div>
+                    <span class="message-sender-name">NGSSAI</span>
+                </div>
                 <div class="typing-indicator">
                     <div class="typing-dot"></div>
                     <div class="typing-dot"></div>
