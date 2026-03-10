@@ -66,29 +66,20 @@
         empty?.classList.add("hidden");
 
         tbody.innerHTML = orgs.map(org => `
-            <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
-                <td style="padding: 16px;">
-                    <span style="background: linear-gradient(135deg, #6366f1, #818cf8); color: white; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 600;">
-                        ${escapeHtml(org.org_code)}
-                    </span>
-                </td>
-                <td style="padding: 16px; font-weight: 500;">${escapeHtml(org.org_name)}</td>
-                <td style="padding: 16px;">
-                    <span style="background: ${org.is_active ? 'rgba(16,185,129,0.2)' : 'rgba(107,114,128,0.2)'}; color: ${org.is_active ? '#10b981' : '#6b7280'}; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem;">
-                        ${org.is_active ? '✓ Aktif' : '✗ Pasif'}
-                    </span>
-                </td>
-                <td style="padding: 16px; color: #9ca3af;">${org.user_count || 0}</td>
-                <td style="padding: 16px; color: #9ca3af;">${org.document_count || 0}</td>
-                <td style="padding: 16px;">
-                    <div style="display: flex; gap: 8px;">
-                        <button onclick="window.orgModule.openEditModal(${org.id})" style="background: rgba(99,102,241,0.2); color: #818cf8; border: none; padding: 8px 12px; border-radius: 6px; cursor: pointer;">
-                            <i class="fa-solid fa-edit"></i>
+            <tr>
+                <td><span class="badge badge-blue">${escapeHtml(org.org_code)}</span></td>
+                <td style="font-weight:500;color:var(--text-1)">${escapeHtml(org.org_name)}</td>
+                <td><span class="badge ${org.is_active ? 'badge-green' : 'badge-red'}"><span class="badge-dot"></span>${org.is_active ? 'Aktif' : 'Pasif'}</span></td>
+                <td>${org.user_count || 0}</td>
+                <td>${org.document_count || 0}</td>
+                <td>
+                    <div class="action-btns">
+                        <button class="act-btn edit" onclick="window.orgModule.openEditModal(${org.id})" title="Düzenle">
+                            <i class="fa-solid fa-edit" style="font-size:11px"></i>
                         </button>
-                        <button onclick="window.orgModule.deleteOrg(${org.id}, '${escapeHtml(org.org_code)}')" 
-                                style="background: rgba(239,68,68,0.2); color: #ef4444; border: none; padding: 8px 12px; border-radius: 6px; cursor: pointer;"
-                                ${['ORG-DEFAULT', 'ORG-ADMIN'].includes(org.org_code) ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
-                            <i class="fa-solid fa-trash"></i>
+                        <button class="act-btn del" onclick="window.orgModule.deleteOrg(${org.id}, '${escapeHtml(org.org_code)}')" title="Sil"
+                                ${['ORG-DEFAULT', 'ORG-ADMIN'].includes(org.org_code) ? 'disabled style="opacity:0.4;cursor:not-allowed;"' : ''}>
+                            <i class="fa-solid fa-trash" style="font-size:11px"></i>
                         </button>
                     </div>
                 </td>
@@ -104,36 +95,18 @@
 
         // Her zaman göster (tek sayfa olsa bile navigasyon bilgisi için)
         let html = `
-            <button onclick="window.orgModule.goToPage(1)" 
-                style="padding: 8px 14px; border-radius: 6px; border: none; cursor: pointer;
-                ${page === 1 ? 'opacity: 0.5; cursor: not-allowed;' : ''} 
-                background: rgba(255,255,255,0.1); color: #9ca3af;"
-                ${page === 1 ? 'disabled' : ''}>
-                <i class="fa-solid fa-angles-left"></i>
+            <button class="pg-btn" onclick="window.orgModule.goToPage(1)" ${page === 1 ? 'disabled style="opacity:.4;cursor:not-allowed"' : ''}>
+                <i class="fa-solid fa-angles-left" style="font-size:10px"></i>
             </button>
-            <button onclick="window.orgModule.goToPage(${page - 1})" 
-                style="padding: 8px 14px; border-radius: 6px; border: none; cursor: pointer;
-                ${page === 1 ? 'opacity: 0.5; cursor: not-allowed;' : ''} 
-                background: rgba(255,255,255,0.1); color: #9ca3af;"
-                ${page === 1 ? 'disabled' : ''}>
-                <i class="fa-solid fa-chevron-left"></i>
+            <button class="pg-btn" onclick="window.orgModule.goToPage(${page - 1})" ${page === 1 ? 'disabled style="opacity:.4;cursor:not-allowed"' : ''}>
+                <i class="fa-solid fa-chevron-left" style="font-size:10px"></i>
             </button>
-            <span style="padding: 8px 14px; color: #a5b4fc; font-weight: 600;">
-                ${page} / ${totalPages}
-            </span>
-            <button onclick="window.orgModule.goToPage(${page + 1})" 
-                style="padding: 8px 14px; border-radius: 6px; border: none; cursor: pointer;
-                ${page >= totalPages ? 'opacity: 0.5; cursor: not-allowed;' : ''} 
-                background: rgba(255,255,255,0.1); color: #9ca3af;"
-                ${page >= totalPages ? 'disabled' : ''}>
-                <i class="fa-solid fa-chevron-right"></i>
+            <span class="pg-btn pg-cur">${page} / ${totalPages}</span>
+            <button class="pg-btn" onclick="window.orgModule.goToPage(${page + 1})" ${page >= totalPages ? 'disabled style="opacity:.4;cursor:not-allowed"' : ''}>
+                <i class="fa-solid fa-chevron-right" style="font-size:10px"></i>
             </button>
-            <button onclick="window.orgModule.goToPage(${totalPages})" 
-                style="padding: 8px 14px; border-radius: 6px; border: none; cursor: pointer;
-                ${page >= totalPages ? 'opacity: 0.5; cursor: not-allowed;' : ''} 
-                background: rgba(255,255,255,0.1); color: #9ca3af;"
-                ${page >= totalPages ? 'disabled' : ''}>
-                <i class="fa-solid fa-angles-right"></i>
+            <button class="pg-btn" onclick="window.orgModule.goToPage(${totalPages})" ${page >= totalPages ? 'disabled style="opacity:.4;cursor:not-allowed"' : ''}>
+                <i class="fa-solid fa-angles-right" style="font-size:10px"></i>
             </button>
         `;
         container.innerHTML = html;
@@ -348,14 +321,14 @@
         // Filter Buttons
         document.querySelectorAll("#sectionOrganizations .org-filter-btn").forEach(btn => {
             btn.addEventListener("click", (e) => {
+                const clicked = e.target.closest('.org-filter-btn');
+                if (!clicked) return;
                 document.querySelectorAll("#sectionOrganizations .org-filter-btn").forEach(b => {
-                    b.style.background = "transparent";
-                    b.style.color = "#9ca3af";
+                    b.classList.remove("active");
                 });
-                e.target.style.background = "#f59e0b";
-                e.target.style.color = "white";
+                clicked.classList.add("active");
 
-                const filter = e.target.dataset.filter;
+                const filter = clicked.dataset.filter;
                 filterActive = filter === "all" ? null : (filter === "active");
                 currentPage = 1;
                 loadOrganizations();

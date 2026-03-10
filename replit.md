@@ -57,3 +57,9 @@ tests/               - Pytest test suite
 - Sidebar and section_dialog are built directly into home.html (not loaded as partials); partial_loader.js loads 7 remaining partials (section_history, section_parameters, section_knowledge, section_auth, section_org, section_profile, modals)
 - Section switching: dialog section = chat area (main view); other sections load into #otherSections wrapper; topBar/mainTabBar shown only for dialog/history views
 - The `window.VYRA_API` global variable name is kept for internal compatibility across many JS modules
+- Inner pages (Parameters, Knowledge Base, Authorization, Organizations, Profile) use shared NGSSAI design system with CSS classes: .page-head, .ph-icon, .ph-text, .sub-tabs/.sub-tab, .card, .sec-head/.sec-title, .data-table, .badge/.badge-green/.badge-amber/.badge-red/.badge-blue/.badge-purple, .inp/.inp-wrap, .toggle/.toggle-wrap, .stat-grid/.stat-card, .model-card, .form-grid/.fg-label, .pager/.pg-btn, .action-btns/.act-btn, .search-bar, .drop-zone, .profile-avatar-block, .slider
+- LLM cards render using .model-card layout with .toggle switch, .act-btn edit/delete buttons
+- Prompt cards render using .card with .sec-head header
+- User table renders with .data-table, inline avatar circles, .badge status badges, .inp role select
+- Org table renders with .data-table, .badge org codes, .act-btn action buttons
+- Design reference file: attached_assets/ngssai-pages_1773154303462.html (DO NOT serve, use as CSS/design reference only)

@@ -1,108 +1,126 @@
 <!-- PROFİLİM BÖLÜMÜ -->
 <section id="sectionProfile" class="hidden">
-    <div class="profile-container">
-        <div class="profile-header">
-            <h2 class="text-2xl font-semibold flex items-center gap-3">
-                <i class="fa-solid fa-user text-yellow-500"></i>
-                Profilim
-            </h2>
+    <div class="page-head">
+        <div class="page-title">
+            <div class="ph-icon" style="background:var(--accent-subtle)">
+                <i class="fa-solid fa-user" style="color:var(--accent);font-size:16px"></i>
+            </div>
+            <div class="ph-text">
+                <h1>Profilim</h1>
+                <p>Kişisel bilgiler ve güvenlik ayarları</p>
+            </div>
         </div>
+    </div>
 
-        <div class="profile-content">
-            <!-- Sol - Avatar ve Temel Bilgi -->
-            <div class="profile-sidebar">
-                <div class="profile-avatar" id="profileAvatarContainer" title="Avatarı değiştirmek için tıklayın">
-                    <i class="fa-solid fa-user-circle"></i>
+    <div style="display:grid;grid-template-columns:220px 1fr;gap:18px;align-items:start">
+        <div class="card">
+            <div class="profile-avatar-block">
+                <div class="p-avatar" id="profileAvatarContainer" title="Avatarı değiştirmek için tıklayın">-</div>
+                <div style="text-align:center">
+                    <div class="p-name" id="profileFullName">-</div>
+                    <div class="p-role" id="profileRole">-</div>
                 </div>
-                <button type="button" id="btnChangeAvatar" class="btn-change-avatar">
-                    <i class="fa-solid fa-camera"></i> Fotoğraf Değiştir
+                <span class="badge badge-green" id="profileStatus"><span class="badge-dot"></span>-</span>
+                <button class="btn" style="width:100%" type="button" id="btnChangeAvatar">
+                    <i class="fa-solid fa-camera"></i>
+                    Fotoğraf Değiştir
                 </button>
                 <input type="file" id="avatarInput" accept="image/*" class="hidden" title="Avatar seçin" />
-                <h3 id="profileFullName" class="profile-name">-</h3>
-                <p id="profileRole" class="profile-role">-</p>
-                <span id="profileStatus" class="profile-status">-</span>
             </div>
+        </div>
 
-            <!-- Sağ - Detaylı Bilgiler -->
-            <div class="profile-details">
-                <!-- Kişisel Bilgiler -->
-                <div class="profile-section">
-                    <h4><i class="fa-solid fa-id-card"></i> Kişisel Bilgiler</h4>
-                    <div class="profile-fields">
-                        <div class="profile-field">
-                            <label>Ad Soyad</label>
-                            <input type="text" id="profileEditFullName" placeholder="Ad Soyad">
-                        </div>
-                        <div class="profile-field">
-                            <label>Kullanıcı Adı</label>
-                            <input type="text" id="profileUsername" disabled title="Kullanıcı adı">
-                        </div>
-                        <div class="profile-field">
-                            <label>E-posta</label>
-                            <input type="email" id="profileEditEmail" placeholder="E-posta">
-                        </div>
-                        <div class="profile-field">
-                            <label>Telefon</label>
-                            <input type="tel" id="profileEditPhone" placeholder="Telefon">
-                        </div>
+        <div style="display:flex;flex-direction:column;gap:16px">
+            <div class="card">
+                <div class="sec-head">
+                    <div class="sec-title">
+                        <i class="fa-solid fa-id-card" style="color:var(--accent);font-size:13px"></i>
+                        Kişisel Bilgiler
                     </div>
-                    <div id="ldapProfileNotice" class="ldap-profile-notice hidden">
-                        <i class="fa-solid fa-shield-halved"></i>
-                        <span>Bu hesap <strong>Active Directory</strong> tarafından yönetilmektedir. Bilgiler
-                            değiştirilemez.</span>
+                </div>
+                <div class="form-grid">
+                    <div>
+                        <label class="fg-label">Ad Soyad</label>
+                        <input class="inp" type="text" id="profileEditFullName" placeholder="Ad Soyad">
                     </div>
-                    <button id="btnSaveProfile" class="btn-save-profile">
+                    <div>
+                        <label class="fg-label">Kullanıcı Adı</label>
+                        <input class="inp" type="text" id="profileUsername" disabled title="Kullanıcı adı">
+                    </div>
+                    <div>
+                        <label class="fg-label">E-posta</label>
+                        <input class="inp" type="email" id="profileEditEmail" placeholder="E-posta">
+                    </div>
+                    <div>
+                        <label class="fg-label">Telefon</label>
+                        <input class="inp" type="tel" id="profileEditPhone" placeholder="Telefon">
+                    </div>
+                </div>
+                <div id="ldapProfileNotice" class="hidden" style="padding:0 18px 12px;display:flex;align-items:center;gap:8px">
+                    <i class="fa-solid fa-shield-halved" style="color:var(--amber);font-size:13px"></i>
+                    <span style="font-size:12px;color:var(--text-2)">Bu hesap <strong>Active Directory</strong> tarafından yönetilmektedir. Bilgiler değiştirilemez.</span>
+                </div>
+                <div style="padding:0 18px 16px">
+                    <button class="btn primary" id="btnSaveProfile">
                         <i class="fa-solid fa-save"></i>
                         Bilgileri Kaydet
                     </button>
                 </div>
+            </div>
 
-                <!-- Kurumsal Bilgiler (LDAP) -->
-                <div id="ldapCorporateSection" class="profile-section hidden">
-                    <h4><i class="fa-solid fa-building"></i> Kurumsal Bilgiler</h4>
-                    <div class="profile-fields">
-                        <div class="profile-field">
-                            <label>Giriş Türü</label>
-                            <input type="text" id="profileAuthType" disabled title="Giriş türü">
-                        </div>
-                        <div class="profile-field">
-                            <label>Domain</label>
-                            <input type="text" id="profileDomain" disabled title="Domain">
-                        </div>
-                        <div class="profile-field">
-                            <label>Departman</label>
-                            <input type="text" id="profileDepartment" disabled title="Departman">
-                        </div>
-                        <div class="profile-field">
-                            <label>Ünvan</label>
-                            <input type="text" id="profileTitle" disabled title="Ünvan">
-                        </div>
+            <div id="ldapCorporateSection" class="card hidden">
+                <div class="sec-head">
+                    <div class="sec-title">
+                        <i class="fa-solid fa-building" style="color:var(--accent);font-size:13px"></i>
+                        Kurumsal Bilgiler
                     </div>
                 </div>
-
-                <!-- Şifre Değiştir -->
-                <div class="profile-section">
-                    <h4><i class="fa-solid fa-lock"></i> Güvenlik & Şifre</h4>
-                    <div class="profile-fields">
-                        <div class="profile-field">
-                            <label>Mevcut Şifre</label>
-                            <input type="password" id="currentPassword" placeholder="••••••••">
-                        </div>
-                        <div class="profile-field-row">
-                            <div class="profile-field">
-                                <label>Yeni Şifre</label>
-                                <input type="password" id="newPassword" placeholder="En az 8 karakter">
-                            </div>
-                            <div class="profile-field">
-                                <label>Yeni Şifre (Tekrar)</label>
-                                <input type="password" id="newPasswordConfirm" placeholder="••••••••">
-                            </div>
-                        </div>
-                        <div class="password-requirements">
-                            <span><i class="fa-solid fa-circle-check"></i> En az 8 karakter</span>
-                        </div>
+                <div class="form-grid">
+                    <div>
+                        <label class="fg-label">Giriş Türü</label>
+                        <input class="inp" type="text" id="profileAuthType" disabled title="Giriş türü">
                     </div>
-                    <button id="btnChangePassword" class="btn-change-password">
+                    <div>
+                        <label class="fg-label">Domain</label>
+                        <input class="inp" type="text" id="profileDomain" disabled title="Domain">
+                    </div>
+                    <div>
+                        <label class="fg-label">Departman</label>
+                        <input class="inp" type="text" id="profileDepartment" disabled title="Departman">
+                    </div>
+                    <div>
+                        <label class="fg-label">Ünvan</label>
+                        <input class="inp" type="text" id="profileTitle" disabled title="Ünvan">
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="sec-head">
+                    <div class="sec-title">
+                        <i class="fa-solid fa-lock" style="color:var(--accent);font-size:13px"></i>
+                        Güvenlik & Şifre
+                    </div>
+                </div>
+                <div class="form-grid">
+                    <div style="grid-column:1/-1">
+                        <label class="fg-label">Mevcut Şifre</label>
+                        <input class="inp" type="password" id="currentPassword" placeholder="••••••••">
+                    </div>
+                    <div>
+                        <label class="fg-label">Yeni Şifre</label>
+                        <input class="inp" type="password" id="newPassword" placeholder="En az 8 karakter">
+                    </div>
+                    <div>
+                        <label class="fg-label">Yeni Şifre (Tekrar)</label>
+                        <input class="inp" type="password" id="newPasswordConfirm" placeholder="••••••••">
+                    </div>
+                </div>
+                <div style="padding:4px 18px 12px;display:flex;align-items:center;gap:8px">
+                    <i class="fa-solid fa-circle-check" style="color:var(--green);font-size:12px"></i>
+                    <span style="font-size:11.5px;color:var(--text-3)">En az 8 karakter</span>
+                </div>
+                <div style="padding:0 18px 16px">
+                    <button class="btn primary" id="btnChangePassword">
                         <i class="fa-solid fa-key"></i>
                         Şifreyi Güncelle
                     </button>

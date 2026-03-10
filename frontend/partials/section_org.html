@@ -1,101 +1,71 @@
             <!-- ORGANİZASYON YÖNETİMİ BÖLÜMÜ (Sadece Admin) -->
             <section id="sectionOrganizations" class="hidden">
-                <div class="org-management-container" style="padding: 20px;">
-                    <!-- Header -->
-                    <div class="org-header"
-                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
-                        <h2 style="font-size: 1.5rem; font-weight: 600; display: flex; align-items: center; gap: 12px;">
-                            <i class="fa-solid fa-building" style="color: #f59e0b;"></i>
-                            Organizasyon Yönetimi
-                        </h2>
-                        <button id="btnNewOrg" class="btn-primary"
-                            style="background: linear-gradient(135deg, #f59e0b, #fbbf24); border: none; padding: 10px 20px; border-radius: 8px; color: white; font-weight: 600; cursor: pointer; margin-right: 40px;">
-                            <i class="fa-solid fa-plus"></i> Yeni Organizasyon
-                        </button>
-                    </div>
 
-                    <!-- Toolbar -->
-                    <div class="org-toolbar"
-                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; background: rgba(30,30,40,0.5); padding: 16px; border-radius: 12px;">
-                        <div class="org-search" style="position: relative; display: flex; align-items: center;">
-                            <i class="fa-solid fa-search"
-                                style="position: absolute; left: 14px; color: #6b7280; font-size: 14px; pointer-events: none; z-index: 1;"></i>
-                            <input type="text" id="orgSearchInput" placeholder="Org kodu veya adı ile ara..." style="background: linear-gradient(135deg, rgba(99,102,241,0.1), rgba(139,92,246,0.1));
-                                border: 1px solid rgba(99,102,241,0.3); border-radius: 12px;
-                                padding: 12px 40px 12px 42px; color: white; width: 280px; font-size: 13px;
-                                transition: all 0.3s ease; box-shadow: 0 2px 8px rgba(0,0,0,0.1); outline: none;"
-                                onfocus="this.style.borderColor='#818cf8'; this.style.boxShadow='0 0 0 3px rgba(99,102,241,0.2)'"
-                                onblur="this.style.borderColor='rgba(99,102,241,0.3)'; this.style.boxShadow='0 2px 8px rgba(0,0,0,0.1)'">
-                            <button id="orgSearchClear" class="org-search-clear hidden" title="Aramayı temizle" style="position: absolute; right: 12px; background: rgba(239,68,68,0.2);
-                                border: none; color: #f87171; cursor: pointer; padding: 5px 7px; border-radius: 50%;
-                                transition: all 0.2s ease;" onmouseover="this.style.background='rgba(239,68,68,0.4)'"
-                                onmouseout="this.style.background='rgba(239,68,68,0.2)'">
-                                <i class="fa-solid fa-times" style="font-size: 10px;"></i>
+                <div class="page-head">
+                    <div class="page-title">
+                        <div class="ph-icon" style="background:var(--amber-dim);color:var(--amber)">
+                            <i class="fa-solid fa-building"></i>
+                        </div>
+                        <div class="ph-text">
+                            <h1>Organizasyon Yönetimi</h1>
+                            <p>Org grupları ve erişim kapsamları</p>
+                        </div>
+                    </div>
+                    <button id="btnNewOrg" class="btn primary">
+                        <i class="fa-solid fa-plus"></i> Yeni Organizasyon
+                    </button>
+                </div>
+
+                <div class="card">
+                    <div class="search-bar">
+                        <div class="inp-wrap">
+                            <i class="fa-solid fa-search inp-ico" style="stroke:none;fill:var(--text-3);width:13px;height:13px"></i>
+                            <input type="text" id="orgSearchInput" class="inp" placeholder="Org kodu veya adı ile ara...">
+                            <button id="orgSearchClear" class="hidden" title="Aramayı temizle" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--red);cursor:pointer;padding:4px;">
+                                <i class="fa-solid fa-times"></i>
                             </button>
                         </div>
-                        <div class="org-filters" style="display: flex; gap: 8px;">
-                            <button class="org-filter-btn active" data-filter="all"
-                                style="padding: 8px 16px; border-radius: 8px; border: none; cursor: pointer;">
+                        <div style="display:flex;gap:6px;">
+                            <button class="org-filter-btn btn active" data-filter="all">
                                 <i class="fa-solid fa-list"></i> Tümü
                             </button>
-                            <button class="org-filter-btn" data-filter="active"
-                                style="padding: 8px 16px; border-radius: 8px; border: 1px solid #374151; background: transparent; color: #9ca3af; cursor: pointer;">
+                            <button class="org-filter-btn btn" data-filter="active">
                                 <i class="fa-solid fa-check-circle"></i> Aktif
                             </button>
-                            <button class="org-filter-btn" data-filter="inactive"
-                                style="padding: 8px 16px; border-radius: 8px; border: 1px solid #374151; background: transparent; color: #9ca3af; cursor: pointer;">
+                            <button class="org-filter-btn btn" data-filter="inactive">
                                 <i class="fa-solid fa-times-circle"></i> Pasif
                             </button>
                         </div>
                     </div>
 
-                    <!-- Org List Table -->
-                    <div class="org-table-container"
-                        style="background: rgba(30,30,40,0.5); border-radius: 12px; overflow: hidden;">
-                        <table class="org-table" style="width: 100%; border-collapse: collapse;">
-                            <thead>
-                                <tr style="background: rgba(0,0,0,0.3);">
-                                    <th
-                                        style="padding: 16px; text-align: left; font-size: 0.75rem; text-transform: uppercase; color: #9ca3af;">
-                                        Org Kodu</th>
-                                    <th
-                                        style="padding: 16px; text-align: left; font-size: 0.75rem; text-transform: uppercase; color: #9ca3af;">
-                                        Org Adı</th>
-                                    <th
-                                        style="padding: 16px; text-align: left; font-size: 0.75rem; text-transform: uppercase; color: #9ca3af;">
-                                        Durum</th>
-                                    <th
-                                        style="padding: 16px; text-align: left; font-size: 0.75rem; text-transform: uppercase; color: #9ca3af;">
-                                        Kullanıcı</th>
-                                    <th
-                                        style="padding: 16px; text-align: left; font-size: 0.75rem; text-transform: uppercase; color: #9ca3af;">
-                                        Doküman</th>
-                                    <th
-                                        style="padding: 16px; text-align: left; font-size: 0.75rem; text-transform: uppercase; color: #9ca3af;">
-                                        İşlemler</th>
-                                </tr>
-                            </thead>
-                            <tbody id="orgTableBody">
-                                <!-- JS ile doldurulacak -->
-                            </tbody>
-                        </table>
-                        <div id="orgEmpty" class="hidden" style="padding: 40px; text-align: center; color: #6b7280;">
-                            <i class="fa-solid fa-building" style="font-size: 3rem; opacity: 0.5;"></i>
-                            <p style="margin-top: 16px;">Organizasyon bulunamadı</p>
-                        </div>
-                        <div id="orgLoading" style="padding: 40px; text-align: center; color: #6b7280;">
-                            <i class="fa-solid fa-spinner fa-spin" style="font-size: 2rem;"></i>
-                            <p style="margin-top: 16px;">Yükleniyor...</p>
-                        </div>
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Org Kodu</th>
+                                <th>Org Adı</th>
+                                <th>Durum</th>
+                                <th>Kullanıcı</th>
+                                <th>Döküman</th>
+                                <th>İşlemler</th>
+                            </tr>
+                        </thead>
+                        <tbody id="orgTableBody">
+                        </tbody>
+                    </table>
+
+                    <div id="orgEmpty" class="hidden" style="padding:40px;text-align:center;color:var(--text-3);">
+                        <i class="fa-solid fa-building" style="font-size:2.5rem;opacity:.4;"></i>
+                        <p style="margin-top:12px;">Organizasyon bulunamadı</p>
+                    </div>
+                    <div id="orgLoading" style="padding:40px;text-align:center;color:var(--text-3);">
+                        <i class="fa-solid fa-spinner fa-spin" style="font-size:1.8rem;"></i>
+                        <p style="margin-top:12px;">Yükleniyor...</p>
                     </div>
 
-                    <!-- Footer: Toplam Kayıt + Pagination -->
-                    <div class="org-footer"
-                        style="margin-top: 20px; display: flex; justify-content: space-between; align-items: center; padding: 12px 0;">
-                        <span id="orgTotalCount"
-                            style="color: #a5b4fc; font-size: 13px; background: rgba(99,102,241,0.15); padding: 6px 14px; border-radius: 20px;">Toplam:
-                            0 kayıt</span>
-                        <div id="orgPagination" style="display: flex; gap: 8px;"></div>
+                    <div class="pager">
+                        <span id="orgTotalCount" class="pager-info">Toplam: 0 kayıt</span>
+                        <div id="orgPagination" class="pager-btns"></div>
                     </div>
                 </div>
+
             </section>

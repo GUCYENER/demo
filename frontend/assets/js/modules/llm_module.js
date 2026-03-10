@@ -47,7 +47,7 @@ window.LLMModule = (function() {
         
         if (!token) {
             if (el.grid) {
-                el.grid.innerHTML = '<div class="text-gray-500">Lütfen giriş yapın.</div>';
+                el.grid.innerHTML = '<div class="n-page-empty"><i class="fa-solid fa-lock"></i><p>Lütfen giriş yapın.</p></div>';
             }
             return;
         }
@@ -58,7 +58,7 @@ window.LLMModule = (function() {
         }
 
         try {
-            el.grid.innerHTML = '<div class="text-gray-400"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Yükleniyor...</div>';
+            el.grid.innerHTML = '<div style="padding:20px;color:var(--text-3);font-size:13px"><i class="fa-solid fa-spinner fa-spin" style="margin-right:8px"></i>Yükleniyor...</div>';
 
             const data = await window.VYRA_API.request("/llm-config/");
 
@@ -90,7 +90,7 @@ window.LLMModule = (function() {
                 errorMessage = `Hata: ${err.message}`;
             }
 
-            el.grid.innerHTML = `<div class="${messageClass}"><i class="fa-solid fa-exclamation-triangle mr-2"></i>${errorMessage}</div>`;
+            el.grid.innerHTML = `<div style="padding:20px;color:var(--red);font-size:13px"><i class="fa-solid fa-exclamation-triangle" style="margin-right:8px"></i>${errorMessage}</div>`;
         }
     }
 
@@ -100,7 +100,7 @@ window.LLMModule = (function() {
         el.grid.innerHTML = "";
 
         if (!list || list.length === 0) {
-            el.grid.innerHTML = '<div class="text-gray-500">Henüz LLM tanımı yok.</div>';
+            el.grid.innerHTML = '<div class="n-page-empty"><i class="fa-solid fa-robot"></i><p>Henüz LLM tanımı yok.</p></div>';
             return;
         }
 
@@ -108,57 +108,42 @@ window.LLMModule = (function() {
             const isActive = llm.is_active === true || llm.is_active === 1;
             const activeClass = isActive ? "border-green-500 border-2" : "border-gray-700 border";
             const badge = isActive
-                ? `<span class="bg-green-600 text-white text-xs px-2 py-1 rounded-full absolute top-4 right-4 shadow-sm"><i class="fa-solid fa-check mr-1"></i>Aktif</span>`
+                ? `<span class="badge badge-green"><span class="badge-dot"></span>Aktif</span>`
                 : ``;
 
-            const desc = llm.description ? `<p class="text-gray-400 text-sm mb-4">${llm.description}</p>` : "";
-            const deleteStyle = isActive ? "opacity-30 cursor-not-allowed" : "hover:bg-white/5 hover:text-red-300";
+            const desc = llm.description ? `<div class="model-tag"><i class="fa-solid fa-info-circle" style="font-size:11px;color:var(--text-3)"></i> ${llm.description}</div>` : "";
+            const deleteDisabled = isActive ? 'style="opacity:.3;cursor:not-allowed"' : '';
 
             const card = document.createElement("div");
-            card.className = `bg-[#1a1d24] rounded-xl p-6 relative hover:shadow-lg transition ${activeClass}`;
+            card.className = "model-card";
 
             card.innerHTML = `
-                ${badge}
-                <div class="flex items-center space-x-4 mb-4">
-                    <div class="bg-blue-900/40 p-3 rounded-lg text-blue-400">
-                        <i class="fa-solid fa-robot text-2xl"></i>
+                <div class="model-card-icon">
+                    <i class="fa-solid fa-robot"></i>
+                </div>
+                <div class="model-info">
+                    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                        <div class="model-name">${llm.provider}</div>
+                        ${badge}
                     </div>
-                    <div>
-                        <h4 class="font-bold text-lg text-white">${llm.provider}</h4>
-                        <p class="text-indigo-300 text-sm font-mono">${llm.model_name}</p>
+                    <div class="model-id">${llm.model_name}</div>
+                    ${desc}
+                    <div class="model-meta">
+                        <div class="mm-item"><span class="mm-key">Vendor</span><span class="mm-val">${llm.vendor_code}</span></div>
+                        <div class="mm-item"><span class="mm-key">Temp / TopP</span><span class="mm-val">${llm.temperature} / ${llm.top_p}</span></div>
                     </div>
                 </div>
-                
-                ${desc}
-
-                <div class="space-y-2 text-sm text-gray-400 mb-6">
-                     <div class="flex justify-between">
-                        <span>Vendor:</span>
-                        <span class="text-gray-200">${llm.vendor_code}</span>
+                <div class="model-actions">
+                    <div class="toggle-wrap">
+                        <div class="toggle ${isActive ? 'on' : ''}" onclick="LLMModule.activate(${llm.id})"></div>
+                        <span class="toggle-lbl" style="font-size:11px;color:var(--text-3)">Aktif Kullan</span>
                     </div>
-                     <div class="flex justify-between">
-                        <span>Temp / TopP:</span>
-                        <span class="text-gray-200">${llm.temperature} / ${llm.top_p}</span>
-                    </div>
-                </div>
-
-                <div class="flex items-center justify-between border-t border-gray-700 pt-4 mt-auto">
-                    <label class="flex items-center cursor-pointer space-x-2">
-                        <input type="radio" name="active_llm" class="form-radio text-green-500 focus:ring-green-500 h-4 w-4" 
-                               ${isActive ? "checked" : ""} 
-                               onclick="LLMModule.activate(${llm.id})">
-                        <span class="text-sm text-gray-300">Aktif Kullan</span>
-                    </label>
-                    
-                    <div class="space-x-2">
-                        <button class="text-blue-400 hover:text-blue-300 p-2 rounded hover:bg-white/5 transition" onclick="LLMModule.edit(${llm.id})">
-                            <i class="fa-solid fa-pen"></i>
-                        </button>
-                        
-                        <button class="text-red-400 p-2 rounded transition ${deleteStyle}" onclick="LLMModule.delete(${llm.id}, ${isActive})">
-                            <i class="fa-solid fa-trash"></i>
-                        </button>
-                    </div>
+                    <button class="act-btn edit" onclick="LLMModule.edit(${llm.id})" title="Düzenle">
+                        <i class="fa-solid fa-pen"></i>
+                    </button>
+                    <button class="act-btn del" ${deleteDisabled} onclick="LLMModule.delete(${llm.id}, ${isActive})" title="Sil">
+                        <i class="fa-solid fa-trash"></i>
+                    </button>
                 </div>
             `;
             el.grid.appendChild(card);

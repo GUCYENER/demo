@@ -1,0 +1,1337 @@
+<!DOCTYPE html>
+<html lang="tr" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NGSSAI — İç Sayfalar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Geist:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ══════════════════════════════════════════
+   TOKENS
+══════════════════════════════════════════ */
+:root[data-theme="dark"] {
+  --bg:            #0d0f14;
+  --bg-sidebar:    rgba(11,13,20,0.97);
+  --bg-surface:    rgba(20,24,35,0.88);
+  --bg-card:       rgba(20,24,35,0.90);
+  --bg-input:      rgba(16,20,30,0.96);
+  --bg-hover:      rgba(255,255,255,0.04);
+  --bg-chip:       rgba(255,255,255,0.05);
+  --bg-table-row:  rgba(255,255,255,0.02);
+  --bg-table-hover:rgba(77,153,255,0.05);
+
+  --border:        rgba(255,255,255,0.07);
+  --border-md:     rgba(255,255,255,0.11);
+  --border-accent: rgba(77,153,255,0.28);
+
+  --accent:        #4D99FF;
+  --accent-2:      #7C3AED;
+  --accent-glow:   rgba(77,153,255,0.14);
+  --accent-subtle: rgba(77,153,255,0.08);
+
+  --green:         #34D399;
+  --green-dim:     rgba(52,211,153,0.12);
+  --amber:         #FBBF24;
+  --amber-dim:     rgba(251,191,36,0.10);
+  --red:           #F87171;
+  --red-dim:       rgba(248,113,113,0.10);
+  --purple:        #A78BFA;
+  --purple-dim:    rgba(167,139,250,0.10);
+
+  --text-1:        #F1F5FF;
+  --text-2:        #9DAAC4;
+  --text-3:        #3D4A63;
+  --text-acc:      #7DB8FF;
+
+  --orb-1:         rgba(77,153,255,0.10);
+  --orb-2:         rgba(124,58,237,0.07);
+  --orb-3:         rgba(52,211,153,0.05);
+
+  --grad-logo:     linear-gradient(135deg,#4D99FF,#7C3AED);
+  --grad-acc:      linear-gradient(135deg,#4D99FF,#7C3AED);
+
+  --shadow-sm:     0 1px 4px rgba(0,0,0,.45);
+  --shadow-card:   0 0 0 1px rgba(255,255,255,.06),0 4px 20px rgba(0,0,0,.4);
+  --shadow-input:  0 0 0 2px rgba(77,153,255,.30),0 0 14px rgba(77,153,255,.07);
+}
+:root[data-theme="light"] {
+  --bg:            #F4F6FC;
+  --bg-sidebar:    rgba(255,255,255,0.97);
+  --bg-surface:    rgba(255,255,255,0.90);
+  --bg-card:       rgba(255,255,255,0.96);
+  --bg-input:      rgba(255,255,255,0.99);
+  --bg-hover:      rgba(0,0,0,0.03);
+  --bg-chip:       rgba(0,0,0,0.04);
+  --bg-table-row:  rgba(0,0,0,0.015);
+  --bg-table-hover:rgba(37,99,235,0.04);
+
+  --border:        rgba(0,0,0,0.07);
+  --border-md:     rgba(0,0,0,0.12);
+  --border-accent: rgba(37,99,235,0.22);
+
+  --accent:        #2563EB;
+  --accent-2:      #7C3AED;
+  --accent-glow:   rgba(37,99,235,0.12);
+  --accent-subtle: rgba(37,99,235,0.07);
+
+  --green:         #059669;
+  --green-dim:     rgba(5,150,105,0.09);
+  --amber:         #D97706;
+  --amber-dim:     rgba(217,119,6,0.09);
+  --red:           #DC2626;
+  --red-dim:       rgba(220,38,38,0.08);
+  --purple:        #7C3AED;
+  --purple-dim:    rgba(124,58,237,0.08);
+
+  --text-1:        #0F172A;
+  --text-2:        #475569;
+  --text-3:        #94A3B8;
+  --text-acc:      #2563EB;
+
+  --orb-1:         rgba(37,99,235,0.05);
+  --orb-2:         rgba(124,58,237,0.04);
+  --orb-3:         rgba(5,150,105,0.03);
+
+  --grad-logo:     linear-gradient(135deg,#2563EB,#7C3AED);
+  --grad-acc:      linear-gradient(135deg,#2563EB,#7C3AED);
+
+  --shadow-sm:     0 1px 4px rgba(0,0,0,.07);
+  --shadow-card:   0 0 0 1px rgba(0,0,0,.06),0 4px 16px rgba(0,0,0,.06);
+  --shadow-input:  0 0 0 2px rgba(37,99,235,.28),0 0 12px rgba(37,99,235,.06);
+}
+
+/* ══════════════════════════════════════════
+   BASE
+══════════════════════════════════════════ */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;font-size:14px}
+body{
+  font-family:'Geist',sans-serif;
+  background:var(--bg);color:var(--text-1);
+  display:flex;height:100vh;overflow:hidden;
+  transition:background .35s,color .3s;
+}
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(ellipse 800px 600px at 15% 20%,var(--orb-1),transparent 65%),
+    radial-gradient(ellipse 600px 500px at 85% 75%,var(--orb-2),transparent 65%),
+    radial-gradient(ellipse 400px 350px at 55% 100%,var(--orb-3),transparent 65%);
+  transition:all .5s;
+}
+
+/* ══════════════════════════════════════════
+   SIDEBAR
+══════════════════════════════════════════ */
+.sidebar{
+  width:200px;min-width:200px;height:100vh;
+  display:flex;flex-direction:column;
+  background:var(--bg-sidebar);backdrop-filter:blur(20px);
+  border-right:1px solid var(--border);
+  position:relative;z-index:10;transition:background .35s;
+}
+.sb-logo{
+  padding:16px 14px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:9px;flex-shrink:0;
+}
+.sb-logo-icon{
+  width:28px;height:28px;border-radius:7px;
+  background:var(--grad-logo);
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 0 14px var(--accent-glow);flex-shrink:0;
+}
+.sb-logo-icon svg{width:15px;height:15px;fill:white}
+.sb-logo-name{
+  font-family:'IBM Plex Mono',monospace;
+  font-size:12.5px;font-weight:500;letter-spacing:.12em;color:var(--text-1);
+}
+.sb-user{padding:12px 12px 10px;border-bottom:1px solid var(--border);flex-shrink:0}
+.sb-user-row{
+  display:flex;align-items:center;gap:8px;
+  padding:6px 8px;border-radius:8px;cursor:pointer;transition:background .12s;
+}
+.sb-user-row:hover{background:var(--bg-hover)}
+.sb-avatar{
+  width:30px;height:30px;border-radius:50%;
+  background:var(--grad-logo);
+  display:flex;align-items:center;justify-content:center;
+  font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:500;
+  color:#fff;flex-shrink:0;box-shadow:0 0 10px var(--accent-glow);
+}
+.sb-user-info{flex:1;min-width:0}
+.sb-uname{font-size:11.5px;font-weight:500;color:var(--text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-urole{
+  display:inline-flex;align-items:center;
+  margin-top:2px;padding:1px 6px;border-radius:4px;
+  background:var(--accent-subtle);
+  font-family:'IBM Plex Mono',monospace;font-size:8.5px;
+  letter-spacing:.06em;color:var(--text-acc);
+}
+.sb-timer{
+  font-family:'IBM Plex Mono',monospace;font-size:9px;
+  color:var(--text-3);margin-top:2px;display:flex;align-items:center;gap:3px;
+}
+.timer-dot{width:4px;height:4px;border-radius:50%;background:var(--green);animation:blink 2s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+.sb-nav{flex:1;padding:6px 8px;overflow-y:auto}
+.sb-nav::-webkit-scrollbar{width:2px}
+.sb-nav::-webkit-scrollbar-thumb{background:var(--border-md);border-radius:2px}
+.nav-section{
+  padding:10px 8px 4px;
+  font-family:'IBM Plex Mono',monospace;font-size:8.5px;
+  letter-spacing:.12em;color:var(--text-3);text-transform:uppercase;
+}
+.nav-item{
+  display:flex;align-items:center;gap:9px;
+  padding:8px 10px;border-radius:8px;
+  cursor:pointer;transition:background .12s;margin-bottom:1px;
+}
+.nav-item:hover{background:var(--bg-hover)}
+.nav-item.active{background:var(--accent-subtle)}
+.nav-item svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.7;flex-shrink:0;color:var(--text-3)}
+.nav-item.active svg{color:var(--accent)}
+.nav-item .lbl{font-size:12.5px;color:var(--text-2)}
+.nav-item.active .lbl{color:var(--text-1);font-weight:500}
+.nav-badge{
+  margin-left:auto;padding:1px 6px;border-radius:9px;
+  background:var(--accent-subtle);
+  font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--text-acc);
+}
+.sb-footer{padding:10px 12px 14px;border-top:1px solid var(--border);flex-shrink:0}
+.logout-btn{
+  width:100%;padding:8px 12px;border-radius:8px;
+  border:1px solid var(--border);background:var(--bg-chip);
+  color:var(--text-2);font-family:'Geist',sans-serif;font-size:12px;
+  cursor:pointer;display:flex;align-items:center;gap:8px;transition:all .15s;
+}
+.logout-btn:hover{background:var(--red-dim);border-color:rgba(248,113,113,.2);color:var(--red)}
+.logout-btn svg{width:13px;height:13px;stroke:currentColor;fill:none}
+.sb-ver{text-align:center;margin-top:7px;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--text-3)}
+
+/* ══════════════════════════════════════════
+   MAIN AREA
+══════════════════════════════════════════ */
+.main{
+  flex:1;display:flex;flex-direction:column;
+  height:100vh;overflow:hidden;position:relative;z-index:5;
+}
+.topbar{
+  height:48px;flex-shrink:0;
+  display:flex;align-items:center;padding:0 20px;gap:10px;
+  background:var(--bg-sidebar);backdrop-filter:blur(20px);
+  border-bottom:1px solid var(--border);
+}
+.tb-title{font-size:13px;color:var(--text-2);flex:1}
+.tb-title strong{color:var(--text-1);font-weight:500}
+.tb-sep{width:1px;height:14px;background:var(--border-md)}
+
+.icon-btn{
+  width:30px;height:30px;border-radius:7px;
+  border:1px solid var(--border);background:var(--bg-chip);
+  color:var(--text-2);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;transition:all .15s;
+}
+.icon-btn:hover{background:var(--bg-hover);color:var(--text-1);border-color:var(--border-md)}
+.icon-btn svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8}
+
+.content-area{
+  flex:1;overflow-y:auto;padding:24px 24px 32px;
+}
+.content-area::-webkit-scrollbar{width:3px}
+.content-area::-webkit-scrollbar-thumb{background:var(--border-md);border-radius:3px}
+
+/* ══════════════════════════════════════════
+   SHARED COMPONENTS
+══════════════════════════════════════════ */
+.page{display:none;animation:fadeUp .25s ease both}
+.page.active{display:block}
+@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+
+/* Page header */
+.page-head{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:20px;
+}
+.page-title{
+  display:flex;align-items:center;gap:11px;
+}
+.ph-icon{
+  width:34px;height:34px;border-radius:9px;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+}
+.ph-icon svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.7}
+.ph-text h1{font-size:18px;font-weight:600;color:var(--text-1);letter-spacing:-.02em}
+.ph-text p{font-size:12px;color:var(--text-3);margin-top:1px}
+
+/* Buttons */
+.btn{
+  height:32px;padding:0 14px;
+  border-radius:8px;border:1px solid var(--border-md);
+  background:var(--bg-card);
+  color:var(--text-2);font-family:'Geist',sans-serif;font-size:12.5px;
+  cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+  transition:all .15s;white-space:nowrap;backdrop-filter:blur(8px);
+}
+.btn:hover{background:var(--bg-hover);color:var(--text-1);border-color:var(--border-md)}
+.btn svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:2}
+.btn.primary{
+  background:var(--grad-acc);border:none;color:#fff;
+  box-shadow:0 2px 12px var(--accent-glow);
+}
+.btn.primary:hover{opacity:.88;transform:translateY(-1px)}
+.btn.danger{background:var(--red-dim);border-color:rgba(248,113,113,.25);color:var(--red)}
+.btn.danger:hover{background:rgba(248,113,113,.18)}
+
+/* Sub-tabs */
+.sub-tabs{
+  display:flex;gap:0;margin-bottom:20px;
+  border-bottom:1px solid var(--border);
+}
+.sub-tab{
+  padding:9px 16px;font-size:12.5px;color:var(--text-3);
+  border:none;background:none;cursor:pointer;position:relative;
+  transition:color .15s;display:flex;align-items:center;gap:6px;
+}
+.sub-tab svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:1.7}
+.sub-tab:hover{color:var(--text-2)}
+.sub-tab.active{color:var(--text-1);font-weight:500}
+.sub-tab.active::after{
+  content:'';position:absolute;bottom:-1px;left:0;right:0;height:2px;
+  background:var(--accent);border-radius:2px 2px 0 0;
+}
+
+/* Card */
+.card{
+  background:var(--bg-card);
+  border:1px solid var(--border);
+  border-radius:12px;
+  backdrop-filter:blur(12px);
+  box-shadow:var(--shadow-card);
+  position:relative;overflow:hidden;
+}
+.card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent 10%,rgba(255,255,255,.07) 50%,transparent 90%);
+  pointer-events:none;
+}
+
+/* Section header inside card */
+.sec-head{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 18px;border-bottom:1px solid var(--border);
+}
+.sec-title{font-size:13px;font-weight:500;color:var(--text-1);display:flex;align-items:center;gap:8px}
+.sec-title svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.7;color:var(--accent)}
+
+/* KV Table */
+.kv-table{padding:2px 0}
+.kv-row{
+  display:flex;align-items:center;
+  padding:10px 18px;border-bottom:1px solid var(--border);transition:background .1s;
+}
+.kv-row:last-child{border-bottom:none}
+.kv-row:hover{background:var(--bg-hover)}
+.kv-key{
+  font-family:'IBM Plex Mono',monospace;font-size:11px;
+  color:var(--text-3);width:140px;flex-shrink:0;letter-spacing:.02em;
+}
+.kv-val{font-size:13px;color:var(--text-1);flex:1}
+.kv-val code{
+  font-family:'IBM Plex Mono',monospace;font-size:11.5px;
+  background:var(--bg-chip);border:1px solid var(--border);
+  padding:2px 7px;border-radius:5px;color:var(--accent);
+}
+
+/* Data table */
+.data-table{width:100%;border-collapse:collapse}
+.data-table th{
+  padding:9px 14px;
+  font-family:'IBM Plex Mono',monospace;font-size:9.5px;
+  font-weight:500;letter-spacing:.10em;text-transform:uppercase;
+  color:var(--text-3);text-align:left;
+  border-bottom:1px solid var(--border);
+  background:var(--bg-hover);
+}
+.data-table td{
+  padding:11px 14px;font-size:12.5px;color:var(--text-2);
+  border-bottom:1px solid var(--border);
+  transition:background .1s;
+}
+.data-table tr:last-child td{border-bottom:none}
+.data-table tr:hover td{background:var(--bg-table-hover)}
+
+/* Badges */
+.badge{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:3px 9px;border-radius:6px;
+  font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:500;
+  letter-spacing:.04em;
+}
+.badge-green{background:var(--green-dim);color:var(--green)}
+.badge-amber{background:var(--amber-dim);color:var(--amber)}
+.badge-red  {background:var(--red-dim);color:var(--red)}
+.badge-blue {background:var(--accent-subtle);color:var(--accent)}
+.badge-purple{background:var(--purple-dim);color:var(--purple)}
+.badge-dot{width:5px;height:5px;border-radius:50%;background:currentColor}
+
+/* Input / select */
+.inp{
+  width:100%;padding:9px 12px;
+  border-radius:8px;border:1px solid var(--border-md);
+  background:var(--bg-input);backdrop-filter:blur(8px);
+  color:var(--text-1);font-family:'Geist',sans-serif;font-size:13px;
+  outline:none;caret-color:var(--accent);transition:border-color .15s,box-shadow .15s;
+}
+.inp:focus{border-color:var(--accent);box-shadow:var(--shadow-input)}
+.inp::placeholder{color:var(--text-3)}
+.inp-wrap{position:relative}
+.inp-ico{
+  position:absolute;left:11px;top:50%;transform:translateY(-50%);
+  width:14px;height:14px;stroke:var(--text-3);fill:none;
+  pointer-events:none;transition:stroke .15s;
+}
+.inp-wrap:focus-within .inp-ico{stroke:var(--accent)}
+.inp-wrap .inp{padding-left:34px}
+
+select.inp{-webkit-appearance:none;cursor:pointer}
+
+/* Toggle switch */
+.toggle-wrap{display:flex;align-items:center;gap:10px}
+.toggle{
+  width:36px;height:20px;border-radius:10px;
+  background:var(--border-md);cursor:pointer;position:relative;
+  transition:background .2s;flex-shrink:0;
+  border:1px solid var(--border-md);
+}
+.toggle.on{background:var(--accent);border-color:var(--accent)}
+.toggle::after{
+  content:'';position:absolute;top:2px;left:2px;
+  width:14px;height:14px;border-radius:50%;
+  background:#fff;transition:transform .2s;
+  box-shadow:0 1px 3px rgba(0,0,0,.3);
+}
+.toggle.on::after{transform:translateX(16px)}
+.toggle-lbl{font-size:12.5px;color:var(--text-2)}
+
+/* Stat cards */
+.stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:18px}
+.stat-card{
+  background:var(--bg-card);border:1px solid var(--border);
+  border-radius:11px;padding:16px 18px;
+  backdrop-filter:blur(12px);position:relative;overflow:hidden;
+  transition:border-color .15s;
+}
+.stat-card:hover{border-color:var(--border-accent)}
+.stat-card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  border-radius:11px 11px 0 0;
+}
+.sc-blue::before {background:linear-gradient(90deg,#4D99FF,#7C3AED)}
+.sc-green::before{background:linear-gradient(90deg,#34D399,#059669)}
+.sc-amber::before{background:linear-gradient(90deg,#FBBF24,#F59E0B)}
+.stat-label{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text-3);letter-spacing:.08em;margin-bottom:6px}
+.stat-val{font-family:'IBM Plex Mono',monospace;font-size:26px;font-weight:400;line-height:1;color:var(--text-1)}
+.stat-meta{font-size:11.5px;color:var(--text-3);margin-top:4px}
+
+/* LLM model card */
+.model-card{
+  background:var(--bg-card);border:1px solid var(--border);
+  border-radius:12px;padding:16px 18px;
+  backdrop-filter:blur(12px);
+  display:flex;align-items:flex-start;gap:14px;
+  transition:border-color .18s;position:relative;overflow:hidden;
+}
+.model-card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:var(--grad-acc);opacity:.5;border-radius:12px 12px 0 0;
+}
+.model-card:hover{border-color:var(--border-accent)}
+.model-card-icon{
+  width:40px;height:40px;border-radius:10px;
+  background:var(--accent-subtle);border:1px solid var(--border-accent);
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+}
+.model-card-icon svg{width:20px;height:20px;stroke:var(--accent);fill:none;stroke-width:1.5}
+.model-info{flex:1;min-width:0}
+.model-name{font-size:14px;font-weight:600;color:var(--text-1);letter-spacing:-.01em}
+.model-id{
+  font-family:'IBM Plex Mono',monospace;font-size:10px;
+  color:var(--text-acc);margin-top:2px;
+}
+.model-tag{
+  display:inline-flex;align-items:center;gap:4px;margin-top:8px;
+  font-size:11px;color:var(--text-3);
+}
+.model-meta{
+  display:grid;grid-template-columns:1fr 1fr;gap:6px 20px;
+  margin-top:10px;padding-top:10px;border-top:1px solid var(--border);
+}
+.mm-item{display:flex;flex-direction:column;gap:2px}
+.mm-key{font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--text-3);letter-spacing:.05em}
+.mm-val{font-size:12.5px;color:var(--text-1);font-weight:500}
+.model-actions{display:flex;align-items:flex-start;gap:7px;flex-shrink:0}
+
+/* Slider */
+.slider-wrap{padding:0 2px}
+.slider{
+  width:100%;height:4px;border-radius:4px;
+  -webkit-appearance:none;appearance:none;
+  background:linear-gradient(90deg,var(--accent) 80%,var(--border-md) 80%);
+  cursor:pointer;outline:none;
+}
+.slider::-webkit-slider-thumb{
+  -webkit-appearance:none;width:16px;height:16px;border-radius:50%;
+  background:var(--accent);border:2px solid var(--bg-card);
+  box-shadow:0 0 0 2px var(--accent);cursor:pointer;
+}
+
+/* Org groups */
+.org-select-area{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 18px;
+}
+.org-placeholder{font-size:12.5px;color:var(--text-3);font-style:italic}
+
+/* Drop zone */
+.drop-zone{
+  border:2px dashed var(--border-md);
+  border-radius:12px;padding:44px 24px;
+  text-align:center;cursor:pointer;
+  transition:all .18s;margin:0 0 18px;
+}
+.drop-zone:hover{border-color:var(--accent);background:var(--accent-subtle)}
+.dz-icon{
+  width:44px;height:44px;border-radius:50%;
+  background:var(--accent-subtle);border:1px solid var(--border-accent);
+  display:flex;align-items:center;justify-content:center;
+  margin:0 auto 14px;
+}
+.dz-icon svg{width:20px;height:20px;stroke:var(--accent);fill:none;stroke-width:1.5}
+.dz-title{font-size:14px;font-weight:500;color:var(--text-1);margin-bottom:5px}
+.dz-sub{font-size:12.5px;color:var(--text-3);margin-bottom:12px}
+.dz-formats{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
+.fmt-tag{
+  padding:2px 9px;border-radius:5px;
+  background:var(--bg-chip);border:1px solid var(--border);
+  font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text-2);
+}
+
+/* Profile avatar */
+.profile-avatar-block{
+  display:flex;flex-direction:column;align-items:center;gap:12px;
+  padding:28px 24px;
+}
+.p-avatar{
+  width:72px;height:72px;border-radius:50%;
+  background:var(--grad-logo);
+  display:flex;align-items:center;justify-content:center;
+  font-family:'IBM Plex Mono',monospace;font-size:22px;font-weight:500;
+  color:#fff;box-shadow:0 0 30px var(--accent-glow),0 0 0 3px var(--bg),0 0 0 4px var(--border-accent);
+}
+.p-name{font-size:15px;font-weight:600;color:var(--text-1);letter-spacing:-.01em}
+.p-role{font-size:12px;color:var(--text-3)}
+
+/* Form grid */
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:16px 18px}
+.form-grid.full{grid-template-columns:1fr}
+.fg-label{font-size:12px;font-weight:500;color:var(--text-2);margin-bottom:6px;display:block}
+
+/* Pagination */
+.pager{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 16px;border-top:1px solid var(--border);
+}
+.pager-info{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text-3)}
+.pager-btns{display:flex;gap:3px}
+.pg-btn{
+  width:26px;height:26px;border-radius:6px;
+  border:1px solid var(--border);background:var(--bg-chip);
+  color:var(--text-2);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  font-family:'IBM Plex Mono',monospace;font-size:10px;transition:all .12s;
+}
+.pg-btn:hover{background:var(--bg-hover);color:var(--text-1)}
+.pg-btn svg{width:10px;height:10px;stroke:currentColor;fill:none;stroke-width:2.5}
+.pg-cur{background:var(--accent-subtle);border-color:var(--accent);color:var(--text-acc)}
+
+/* Inline action row */
+.action-btns{display:flex;gap:5px}
+.act-btn{
+  width:26px;height:26px;border-radius:6px;
+  border:1px solid var(--border);background:var(--bg-chip);
+  color:var(--text-2);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;transition:all .12s;
+}
+.act-btn:hover{background:var(--bg-hover);color:var(--text-1)}
+.act-btn.edit:hover{background:var(--accent-subtle);color:var(--accent);border-color:var(--border-accent)}
+.act-btn.del:hover{background:var(--red-dim);color:var(--red);border-color:rgba(248,113,113,.25)}
+.act-btn svg{width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:2}
+
+/* Search input row */
+.search-bar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 18px;border-bottom:1px solid var(--border);gap:10px;
+}
+
+/* Separator */
+.section-sep{height:1px;background:var(--border);margin:18px 0}
+</style>
+</head>
+<body>
+
+<!-- ══════════════ SIDEBAR ══════════════ -->
+<aside class="sidebar">
+  <div class="sb-logo">
+    <div class="sb-logo-icon">
+      <svg viewBox="0 0 24 24"><path d="M4 4 L4 20 L10 12 L16 20 L16 4 L14 4 L14 16 L10 10 L6 16 L6 4 Z"/></svg>
+    </div>
+    <span class="sb-logo-name">NGSSAI</span>
+  </div>
+
+  <div class="sb-user">
+    <div class="sb-user-row">
+      <div class="sb-avatar">YF</div>
+      <div class="sb-user-info">
+        <div class="sb-uname">Yasin Fazlıoğlu</div>
+        <div class="sb-urole">YÖNETİCİ</div>
+        <div class="sb-timer"><div class="timer-dot"></div><span id="tmr">00:22:47</span></div>
+      </div>
+    </div>
+  </div>
+
+  <nav class="sb-nav">
+    <div class="nav-item" onclick="nav(this,'ana')">
+      <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      <span class="lbl">Ana Sayfa</span>
+    </div>
+    <div class="nav-section">Yönetim</div>
+    <div class="nav-item active" onclick="nav(this,'params')">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 010 14.14M4.93 4.93a10 10 0 000 14.14"/></svg>
+      <span class="lbl">Parametreler</span>
+    </div>
+    <div class="nav-item" onclick="nav(this,'kb')">
+      <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+      <span class="lbl">Bilgi Tabanı</span>
+      <span class="nav-badge">12</span>
+    </div>
+    <div class="nav-item" onclick="nav(this,'auth')">
+      <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+      <span class="lbl">Yetkilendirme</span>
+    </div>
+    <div class="nav-item" onclick="nav(this,'orgs')">
+      <svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2"/></svg>
+      <span class="lbl">Organizasyonlar</span>
+      <span class="nav-badge">3</span>
+    </div>
+    <div class="nav-section">Hesap</div>
+    <div class="nav-item" onclick="nav(this,'profile')">
+      <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span class="lbl">Profilim</span>
+    </div>
+  </nav>
+
+  <div class="sb-footer">
+    <button class="logout-btn">
+      <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      Oturumu Kapat
+    </button>
+    <div class="sb-ver">NGSSAI v1.0.0</div>
+  </div>
+</aside>
+
+<!-- ══════════════ MAIN ══════════════ -->
+<main class="main">
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <span class="tb-title" id="topTitle"><strong>Sistem Parametreleri</strong></span>
+    <button class="icon-btn" onclick="toggleTheme()" title="Tema">
+      <svg id="theme-ico" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+    </button>
+  </div>
+
+  <div class="content-area">
+
+    <!-- ══════════ PAGE: PARAMETRELER ══════════ -->
+    <div class="page active" id="page-params">
+      <div class="page-head">
+        <div class="page-title">
+          <div class="ph-icon" style="background:var(--accent-subtle)">
+            <svg viewBox="0 0 24 24" style="color:var(--accent)"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 010 14.14M4.93 4.93a10 10 0 000 14.14"/></svg>
+          </div>
+          <div class="ph-text">
+            <h1>Sistem Parametreleri</h1>
+            <p>LLM tanımları, prompt şablonları ve sistem yapılandırması</p>
+          </div>
+        </div>
+        <button class="btn primary">
+          <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Yeni LLM Ekle
+        </button>
+      </div>
+
+      <!-- Sub-tabs -->
+      <div class="sub-tabs">
+        <button class="sub-tab active" onclick="stab(this,'pt-llm')">
+          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 9l6 6M15 9l-6 6"/></svg>
+          LLM Tanımları
+        </button>
+        <button class="sub-tab" onclick="stab(this,'pt-prompt')">
+          <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          Prompt Dizayn
+        </button>
+        <button class="sub-tab" onclick="stab(this,'pt-train')">
+          <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+          Model Eğitimi
+        </button>
+        <button class="sub-tab" onclick="stab(this,'pt-ldap')">
+          <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          LDAP Ayarları
+        </button>
+        <button class="sub-tab" onclick="stab(this,'pt-org')">
+          <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+          Organizasyon Yetki
+        </button>
+      </div>
+
+      <!-- LLM Tab -->
+      <div id="pt-llm">
+        <div class="model-card">
+          <div class="model-card-icon">
+            <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 9l6 6M15 9l-6 6"/></svg>
+          </div>
+          <div class="model-info">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <div class="model-name">qwen3-32b</div>
+              <span class="badge badge-green"><span class="badge-dot"></span>Aktif</span>
+            </div>
+            <div class="model-id">qwen3-32b-awq</div>
+            <div class="model-tag">
+              <svg viewBox="0 0 24 24" style="width:11px;height:11px;stroke:currentColor;fill:none"><path d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0H5"/></svg>
+              Turkcell LLM
+            </div>
+            <div class="model-meta">
+              <div class="mm-item"><span class="mm-key">Vendor</span><span class="mm-val">12000533461</span></div>
+              <div class="mm-item"><span class="mm-key">Temp / TopP</span><span class="mm-val">0.7 / 1</span></div>
+            </div>
+          </div>
+          <div class="model-actions">
+            <div class="toggle-wrap">
+              <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+              <span class="toggle-lbl" style="font-size:11px;color:var(--text-3)">Aktif Kullan</span>
+            </div>
+            <button class="act-btn edit"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+            <button class="act-btn del"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg></button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Prompt Tab -->
+      <div id="pt-prompt" style="display:none">
+        <div class="card">
+          <div class="sec-head">
+            <div class="sec-title">
+              <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/></svg>
+              Sistem Prompt Şablonu
+            </div>
+            <button class="btn primary" style="height:28px;font-size:11.5px">
+              <svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v14a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              Kaydet
+            </button>
+          </div>
+          <div style="padding:16px 18px">
+            <label class="fg-label">Aktif Şablon</label>
+            <textarea class="inp" style="min-height:120px;resize:vertical;font-family:'IBM Plex Mono',monospace;font-size:12px;line-height:1.6">Sen NGSSAI kurumsal destek asistanısın. Kullanıcılara bilgi tabanındaki dokümanları referans alarak Türkçe, öz ve profesyonel yanıtlar ver. Belirsiz sorularda açıklama iste. Yanıtlarını markdown formatında düzenle.</textarea>
+            <div style="display:flex;gap:8px;margin-top:10px">
+              <div class="toggle-wrap">
+                <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+                <span class="toggle-lbl">Sistem promptu aktif</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Other tabs placeholder -->
+      <div id="pt-train" style="display:none">
+        <div class="card" style="padding:40px;text-align:center">
+          <div style="font-size:13px;color:var(--text-3)">Model eğitim yapılandırması — yakında.</div>
+        </div>
+      </div>
+      <div id="pt-ldap" style="display:none">
+        <div class="card">
+          <div class="sec-head">
+            <div class="sec-title">
+              <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              LDAP Bağlantı Ayarları
+            </div>
+            <button class="btn primary" style="height:28px;font-size:11.5px">Bağlantıyı Test Et</button>
+          </div>
+          <div class="form-grid">
+            <div><label class="fg-label">LDAP Sunucu Adresi</label><input class="inp" value="ldap.turkcell.com.tr" /></div>
+            <div><label class="fg-label">Port</label><input class="inp" value="389" /></div>
+            <div><label class="fg-label">Bağlama DN</label><input class="inp" value="cn=admin,dc=turkcell,dc=com,dc=tr" /></div>
+            <div><label class="fg-label">Temel DN</label><input class="inp" value="dc=turkcell,dc=com,dc=tr" /></div>
+          </div>
+          <div style="padding:0 18px 16px;display:flex;gap:8px;align-items:center">
+            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+            <span class="toggle-lbl">LDAP kimlik doğrulama aktif</span>
+          </div>
+        </div>
+      </div>
+      <div id="pt-org" style="display:none">
+        <div class="card" style="padding:40px;text-align:center">
+          <div style="font-size:13px;color:var(--text-3)">Organizasyon yetki matrisi — yakında.</div>
+        </div>
+      </div>
+    </div><!-- /params -->
+
+    <!-- ══════════ PAGE: BİLGİ TABANI ══════════ -->
+    <div class="page" id="page-kb">
+      <div class="page-head">
+        <div class="page-title">
+          <div class="ph-icon" style="background:var(--accent-subtle)">
+            <svg viewBox="0 0 24 24" style="color:var(--accent)"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+          </div>
+          <div class="ph-text">
+            <h1>Bilgi Tabanı Yönetimi</h1>
+            <p>Doküman yükleme, vektör indeksleme ve içerik yönetimi</p>
+          </div>
+        </div>
+        <button class="btn">
+          <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          Dosya Hazırlama Kuralları
+        </button>
+      </div>
+
+      <!-- Stats -->
+      <div class="stat-grid">
+        <div class="stat-card sc-blue">
+          <div class="stat-label">YÜKLÜ DOSYALAR</div>
+          <div class="stat-val">12</div>
+          <div class="stat-meta">Son 7 günde +3 eklendi</div>
+        </div>
+        <div class="stat-card sc-green">
+          <div class="stat-label">VEKTÖR PARÇALARI</div>
+          <div class="stat-val">847</div>
+          <div class="stat-meta">Ortalama 70 parça / dosya</div>
+        </div>
+        <div class="stat-card sc-amber">
+          <div class="stat-label">DURUM</div>
+          <div class="stat-val" style="font-size:18px;padding-top:4px">
+            <span class="badge badge-green"><span class="badge-dot"></span>Aktif</span>
+          </div>
+          <div class="stat-meta">Son indeksleme: bugün 14:32</div>
+        </div>
+      </div>
+
+      <!-- Threshold slider -->
+      <div class="card" style="margin-bottom:16px">
+        <div class="sec-head">
+          <div class="sec-title">
+            <svg viewBox="0 0 24 24"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+            İyileştirme Eşik Değeri
+          </div>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-3)">Maturity skoru bu değerin altında olan dosyalar için "İyileştir" butonu görünür</span>
+        </div>
+        <div style="padding:16px 18px 20px">
+          <div style="display:flex;align-items:center;gap:14px">
+            <input type="range" class="slider" min="0" max="100" value="80" style="flex:1" oninput="document.getElementById('sliderVal').textContent=this.value">
+            <div style="width:42px;height:32px;border-radius:7px;background:var(--bg-chip);border:1px solid var(--border);display:flex;align-items:center;justify-content:center">
+              <span id="sliderVal" style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:500;color:var(--accent)">80</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hedef Org -->
+      <div class="card" style="margin-bottom:16px">
+        <div class="sec-head">
+          <div class="sec-title">
+            <svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2"/></svg>
+            Hedef Org Grupları
+          </div>
+          <span style="font-size:11.5px;color:var(--text-3)">Yüklenecek dosyalar seçilen gruplara şekilit olacak</span>
+        </div>
+        <div class="org-select-area">
+          <span class="org-placeholder">Org seçilmedi</span>
+          <button class="act-btn edit"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+        </div>
+      </div>
+
+      <!-- Drop zone -->
+      <div class="drop-zone">
+        <div class="dz-icon">
+          <svg viewBox="0 0 24 24"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0018 9h-1.26A8 8 0 103 16.3"/></svg>
+        </div>
+        <div class="dz-title">Dosyalarınızı buraya sürükleyin</div>
+        <div class="dz-sub">veya tıklayarak seçin</div>
+        <div class="dz-formats">
+          <span class="fmt-tag">PDF</span><span class="fmt-tag">DOCX</span>
+          <span class="fmt-tag">XLSX</span><span class="fmt-tag">PPTX</span>
+          <span class="fmt-tag">TXT</span>
+        </div>
+      </div>
+
+      <!-- File list -->
+      <div class="card">
+        <div class="search-bar">
+          <div style="display:flex;align-items:center;gap:8px">
+            <svg viewBox="0 0 24 24" style="width:13px;height:13px;stroke:var(--text-3);fill:none"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+            <span style="font-size:13px;font-weight:500;color:var(--text-1)">Yüklü Dosyalar</span>
+            <span class="badge badge-blue">12</span>
+          </div>
+          <div class="inp-wrap" style="width:220px">
+            <svg class="inp-ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input class="inp" placeholder="Dosya ara…">
+          </div>
+        </div>
+        <table class="data-table" style="width:100%">
+          <thead>
+            <tr>
+              <th>DOSYA ADI</th>
+              <th>TÜR</th>
+              <th>PARÇA</th>
+              <th>MATURİTY</th>
+              <th>TARİH</th>
+              <th>İŞLEMLER</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span style="color:var(--text-1);font-weight:500">VPN_Kullanim_Kilavuzu_v3.pdf</span></td>
+              <td><span class="fmt-tag">PDF</span></td>
+              <td><code style="font-family:'IBM Plex Mono',monospace;font-size:11px;background:var(--bg-chip);padding:1px 6px;border-radius:4px;color:var(--text-2)">94</code></td>
+              <td><div style="display:flex;align-items:center;gap:6px"><div style="width:60px;height:4px;border-radius:3px;background:var(--border-md)"><div style="width:87%;height:100%;background:var(--green);border-radius:3px"></div></div><span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--green)">87</span></div></td>
+              <td style="font-family:'IBM Plex Mono',monospace;font-size:11px">08.03.2026</td>
+              <td><div class="action-btns"><button class="act-btn edit"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button><button class="act-btn del"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button></div></td>
+            </tr>
+            <tr>
+              <td><span style="color:var(--text-1);font-weight:500">Ag_Mimarisi_Dokumantasyonu.docx</span></td>
+              <td><span class="fmt-tag">DOCX</span></td>
+              <td><code style="font-family:'IBM Plex Mono',monospace;font-size:11px;background:var(--bg-chip);padding:1px 6px;border-radius:4px;color:var(--text-2)">128</code></td>
+              <td><div style="display:flex;align-items:center;gap:6px"><div style="width:60px;height:4px;border-radius:3px;background:var(--border-md)"><div style="width:92%;height:100%;background:var(--green);border-radius:3px"></div></div><span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--green)">92</span></div></td>
+              <td style="font-family:'IBM Plex Mono',monospace;font-size:11px">05.03.2026</td>
+              <td><div class="action-btns"><button class="act-btn edit"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button><button class="act-btn del"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button></div></td>
+            </tr>
+            <tr>
+              <td><span style="color:var(--text-1);font-weight:500">IT_Süreçleri_Prosedür_v2.pdf</span></td>
+              <td><span class="fmt-tag">PDF</span></td>
+              <td><code style="font-family:'IBM Plex Mono',monospace;font-size:11px;background:var(--bg-chip);padding:1px 6px;border-radius:4px;color:var(--text-2)">71</code></td>
+              <td><div style="display:flex;align-items:center;gap:6px"><div style="width:60px;height:4px;border-radius:3px;background:var(--border-md)"><div style="width:62%;height:100%;background:var(--amber);border-radius:3px"></div></div><span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--amber)">62</span></div></td>
+              <td style="font-family:'IBM Plex Mono',monospace;font-size:11px">01.03.2026</td>
+              <td><div class="action-btns"><button class="act-btn" style="border-color:rgba(251,191,36,.3);color:var(--amber)"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></button><button class="act-btn del"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button></div></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="pager">
+          <span class="pager-info">Toplam: 12 dosya</span>
+          <div class="pager-btns">
+            <button class="pg-btn"><svg viewBox="0 0 24 24"><polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/></svg></button>
+            <button class="pg-btn"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></button>
+            <button class="pg-btn pg-cur">1</button>
+            <button class="pg-btn">2</button>
+            <button class="pg-btn"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></button>
+            <button class="pg-btn"><svg viewBox="0 0 24 24"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg></button>
+          </div>
+        </div>
+      </div>
+    </div><!-- /kb -->
+
+    <!-- ══════════ PAGE: YETKİLENDİRME ══════════ -->
+    <div class="page" id="page-auth">
+      <div class="page-head">
+        <div class="page-title">
+          <div class="ph-icon" style="background:var(--purple-dim)">
+            <svg viewBox="0 0 24 24" style="color:var(--purple)"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+          </div>
+          <div class="ph-text">
+            <h1>Yetkilendirme Paneli</h1>
+            <p>Kullanıcı rolleri ve erişim izinlerini yönetin</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="sub-tabs">
+        <button class="sub-tab active" onclick="stab(this,'at-users')">
+          <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+          Kullanıcı Listesi
+        </button>
+        <button class="sub-tab" onclick="stab(this,'at-roles')">
+          <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          Rol Yetkileri
+        </button>
+      </div>
+
+      <div id="at-users">
+        <div class="card">
+          <div class="search-bar">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:13px;font-weight:500;color:var(--text-1)">Kullanıcı Listesi</span>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <div class="inp-wrap" style="width:200px">
+                <svg class="inp-ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input class="inp" placeholder="Kullanıcı ara…">
+              </div>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                <input type="checkbox" style="accent-color:var(--accent)">
+                <span style="font-size:12px;color:var(--text-2)">Sadece bekleyenler</span>
+              </label>
+              <button class="btn primary" style="height:30px;font-size:12px">
+                <svg viewBox="0 0 24 24"><polyline points="23 4 23 11 16 11"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 11"/></svg>
+                Yenile
+              </button>
+            </div>
+          </div>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>KULLANICI</th>
+                <th>KULLANICI ADI</th>
+                <th>E-POSTA</th>
+                <th>KAYIT TARİHİ</th>
+                <th>ROL</th>
+                <th>ORG GRUPLARI</th>
+                <th>DURUM</th>
+                <th>İŞLEMLER</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><div style="display:flex;align-items:center;gap:8px"><div style="width:28px;height:28px;border-radius:50%;background:var(--grad-logo);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#fff;flex-shrink:0">YF</div><span style="color:var(--text-1);font-weight:500">YASİN FAZLIOĞLU</span></div></td>
+                <td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">admin</td>
+                <td style="font-size:12px">yasin.fazlioglu@consultant.turkcell.com.tr</td>
+                <td style="font-family:'IBM Plex Mono',monospace;font-size:11px">10.03.2026</td>
+                <td>
+                  <select class="inp" style="padding:4px 8px;height:auto;font-size:11.5px;width:auto">
+                    <option>admin</option><option>user</option><option>viewer</option>
+                  </select>
+                </td>
+                <td>
+                  <div style="display:flex;align-items:center;gap:5px">
+                    <span class="badge badge-purple">ORG-ADMIN</span>
+                    <button class="act-btn edit"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+                  </div>
+                </td>
+                <td><span class="badge badge-green"><span class="badge-dot"></span>Aktif</span></td>
+                <td>
+                  <div class="action-btns">
+                    <button class="btn" style="height:26px;font-size:11px;padding:0 10px">Onayla</button>
+                    <button class="act-btn del"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td><div style="display:flex;align-items:center;gap:8px"><div style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#34D399,#059669);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#fff;flex-shrink:0">AK</div><span style="color:var(--text-1);font-weight:500">AHMET KAYA</span></div></td>
+                <td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">ahmet.kaya</td>
+                <td style="font-size:12px">ahmet.kaya@turkcell.com.tr</td>
+                <td style="font-family:'IBM Plex Mono',monospace;font-size:11px">08.03.2026</td>
+                <td>
+                  <select class="inp" style="padding:4px 8px;height:auto;font-size:11.5px;width:auto">
+                    <option>user</option><option>admin</option><option>viewer</option>
+                  </select>
+                </td>
+                <td><span class="badge badge-blue">ORG-DEFAULT</span></td>
+                <td><span class="badge badge-green"><span class="badge-dot"></span>Aktif</span></td>
+                <td>
+                  <div class="action-btns">
+                    <button class="act-btn del"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td><div style="display:flex;align-items:center;gap:8px"><div style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#FBBF24,#F59E0B);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#fff;flex-shrink:0">MÇ</div><span style="color:var(--text-1);font-weight:500">MERVE ÇELİK</span></div></td>
+                <td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">merve.celik</td>
+                <td style="font-size:12px">merve.celik@turkcell.com.tr</td>
+                <td style="font-family:'IBM Plex Mono',monospace;font-size:11px">07.03.2026</td>
+                <td>
+                  <select class="inp" style="padding:4px 8px;height:auto;font-size:11.5px;width:auto">
+                    <option>viewer</option><option>admin</option><option>user</option>
+                  </select>
+                </td>
+                <td><span class="badge badge-blue">ORG-DEFAULT</span></td>
+                <td><span class="badge badge-amber"><span class="badge-dot"></span>Beklemede</span></td>
+                <td>
+                  <div class="action-btns">
+                    <button class="btn primary" style="height:26px;font-size:11px;padding:0 10px">Onayla</button>
+                    <button class="act-btn del"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="pager">
+            <span class="pager-info">Toplam: 3 kullanıcı</span>
+            <div class="pager-btns">
+              <button class="pg-btn"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></button>
+              <button class="pg-btn pg-cur">1 / 1</button>
+              <button class="pg-btn"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="at-roles" style="display:none">
+        <div class="card" style="padding:40px;text-align:center">
+          <div style="font-size:13px;color:var(--text-3)">Rol yetki matrisi — yakında.</div>
+        </div>
+      </div>
+    </div><!-- /auth -->
+
+    <!-- ══════════ PAGE: ORGANİZASYONLAR ══════════ -->
+    <div class="page" id="page-orgs">
+      <div class="page-head">
+        <div class="page-title">
+          <div class="ph-icon" style="background:var(--amber-dim)">
+            <svg viewBox="0 0 24 24" style="color:var(--amber)"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2"/></svg>
+          </div>
+          <div class="ph-text">
+            <h1>Organizasyon Yönetimi</h1>
+            <p>Org grupları ve erişim kapsamları</p>
+          </div>
+        </div>
+        <button class="btn primary">
+          <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Yeni Organizasyon
+        </button>
+      </div>
+
+      <div class="card">
+        <div class="search-bar">
+          <div class="inp-wrap" style="width:280px">
+            <svg class="inp-ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input class="inp" placeholder="Org kodu veya adı ile ara…">
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn" style="height:30px;font-size:12px;background:var(--accent-subtle);border-color:var(--border-accent);color:var(--text-acc)">Tümü</button>
+            <button class="btn" style="height:30px;font-size:12px">Aktif</button>
+            <button class="btn" style="height:30px;font-size:12px">Pasif</button>
+          </div>
+        </div>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>ORG KODU</th>
+              <th>ORG ADI</th>
+              <th>DURUM</th>
+              <th>KULLANICI</th>
+              <th>DÖKÜMAN</th>
+              <th>İŞLEMLER</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="badge badge-blue">ORG-DEFAULT</span></td>
+              <td style="color:var(--text-1);font-weight:500">Genel Kullanıcılar</td>
+              <td><span class="badge badge-green"><span class="badge-dot"></span>Aktif</span></td>
+              <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">0</td>
+              <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">0</td>
+              <td><div class="action-btns"><button class="act-btn edit"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button><button class="act-btn del"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button></div></td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-purple">ORG-ADMIN</span></td>
+              <td style="color:var(--text-1);font-weight:500">Yönetici Grubu</td>
+              <td><span class="badge badge-green"><span class="badge-dot"></span>Aktif</span></td>
+              <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">1</td>
+              <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">0</td>
+              <td><div class="action-btns"><button class="act-btn edit"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button><button class="act-btn del"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button></div></td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-amber">ORG-NOC</span></td>
+              <td style="color:var(--text-1);font-weight:500">NOC Operatörleri</td>
+              <td><span class="badge badge-amber"><span class="badge-dot"></span>Pasif</span></td>
+              <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">0</td>
+              <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">5</td>
+              <td><div class="action-btns"><button class="act-btn edit"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button><button class="act-btn del"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button></div></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="pager">
+          <span class="pager-info">Toplam: 3 kayıt</span>
+          <div class="pager-btns">
+            <button class="pg-btn"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></button>
+            <button class="pg-btn pg-cur">1 / 1</button>
+            <button class="pg-btn"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></button>
+          </div>
+        </div>
+      </div>
+    </div><!-- /orgs -->
+
+    <!-- ══════════ PAGE: PROFİLİM ══════════ -->
+    <div class="page" id="page-profile">
+      <div class="page-head">
+        <div class="page-title">
+          <div class="ph-icon" style="background:var(--accent-subtle)">
+            <svg viewBox="0 0 24 24" style="color:var(--accent)"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          </div>
+          <div class="ph-text">
+            <h1>Profilim</h1>
+            <p>Kişisel bilgiler ve güvenlik ayarları</p>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:220px 1fr;gap:18px;align-items:start">
+        <!-- Avatar card -->
+        <div class="card">
+          <div class="profile-avatar-block">
+            <div class="p-avatar">YF</div>
+            <div>
+              <div class="p-name">Yasin Fazlıoğlu</div>
+              <div class="p-role">admin</div>
+            </div>
+            <span class="badge badge-green"><span class="badge-dot"></span>AKTİF</span>
+            <button class="btn" style="width:100%">
+              <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+              Fotoğraf Değiştir
+            </button>
+          </div>
+        </div>
+
+        <!-- Forms -->
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <!-- Kişisel bilgiler -->
+          <div class="card">
+            <div class="sec-head">
+              <div class="sec-title">
+                <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                Kişisel Bilgiler
+              </div>
+            </div>
+            <div class="form-grid">
+              <div>
+                <label class="fg-label">Ad Soyad</label>
+                <input class="inp" value="YASİN FAZLIOĞLU">
+              </div>
+              <div>
+                <label class="fg-label">Kullanıcı Adı</label>
+                <input class="inp" value="admin">
+              </div>
+              <div>
+                <label class="fg-label">E-posta</label>
+                <input class="inp" type="email" value="yasin.fazlioglu@consultant.turkcell.com.tr">
+              </div>
+              <div>
+                <label class="fg-label">Telefon</label>
+                <input class="inp" value="5325555981">
+              </div>
+            </div>
+            <div style="padding:0 18px 16px">
+              <button class="btn primary">
+                <svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v14a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                Bilgileri Kaydet
+              </button>
+            </div>
+          </div>
+
+          <!-- Güvenlik -->
+          <div class="card">
+            <div class="sec-head">
+              <div class="sec-title">
+                <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+                Güvenlik & Şifre
+              </div>
+            </div>
+            <div class="form-grid">
+              <div class="form-grid" style="grid-template-columns:1fr;gap:10px;padding:0">
+                <div>
+                  <label class="fg-label">Mevcut Şifre</label>
+                  <input class="inp" type="password" value="••••••••">
+                </div>
+              </div>
+              <div></div>
+              <div>
+                <label class="fg-label">Yeni Şifre</label>
+                <input class="inp" type="password" placeholder="En az 8 karakter">
+              </div>
+              <div>
+                <label class="fg-label">Yeni Şifre (Tekrar)</label>
+                <input class="inp" type="password" placeholder="••••••••">
+              </div>
+            </div>
+            <div style="padding:4px 18px 16px;display:flex;align-items:center;gap:8px">
+              <svg viewBox="0 0 24 24" style="width:12px;height:12px;stroke:var(--green);fill:none;stroke-width:2"><polyline points="20 6 9 17 4 12"/></svg>
+              <span style="font-size:11.5px;color:var(--text-3)">En az 8 karakter</span>
+            </div>
+            <div style="padding:0 18px 16px">
+              <button class="btn primary">
+                <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+                Şifreyi Güncelle
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /profile -->
+
+  </div><!-- /content-area -->
+</main>
+
+<script>
+/* ── Theme ── */
+function toggleTheme(){
+  const h=document.documentElement;
+  const light=h.getAttribute('data-theme')==='light';
+  h.setAttribute('data-theme',light?'dark':'light');
+  const sun='<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>';
+  const moon='<path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>';
+  document.getElementById('theme-ico').innerHTML=light?moon:sun;
+}
+
+/* ── Nav ── */
+const pageMap={
+  ana:'params', params:'params', kb:'kb',
+  auth:'auth', orgs:'orgs', profile:'profile'
+};
+const titleMap={
+  params:'Sistem Parametreleri', kb:'Bilgi Tabanı Yönetimi',
+  auth:'Yetkilendirme Paneli', orgs:'Organizasyon Yönetimi', profile:'Profilim'
+};
+function nav(el,key){
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  el.classList.add('active');
+  const pg=pageMap[key]||key;
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  const target=document.getElementById('page-'+pg);
+  if(target)target.classList.add('active');
+  document.getElementById('topTitle').innerHTML='<strong>'+(titleMap[pg]||pg)+'</strong>';
+}
+
+/* ── Sub-tabs ── */
+function stab(btn,contentId){
+  const parent=btn.closest('.sub-tabs');
+  parent.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+  // Find sibling content divs
+  const page=btn.closest('.page');
+  const allTabs=Array.from(parent.querySelectorAll('.sub-tab'));
+  // Each sub-tab corresponds to an id; hide all siblings, show target
+  const tabIds={
+    'pt-llm':1,'pt-prompt':1,'pt-train':1,'pt-ldap':1,'pt-org':1,
+    'at-users':1,'at-roles':1
+  };
+  if(tabIds[contentId]){
+    // Find all tab content divs in same page
+    Object.keys(tabIds).forEach(id=>{
+      const el=document.getElementById(id);
+      if(el)el.style.display='none';
+    });
+    const el=document.getElementById(contentId);
+    if(el)el.style.display='block';
+  }
+}
+
+/* ── Session timer ── */
+let s=1367;
+setInterval(()=>{
+  s++;
+  const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;
+  const el=document.getElementById('tmr');
+  if(el)el.textContent=`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+},1000);
+</script>
+</body>
+</html>

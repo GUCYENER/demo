@@ -56,36 +56,12 @@ window.RAGFileList = {
         const totalPages = Math.ceil(total / perPage) || 1;
 
         let html = `
-            <button onclick="RAGUpload.goToFilesPage(1)" 
-                style="padding: 8px 14px; border-radius: 6px; border: none; cursor: pointer;
-                ${page === 1 ? 'opacity: 0.5; cursor: not-allowed;' : ''} 
-                background: rgba(255,255,255,0.1); color: #9ca3af;"
-                ${page === 1 ? 'disabled' : ''}>
-                <i class="fa-solid fa-angles-left"></i>
+            <button class="pg-btn" onclick="RAGUpload.goToFilesPage(${page - 1})" ${page === 1 ? 'disabled style="opacity:0.4;pointer-events:none"' : ''}>
+                <i class="fa-solid fa-chevron-left" style="font-size:10px"></i>
             </button>
-            <button onclick="RAGUpload.goToFilesPage(${page - 1})" 
-                style="padding: 8px 14px; border-radius: 6px; border: none; cursor: pointer;
-                ${page === 1 ? 'opacity: 0.5; cursor: not-allowed;' : ''} 
-                background: rgba(255,255,255,0.1); color: #9ca3af;"
-                ${page === 1 ? 'disabled' : ''}>
-                <i class="fa-solid fa-chevron-left"></i>
-            </button>
-            <span style="padding: 8px 14px; color: #a5b4fc; font-weight: 600;">
-                ${page} / ${totalPages}
-            </span>
-            <button onclick="RAGUpload.goToFilesPage(${page + 1})" 
-                style="padding: 8px 14px; border-radius: 6px; border: none; cursor: pointer;
-                ${page >= totalPages ? 'opacity: 0.5; cursor: not-allowed;' : ''} 
-                background: rgba(255,255,255,0.1); color: #9ca3af;"
-                ${page >= totalPages ? 'disabled' : ''}>
-                <i class="fa-solid fa-chevron-right"></i>
-            </button>
-            <button onclick="RAGUpload.goToFilesPage(${totalPages})" 
-                style="padding: 8px 14px; border-radius: 6px; border: none; cursor: pointer;
-                ${page >= totalPages ? 'opacity: 0.5; cursor: not-allowed;' : ''} 
-                background: rgba(255,255,255,0.1); color: #9ca3af;"
-                ${page >= totalPages ? 'disabled' : ''}>
-                <i class="fa-solid fa-angles-right"></i>
+            <button class="pg-btn pg-cur">${page} / ${totalPages}</button>
+            <button class="pg-btn" onclick="RAGUpload.goToFilesPage(${page + 1})" ${page >= totalPages ? 'disabled style="opacity:0.4;pointer-events:none"' : ''}>
+                <i class="fa-solid fa-chevron-right" style="font-size:10px"></i>
             </button>
         `;
         container.innerHTML = html;
@@ -286,17 +262,17 @@ window.RAGFileList = {
 
         if (this.files.length === 0) {
             container.innerHTML = `
-                <div class="rag-empty-state">
-                    <i class="fas fa-folder-open"></i>
-                    <h4>Henüz dosya yok</h4>
-                    <p>Bilgi tabanınıza doküman eklemek için yukarıdaki alana dosya sürükleyin.</p>
+                <div class="rag-empty-state" style="padding:40px;text-align:center">
+                    <i class="fas fa-folder-open" style="font-size:32px;color:var(--text-3);margin-bottom:12px;display:block"></i>
+                    <h4 style="font-size:14px;color:var(--text-1);margin-bottom:6px">Henüz dosya yok</h4>
+                    <p style="font-size:12.5px;color:var(--text-3)">Bilgi tabanınıza doküman eklemek için yukarıdaki alana dosya sürükleyin.</p>
                 </div>
             `;
             return;
         }
 
         const tableHTML = `
-            <table class="rag-files-table">
+            <table class="data-table">
                 <thead>
                     <tr>
                         <th style="width: 40px;">

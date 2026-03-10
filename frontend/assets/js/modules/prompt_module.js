@@ -59,7 +59,7 @@ window.PromptModule = (function () {
 
         if (!token) {
             if (el.grid) {
-                el.grid.innerHTML = '<div class="text-gray-500">Lütfen giriş yapın.</div>';
+                el.grid.innerHTML = '<div class="n-page-empty"><i class="fa-solid fa-lock"></i><p>Lütfen giriş yapın.</p></div>';
             }
             return;
         }
@@ -70,7 +70,7 @@ window.PromptModule = (function () {
         }
 
         try {
-            el.grid.innerHTML = '<div class="text-gray-400"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Yükleniyor...</div>';
+            el.grid.innerHTML = '<div style="padding:20px;color:var(--text-3);font-size:13px"><i class="fa-solid fa-spinner fa-spin" style="margin-right:8px"></i>Yükleniyor...</div>';
 
             const data = await window.VYRA_API.request("/prompts/");
 
@@ -102,7 +102,7 @@ window.PromptModule = (function () {
                 errorMessage = `Hata: ${err.message}`;
             }
 
-            el.grid.innerHTML = `<div class="${messageClass}"><i class="fa-solid fa-exclamation-triangle mr-2"></i>${errorMessage}</div>`;
+            el.grid.innerHTML = `<div style="padding:20px;color:var(--red);font-size:13px"><i class="fa-solid fa-exclamation-triangle" style="margin-right:8px"></i>${errorMessage}</div>`;
         }
     }
 
@@ -112,7 +112,7 @@ window.PromptModule = (function () {
         el.grid.innerHTML = "";
 
         if (!list || list.length === 0) {
-            el.grid.innerHTML = '<div class="text-gray-500">Henüz prompt tanımı yok.</div>';
+            el.grid.innerHTML = '<div class="n-page-empty"><i class="fa-solid fa-wand-magic-sparkles"></i><p>Henüz prompt tanımı yok.</p></div>';
             return;
         }
 
@@ -124,39 +124,29 @@ window.PromptModule = (function () {
             const categoryName = categoryNames[prompt.category] || prompt.category;
 
             const card = document.createElement("div");
-            card.className = `bg-[#1a1d24] rounded-xl p-6 hover:shadow-lg transition border-green-500 border-2`;
+            card.className = "card";
+            card.style.marginBottom = "12px";
 
             card.innerHTML = `
-                <div class="flex items-start justify-between mb-4">
-                    <div class="flex items-center space-x-4 flex-1 min-w-0">
-                        <div class="bg-purple-900/40 p-3 rounded-lg text-purple-400 flex-shrink-0">
-                            <i class="${categoryIcon} text-2xl"></i>
-                        </div>
-                        <div class="min-w-0">
-                            <h4 class="font-bold text-lg text-white truncate">${prompt.title}</h4>
-                            <p class="text-purple-300 text-sm font-mono">${categoryName}</p>
-                        </div>
+                <div class="sec-head">
+                    <div class="sec-title">
+                        <i class="${categoryIcon}" style="color:var(--accent);font-size:13px"></i>
+                        ${prompt.title}
                     </div>
-                    <span class="prompt-active-badge"><i class="fa-solid fa-check mr-1"></i>Aktif</span>
-                </div>
-                
-                ${desc}
-
-                <div class="space-y-2 text-sm text-gray-400 mb-4">
-                    <div class="flex justify-between">
-                        <span>Oluşturma:</span>
-                        <span class="text-gray-200">${new Date(prompt.created_at).toLocaleDateString('tr-TR')}</span>
+                    <div style="display:flex;align-items:center;gap:8px">
+                        <span class="badge badge-green"><span class="badge-dot"></span>Aktif</span>
+                        <button class="act-btn edit" onclick="PromptModule.edit(${prompt.id})" title="Prompt'u düzenle">
+                            <i class="fa-solid fa-pen"></i>
+                        </button>
                     </div>
                 </div>
-
-                <div class="bg-[#0f1116] p-3 rounded-lg text-xs font-mono text-gray-400 max-h-24 overflow-y-auto mb-4">
-                    ${prompt.content.substring(0, 150)}${prompt.content.length > 150 ? '...' : ''}
-                </div>
-
-                <div class="flex items-center justify-end border-t border-gray-700 pt-4 mt-auto">
-                    <button class="text-blue-400 hover:text-blue-300 p-2 rounded hover:bg-white/5 transition" onclick="PromptModule.edit(${prompt.id})" title="Prompt'u düzenle">
-                        <i class="fa-solid fa-pen"></i> Düzenle
-                    </button>
+                <div style="padding:16px 18px">
+                    <div style="font-size:12px;color:var(--text-3);margin-bottom:8px">${categoryName}</div>
+                    ${desc}
+                    <div style="background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--text-2);max-height:96px;overflow-y:auto;line-height:1.6">
+                        ${prompt.content.substring(0, 150)}${prompt.content.length > 150 ? '...' : ''}
+                    </div>
+                    <div style="margin-top:8px;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text-3)">Oluşturma: ${new Date(prompt.created_at).toLocaleDateString('tr-TR')}</div>
                 </div>
             `;
             el.grid.appendChild(card);

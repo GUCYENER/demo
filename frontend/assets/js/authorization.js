@@ -112,36 +112,12 @@
         const totalPages = Math.ceil(total / perPage) || 1;
 
         let html = `
-            <button onclick="window.authorizationModule.goToUsersPage(1)" 
-                style="padding: 8px 14px; border-radius: 6px; border: none; cursor: pointer;
-                ${page === 1 ? 'opacity: 0.5; cursor: not-allowed;' : ''} 
-                background: rgba(255,255,255,0.1); color: #9ca3af;"
-                ${page === 1 ? 'disabled' : ''}>
-                <i class="fa-solid fa-angles-left"></i>
+            <button class="pg-btn" onclick="window.authorizationModule.goToUsersPage(${page - 1})" ${page === 1 ? 'disabled style="opacity:.4;cursor:not-allowed"' : ''}>
+                <i class="fa-solid fa-chevron-left" style="font-size:9px"></i>
             </button>
-            <button onclick="window.authorizationModule.goToUsersPage(${page - 1})" 
-                style="padding: 8px 14px; border-radius: 6px; border: none; cursor: pointer;
-                ${page === 1 ? 'opacity: 0.5; cursor: not-allowed;' : ''} 
-                background: rgba(255,255,255,0.1); color: #9ca3af;"
-                ${page === 1 ? 'disabled' : ''}>
-                <i class="fa-solid fa-chevron-left"></i>
-            </button>
-            <span style="padding: 8px 14px; color: #a5b4fc; font-weight: 600;">
-                ${page} / ${totalPages}
-            </span>
-            <button onclick="window.authorizationModule.goToUsersPage(${page + 1})" 
-                style="padding: 8px 14px; border-radius: 6px; border: none; cursor: pointer;
-                ${page >= totalPages ? 'opacity: 0.5; cursor: not-allowed;' : ''} 
-                background: rgba(255,255,255,0.1); color: #9ca3af;"
-                ${page >= totalPages ? 'disabled' : ''}>
-                <i class="fa-solid fa-chevron-right"></i>
-            </button>
-            <button onclick="window.authorizationModule.goToUsersPage(${totalPages})" 
-                style="padding: 8px 14px; border-radius: 6px; border: none; cursor: pointer;
-                ${page >= totalPages ? 'opacity: 0.5; cursor: not-allowed;' : ''} 
-                background: rgba(255,255,255,0.1); color: #9ca3af;"
-                ${page >= totalPages ? 'disabled' : ''}>
-                <i class="fa-solid fa-angles-right"></i>
+            <button class="pg-btn pg-cur">${page} / ${totalPages}</button>
+            <button class="pg-btn" onclick="window.authorizationModule.goToUsersPage(${page + 1})" ${page >= totalPages ? 'disabled style="opacity:.4;cursor:not-allowed"' : ''}>
+                <i class="fa-solid fa-chevron-right" style="font-size:9px"></i>
             </button>
         `;
         container.innerHTML = html;
@@ -205,8 +181,11 @@
 
         tbody.innerHTML = users.map(user => {
             const initials = user.full_name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
-            const statusClass = user.is_approved ? (user.is_active !== false ? "approved" : "inactive") : "pending";
-            const statusText = user.is_approved ? (user.is_active !== false ? "Aktif" : "Pasif") : "Bekliyor";
+            const statusBadge = user.is_approved
+                ? (user.is_active !== false
+                    ? '<span class="badge badge-green"><span class="badge-dot"></span>Aktif</span>'
+                    : '<span class="badge badge-red"><span class="badge-dot"></span>Pasif</span>')
+                : '<span class="badge badge-amber"><span class="badge-dot"></span>Beklemede</span>';
             const createdDate = new Date(user.created_at).toLocaleDateString("tr-TR");
 
             const roleOptions = roles.map(r =>
@@ -216,46 +195,40 @@
             return `
                 <tr data-user-id="${user.id}">
                     <td>
-                        <div class="user-cell">
-                            <div class="user-avatar-small">${initials}</div>
-                            <span>${user.full_name}</span>
+                        <div style="display:flex;align-items:center;gap:8px">
+                            <div style="width:28px;height:28px;border-radius:50%;background:var(--grad-logo);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#fff;flex-shrink:0">${initials}</div>
+                            <span style="color:var(--text-1);font-weight:500">${user.full_name}</span>
                         </div>
                     </td>
-                    <td>${user.username}</td>
-                    <td>${user.email}</td>
-                    <td>${createdDate}</td>
+                    <td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">${user.username}</td>
+                    <td style="font-size:12px">${user.email}</td>
+                    <td style="font-family:'IBM Plex Mono',monospace;font-size:11px">${createdDate}</td>
                     <td>
-                        <select class="role-select modern-select" data-user-id="${user.id}">
+                        <select class="inp role-select" style="padding:4px 8px;height:auto;font-size:11.5px;width:auto" data-user-id="${user.id}">
                             ${roleOptions || '<option value="2">user</option>'}
                         </select>
                     </td>
                     <td>
-                        <div class="org-display-group" data-user-id="${user.id}">
-                            <div class="org-badges-row">
+                        <div style="display:flex;align-items:center;gap:5px" data-user-id="${user.id}">
+                            <div class="org-badges-row" style="display:flex;gap:4px;flex-wrap:wrap">
                                 ${getUserOrgBadges(user)}
                             </div>
-                            <button class="btn-edit-orgs" data-user-id="${user.id}" title="Org Gruplarını Düzenle">
+                            <button class="act-btn edit btn-edit-orgs" data-user-id="${user.id}" title="Org Gruplarını Düzenle">
                                 <i class="fa-solid fa-pen"></i>
                             </button>
                         </div>
                     </td>
+                    <td>${statusBadge}</td>
                     <td>
-                        <span class="status-badge ${statusClass}">${statusText}</span>
-                    </td>
-                    <td>
-                        <div class="action-buttons">
+                        <div class="action-btns">
                             ${!user.is_approved ? `
-                                <button class="btn-approve" data-user-id="${user.id}" title="Onayla">
-                                    <i class="fa-solid fa-check"></i> Onayla
-                                </button>
-                                <button class="btn-reject" data-user-id="${user.id}" title="Reddet">
+                                <button class="btn primary btn-approve" style="height:26px;font-size:11px;padding:0 10px" data-user-id="${user.id}" title="Onayla">Onayla</button>
+                                <button class="act-btn del btn-reject" data-user-id="${user.id}" title="Reddet">
                                     <i class="fa-solid fa-times"></i>
                                 </button>
-                            ` : `
-                                <span class="action-approved-text">Onaylı</span>
-                            `}
+                            ` : ''}
                             ${user.is_approved ? `
-                                <button class="btn-toggle-active ${user.is_active !== false ? 'active' : 'inactive'}" data-user-id="${user.id}" title="${user.is_active !== false ? 'Pasife Al' : 'Aktife Al'}">
+                                <button class="act-btn btn-toggle-active ${user.is_active !== false ? 'active' : 'inactive'}" data-user-id="${user.id}" data-is-active="${user.is_active !== false}" title="${user.is_active !== false ? 'Pasife Al' : 'Aktife Al'}">
                                     <i class="fa-solid ${user.is_active !== false ? 'fa-user-slash' : 'fa-user-check'}"></i>
                                 </button>
                             ` : ''}
@@ -302,13 +275,13 @@
         // user.orgs varsa kullan, yoksa varsayılan ORG-DEFAULT
         const userOrgs = user.orgs || ['ORG-DEFAULT'];
         if (!userOrgs || userOrgs.length === 0) {
-            return '<span class="org-badge-assigned" title="Varsayılan Organizasyon">ORG-DEFAULT</span>';
+            return '<span class="badge badge-blue" title="Varsayılan Organizasyon" style="font-size:9px">ORG-DEFAULT</span>';
         }
         return userOrgs.map(orgCode => {
             // orgs listesinden uzun adı bul
             const orgDetails = orgs.find(o => o.org_code === orgCode);
             const orgName = orgDetails ? orgDetails.org_name : orgCode;
-            return `<span class="org-badge-assigned" title="${orgName}">${orgCode}</span>`;
+            return `<span class="badge badge-blue" title="${orgName}" style="font-size:9px">${orgCode}</span>`;
         }).join('');
     }
 
@@ -337,7 +310,7 @@
             }
         } else {
             // Dataset yoksa, satırdaki badge'lardan org kodlarını al ve id'lere çevir
-            const badges = row?.querySelectorAll('.org-badge-assigned');
+            const badges = row?.querySelectorAll('.org-badges-row .badge');
             if (badges && badges.length > 0) {
                 const orgCodes = Array.from(badges).map(b => b.textContent.trim());
                 orgModalSelectedIds = orgCodes.map(code => {
@@ -583,9 +556,11 @@
                         return org ? org.org_code : '';
                     }).filter(Boolean);
 
-                    badgesRow.innerHTML = selectedOrgCodes.map(code =>
-                        `<span class="org-badge-assigned">${code}</span>`
-                    ).join('');
+                    badgesRow.innerHTML = selectedOrgCodes.map(code => {
+                        const orgDetails = orgs.find(o => o.org_code === code);
+                        const orgName = orgDetails ? orgDetails.org_name : code;
+                        return `<span class="badge badge-blue" title="${orgName}" style="font-size:9px">${code}</span>`;
+                    }).join('');
                 }
             }
 
@@ -737,8 +712,8 @@
         if (!token) return;
 
         const row = document.querySelector(`tr[data-user-id="${userId}"]`);
-        const badge = row?.querySelector(".status-badge");
-        const isCurrentlyActive = badge?.classList.contains("approved");
+        const toggleBtn = row?.querySelector(".btn-toggle-active");
+        const isCurrentlyActive = toggleBtn?.dataset.isActive === "true";
         const username = (row?.querySelector("td:nth-child(2)")?.textContent?.trim() || "")
             .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
@@ -851,8 +826,9 @@
         if (btnSave) btnSave.classList.toggle("hidden", isLdap);
 
         // LDAP ise şifre bölümü gizle
-        const passwordSection = document.querySelector("#sectionProfile .profile-section:last-child");
-        if (passwordSection && passwordSection.querySelector("#currentPassword")) {
+        const passwordField = document.getElementById("currentPassword");
+        const passwordSection = passwordField ? passwordField.closest(".card") : null;
+        if (passwordSection) {
             passwordSection.classList.toggle("hidden", isLdap);
         }
     }
