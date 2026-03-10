@@ -1,0 +1,831 @@
+/* ==============================================
+   RAG Upload Component Styles
+   Modern SaaS design with glassmorphism
+   ============================================== */
+
+/* Section - No Scroll */
+#sectionKnowledgeBase {
+    overflow: hidden;
+}
+
+/* Container */
+.rag-container {
+    padding: 16px 20px 20px 20px;
+}
+
+.rag-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 0;
+    margin-bottom: 20px;
+}
+
+.rag-title {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--text-primary, #1f2937);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.rag-title i {
+    color: var(--primary-color, #6366f1);
+}
+
+/* Stats Cards */
+.rag-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.rag-stat-card {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(139, 92, 246, 0.1));
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    border-radius: 12px;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    transition: all 0.3s ease;
+}
+
+.rag-stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(99, 102, 241, 0.15);
+}
+
+.rag-stat-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+}
+
+.rag-stat-icon.files {
+    background: linear-gradient(135deg, #6366f1, #818cf8);
+    color: white;
+}
+
+.rag-stat-icon.chunks {
+    background: linear-gradient(135deg, #10b981, #34d399);
+    color: white;
+}
+
+.rag-stat-icon.status {
+    background: linear-gradient(135deg, #f59e0b, #fbbf24);
+    color: white;
+}
+
+.rag-stat-info h4 {
+    font-size: 0.875rem;
+    color: var(--text-secondary, #6b7280);
+    margin-bottom: 4px;
+    font-weight: 500;
+}
+
+.rag-stat-info .stat-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-primary, #1f2937);
+}
+
+/* Upload Zone */
+.rag-upload-zone {
+    border: 2px dashed rgba(99, 102, 241, 0.4);
+    border-radius: 16px;
+    padding: 24px;
+    text-align: center;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.05), rgba(139, 92, 246, 0.05));
+    transition: all 0.3s ease;
+    cursor: pointer;
+    margin-bottom: 16px;
+}
+
+.rag-upload-zone:hover,
+.rag-upload-zone.drag-over {
+    border-color: var(--primary-color, #6366f1);
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(139, 92, 246, 0.1));
+    transform: scale(1.01);
+}
+
+.rag-upload-zone.drag-over {
+    box-shadow: 0 0 30px rgba(99, 102, 241, 0.3);
+}
+
+.upload-icon {
+    width: 60px;
+    height: 60px;
+    margin: 0 auto 12px;
+    background: linear-gradient(135deg, #6366f1, #818cf8);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+    color: white;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        transform: scale(1);
+    }
+
+    50% {
+        transform: scale(1.05);
+    }
+}
+
+.upload-text h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-primary, #1f2937);
+    margin-bottom: 8px;
+}
+
+.upload-text p {
+    color: var(--text-secondary, #6b7280);
+    font-size: 0.875rem;
+    margin-bottom: 16px;
+}
+
+.upload-formats {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+}
+
+.format-badge {
+    background: rgba(99, 102, 241, 0.1);
+    color: var(--primary-color, #6366f1);
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+/* File Input Hidden */
+.rag-file-input {
+    display: none;
+}
+
+/* Upload Progress */
+.upload-progress-container {
+    margin-bottom: 24px;
+    display: none;
+}
+
+.upload-progress-container.active {
+    display: block;
+}
+
+.upload-progress-bar {
+    height: 8px;
+    background: rgba(99, 102, 241, 0.1);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 12px;
+}
+
+.upload-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #6366f1, #818cf8);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+    width: 0%;
+}
+
+.upload-progress-text {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.875rem;
+    color: var(--text-secondary, #6b7280);
+}
+
+/* Files List */
+.rag-files-section {
+    background: var(--bg-card, #ffffff);
+    border-radius: 20px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+    overflow: hidden;
+}
+
+.rag-files-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border-color, #e5e7eb);
+}
+
+.rag-files-header h3 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--text-primary, #1f2937);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.files-count-badge {
+    background: var(--primary-color, #6366f1);
+    color: white;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.rag-files-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.btn-rebuild {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: linear-gradient(135deg, #10b981, #34d399);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn-rebuild:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+}
+
+.btn-rebuild:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.btn-rebuild.loading i {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Files Table */
+.rag-files-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.rag-files-table th,
+.rag-files-table td {
+    padding: 16px 24px;
+    text-align: left;
+}
+
+.rag-files-table th {
+    background: var(--bg-secondary, #f9fafb);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-secondary, #6b7280);
+    letter-spacing: 0.05em;
+}
+
+.rag-files-table tr {
+    border-bottom: 1px solid var(--border-color, #e5e7eb);
+    transition: all 0.2s ease;
+}
+
+.rag-files-table tbody tr:hover {
+    background: rgba(99, 102, 241, 0.03);
+}
+
+.file-name-cell {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.file-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.125rem;
+}
+
+.file-icon.pdf {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+}
+
+.file-icon.docx,
+.file-icon.doc {
+    background: rgba(59, 130, 246, 0.1);
+    color: #3b82f6;
+}
+
+.file-icon.xlsx,
+.file-icon.xls {
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
+}
+
+.file-icon.pptx,
+.file-icon.ppt {
+    background: rgba(249, 115, 22, 0.1);
+    color: #f97316;
+}
+
+.file-icon.txt {
+    background: rgba(107, 114, 128, 0.1);
+    color: #6b7280;
+}
+
+.file-info .file-name {
+    font-weight: 600;
+    color: var(--text-primary, #1f2937);
+    font-size: 0.9375rem;
+}
+
+.file-info .file-name-link {
+    font-weight: 600;
+    color: var(--text-primary, #e5e7eb);
+    font-size: 0.9375rem;
+    text-decoration: none;
+    transition: color 0.2s ease;
+    cursor: pointer;
+}
+
+.file-info .file-name-link:hover {
+    color: #6366f1;
+    text-decoration: underline;
+}
+
+.file-info .file-type {
+    font-size: 0.75rem;
+    color: var(--text-secondary, #6b7280);
+    text-transform: uppercase;
+}
+
+.file-size {
+    color: var(--text-secondary, #6b7280);
+    font-size: 0.875rem;
+}
+
+.file-date {
+    color: var(--text-secondary, #6b7280);
+    font-size: 0.875rem;
+}
+
+.btn-delete-file {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    border: none;
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.btn-delete-file:hover {
+    background: #ef4444;
+    color: white;
+}
+
+/* Empty State */
+.rag-empty-state {
+    padding: 30px 24px;
+    text-align: center;
+}
+
+.rag-empty-state i {
+    font-size: 3rem;
+    color: var(--text-secondary, #6b7280);
+    opacity: 0.5;
+    margin-bottom: 16px;
+}
+
+.rag-empty-state h4 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--text-primary, #1f2937);
+    margin-bottom: 8px;
+}
+
+.rag-empty-state p {
+    color: var(--text-secondary, #6b7280);
+    font-size: 0.875rem;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .rag-header {
+        flex-direction: column;
+        gap: 16px;
+        text-align: center;
+    }
+
+    .rag-stats {
+        grid-template-columns: 1fr;
+    }
+
+    .rag-upload-zone {
+        padding: 32px 16px;
+    }
+
+    .upload-icon {
+        width: 60px;
+        height: 60px;
+        font-size: 1.5rem;
+    }
+
+    .rag-files-table th,
+    .rag-files-table td {
+        padding: 12px 16px;
+    }
+
+    .rag-files-table th:nth-child(3),
+    .rag-files-table td:nth-child(3) {
+        display: none;
+    }
+}
+
+/* Checkbox Styles */
+.rag-checkbox {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: #10b981;
+    border-radius: 4px;
+}
+
+.rag-checkbox:checked {
+    background-color: #10b981;
+}
+
+/* Checkbox column alignment */
+.rag-files-table th:first-child,
+.rag-files-table td:first-child {
+    text-align: center;
+    width: 50px;
+}
+
+/* Org Badge Styles */
+.org-badge-sm {
+    display: inline-block;
+    background: linear-gradient(135deg, #6366f1, #818cf8);
+    color: white;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    margin: 1px;
+}
+
+.file-orgs {
+    max-width: 150px;
+}
+
+.text-muted {
+    color: #6b7280;
+}
+
+/* ---- RAG Maturity Threshold Selector ---- */
+.rag-threshold-selector {
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.08), rgba(251, 191, 36, 0.04));
+    border: 1px dashed rgba(245, 158, 11, 0.3);
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+}
+
+.rag-threshold-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.rag-threshold-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    color: #fbbf24;
+    font-size: 14px;
+}
+
+.rag-threshold-title i {
+    color: #f59e0b;
+}
+
+.rag-threshold-hint {
+    font-size: 12px;
+    color: #6b7280;
+}
+
+.rag-threshold-control {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.rag-threshold-range {
+    flex: 1;
+    height: 6px;
+    appearance: none;
+    -webkit-appearance: none;
+    background: rgba(245, 158, 11, 0.15);
+    border-radius: 4px;
+    outline: none;
+    cursor: pointer;
+}
+
+.rag-threshold-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #f59e0b, #fbbf24);
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.4);
+    cursor: pointer;
+    transition: transform 0.2s;
+}
+
+.rag-threshold-range::-webkit-slider-thumb:hover {
+    transform: scale(1.15);
+}
+
+.rag-threshold-range::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #f59e0b, #fbbf24);
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.4);
+    cursor: pointer;
+    border: none;
+}
+
+.rag-threshold-value {
+    min-width: 48px;
+    text-align: center;
+    font-size: 18px;
+    font-weight: 700;
+    color: #fbbf24;
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.25);
+    border-radius: 8px;
+    padding: 4px 12px;
+}
+
+/* ---- RAG Org Selector ---- */
+.rag-org-selector {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(139, 92, 246, 0.05));
+    border: 1px dashed rgba(99, 102, 241, 0.3);
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 20px;
+}
+
+.rag-org-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.rag-org-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    color: #a5b4fc;
+    font-size: 14px;
+}
+
+.rag-org-title i {
+    color: #6366f1;
+}
+
+.rag-org-hint {
+    font-size: 12px;
+    color: #6b7280;
+}
+
+.rag-org-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.rag-org-loading,
+.rag-org-empty {
+    font-size: 13px;
+    color: #6b7280;
+    font-style: italic;
+}
+
+.rag-org-chip {
+    display: inline-flex;
+    cursor: pointer;
+}
+
+.rag-org-checkbox {
+    display: none;
+}
+
+.rag-org-chip-label {
+    display: inline-block;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    background: rgba(55, 65, 81, 0.5);
+    color: #9ca3af;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: all 0.2s ease;
+}
+
+.rag-org-checkbox:checked+.rag-org-chip-label {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.3), rgba(139, 92, 246, 0.3));
+    color: #c4b5fd;
+    border-color: rgba(139, 92, 246, 0.5);
+    box-shadow: 0 0 12px rgba(139, 92, 246, 0.25);
+}
+
+.rag-org-chip-label:hover {
+    background: rgba(99, 102, 241, 0.15);
+    color: #a5b4fc;
+}
+
+/* ---- RAG Org Display (Badge + Edit Button) ---- */
+.rag-org-display {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.rag-org-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    flex: 1;
+}
+
+.rag-org-badge-selected {
+    display: inline-block;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.3), rgba(99, 102, 241, 0.3));
+    color: #93c5fd;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid rgba(59, 130, 246, 0.4);
+}
+
+.btn-rag-edit-orgs {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(139, 92, 246, 0.2));
+    border: 1px solid rgba(99, 102, 241, 0.4);
+    color: #a5b4fc;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.btn-rag-edit-orgs:hover {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.4), rgba(139, 92, 246, 0.4));
+    transform: scale(1.05);
+    box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
+}
+
+/* File Actions Container */
+.file-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+/* Edit File Org Button */
+.btn-edit-file-org {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(139, 92, 246, 0.2));
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    color: #a5b4fc;
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.btn-edit-file-org:hover {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.4), rgba(139, 92, 246, 0.4));
+    transform: scale(1.1);
+    color: #fff;
+}
+
+/* File Org Edit Modal Info */
+.file-org-edit-info {
+    background: rgba(99, 102, 241, 0.1);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    color: #a5b4fc;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.file-org-edit-info i {
+    color: #818cf8;
+}
+
+/* ---- v2.39.0: RAG Row Status Styles ---- */
+
+/* Processing satırı — yarı şeffaf + pulse animasyonu */
+.rag-row-processing {
+    opacity: 0.7;
+    animation: ragProcessingPulse 2s ease-in-out infinite;
+}
+
+@keyframes ragProcessingPulse {
+    0%, 100% { background-color: transparent; }
+    50% { background-color: rgba(99, 102, 241, 0.06); }
+}
+
+/* Failed satırı — hafif kırmızı arka plan */
+.rag-row-failed {
+    background-color: rgba(239, 68, 68, 0.05) !important;
+}
+
+.rag-row-failed:hover {
+    background-color: rgba(239, 68, 68, 0.08) !important;
+}
+
+/* Status Badge */
+.rag-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: none;
+    vertical-align: middle;
+    margin-left: 6px;
+}
+
+.rag-status-badge.processing {
+    background: rgba(99, 102, 241, 0.15);
+    color: #818cf8;
+    border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.rag-status-badge.failed {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}

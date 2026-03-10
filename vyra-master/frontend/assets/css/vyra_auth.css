@@ -1,0 +1,193 @@
+/* Genel */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #020617;
+  /* çok koyu lacivert */
+  color: #e2e8f0;
+}
+
+/* Ana layout */
+.auth-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  padding: 20px;
+}
+
+/* SOL PANEL ---------------------------------------------------- */
+.auth-sidebar {
+  width: 340px;
+  background: #111827;
+  /* slate-900 */
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #1e293b;
+}
+
+.logo-box {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.logo-img {
+  max-width: 200px;
+}
+
+/* Tabs (Giriş / Kayıt) */
+.auth-tabs {
+  margin-bottom: 24px;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  color: #e5e7eb;
+  font-size: 14px;
+}
+
+.tab input[type="radio"] {
+  accent-color: #facc15;
+  /* sarı (logo ile uyumlu) */
+}
+
+/* Form */
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  font-size: 14px;
+  margin-bottom: 4px;
+  display: block;
+}
+
+.form-group input {
+  width: 100%;
+  padding: 10px;
+  background: #020617;
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+  color: #e5e7eb;
+}
+
+.form-group input::placeholder {
+  color: #6b7280;
+}
+
+.form-group input:focus {
+  border-color: #22c55e;
+  outline: none;
+}
+
+.password-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.password-wrapper input {
+  padding-right: 40px;
+}
+
+.pwd-toggle {
+  position: absolute;
+  right: 10px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: #9ca3af;
+}
+
+.pwd-toggle:hover {
+  color: #e5e7eb;
+}
+
+.hint {
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+/* Buton */
+.auth-button {
+  margin-top: 6px;
+  width: 100%;
+  padding: 11px;
+  background: #22c55e;
+  /* yeşil: ana aksiyon rengi, chat ile uyumlu */
+  border: none;
+  border-radius: 6px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #021016;
+}
+
+.auth-button:hover {
+  background: #16a34a;
+}
+
+/* Mesaj alanı */
+.auth-message {
+  margin-top: 8px;
+  font-size: 13px;
+  min-height: 18px;
+}
+
+/* SAĞ PANEL ---------------------------------------------------- */
+.auth-hero {
+  flex: 1;
+  padding: 80px 60px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  background: #020617;
+  text-align: center;
+}
+
+.hero-title {
+  font-size: 38px;
+  margin-bottom: 12px;
+}
+
+.hero-subtitle {
+  font-size: 28px;
+  color: #bfdbfe;
+  margin-bottom: 12px;
+}
+
+.hero-text {
+  font-size: 16px;
+  color: #cbd5f5;
+}
+
+/* Küçük ekranlar */
+@media (max-width: 900px) {
+  .auth-container {
+    flex-direction: column;
+  }
+
+  .auth-sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid #1e293b;
+  }
+
+  .auth-hero {
+    padding: 40px 20px;
+  }
+}
+
+.hidden {
+  display: none !important;
+}

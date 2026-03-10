@@ -1,0 +1,163 @@
+"""
+VYRA L1 Support API - Configuration Module
+==========================================
+Merkezi konfigürasyon yönetimi. PostgreSQL bağlantısı ve uygulama ayarları.
+"""
+
+from pathlib import Path
+from typing import List
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import model_validator
+
+# Proje kök dizini (vyra_l1_fastapi klasörü)
+BASE_DIR = Path(__file__).resolve().parents[2]
+
+
+class Settings(BaseSettings):
+    """
+    Uygulama ayarları.
+    
+    Tüm ayarlar .env dosyasından veya environment variable'lardan okunabilir.
+    """
+    
+    # -------------------------------------------------
+    #  Genel API ayarları
+    # -------------------------------------------------
+    app_name: str = "VYRA Çözümü Burada Ara"
+    debug: bool = True
+    APP_VERSION: str = "2.52.1"  # İlgisiz İçerik Filtreleme + CatBoost Bypass Fix + Enhance API Fix
+
+    # Frontend & API prefix
+    api_prefix: str = "/api"
+    frontend_origin: str = "http://localhost:5500"
+
+    # CORS için kullanılan origin listesi
+    # Production'da .env'den oku: CORS_ORIGINS=https://vyra.company.com
+    # Birden fazla origin virgülle ayrılarak tanımlanabilir
+    CORS_ORIGINS: str = ""  # .env'den okunur (örn: "https://vyra.company.com,https://admin.vyra.company.com")
+    
+    # Default development origins + .env'den okunan production origins
+    backend_cors_origins: List[str] = [
+        "http://localhost:5500",
+        "http://127.0.0.1:5500",
+        "http://localhost:8002",
+        "http://127.0.0.1:8002",
+    ]
+
+    @model_validator(mode='after')
+    def _merge_cors_origins(self) -> 'Settings':
+        """Production .env'den CORS_ORIGINS varsa listeye ekle."""
+        if self.CORS_ORIGINS:
+            extra_origins = [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+            for origin in extra_origins:
+                if origin not in self.backend_cors_origins:
+                    self.backend_cors_origins.append(origin)
+        return self
+
+    # -------------------------------------------------
+    #  JWT ayarları
+    # -------------------------------------------------
+    JWT_SECRET: str = ""  # ⚠️ ZORUNLU: .env dosyasından ayarlanmalı
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60  # 1 saat
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    
+    def validate_jwt_secret(self) -> None:
+        """JWT_SECRET'ın güvenli bir şekilde ayarlandığını doğrular."""
+        insecure_values = ["", "CHANGE_ME_IN_.ENV", "your-secret-key", "secret", "changeme"]
+        if self.JWT_SECRET in insecure_values or len(self.JWT_SECRET) < 32:
+            raise RuntimeError(
+                "\n" + "=" * 60 + "\n"
+                "🔒 GÜVENLİK HATASI: JWT_SECRET ayarlanmamış!\n"
+                "=" * 60 + "\n"
+                "JWT_SECRET değeri .env dosyasında tanımlanmalıdır.\n"
+                "En az 32 karakter uzunluğunda güvenli bir değer kullanın.\n\n"
+                "Örnek (.env dosyasına ekleyin):\n"
+                "JWT_SECRET=your-super-secret-key-at-least-32-characters-long\n"
+                "=" * 60
+            )
+
+    # -------------------------------------------------
+    #  PostgreSQL Veritabanı Ayarları
+    # -------------------------------------------------
+    # Standalone PostgreSQL kurulumu
+    PGSQL_DIR: str = str(BASE_DIR / "pgsql")
+    
+    # Bağlantı parametreleri
+    # ⚠️ GÜVENLİK: Üretimde 'postgres' superuser yerine 
+    # kısıtlı yetkili 'vyra_app' kullanıcısını kullanın.
+    # Bkz: scripts/create_app_user.sql
+    DB_HOST: str = "localhost"
+    DB_PORT: int = 5005  # Standalone kurulum için özel port
+    DB_NAME: str = "vyra"
+    DB_USER: str = "postgres"      # .env: DB_USER=vyra_app (önerilen)
+    DB_PASSWORD: str = "postgres"  # .env: DB_PASSWORD=guclu_sifre
+
+    # -------------------------------------------------
+    #  RAG / Dosya Yükleme ayarları
+    # -------------------------------------------------
+    # Desteklenen dosya formatları
+    SUPPORTED_FILE_EXTENSIONS: List[str] = [
+        ".pdf", ".docx", ".doc",
+        ".xlsx", ".xls",
+        ".pptx", ".ppt",
+        ".txt"
+    ]
+    
+    # Maksimum dosya boyutu (MB)
+    MAX_FILE_SIZE_MB: int = 50
+    
+    # ChromaDB embedding model
+    EMBEDDING_MODEL: str = "paraphrase-multilingual-MiniLM-L12-v2"
+    
+    # Chunk ayarları
+    CHUNK_SIZE: int = 500
+    CHUNK_OVERLAP: int = 100
+    
+    # -------------------------------------------------
+    #  Cache & Performans Ayarları
+    # -------------------------------------------------
+    EMBEDDING_CACHE_SIZE: int = 500  # Max cached embedding sayısı
+    FUZZY_CACHE_SIZE: int = 500  # Max cached fuzzy match sayısı
+    LLM_BYPASS_THRESHOLD: float = 0.70  # RAG skoru bu değerin üzerindeyse LLM atlanır
+    PGVECTOR_INDEX: bool = True  # pgvector index kullanımı etkin mi
+    REDIS_URL: str = "redis://localhost:6379/1"  # 🆕 v2.50.0: Deep Think cache persistence
+    
+    # -------------------------------------------------
+    #  Scheduler & System Ayarları (v2.27.2)
+    # -------------------------------------------------
+    SCHEDULER_INTERVAL_SECONDS: int = 300  # İnaktif dialog kapatma interval (5 dk)
+    
+    # RAG Arama Parametreleri
+    RAG_DEFAULT_RESULTS: int = 5  # Varsayılan RAG sonuç sayısı
+    RAG_MIN_SCORE: float = 0.30  # 🔧 v2.33.2: 0.40'tan düşürüldü - PDF dokümanları için
+    
+    # DB Connection Yönetimi
+    DB_MAX_RETRIES: int = 15  # Veritabanı bağlantı deneme sayısı
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # -------------------------------------------------
+    #  Computed Properties
+    # -------------------------------------------------
+    
+    @property
+    def DATABASE_URL(self) -> str:
+        """SQLAlchemy için PostgreSQL connection string"""
+        return f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+    
+    @property
+    def PGSQL_BIN_DIR(self) -> Path:
+        """PostgreSQL binary dizini"""
+        return Path(self.PGSQL_DIR) / "bin"
+
+
+settings = Settings()
+
+# 🔒 Startup güvenlik kontrolü
+settings.validate_jwt_secret()

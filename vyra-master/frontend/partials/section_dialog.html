@@ -1,0 +1,65 @@
+<!-- DİALOG CHAT BÖLÜMÜ (v2.14.0) -->
+<section id="sectionDialog" class="space-y-4">
+    <div class="dialog-chat-wrapper">
+        <!-- Header -->
+        <div class="dialog-header">
+            <div class="dialog-header-left">
+                <div class="dialog-avatar">🤖</div>
+                <div class="dialog-title-area">
+                    <h3>VYRA Asistan</h3>
+                    <div class="dialog-status" id="wsConnectionStatus">
+                        <span class="status-dot"></span>
+                        <span class="status-text">Bağlanıyor...</span>
+                    </div>
+                </div>
+            </div>
+            <div class="dialog-header-right">
+                <!-- v2.26.0: Çağrı Aç ve VYRA'ya Sor butonları -->
+                <button type="button" id="dialogTicketBtn" class="dialog-header-btn dialog-ticket-btn"
+                    title="IT çağrı özeti oluştur">
+                    <i class="fa-solid fa-headset"></i>
+                    <span class="ticket-btn-label">Çağrı Aç</span>
+                </button>
+                <button type="button" id="dialogNewBtn" class="dialog-header-btn" title="Yeni soru sor">
+                    <span class="new-dialog-label">Yeni Soru Sor</span>
+                    <i class="fa-solid fa-plus"></i>
+                </button>
+            </div>
+
+            <!-- v2.26.0: Mod Toggle - Ortada (CSS grid 2. sütun) -->
+            <button type="button" id="chatModeToggleBtn" class="dialog-header-btn chat-mode-toggle-btn"
+                onclick="DialogChatModule.toggleChatMode()" title="Vyra ile sohbet moduna geç">
+                <i class="fa-solid fa-comments" id="chatModeIcon"></i>
+                <span class="mode-toggle-label" id="chatModeLabel">Vyra ile Sohbet et</span>
+            </button>
+        </div>
+
+        <!-- Messages Area -->
+        <div class="dialog-messages" id="dialogMessages">
+            <div class="dialog-empty-state">
+                <div class="dialog-empty-icon">💬</div>
+                <div class="dialog-empty-title">Merhaba!</div>
+                <div class="dialog-empty-subtitle">
+                    Size nasıl yardımcı olabilirim? Sorununuzu yazın veya ekran görüntüsü paylaşın.
+                </div>
+            </div>
+        </div>
+
+        <!-- Input Area -->
+        <div class="dialog-input-area">
+            <button type="button" id="dialogAttachBtn" class="dialog-action-btn dialog-attach-btn" title="Dosya Ekle">
+                <i class="fa-solid fa-paperclip"></i>
+            </button>
+            <button type="button" id="dialogVoiceBtn" class="dialog-action-btn dialog-voice-btn" title="Sesli Mesaj">
+                <i class="fa-solid fa-microphone"></i>
+            </button>
+            <div class="dialog-input-wrapper">
+                <textarea id="dialogInput" class="dialog-input" placeholder="Mesajınızı yazın..." rows="1"></textarea>
+            </div>
+            <button type="button" id="dialogSendBtn" class="dialog-action-btn dialog-send-btn" disabled title="Gönder">
+                <i class="fa-solid fa-paper-plane"></i>
+            </button>
+        </div>
+    </div>
+    <input type="file" id="dialogFileInput" accept="image/*" class="hidden" multiple title="Görsel seçin" />
+</section>

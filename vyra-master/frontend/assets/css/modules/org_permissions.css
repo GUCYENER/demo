@@ -1,0 +1,338 @@
+/* ================================================
+   VYRA - Organization Permissions Module Styles
+   v2.46.0 — Modern SaaS Design
+   ================================================ */
+
+/* ---- Org Permissions Content Area ---- */
+#contentOrgPermissions {
+    padding: 0;
+}
+
+/* ---- Add Form Card ---- */
+.org-perm-add-card {
+    background: linear-gradient(135deg, rgba(251, 191, 36, 0.04) 0%, rgba(139, 92, 246, 0.03) 100%);
+    border: 1px solid rgba(251, 191, 36, 0.12);
+    border-radius: 14px;
+    padding: 24px;
+    margin-bottom: 24px;
+}
+
+.org-perm-add-card h4 {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0 0 16px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.org-perm-add-card h4 i {
+    color: var(--primary);
+    font-size: 15px;
+}
+
+.org-perm-add-form {
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
+}
+
+.org-perm-add-form .form-group {
+    flex: 1;
+    margin: 0;
+}
+
+.org-perm-add-form .form-group label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    letter-spacing: 0.2px;
+}
+
+.org-perm-add-form .form-group input {
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border-color);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-primary);
+    font-size: 13px;
+    transition: all 0.2s ease;
+    outline: none;
+    box-sizing: border-box;
+}
+
+.org-perm-add-form .form-group input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.12);
+    background: rgba(251, 191, 36, 0.03);
+}
+
+.org-perm-add-form .form-group input::placeholder {
+    color: var(--text-muted);
+    opacity: 0.5;
+    font-size: 12px;
+}
+
+.org-perm-add-form .btn-add-org {
+    padding: 10px 20px;
+    border-radius: 10px;
+    border: none;
+    background: linear-gradient(135deg, var(--primary) 0%, #f59e0b 100%);
+    color: #000;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+    height: 40px;
+}
+
+.org-perm-add-form .btn-add-org:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(251, 191, 36, 0.3);
+}
+
+.org-perm-add-form .btn-add-org:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+/* ---- Permissions Table Container ---- */
+.org-perm-table-container {
+    overflow-x: auto;
+    border-radius: 12px;
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-card);
+}
+
+.org-perm-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 13px;
+}
+
+.org-perm-table thead th {
+    background: linear-gradient(135deg, rgba(251, 191, 36, 0.06) 0%, rgba(251, 191, 36, 0.02) 100%);
+    color: var(--text-secondary);
+    font-weight: 600;
+    padding: 14px 16px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+    white-space: nowrap;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+}
+
+.org-perm-table thead th:first-child {
+    border-radius: 12px 0 0 0;
+}
+
+.org-perm-table thead th:last-child {
+    border-radius: 0 12px 0 0;
+    text-align: center;
+    width: 80px;
+}
+
+.org-perm-table tbody td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-subtle);
+    vertical-align: middle;
+    transition: background 0.2s ease;
+}
+
+.org-perm-table tbody tr:hover td {
+    background: rgba(251, 191, 36, 0.04);
+}
+
+/* ---- Domain Badge ---- */
+.org-perm-domain-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    background: linear-gradient(135deg, rgba(56, 189, 248, 0.12) 0%, rgba(56, 189, 248, 0.05) 100%);
+    color: #38bdf8;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    border: 1px solid rgba(56, 189, 248, 0.15);
+}
+
+.org-perm-domain-badge i {
+    font-size: 12px;
+    opacity: 0.8;
+}
+
+/* ---- Org Code Badge ---- */
+.org-perm-org-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(139, 92, 246, 0.06) 100%);
+    color: #a78bfa;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    border: 1px solid rgba(139, 92, 246, 0.15);
+}
+
+.org-perm-org-badge i {
+    font-size: 11px;
+    opacity: 0.7;
+}
+
+/* ---- Delete Button ---- */
+.org-perm-table .btn-delete-org {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-card);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 13px;
+    margin: 0 auto;
+    display: flex;
+}
+
+.org-perm-table .btn-delete-org:hover {
+    border-color: #ef4444;
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.1);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(239, 68, 68, 0.15);
+}
+
+/* ---- Empty State ---- */
+.org-perm-empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-muted);
+}
+
+.org-perm-empty i {
+    font-size: 48px;
+    opacity: 0.15;
+    color: var(--primary);
+    display: block;
+    margin-bottom: 16px;
+}
+
+.org-perm-empty p {
+    font-size: 14px;
+    margin: 0 0 6px 0;
+}
+
+.org-perm-empty small {
+    font-size: 12px;
+    opacity: 0.6;
+}
+
+/* ---- Grouped Domain View ---- */
+.org-perm-table .domain-group-first td {
+    border-top: 2px solid rgba(251, 191, 36, 0.1);
+}
+
+/* ---- Responsive ---- */
+@media (max-width: 640px) {
+    .org-perm-add-form {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .org-perm-add-form .btn-add-org {
+        justify-content: center;
+    }
+}
+
+/* ---- Actions Cell ---- */
+.org-perm-actions {
+    display: flex;
+    gap: 6px;
+    justify-content: center;
+}
+
+/* ---- Edit Button ---- */
+.org-perm-table .btn-edit-org {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-card);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 13px;
+}
+
+.org-perm-table .btn-edit-org:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+    background: rgba(251, 191, 36, 0.1);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(251, 191, 36, 0.15);
+}
+
+/* ---- Editing Row Highlight ---- */
+.org-perm-table tbody tr.editing-row td {
+    background: rgba(251, 191, 36, 0.06);
+    border-color: rgba(251, 191, 36, 0.15);
+}
+
+/* ---- Cancel Edit Button ---- */
+.btn-cancel-edit {
+    padding: 10px 16px;
+    border-radius: 10px;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    background: rgba(239, 68, 68, 0.08);
+    color: #f87171;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    height: 40px;
+}
+
+.btn-cancel-edit:hover {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: #ef4444;
+}
+
+/* ---- Update Mode Button ---- */
+.org-perm-add-form .btn-add-org.btn-update-mode {
+    background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+}
+
+.org-perm-add-form .btn-add-org.btn-update-mode:hover {
+    box-shadow: 0 4px 16px rgba(34, 197, 94, 0.3);
+}
+
+/* ---- Edit Mode Card Border ---- */
+.org-perm-add-card:has(.btn-update-mode) {
+    border-color: rgba(34, 197, 94, 0.25);
+    background: linear-gradient(135deg, rgba(34, 197, 94, 0.04) 0%, rgba(34, 197, 94, 0.02) 100%);
+}

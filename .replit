@@ -1,0 +1,26 @@
+modules = ["python-3.11"]
+[agent]
+expertMode = true
+
+[nix]
+channel = "stable-25_05"
+
+[userenv]
+
+[userenv.shared]
+DB_HOST = "helium"
+DB_PORT = "5432"
+DB_NAME = "heliumdb"
+DB_USER = "postgres"
+EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
+CHUNK_SIZE = "500"
+CHUNK_OVERLAP = "100"
+MAX_FILE_SIZE_MB = "50"
+EMBEDDING_CACHE_SIZE = "500"
+FUZZY_CACHE_SIZE = "500"
+LLM_BYPASS_THRESHOLD = "0.70"
+RAG_DEFAULT_RESULTS = "5"
+RAG_MIN_SCORE = "0.4"
+SCHEDULER_INTERVAL_SECONDS = "300"
+debug = "True"
+CORS_ORIGINS = ""

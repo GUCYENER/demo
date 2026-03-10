@@ -1,0 +1,371 @@
+/* =============================================
+   ROL YETKİLENDİRME (RBAC) PANELI
+   Permissions Management Styles
+   ============================================= */
+
+/* Panel Header */
+.permissions-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+    gap: 16px;
+}
+
+.permissions-panel-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.permissions-panel-title i {
+    font-size: 24px;
+    color: #a78bfa;
+}
+
+.permissions-panel-title h3 {
+    font-size: 20px;
+    font-weight: 700;
+    color: #e5e7eb;
+    margin: 0;
+}
+
+.permissions-panel-title p {
+    font-size: 14px;
+    color: #9ca3af;
+    margin: 4px 0 0 0;
+}
+
+/* Role Selector */
+.role-selector {
+    display: flex;
+    gap: 8px;
+    background: rgba(31, 41, 55, 0.5);
+    padding: 6px;
+    border-radius: 12px;
+    border: 1px solid rgba(75, 85, 99, 0.3);
+}
+
+.role-selector-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    color: #9ca3af;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.role-selector-btn:hover {
+    background: rgba(75, 85, 99, 0.3);
+    color: #e5e7eb;
+}
+
+.role-selector-btn.active {
+    background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);
+    color: white;
+    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+}
+
+.role-selector-btn i {
+    font-size: 16px;
+}
+
+/* Admin Warning */
+.admin-perm-warning {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 18px;
+    background: linear-gradient(135deg, rgba(251, 191, 36, 0.1) 0%, rgba(245, 158, 11, 0.05) 100%);
+    border: 1px solid rgba(251, 191, 36, 0.3);
+    border-radius: 10px;
+    margin-bottom: 20px;
+    color: #fbbf24;
+    font-size: 14px;
+}
+
+.admin-perm-warning i {
+    font-size: 18px;
+}
+
+/* Permission Category */
+.permission-category {
+    background: rgba(31, 41, 55, 0.5);
+    border: 1px solid rgba(75, 85, 99, 0.3);
+    border-radius: 12px;
+    margin-bottom: 16px;
+    overflow: hidden;
+}
+
+/* Permission Item */
+.permission-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid rgba(75, 85, 99, 0.2);
+    transition: background 0.2s ease;
+}
+
+.permission-item:last-child {
+    border-bottom: none;
+}
+
+.permission-item:hover {
+    background: rgba(139, 92, 246, 0.05);
+}
+
+.permission-item.menu-item {
+    background: rgba(17, 24, 39, 0.5);
+}
+
+.permission-item.tab-item {
+    padding-left: 44px;
+    background: rgba(31, 41, 55, 0.3);
+}
+
+.permission-item.tab-item::before {
+    content: '';
+    position: absolute;
+    left: 24px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: rgba(139, 92, 246, 0.3);
+}
+
+/* Permission Info */
+.permission-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+}
+
+.permission-info i {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(139, 92, 246, 0.15);
+    border-radius: 8px;
+    color: #a78bfa;
+    font-size: 14px;
+}
+
+.permission-label {
+    font-size: 15px;
+    font-weight: 500;
+    color: #e5e7eb;
+}
+
+/* Type Badge */
+.permission-type-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.permission-type-badge.menu {
+    background: rgba(99, 102, 241, 0.2);
+    color: #818cf8;
+}
+
+.permission-type-badge.tab {
+    background: rgba(34, 197, 94, 0.2);
+    color: #22c55e;
+}
+
+.permission-type-badge.button {
+    background: rgba(251, 191, 36, 0.2);
+    color: #fbbf24;
+}
+
+/* Permission Checkboxes */
+.permission-checkboxes {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.perm-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    user-select: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    background: rgba(31, 41, 55, 0.5);
+    border: 1px solid rgba(75, 85, 99, 0.3);
+    transition: all 0.2s ease;
+}
+
+.perm-checkbox-label:hover {
+    border-color: rgba(139, 92, 246, 0.5);
+    background: rgba(139, 92, 246, 0.1);
+}
+
+.perm-checkbox {
+    width: 16px;
+    height: 16px;
+    accent-color: #8b5cf6;
+    cursor: pointer;
+}
+
+.perm-checkbox:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.perm-checkbox-label:has(.perm-checkbox:disabled) {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.perm-checkbox-text {
+    font-size: 12px;
+    color: #9ca3af;
+    font-weight: 500;
+}
+
+.perm-checkbox:checked+.perm-checkbox-text {
+    color: #a78bfa;
+}
+
+/* Permission Children Container */
+.permission-children {
+    position: relative;
+    border-top: 1px solid rgba(75, 85, 99, 0.2);
+}
+
+/* Actions */
+.permissions-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid rgba(75, 85, 99, 0.3);
+}
+
+.btn-save-permissions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 24px;
+    background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn-save-permissions:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(34, 197, 94, 0.3);
+}
+
+.btn-save-permissions:disabled,
+.btn-save-permissions.btn-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+.btn-reset-permissions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 24px;
+    background: transparent;
+    color: #9ca3af;
+    border: 1px solid rgba(75, 85, 99, 0.5);
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn-reset-permissions:hover {
+    border-color: rgba(239, 68, 68, 0.5);
+    color: #f87171;
+    background: rgba(239, 68, 68, 0.1);
+}
+
+/* Loading State */
+.permissions-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    color: #9ca3af;
+}
+
+.permissions-loading i {
+    font-size: 32px;
+    color: #8b5cf6;
+    margin-bottom: 16px;
+    animation: spin 1s linear infinite;
+}
+
+.permissions-loading span {
+    font-size: 14px;
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .permissions-panel-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .role-selector {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .permission-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+    }
+
+    .permission-checkboxes {
+        width: 100%;
+        justify-content: flex-start;
+    }
+
+    .permission-item.tab-item {
+        padding-left: 20px;
+    }
+}

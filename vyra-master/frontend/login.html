@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="VYRA L1 Support - Dijital Destek Asistanı">
+    <title>VYRA – Dijital Gölgeniz</title>
+    <link rel="icon" type="image/png" href="/api/assets/favicon" />
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Font Awesome - Local -->
+    <link rel="stylesheet" href="assets/vendor/fontawesome/all.min.css" />
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="assets/css/global.css?v=2.46.0" />
+    <link rel="stylesheet" href="assets/css/login.css?v=2.46.0" />
+</head>
+
+<body>
+    <div class="auth-container">
+        <!-- Sol Panel - Form -->
+        <div class="auth-left">
+            <div class="auth-form-wrapper">
+
+
+                <!-- Tab Navigation -->
+                <div class="auth-tabs">
+                    <button class="auth-tab active" data-tab="login">Giriş Yap</button>
+                    <button class="auth-tab" data-tab="register">Kayıt Ol</button>
+                </div>
+
+                <!-- Login Form -->
+                <form id="loginForm" class="auth-form active">
+                    <div class="form-group">
+                        <label for="login-domain">Giriş Türü</label>
+                        <div class="domain-select-wrapper">
+                            <i class="fas fa-network-wired domain-select-icon"></i>
+                            <select id="login-domain" name="domain" class="domain-select">
+                                <option value="">Lokal Kullanıcı (Admin)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="login-username">Kullanıcı Adı</label>
+                        <input type="text" id="login-username" name="username" placeholder="Kullanıcı adınız" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="login-password">Şifre</label>
+                        <div class="password-wrapper">
+                            <input type="password" id="login-password" name="password" placeholder="••••••••" required>
+                            <button type="button" class="password-toggle" data-toggle-password
+                                title="Şifreyi göster/gizle">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="form-options">
+                        <label class="checkbox-wrapper">
+                            <input type="checkbox" id="remember-me">
+                            <span class="checkmark"></span>
+                            <span>Beni Hatırla</span>
+                        </label>
+                    </div>
+
+                    <button type="submit" class="btn-primary">
+                        <i class="fas fa-sign-in-alt"></i>
+                        Giriş Yap
+                    </button>
+
+                    <div id="login-error" class="error-message"></div>
+                </form>
+
+                <!-- Register Form -->
+                <form id="registerForm" class="auth-form" novalidate>
+                    <div class="form-group">
+                        <label for="register-fullname">Ad Soyad</label>
+                        <input type="text" id="register-fullname" name="fullname" placeholder="Ad ve Soyadınız"
+                            required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="register-username">Kullanıcı Adı</label>
+                        <input type="text" id="register-username" name="username" placeholder="Kullanıcı adınız"
+                            required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="register-email">E-posta</label>
+                        <input type="email" id="register-email" name="email" placeholder="ornek@email.com" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="register-phone">Telefon</label>
+                        <input type="tel" id="register-phone" name="phone" placeholder="5XX XXX XXXX" required
+                            maxlength="10" pattern="[0-9]{10}" title="10 haneli telefon numarası girin">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="register-password">Şifre</label>
+                        <div class="password-wrapper">
+                            <input type="password" id="register-password" name="password" placeholder="En az 8 karakter"
+                                required minlength="8">
+                            <button type="button" class="password-toggle" data-toggle-password
+                                title="Şifreyi göster/gizle">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="register-password-confirm">Şifre Tekrar</label>
+                        <div class="password-wrapper">
+                            <input type="password" id="register-password-confirm" name="password_confirm"
+                                placeholder="Şifrenizi doğrulayın" required>
+                            <button type="button" class="password-toggle" data-toggle-password
+                                title="Şifreyi göster/gizle">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn-primary">
+                        <i class="fas fa-user-plus"></i>
+                        Kayıt Ol
+                    </button>
+
+                    <div id="register-error" class="error-message"></div>
+                    <div id="register-success" class="success-message"></div>
+                </form>
+
+                <!-- Footer -->
+                <div class="auth-footer">
+                    <span id="app-version">v...</span>
+                    <span class="copyright">© 2025 Tüm hakları saklıdır.</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sağ Panel - Branding -->
+        <div class="auth-right">
+            <div class="branding-content">
+                <!-- Fallback Logo - Video yüklenene kadar görünür -->
+                <img id="loginLogo" class="branding-logo-fallback" src="assets/images/vyra_logo_new.png"
+                    alt="VYRA Logo">
+                <!-- Video - Yüklendiğinde görünür -->
+                <video id="loginVideo" class="branding-logo-video hidden" autoplay loop muted playsinline></video>
+                <h1 class="branding-title">VYRA Dijital Gölgeniz Her Zaman Yanınızda</h1>
+                <p class="branding-subtitle">Hemen Vyra'lamak için lütfen giriş yapın.</p>
+            </div>
+            <div class="branding-footer">
+                <span>Bir</span>
+                <img src="assets/images/global_bilgi_logo.png" alt="Global Bilgi" class="turkcell-logo">
+                <span>hizmetidir.</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toast-container"></div>
+
+    <!-- Scripts -->
+    <script src="assets/js/config.js?v=2.51.1"></script>
+    <script defer src="assets/js/toast.js?v=2.51.1"></script>
+    <script defer src="assets/js/login.js?v=2.51.1"></script>
+</body>
+
+</html>

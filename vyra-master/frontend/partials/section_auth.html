@@ -1,0 +1,162 @@
+            <!-- YETKİLENDİRME BÖLÜMÜ (Sadece Admin) -->
+            <section id="sectionAuthorization" class="hidden">
+                <div class="authorization-container">
+                    <div class="authorization-header">
+                        <h2 class="text-2xl font-semibold flex items-center gap-3">
+                            <i class="fa-solid fa-user-shield text-yellow-500"></i>
+                            Yetkilendirme Paneli
+                        </h2>
+                        <p class="text-gray-400 mt-1">Kullanıcı rollerini ve erişim izinlerini yönetin.</p>
+                    </div>
+
+                    <!-- Yetkilendirme Sekmeleri -->
+                    <div class="auth-tabs-container">
+                        <div class="auth-tabs">
+                            <button id="tabUsersList" class="auth-tab active" data-tab="users">
+                                <i class="fa-solid fa-users"></i>
+                                Kullanıcı Listesi
+                            </button>
+                            <button id="tabRolePermissions" class="auth-tab" data-tab="permissions">
+                                <i class="fa-solid fa-shield-halved"></i>
+                                Rol Yetkileri
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Kullanıcı Listesi İçeriği -->
+                    <div id="contentUsersList" class="auth-tab-content">
+                        <!-- Pending Users Alert -->
+                        <div id="pendingUsersAlert" class="pending-alert hidden">
+                            <i class="fa-solid fa-exclamation-circle"></i>
+                            <span id="pendingUsersCount">0</span> kullanıcı onay bekliyor
+                        </div>
+
+                        <!-- Users Table -->
+                        <div class="users-table-container">
+                            <div class="users-table-header">
+                                <h3>
+                                    <i class="fa-solid fa-users"></i>
+                                    Kullanıcı Listesi
+                                </h3>
+                                <div class="users-filter" style="display: flex; align-items: center; gap: 12px;">
+                                    <!-- Arama Kutusu - Modern SaaS -->
+                                    <div style="position: relative; display: flex; align-items: center;">
+                                        <i class="fa-solid fa-search"
+                                            style="position: absolute; left: 12px; color: #6b7280; font-size: 14px; pointer-events: none;"></i>
+                                        <input type="text" id="usersSearch" placeholder="Kullanıcı ara..." style="background: linear-gradient(135deg, rgba(99,102,241,0.1), rgba(139,92,246,0.1)); 
+                                        border: 1px solid rgba(99,102,241,0.3); border-radius: 10px; 
+                                        padding: 10px 36px 10px 38px; color: white; width: 200px; font-size: 13px;
+                                        transition: all 0.3s ease; box-shadow: 0 2px 8px rgba(0,0,0,0.1);"
+                                            onfocus="this.style.borderColor='#818cf8'; this.style.boxShadow='0 0 0 3px rgba(99,102,241,0.2)'"
+                                            onblur="this.style.borderColor='rgba(99,102,241,0.3)'; this.style.boxShadow='0 2px 8px rgba(0,0,0,0.1)'"
+                                            oninput="window.authorizationModule.onUsersSearchInput(this)">
+                                        <button id="usersSearchClear" class="hidden"
+                                            onclick="window.authorizationModule.clearUsersSearch()" style="position: absolute; right: 10px; background: rgba(239,68,68,0.2); 
+                                        border: none; color: #f87171; cursor: pointer; padding: 4px 6px; border-radius: 50%;
+                                        transition: all 0.2s ease;"
+                                            onmouseover="this.style.background='rgba(239,68,68,0.4)'"
+                                            onmouseout="this.style.background='rgba(239,68,68,0.2)'">
+                                            <i class="fa-solid fa-times" style="font-size: 10px;"></i>
+                                        </button>
+                                    </div>
+                                    <label class="filter-checkbox">
+                                        <input type="checkbox" id="filterPendingOnly">
+                                        <span>Sadece bekleyenler</span>
+                                    </label>
+                                    <button id="btnRefreshUsers" class="btn-refresh">
+                                        <i class="fa-solid fa-rotate"></i>
+                                        Yenile
+                                    </button>
+                                </div>
+                            </div>
+
+                            <table class="users-table">
+                                <thead>
+                                    <tr>
+                                        <th>Kullanıcı</th>
+                                        <th>Kullanıcı Adı</th>
+                                        <th>E-posta</th>
+                                        <th>Kayıt Tarihi</th>
+                                        <th>Rol</th>
+                                        <th>Org Grupları</th>
+                                        <th>Durum</th>
+                                        <th>İşlemler</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="usersTableBody">
+                                    <!-- JS ile doldurulacak -->
+                                </tbody>
+                            </table>
+
+                            <div id="usersEmpty" class="users-empty hidden">
+                                <i class="fa-solid fa-users-slash"></i>
+                                <p>Kullanıcı bulunamadı</p>
+                            </div>
+
+                            <!-- Footer: Toplam Kayıt + Pagination -->
+                            <div class="users-footer"
+                                style="margin-top: 20px; display: flex; justify-content: space-between; align-items: center; padding: 12px 0;">
+                                <span id="usersTotalCount"
+                                    style="color: #a5b4fc; font-size: 13px; background: rgba(99,102,241,0.15); padding: 6px 14px; border-radius: 20px;">Toplam:
+                                    0 kullanıcı</span>
+                                <div id="usersPagination" style="display: flex; gap: 8px;"></div>
+                            </div>
+                        </div><!-- /users-table-container -->
+                    </div><!-- /contentUsersList -->
+
+                    <!-- Rol Yetkileri İçeriği -->
+                    <div id="contentRolePermissions" class="auth-tab-content hidden">
+                        <!-- Panel Header -->
+                        <div class="permissions-panel-header">
+                            <div class="permissions-panel-title">
+                                <div>
+                                    <h3>Rol Bazlı Erişim Yönetimi</h3>
+                                    <p>Menü ve sekmelere erişim yetkilerini düzenleyin</p>
+                                </div>
+                            </div>
+
+                            <!-- Role Selector -->
+                            <div class="role-selector">
+                                <button class="role-selector-btn" data-role="admin">
+                                    <i class="fa-solid fa-crown"></i>
+                                    Yönetici
+                                </button>
+                                <button class="role-selector-btn active" data-role="user">
+                                    <i class="fa-solid fa-user"></i>
+                                    Kullanıcı
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Admin Warning -->
+                        <div id="adminPermWarning" class="admin-perm-warning hidden">
+                            <i class="fa-solid fa-info-circle"></i>
+                            <span>Yönetici rolü tüm yetkilere sahiptir ve değiştirilemez.</span>
+                        </div>
+
+                        <!-- Loading State -->
+                        <div id="permissionsLoading" class="permissions-loading hidden">
+                            <i class="fa-solid fa-spinner fa-spin"></i>
+                            <span>Yetkiler yükleniyor...</span>
+                        </div>
+
+                        <!-- Permission Tree -->
+                        <div id="permissionTree" class="permission-tree">
+                            <!-- JS ile doldurulacak -->
+                        </div>
+
+                        <!-- Actions -->
+                        <div class="permissions-actions">
+                            <button id="btnResetPermissions" class="btn-reset-permissions">
+                                <i class="fa-solid fa-rotate-left"></i>
+                                Geri Al
+                            </button>
+                            <button id="btnSavePermissions" class="btn-save-permissions btn-disabled" disabled>
+                                <i class="fa-solid fa-save"></i>
+                                Kaydet
+                            </button>
+                        </div>
+                    </div><!-- /contentRolePermissions -->
+
+                </div><!-- /authorization-container -->
+            </section>

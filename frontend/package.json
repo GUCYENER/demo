@@ -1,0 +1,14 @@
+{
+    "name": "vyra-frontend",
+    "version": "1.0.0",
+    "private": true,
+    "description": "VYRA L1 Support Frontend Build Pipeline",
+    "scripts": {
+        "build": "node build.mjs",
+        "watch": "node build.mjs --watch",
+        "clean": "node -e \"const fs=require('fs'); if(fs.existsSync('dist')) fs.rmSync('dist',{recursive:true}); console.log('dist/ temizlendi')\""
+    },
+    "devDependencies": {
+        "esbuild": "^0.24.0"
+    }
+}

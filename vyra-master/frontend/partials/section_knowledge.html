@@ -1,0 +1,178 @@
+<!-- BİLGİ TABANI BÖLÜMÜ -->
+<section id="sectionKnowledgeBase" class="hidden">
+    <div class="rag-container">
+        <!-- Header -->
+        <div class="rag-header" style="display: flex; justify-content: space-between; align-items: center;">
+            <h2 class="rag-title">
+                <i class="fa-solid fa-database"></i>
+                Bilgi Tabanı Yönetimi
+            </h2>
+            <button type="button" class="btn-file-guidelines" onclick="FileGuidelinesModal.open()"
+                title="Dosya hazırlama kurallarını görüntüle">
+                <i class="fa-solid fa-book-open"></i>
+                <span>Dosya Hazırlama Kuralları</span>
+            </button>
+        </div>
+
+        <!-- Stats Cards -->
+        <div class="rag-stats">
+            <div class="rag-stat-card">
+                <div class="rag-stat-icon files">
+                    <i class="fa-solid fa-file-lines"></i>
+                </div>
+                <div class="rag-stat-info">
+                    <h4>Yüklü Dosyalar</h4>
+                    <div class="stat-value" id="rag-file-count">0</div>
+                </div>
+            </div>
+
+            <div class="rag-stat-card">
+                <div class="rag-stat-icon chunks">
+                    <i class="fa-solid fa-puzzle-piece"></i>
+                </div>
+                <div class="rag-stat-info">
+                    <h4>Vektör Parçaları</h4>
+                    <div class="stat-value" id="rag-chunk-count">0</div>
+                </div>
+            </div>
+
+            <div class="rag-stat-card">
+                <div class="rag-stat-icon status">
+                    <i class="fa-solid fa-circle-check"></i>
+                </div>
+                <div class="rag-stat-info">
+                    <h4>Durum</h4>
+                    <div class="stat-value" id="rag-status">Hazır</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- İyileştirme Eşik Değeri -->
+        <div class="rag-threshold-selector">
+            <div class="rag-threshold-header">
+                <div class="rag-threshold-title">
+                    <i class="fa-solid fa-sliders"></i>
+                    <span>İyileştirme Eşik Değeri</span>
+                </div>
+                <span class="rag-threshold-hint">Maturity skoru bu değerin altında olan dosyalar için "İyileştir" butonu
+                    görünür</span>
+            </div>
+            <div class="rag-threshold-control">
+                <input type="range" id="rag-maturity-threshold" class="rag-threshold-range" min="0" max="100" value="80"
+                    step="1" />
+                <span class="rag-threshold-value" id="rag-threshold-value">80</span>
+            </div>
+        </div>
+
+        <!-- Org Grupları Seçimi -->
+        <div class="rag-org-selector">
+            <div class="rag-org-header">
+                <div class="rag-org-title">
+                    <i class="fa-solid fa-building"></i>
+                    <span>Hedef Org Grupları</span>
+                </div>
+                <span class="rag-org-hint">Yüklenecek dosyalar seçilen gruplara yetkili olacak</span>
+            </div>
+            <div class="rag-org-display">
+                <div class="rag-org-badges" id="rag-org-badges">
+                    <!-- JS ile doldurulacak -->
+                    <span class="rag-org-loading">Yükleniyor...</span>
+                </div>
+                <button type="button" class="btn-rag-edit-orgs" id="btn-rag-edit-orgs" title="Org Gruplarını Seç">
+                    <i class="fa-solid fa-pen"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Upload Zone -->
+        <div class="rag-upload-zone" id="rag-upload-zone">
+            <!-- Label'dan for attribute kaldırıldı - JS ile kontrol ediliyor -->
+            <label class="sr-only">Bilgi tabanına dosya yükle</label>
+            <input type="file" id="rag-file-input" class="rag-file-input" multiple
+                title="Desteklenen formatlar: PDF, DOCX, XLSX, PPTX, TXT"
+                accept=".pdf,.docx,.doc,.xlsx,.xls,.pptx,.ppt,.txt" aria-label="Bilgi tabanına dosya yükle" />
+
+            <div class="upload-icon">
+                <i class="fa-solid fa-cloud-arrow-up"></i>
+            </div>
+
+            <div class="upload-text">
+                <h3>Dosyalarınızı buraya sürükleyin</h3>
+                <p>veya tıklayarak seçin</p>
+            </div>
+
+            <div class="upload-formats">
+                <span class="format-badge">PDF</span>
+                <span class="format-badge">DOCX</span>
+                <span class="format-badge">XLSX</span>
+                <span class="format-badge">PPTX</span>
+                <span class="format-badge">TXT</span>
+            </div>
+        </div>
+
+        <!-- Upload Progress -->
+        <div class="upload-progress-container">
+            <div class="upload-progress-bar">
+                <div class="upload-progress-fill"></div>
+            </div>
+            <div class="upload-progress-text">
+                <span class="upload-progress-status">Hazırlanıyor...</span>
+                <span class="upload-progress-percent">0%</span>
+            </div>
+        </div>
+
+        <!-- Files Section -->
+        <div class="rag-files-section">
+            <div class="rag-files-header">
+                <h3>
+                    <i class="fa-solid fa-folder-open"></i>
+                    Yüklü Dosyalar
+                    <span class="files-count-badge">0</span>
+                </h3>
+                <div class="rag-files-actions">
+                    <!-- Arama Kutusu - Modern SaaS -->
+                    <div class="rag-files-search-box" style="position: relative; display: flex; align-items: center;">
+                        <i class="fa-solid fa-search"
+                            style="position: absolute; left: 12px; color: #6b7280; font-size: 14px; pointer-events: none;"></i>
+                        <input type="text" id="rag-files-search" placeholder="Dosya ara..." style="background: linear-gradient(135deg, rgba(99,102,241,0.1), rgba(139,92,246,0.1)); 
+                                        border: 1px solid rgba(99,102,241,0.3); border-radius: 10px; 
+                                        padding: 10px 36px 10px 38px; color: white; width: 220px; font-size: 13px;
+                                        transition: all 0.3s ease; box-shadow: 0 2px 8px rgba(0,0,0,0.1);"
+                            onfocus="this.style.borderColor='#818cf8'; this.style.boxShadow='0 0 0 3px rgba(99,102,241,0.2)'"
+                            onblur="this.style.borderColor='rgba(99,102,241,0.3)'; this.style.boxShadow='0 2px 8px rgba(0,0,0,0.1)'"
+                            oninput="RAGUpload.onFilesSearchInput(this)">
+                        <button id="rag-files-search-clear" class="hidden" onclick="RAGUpload.clearFilesSearch()" style="position: absolute; right: 10px; background: rgba(239,68,68,0.2); 
+                                        border: none; color: #f87171; cursor: pointer; padding: 4px 6px; border-radius: 50%;
+                                        transition: all 0.2s ease;"
+                            onmouseover="this.style.background='rgba(239,68,68,0.4)'"
+                            onmouseout="this.style.background='rgba(239,68,68,0.2)'">
+                            <i class="fa-solid fa-times" style="font-size: 10px;"></i>
+                        </button>
+                    </div>
+                    <button id="btn-rebuild-vectorstore" class="btn-rebuild">
+                        <i class="fa-solid fa-sync-alt"></i>
+                        Yeniden Oluştur
+                    </button>
+                </div>
+            </div>
+
+            <div id="rag-files-list">
+                <!-- Dosya listesi JS ile yüklenecek -->
+                <div class="rag-empty-state">
+                    <i class="fa-solid fa-folder-open"></i>
+                    <h4>Henüz dosya yok</h4>
+                    <p>Bilgi tabanınıza doküman eklemek için yukarıdaki alana dosya sürükleyin.</p>
+                </div>
+            </div>
+
+            <!-- Footer: Toplam Kayıt + Pagination -->
+            <div class="rag-files-footer"
+                style="margin-top: 20px; display: flex; justify-content: space-between; align-items: center; padding: 12px 0;">
+                <span id="rag-files-total-count"
+                    style="color: #a5b4fc; font-size: 13px; background: rgba(99,102,241,0.15); padding: 6px 14px; border-radius: 20px;">
+                    Toplam: 0 dosya</span>
+                <div id="rag-files-pagination" style="display: flex; gap: 8px;"></div>
+            </div>
+        </div>
+    </div>
+</section>

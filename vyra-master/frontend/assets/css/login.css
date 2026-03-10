@@ -1,0 +1,464 @@
+/* ================================================
+   VYRA L1 Support - Login/Register Styles
+   Modern SaaS Design (Uses global.css variables)
+   ================================================ */
+
+/* ---- Reset & Base ---- */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html,
+body {
+    height: 100%;
+    overflow: hidden;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg-dark);
+    color: var(--text-primary);
+    line-height: 1.6;
+}
+
+/* ---- Auth Container ---- */
+.auth-container {
+    display: flex;
+    height: 100%;
+}
+
+/* ---- Left Panel - Form ---- */
+.auth-left {
+    flex: 0 0 420px;
+    background: linear-gradient(180deg, var(--bg-dark) 0%, var(--bg-darker) 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px 40px;
+    overflow-y: auto;
+}
+
+.auth-form-wrapper {
+    width: 100%;
+    max-width: 340px;
+}
+
+/* ---- Logo ---- */
+.auth-logo {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 16px;
+}
+
+.logo-img {
+    width: 93px;
+    height: 93px;
+    object-fit: contain;
+}
+
+.logo-img-large {
+    width: 80px;
+    height: 80px;
+    object-fit: contain;
+    border-radius: 16px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.logo-text {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--primary);
+    letter-spacing: 1px;
+}
+
+/* ---- Tabs ---- */
+.auth-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 32px;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 8px;
+}
+
+.auth-tab {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 15px;
+    font-weight: 500;
+    padding: 8px 16px;
+    cursor: pointer;
+    transition: var(--transition);
+    position: relative;
+}
+
+.auth-tab:hover {
+    color: var(--text-secondary);
+}
+
+.auth-tab.active {
+    color: var(--primary);
+}
+
+.auth-tab.active::after {
+    content: '';
+    position: absolute;
+    bottom: -9px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--primary);
+    border-radius: 2px;
+}
+
+/* ---- Forms ---- */
+.auth-form {
+    display: none;
+}
+
+.auth-form.active {
+    display: block;
+}
+
+.form-group {
+    margin-bottom: 12px;
+}
+
+.form-group label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+}
+
+.form-group input {
+    width: 100%;
+    padding: 12px 16px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    font-size: 14px;
+    transition: var(--transition);
+}
+
+.form-group input::placeholder {
+    color: var(--text-muted);
+}
+
+.form-group input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.1);
+}
+
+/* ---- Domain Select (LDAP) ---- */
+.domain-select-wrapper {
+    position: relative;
+}
+
+.domain-select-icon {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+    font-size: 14px;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.domain-select {
+    width: 100%;
+    padding: 12px 16px 12px 40px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: 'Inter', sans-serif;
+    transition: var(--transition);
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239CA3AF' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+}
+
+.domain-select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.1);
+}
+
+.domain-select option {
+    background: var(--bg-darker);
+    color: var(--text-primary);
+    padding: 8px;
+}
+
+/* ---- Password Wrapper ---- */
+.password-wrapper {
+    position: relative;
+}
+
+.password-wrapper input {
+    padding-right: 48px;
+}
+
+.password-toggle {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px;
+    transition: var(--transition);
+}
+
+.password-toggle:hover {
+    color: var(--text-secondary);
+}
+
+/* ---- Checkbox ---- */
+.form-options {
+    margin-bottom: 24px;
+}
+
+.checkbox-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+
+.checkbox-wrapper input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--primary);
+    cursor: pointer;
+}
+
+/* ---- Primary Button ---- */
+.btn-primary {
+    width: 100%;
+    padding: 14px 24px;
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+    border: none;
+    border-radius: var(--radius);
+    color: var(--bg-dark);
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(251, 191, 36, 0.3);
+}
+
+.btn-primary:active {
+    transform: translateY(0);
+}
+
+.btn-primary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* ---- Messages ---- */
+.error-message {
+    margin-top: 16px;
+    padding: 12px 16px;
+    background: rgba(245, 101, 101, 0.1);
+    border: 1px solid var(--error-color);
+    border-radius: var(--radius);
+    color: var(--error-color);
+    font-size: 14px;
+    display: none;
+}
+
+.error-message.show {
+    display: block;
+}
+
+.success-message {
+    margin-top: 16px;
+    padding: 12px 16px;
+    background: rgba(72, 187, 120, 0.1);
+    border: 1px solid var(--success-color);
+    border-radius: var(--radius);
+    color: var(--success-color);
+    font-size: 14px;
+    display: none;
+}
+
+.success-message.show {
+    display: block;
+}
+
+/* ---- Footer ---- */
+.auth-footer {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    font-size: 11px;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+/* ---- Right Panel - Branding ---- */
+.auth-right {
+    flex: 1;
+    background: linear-gradient(135deg, var(--bg-darker) 0%, #0D1117 100%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px;
+    position: relative;
+}
+
+.branding-content {
+    text-align: center;
+}
+
+.branding-logo {
+    width: 180px;
+    height: 180px;
+    margin-bottom: 40px;
+    filter: drop-shadow(0 10px 30px rgba(0, 199, 183, 0.2));
+    animation: float 6s ease-in-out infinite;
+    border-radius: 24px;
+}
+
+/* Video Logo */
+.branding-logo-video {
+    width: 396px;
+    height: 396px;
+    margin-bottom: 40px;
+    object-fit: contain;
+    border-radius: 24px;
+    filter: drop-shadow(0 10px 40px rgba(0, 199, 183, 0.3));
+}
+
+/* Fallback Logo - Video yüklenene kadar görünür */
+.branding-logo-fallback {
+    width: 280px;
+    height: 280px;
+    margin-bottom: 40px;
+    object-fit: contain;
+    border-radius: 24px;
+    filter: drop-shadow(0 10px 40px rgba(251, 191, 36, 0.4));
+    animation: float 6s ease-in-out infinite;
+}
+
+/* Hidden utility class */
+.hidden {
+    display: none !important;
+}
+
+@keyframes float {
+
+    0%,
+    100% {
+        transform: translateY(0);
+    }
+
+    50% {
+        transform: translateY(-20px);
+    }
+}
+
+.branding-title {
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--secondary);
+    margin-bottom: 16px;
+    letter-spacing: -0.5px;
+}
+
+.branding-subtitle {
+    font-size: 18px;
+    color: var(--text-secondary);
+    max-width: 400px;
+    text-align: center;
+    margin: 0 auto;
+}
+
+.branding-footer {
+    position: absolute;
+    bottom: 40px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 18px;
+    color: var(--text-muted);
+}
+
+.turkcell-logo {
+    height: 68px;
+    opacity: 0.9;
+}
+
+/* ---- Responsive ---- */
+@media (max-width: 1024px) {
+    .auth-right {
+        display: none;
+    }
+
+    .auth-left {
+        flex: 1;
+        max-width: none;
+    }
+}
+
+@media (max-width: 480px) {
+    .auth-left {
+        padding: 24px;
+    }
+
+    .auth-form-wrapper {
+        max-width: none;
+    }
+}
+
+/* ---- Loading State ---- */
+.btn-primary.loading {
+    pointer-events: none;
+}
+
+.btn-primary.loading::after {
+    content: '';
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--bg-dark);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-left: 8px;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
