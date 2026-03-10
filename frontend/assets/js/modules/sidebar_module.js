@@ -233,7 +233,12 @@ window.SidebarModule = (function () {
         try {
             const result = await window.VYRA_API?.request('/permissions/my/permissions');
             if (!result || !result.success) {
-                console.log('[Sidebar] Permissions API not available, using default');
+                console.log('[Sidebar] Permissions API not available, using JWT fallback');
+                if (window.authorizationModule && window.authorizationModule.checkAdminAccess()) {
+                    const el = getElements();
+                    if (el.sidebar.authorization) el.sidebar.authorization.classList.remove('hidden');
+                    if (el.sidebar.organizations) el.sidebar.organizations.classList.remove('hidden');
+                }
                 return;
             }
 
