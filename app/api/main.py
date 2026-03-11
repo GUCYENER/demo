@@ -251,17 +251,19 @@ def create_app() -> FastAPI:
 
     frontend_dir = Path(__file__).resolve().parents[2] / "frontend"
     if frontend_dir.exists():
+        _no_cache = {"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"}
+
         @app.get("/")
         async def serve_index():
-            return FileResponse(str(frontend_dir / "login.html"))
+            return FileResponse(str(frontend_dir / "login.html"), headers=_no_cache)
 
         @app.get("/home.html")
         async def serve_home():
-            return FileResponse(str(frontend_dir / "home.html"))
+            return FileResponse(str(frontend_dir / "home.html"), headers=_no_cache)
 
         @app.get("/login.html")
         async def serve_login():
-            return FileResponse(str(frontend_dir / "login.html"))
+            return FileResponse(str(frontend_dir / "login.html"), headers=_no_cache)
 
         @app.get("/organization_management.html")
         async def serve_org():
