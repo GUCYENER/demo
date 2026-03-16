@@ -23,6 +23,7 @@ window.ParamTabsModule = (function () {
                     systemReset: document.getElementById("tabSystemReset"),
                     ldapSettings: document.getElementById("tabLdapSettings"),
                     orgPermissions: document.getElementById("tabOrgPermissions"),
+                    widgetKeys: document.getElementById("tabWidgetKeys"),
                 },
                 content: {
                     llmConfig: document.getElementById("contentLlmConfig"),
@@ -31,6 +32,7 @@ window.ParamTabsModule = (function () {
                     systemReset: document.getElementById("contentSystemReset"),
                     ldapSettings: document.getElementById("contentLdapSettings"),
                     orgPermissions: document.getElementById("contentOrgPermissions"),
+                    widgetKeys: document.getElementById("contentWidgetKeys"),
                 }
             };
         }
@@ -101,6 +103,14 @@ window.ParamTabsModule = (function () {
                     window.OrgPermissionsModule.load();
                 }
                 break;
+
+            case "widgetKeys":
+                if (el.tabs.widgetKeys) el.tabs.widgetKeys.classList.add("active");
+                if (el.content.widgetKeys) el.content.widgetKeys.classList.remove("hidden");
+                if (window.widgetModule) {
+                    window.widgetModule.init();
+                }
+                break;
         }
     }
 
@@ -130,6 +140,10 @@ window.ParamTabsModule = (function () {
 
         if (el.tabs.orgPermissions) {
             el.tabs.orgPermissions.addEventListener("click", () => activateTab("orgPermissions"));
+        }
+
+        if (el.tabs.widgetKeys) {
+            el.tabs.widgetKeys.addEventListener("click", () => activateTab("widgetKeys"));
         }
     }
 

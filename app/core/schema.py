@@ -633,4 +633,28 @@ CREATE TABLE IF NOT EXISTS learned_answers (
 CREATE INDEX IF NOT EXISTS idx_learned_answers_intent ON learned_answers(intent);
 CREATE INDEX IF NOT EXISTS idx_learned_answers_source ON learned_answers(source_file);
 CREATE INDEX IF NOT EXISTS idx_learned_answers_quality ON learned_answers(quality_score DESC);
+
+-- =====================================================
+-- Widget API Keys (v2.60.0)
+-- =====================================================
+
+-- Web widget entegrasyon anahtarları
+-- Her key bir organizasyona bağlıdır ve domain whitelist destekler
+CREATE TABLE IF NOT EXISTS widget_api_keys (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    key_prefix VARCHAR(12) NOT NULL,
+    key_hash TEXT NOT NULL UNIQUE,
+    widget_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    org_id INTEGER REFERENCES organization_groups(id) ON DELETE CASCADE,
+    allowed_domains JSONB DEFAULT '[]',
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_by INTEGER REFERENCES users(id),
+    last_used_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_widget_api_keys_hash ON widget_api_keys(key_hash);
+CREATE INDEX IF NOT EXISTS idx_widget_api_keys_active ON widget_api_keys(is_active);
+CREATE INDEX IF NOT EXISTS idx_widget_api_keys_org ON widget_api_keys(org_id);
 """

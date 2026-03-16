@@ -99,6 +99,7 @@ const JS_FILES = [
     'assets/js/modules/rag_ocr_popup.js',
     'assets/js/modules/ldap_settings.js',
     'assets/js/modules/org_permissions.js',
+    'assets/js/modules/widget_module.js',
 ];
 
 // ===================================================

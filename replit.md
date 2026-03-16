@@ -1,7 +1,7 @@
 # NGSSAI AIOps Platform
 
 ## Overview
-NGSSAI is a Turkish-language AIOps platform (formerly VYRA) built with FastAPI (backend) and static HTML/JS/CSS (frontend). It features RAG-based knowledge search, dialog management, ticket handling, ML training, LDAP authentication, and organization management.
+NGSSAI is a Turkish-language AIOps platform (formerly VYRA) built with FastAPI (backend) and static HTML/JS/CSS (frontend). It features RAG-based knowledge search, dialog management, ticket handling, ML training, LDAP authentication, organization management, and an embeddable **Web Widget** (JS chatbot add-on).
 
 ## Architecture
 - **Backend**: FastAPI (Python 3.11), served via uvicorn on port 5000
@@ -63,3 +63,17 @@ tests/               - Pytest test suite
 - User table renders with .data-table, inline avatar circles, .badge status badges, .inp role select
 - Org table renders with .data-table, .badge org codes, .act-btn action buttons
 - Design reference file: attached_assets/ngssai-pages_1773154303462.html (DO NOT serve, use as CSS/design reference only)
+
+## Web Widget (v2.60.0)
+Standalone embeddable chatbot widget for any website via a single `<script>` tag.
+
+- **Widget JS**: `frontend/widget/widget.src.js` → built to `frontend/widget/dist/widget.js` via `node frontend/widget/build.mjs`
+- **Static serve**: Served at `/widget/widget.js` by FastAPI StaticFiles mount
+- **Auth flow**: Admin creates API key (admin panel → Parametreler → Web Widget) → widget JS uses key to get short-lived JWT via `POST /api/widget/token` → JWT used with existing dialog endpoints
+- **Backend**: `app/api/routes/widget.py` — public token endpoint + admin CRUD for API keys
+- **DB table**: `widget_api_keys` (id, name, key_prefix, key_hash, widget_user_id, org_id, allowed_domains JSONB, is_active, created_at, created_by, last_used_at)
+- **CORS**: `/api/widget/token` allows wildcard origin (custom middleware in main.py); other endpoints use normal auth
+- **Admin UI**: Parametreler → Web Widget tab — key list, create modal, snippet generator (`frontend/assets/js/modules/widget_module.js`)
+- **Test page**: `/widget/test.html` — interactive token test + live widget preview
+- **Shadow DOM**: Widget is isolated from host site CSS (no conflicts)
+- **DB note**: `widget_api_keys` uses RealDictCursor; all row access in widget.py must use dict keys (`row['id']`) not tuple index (`row[0]`)

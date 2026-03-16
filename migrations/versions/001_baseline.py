@@ -493,12 +493,31 @@ def upgrade() -> None:
 
     -- Document Topics
     CREATE INDEX IF NOT EXISTS idx_document_topics_name ON document_topics(topic_name);
+
+    -- Widget API Keys (v2.60.0)
+    CREATE TABLE IF NOT EXISTS widget_api_keys (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        key_prefix VARCHAR(12) NOT NULL,
+        key_hash TEXT NOT NULL UNIQUE,
+        widget_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        org_id INTEGER REFERENCES organization_groups(id) ON DELETE CASCADE,
+        allowed_domains JSONB DEFAULT '[]',
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_by INTEGER REFERENCES users(id),
+        last_used_at TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_widget_api_keys_hash ON widget_api_keys(key_hash);
+    CREATE INDEX IF NOT EXISTS idx_widget_api_keys_active ON widget_api_keys(is_active);
+    CREATE INDEX IF NOT EXISTS idx_widget_api_keys_org ON widget_api_keys(org_id);
     """)
 
 
 def downgrade() -> None:
     """Tüm tabloları ters bağımlılık sırasıyla kaldırır."""
     tables = [
+        "widget_api_keys",
         "document_topics",
         "system_settings",
         "system_assets",

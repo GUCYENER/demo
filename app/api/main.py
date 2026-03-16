@@ -12,7 +12,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import auth, chat, health, rag as rag_routes, tickets, llm_config, prompts, users, system, websocket as ws_routes, organizations, feedback, dialog, permissions, assets, ldap_settings, domain_org_api
+from app.api.routes import auth, chat, health, rag as rag_routes, tickets, llm_config, prompts, users, system, websocket as ws_routes, organizations, feedback, dialog, permissions, assets, ldap_settings, domain_org_api, widget as widget_routes
 from app.core.config import settings
 from app.core.db import init_db
 from app.core.rate_limiter import limiter, get_rate_limit_handler, get_rate_limit_exception
@@ -196,6 +196,27 @@ def create_app() -> FastAPI:
         allow_headers=["Authorization", "Content-Type", "X-Requested-With", "Accept"],
         expose_headers=["Content-Disposition"],
     )
+
+    # v2.60.0: Widget token endpoint herkese açık CORS (herhangi bir domain'den embed)
+    @app.middleware("http")
+    async def widget_cors_middleware(request: Request, call_next):
+        """Widget /api/widget/token endpoint'i için wildcard CORS."""
+        is_widget_path = request.url.path in ("/api/widget/token",)
+        if is_widget_path and request.method == "OPTIONS":
+            from fastapi.responses import Response as FastAPIResponse
+            return FastAPIResponse(
+                status_code=204,
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type",
+                    "Access-Control-Max-Age": "86400",
+                },
+            )
+        response = await call_next(request)
+        if is_widget_path:
+            response.headers["Access-Control-Allow-Origin"] = "*"
+        return response
     
     # 📊 Request Logging Middleware (v2.27.2)
     @app.middleware("http")
@@ -244,6 +265,7 @@ def create_app() -> FastAPI:
     app.include_router(assets.router, prefix="/api/assets", tags=["assets"])  # v2.22.0 - System Assets
     app.include_router(ldap_settings.router)  # v2.46.0 - LDAP/AD Integration
     app.include_router(domain_org_api.router, prefix="/api")  # v2.46.0 - Domain Org Permissions
+    app.include_router(widget_routes.router, prefix="/api")  # v2.60.0 - Web Widget
 
     import os
     from pathlib import Path
@@ -275,6 +297,11 @@ def create_app() -> FastAPI:
         dist_dir = frontend_dir / "dist"
         if dist_dir.exists():
             app.mount("/dist", StaticFiles(directory=str(dist_dir)), name="dist")
+
+        # v2.60.0: Widget static dosyalarını sun (widget.js)
+        widget_dir = frontend_dir / "widget" / "dist"
+        if widget_dir.exists():
+            app.mount("/widget", StaticFiles(directory=str(widget_dir)), name="widget")
 
     return app
 

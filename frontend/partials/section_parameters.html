@@ -44,6 +44,10 @@
             <i class="fa-solid fa-shield-halved"></i>
             Organizasyon Yetki
         </button>
+        <button id="tabWidgetKeys" class="sub-tab admin-only">
+            <i class="fa-solid fa-puzzle-piece"></i>
+            Web Widget
+        </button>
     </div>
 
     <!-- LLM Tanımları İçeriği -->
@@ -632,6 +636,133 @@
                 <button type="button" class="btn-primary-action" id="btnSaveLdap">
                     <i class="fa-solid fa-save"></i> Kaydet
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Widget API Key Yönetimi -->
+    <div id="contentWidgetKeys" class="param-content hidden admin-only">
+        <div class="card" style="margin-bottom:20px">
+            <div class="sec-head">
+                <div class="sec-title">
+                    <i class="fa-solid fa-puzzle-piece" style="color:var(--accent)"></i>
+                    Web Widget API Anahtarları
+                </div>
+                <button id="btnNewWidgetKey" class="btn primary">
+                    <i class="fa-solid fa-plus"></i>
+                    Yeni Anahtar
+                </button>
+            </div>
+
+            <!-- Bilgi Kartı -->
+            <div style="background:var(--accent-subtle);border:1px solid var(--border-accent);border-radius:10px;padding:14px 16px;margin:0 0 18px;display:flex;gap:12px;align-items:flex-start">
+                <i class="fa-solid fa-circle-info" style="color:var(--accent);margin-top:2px;flex-shrink:0"></i>
+                <div style="font-size:13px;color:var(--text-2);line-height:1.6">
+                    Web widget'ı herhangi bir siteye eklemek için bir API anahtarı oluşturun. Anahtarı oluşturduktan sonra aşağıdaki kod snippet'ini hedef siteye yapıştırın.
+                    <br><code style="font-family:monospace;font-size:11px;background:rgba(0,0,0,.2);padding:2px 6px;border-radius:4px">&lt;script src="<span id="widgetBaseUrl"></span>/widget/widget.js" data-key="ngssai_..."&gt;&lt;/script&gt;</code>
+                </div>
+            </div>
+
+            <!-- Tablo -->
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Anahtar Adı</th>
+                            <th>Prefix</th>
+                            <th>Organizasyon</th>
+                            <th>İzinli Domain'ler</th>
+                            <th>Son Kullanım</th>
+                            <th>Durum</th>
+                            <th>İşlemler</th>
+                        </tr>
+                    </thead>
+                    <tbody id="widgetKeysTableBody">
+                        <tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:32px">Yükleniyor...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div id="widgetKeysEmpty" class="hidden" style="padding:40px;text-align:center;color:var(--text-3)">
+                <i class="fa-solid fa-puzzle-piece" style="font-size:28px;opacity:.3;margin-bottom:10px;display:block"></i>
+                Henüz widget API anahtarı oluşturulmadı.
+            </div>
+        </div>
+    </div>
+
+    <!-- Widget Key Modal -->
+    <div id="widgetKeyModal" class="modal-overlay hidden">
+        <div class="modal-box" style="max-width:500px">
+            <div class="modal-header">
+                <h3 id="widgetKeyModalTitle">Yeni Widget API Anahtarı</h3>
+                <button class="modal-close" id="closeWidgetKeyModal"><i class="fa-solid fa-times"></i></button>
+            </div>
+            <div class="modal-body" style="display:flex;flex-direction:column;gap:16px">
+                <div class="fg-label">
+                    <label>Anahtar Adı <span style="color:var(--red)">*</span></label>
+                    <input class="inp" type="text" id="widgetKeyName" placeholder="Örn: Destek Sitesi Widget'ı">
+                </div>
+                <div class="fg-label">
+                    <label>Organizasyon <span style="color:var(--red)">*</span></label>
+                    <select class="inp" id="widgetKeyOrg">
+                        <option value="">Organizasyon seçin...</option>
+                    </select>
+                </div>
+                <div class="fg-label">
+                    <label>İzinli Domain'ler <span style="color:var(--text-3);font-weight:400">(Boşsa herkese açık)</span></label>
+                    <input class="inp" type="text" id="widgetKeyDomains" placeholder="example.com, app.company.com">
+                    <span style="font-size:11.5px;color:var(--text-3)">Virgülle ayırın. Boş bırakırsanız tüm domain'lerden erişime izin verilir.</span>
+                </div>
+                <div class="toggle-wrap">
+                    <div class="toggle-label">
+                        <span style="color:var(--text-1);font-weight:500">Aktif</span>
+                        <span style="color:var(--text-3);font-size:12px">Anahtarı hemen aktifleştir</span>
+                    </div>
+                    <label class="toggle">
+                        <input type="checkbox" id="widgetKeyActive" checked>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" id="cancelWidgetKeyModal">İptal</button>
+                <button class="btn primary" id="saveWidgetKey">
+                    <i class="fa-solid fa-key"></i> Oluştur
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Widget Key Oluşturuldu Modal -->
+    <div id="widgetKeyCreatedModal" class="modal-overlay hidden">
+        <div class="modal-box" style="max-width:520px">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-circle-check" style="color:var(--green)"></i> Anahtar Oluşturuldu</h3>
+                <button class="modal-close" id="closeWidgetCreatedModal"><i class="fa-solid fa-times"></i></button>
+            </div>
+            <div class="modal-body" style="display:flex;flex-direction:column;gap:16px">
+                <div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.25);border-radius:10px;padding:12px 14px;font-size:13px;color:var(--text-2)">
+                    <i class="fa-solid fa-triangle-exclamation" style="color:#fbbf24;margin-right:6px"></i>
+                    Bu anahtar <strong style="color:var(--text-1)">yalnızca bir kez</strong> gösterilmektedir. Güvenli bir yere kopyalayın.
+                </div>
+                <div class="fg-label">
+                    <label>API Anahtarı</label>
+                    <div style="display:flex;gap:8px">
+                        <input class="inp" type="text" id="widgetCreatedKey" readonly style="font-family:monospace;font-size:12px">
+                        <button class="btn" id="copyWidgetKey" title="Kopyala">
+                            <i class="fa-regular fa-copy"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="fg-label">
+                    <label>Entegrasyon Kodu</label>
+                    <textarea class="inp" id="widgetSnippet" readonly rows="3" style="font-family:monospace;font-size:11.5px;resize:none"></textarea>
+                    <button class="btn" id="copyWidgetSnippet" style="margin-top:6px;width:100%">
+                        <i class="fa-regular fa-copy"></i> Kodu Kopyala
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn primary" id="closeWidgetCreatedOk">Tamam, Anladım</button>
             </div>
         </div>
     </div>

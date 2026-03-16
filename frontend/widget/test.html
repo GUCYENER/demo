@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NGSSAI Widget — Test Sayfası</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f4f5f7;
+    color: #1a1d27;
+    min-height: 100vh;
+  }
+  .header {
+    background: #0d0f14;
+    color: #e8eaf0;
+    padding: 20px 40px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid #2a2f45;
+  }
+  .header h1 { font-size: 18px; font-weight: 600; }
+  .header p { font-size: 12px; color: #9da4ba; }
+  .badge {
+    background: #7c6bff22;
+    color: #7c6bff;
+    border: 1px solid #7c6bff44;
+    padding: 3px 10px;
+    border-radius: 100px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .container { max-width: 900px; margin: 40px auto; padding: 0 24px; }
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    border: 1px solid #e2e4e8;
+    padding: 24px;
+    margin-bottom: 20px;
+  }
+  .card h2 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+  .card p { font-size: 13px; color: #6b7280; line-height: 1.5; margin-bottom: 16px; }
+  label { font-size: 12px; font-weight: 500; color: #374151; display: block; margin-bottom: 6px; }
+  input, select {
+    width: 100%;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    padding: 9px 12px;
+    font-size: 13.5px;
+    outline: none;
+    margin-bottom: 12px;
+    transition: border-color .15s;
+  }
+  input:focus, select:focus { border-color: #7c6bff; }
+  .btn {
+    background: #7c6bff;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 20px;
+    font-size: 13.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity .15s;
+  }
+  .btn:hover { opacity: .88; }
+  .btn-outline {
+    background: none;
+    color: #7c6bff;
+    border: 1px solid #7c6bff;
+    border-radius: 8px;
+    padding: 9px 16px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background .15s;
+    margin-right: 8px;
+  }
+  .btn-outline:hover { background: #7c6bff11; }
+  .snippet {
+    background: #0d0f14;
+    color: #c8ccd8;
+    border-radius: 10px;
+    padding: 14px 16px;
+    font-family: monospace;
+    font-size: 12.5px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-all;
+    position: relative;
+    margin: 10px 0;
+  }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+  .dot-ok { background: #22c55e; }
+  .dot-err { background: #ef4444; }
+  .dot-pending { background: #f59e0b; }
+  #testLog {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 12px;
+    font-family: monospace;
+    font-size: 12px;
+    color: #374151;
+    height: 180px;
+    overflow-y: auto;
+    line-height: 1.7;
+  }
+  .log-ok { color: #16a34a; }
+  .log-err { color: #dc2626; }
+  .log-info { color: #2563eb; }
+  .row { display: flex; gap: 10px; align-items: flex-end; margin-bottom: 12px; }
+  .row .fg { flex: 1; }
+  .row .fg label { margin-bottom: 5px; }
+  .row .fg input { margin-bottom: 0; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>NGSSAI Web Widget — Test Sayfası</h1>
+    <p>Widget entegrasyonunu test etmek için bu sayfayı kullanın.</p>
+  </div>
+  <span class="badge">v1.0.0</span>
+</div>
+
+<div class="container">
+
+  <!-- Adım 1: API Key -->
+  <div class="card">
+    <h2>1. Widget API Anahtarı</h2>
+    <p>
+      Admin panelinde <strong>Parametreler → Web Widget</strong> sekmesinde oluşturduğunuz API anahtarını buraya yapıştırın.
+      Henüz oluşturmadıysanız önce admin paneline gidin.
+    </p>
+    <div class="row">
+      <div class="fg">
+        <label>API Anahtarı</label>
+        <input id="apiKeyInput" type="text" placeholder="ngssai_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
+      </div>
+    </div>
+    <button class="btn" onclick="testToken()">Bağlantıyı Test Et</button>
+    <div id="tokenResult" style="margin-top:12px;font-size:13px;display:none"></div>
+  </div>
+
+  <!-- Adım 2: Widget Yükle -->
+  <div class="card">
+    <h2>2. Widget'ı Yükle</h2>
+    <p>API anahtarı geçerliyse aşağıdaki buton ile widget'ı bu sayfada başlatabilirsiniz.</p>
+    <div class="row">
+      <div class="fg">
+        <label>Başlık</label>
+        <input id="wTitle" type="text" value="Destek Asistanı" />
+      </div>
+      <div class="fg">
+        <label>Alt Başlık</label>
+        <input id="wSubtitle" type="text" value="Size nasıl yardımcı olabilirim?" />
+      </div>
+    </div>
+    <div class="row">
+      <div class="fg">
+        <label>Konum</label>
+        <select id="wPosition">
+          <option value="right">Sağ</option>
+          <option value="left">Sol</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label>Vurgu Rengi</label>
+        <input id="wAccent" type="color" value="#7c6bff" style="height:40px;padding:4px 6px" />
+      </div>
+    </div>
+    <button class="btn-outline" onclick="loadWidget()">Widget'ı Başlat</button>
+    <button class="btn-outline" onclick="removeWidget()">Widget'ı Kaldır</button>
+  </div>
+
+  <!-- Adım 3: Snippet -->
+  <div class="card">
+    <h2>3. Entegrasyon Kodu</h2>
+    <p>Herhangi bir siteye widget eklemek için bu kodu &lt;/body&gt; etiketinin hemen öncesine yapıştırın.</p>
+    <div class="snippet" id="snippetEl">&lt;!-- Önce API anahtarı girin ve "Bağlantıyı Test Et"e basın --&gt;</div>
+    <button class="btn-outline" onclick="copySnippet()">Kopyala</button>
+  </div>
+
+  <!-- Test Log -->
+  <div class="card">
+    <h2>Test Günlüğü</h2>
+    <div id="testLog">Hazır. API anahtarını girin ve bağlantıyı test edin...\n</div>
+  </div>
+
+</div>
+
+<script>
+  const BASE_URL = window.location.origin;
+
+  function log(msg, type = "info") {
+    const el = document.getElementById("testLog");
+    const cls = type === "ok" ? "log-ok" : type === "err" ? "log-err" : "log-info";
+    const time = new Date().toLocaleTimeString("tr-TR");
+    el.innerHTML += `<span class="${cls}">[${time}] ${msg}</span>\n`;
+    el.scrollTop = el.scrollHeight;
+  }
+
+  async function testToken() {
+    const apiKey = document.getElementById("apiKeyInput").value.trim();
+    if (!apiKey) { log("API anahtarı boş olamaz.", "err"); return; }
+
+    log(`Token isteği gönderiliyor: ${apiKey.slice(0, 16)}...`, "info");
+
+    try {
+      const resp = await fetch(`${BASE_URL}/api/widget/token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ api_key: apiKey }),
+      });
+
+      const data = await resp.json();
+
+      if (!resp.ok) {
+        log(`HATA ${resp.status}: ${data.detail || JSON.stringify(data)}`, "err");
+        document.getElementById("tokenResult").style.display = "block";
+        document.getElementById("tokenResult").innerHTML =
+          `<span class="status-dot dot-err"></span> Hata: ${data.detail || resp.statusText}`;
+        return;
+      }
+
+      log(`✅ Token alındı! org_code=${data.org_code}, expires=${data.expires_in}s`, "ok");
+      document.getElementById("tokenResult").style.display = "block";
+      document.getElementById("tokenResult").innerHTML =
+        `<span class="status-dot dot-ok"></span> Bağlantı başarılı — org: <strong>${data.org_code}</strong>`;
+
+      updateSnippet(apiKey);
+
+    } catch (e) {
+      log(`Fetch hatası: ${e.message}`, "err");
+    }
+  }
+
+  function updateSnippet(apiKey) {
+    const el = document.getElementById("snippetEl");
+    el.textContent =
+      `<script src="${BASE_URL}/widget/widget.js"\n` +
+      `        data-key="${apiKey}"\n` +
+      `        data-title="Destek Asistanı"\n` +
+      `        data-position="right">\n` +
+      `<\/script>`;
+  }
+
+  function copySnippet() {
+    const text = document.getElementById("snippetEl").textContent;
+    navigator.clipboard?.writeText(text)
+      .then(() => log("Snippet kopyalandı.", "ok"))
+      .catch(() => log("Kopyalama başarısız.", "err"));
+  }
+
+  let widgetLoaded = false;
+  function loadWidget() {
+    const apiKey = document.getElementById("apiKeyInput").value.trim();
+    if (!apiKey) { log("Önce API anahtarı girin.", "err"); return; }
+    if (widgetLoaded) { log("Widget zaten yüklü. Önce kaldırın.", "err"); return; }
+
+    const title = document.getElementById("wTitle").value || "Destek Asistanı";
+    const subtitle = document.getElementById("wSubtitle").value || "";
+    const position = document.getElementById("wPosition").value;
+    const accent = document.getElementById("wAccent").value;
+
+    const script = document.createElement("script");
+    script.id = "ngssai-widget-test-script";
+    script.src = `${BASE_URL}/widget/widget.js`;
+    script.setAttribute("data-key", apiKey);
+    script.setAttribute("data-title", title);
+    script.setAttribute("data-subtitle", subtitle);
+    script.setAttribute("data-position", position);
+    script.setAttribute("data-accent", accent);
+    document.body.appendChild(script);
+
+    widgetLoaded = true;
+    log("Widget script DOM'a eklendi.", "ok");
+  }
+
+  function removeWidget() {
+    const script = document.getElementById("ngssai-widget-test-script");
+    if (script) script.remove();
+    const host = document.querySelector("ngssai-widget");
+    if (host) host.remove();
+    widgetLoaded = false;
+    log("Widget kaldırıldı.", "info");
+  }
+</script>
+</body>
+</html>
