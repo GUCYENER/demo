@@ -1,0 +1,108 @@
+{"ts": "2026-03-11T04:00:03.033154", "level": "DEBUG", "module": "startup", "msg": "Crash recovery: Takılı dosya bulunamadı"}
+{"ts": "2026-03-11T04:00:03.047233", "level": "INFO", "module": "startup", "msg": "🚀 RAG Service preload başlıyor (model + cache warm-up)..."}
+{"ts": "2026-03-11T04:00:03.047574", "level": "INFO", "module": "scheduler", "msg": "[Scheduler] ML Training schedule checker baslatildi"}
+{"ts": "2026-03-11T04:00:03.051894", "level": "INFO", "module": "rag", "msg": "🚀 RAG Service preload başlıyor..."}
+{"ts": "2026-03-11T04:00:03.058042", "level": "DEBUG", "module": "rag", "msg": "ONNX model bulunamadı: /home/runner/workspace/models/embedding/model.onnx"}
+{"ts": "2026-03-11T04:00:40.310390", "level": "WARNING", "module": "rag", "msg": "Offline model yüklenemedi, online deneniyor: We couldn't connect to 'https://huggingface.co' to load the files, and couldn't find them in the cached files.\nCheck your internet connection or see how to run the library in offline mode at 'https://huggingface.co/docs/transformers/installation#offline-mode'."}
+{"ts": "2026-03-11T04:00:40.332152", "level": "ERROR", "module": "rag", "msg": "RAG preload hatası: We couldn't connect to 'https://huggingface.co' to load the files, and couldn't find them in the cached files.\nCheck your internet connection or see how to run the library in offline mode at 'https://huggingface.co/docs/transformers/installation#offline-mode'."}
+{"ts": "2026-03-11T04:00:40.339685", "level": "INFO", "module": "startup", "msg": "✅ RAG Service preload tamamlandı!"}
+{"ts": "2026-03-11T07:40:12.035113", "level": "DEBUG", "module": "startup", "msg": "Crash recovery: Takılı dosya bulunamadı"}
+{"ts": "2026-03-11T07:40:12.049594", "level": "INFO", "module": "startup", "msg": "🚀 RAG Service preload başlıyor (model + cache warm-up)..."}
+{"ts": "2026-03-11T07:40:12.049821", "level": "INFO", "module": "scheduler", "msg": "[Scheduler] ML Training schedule checker baslatildi"}
+{"ts": "2026-03-11T07:40:12.054425", "level": "INFO", "module": "rag", "msg": "🚀 RAG Service preload başlıyor..."}
+{"ts": "2026-03-11T07:40:12.058382", "level": "DEBUG", "module": "rag", "msg": "ONNX model bulunamadı: /home/runner/workspace/models/embedding/model.onnx"}
+{"ts": "2026-03-11T07:40:14.502219", "level": "WARNING", "module": "cache", "msg": "redis paketi yüklü değil, in-memory fallback aktif"}
+{"ts": "2026-03-11T07:40:14.505928", "level": "INFO", "module": "cache", "msg": "Cache service başlatıldı"}
+{"ts": "2026-03-11T07:40:14.522730", "level": "INFO", "module": "api", "msg": "GET /api/auth/ldap-domains - Status: 200", "request_path": "/api/auth/ldap-domains"}
+{"ts": "2026-03-11T07:40:46.807897", "level": "WARNING", "module": "rag", "msg": "Offline model yüklenemedi, online deneniyor: We couldn't connect to 'https://huggingface.co' to load the files, and couldn't find them in the cached files.\nCheck your internet connection or see how to run the library in offline mode at 'https://huggingface.co/docs/transformers/installation#offline-mode'."}
+{"ts": "2026-03-11T07:40:46.821858", "level": "ERROR", "module": "rag", "msg": "RAG preload hatası: We couldn't connect to 'https://huggingface.co' to load the files, and couldn't find them in the cached files.\nCheck your internet connection or see how to run the library in offline mode at 'https://huggingface.co/docs/transformers/installation#offline-mode'."}
+{"ts": "2026-03-11T07:40:46.825255", "level": "INFO", "module": "startup", "msg": "✅ RAG Service preload tamamlandı!"}
+{"ts": "2026-03-11T08:19:57.364625", "level": "INFO", "module": "api", "msg": "GET /api/auth/ldap-domains - Status: 200", "request_path": "/api/auth/ldap-domains"}
+{"ts": "2026-03-11T08:39:44.977801", "level": "INFO", "module": "api", "msg": "GET /api/auth/ldap-domains - Status: 200", "request_path": "/api/auth/ldap-domains"}
+{"ts": "2026-03-11T08:40:46.589289", "level": "DEBUG", "module": "startup", "msg": "Crash recovery: Takılı dosya bulunamadı"}
+{"ts": "2026-03-11T08:40:46.630377", "level": "INFO", "module": "startup", "msg": "🚀 RAG Service preload başlıyor (model + cache warm-up)..."}
+{"ts": "2026-03-11T08:40:46.630612", "level": "INFO", "module": "scheduler", "msg": "[Scheduler] ML Training schedule checker baslatildi"}
+{"ts": "2026-03-11T08:40:46.635345", "level": "INFO", "module": "rag", "msg": "🚀 RAG Service preload başlıyor..."}
+{"ts": "2026-03-11T08:40:46.648982", "level": "DEBUG", "module": "rag", "msg": "ONNX model bulunamadı: /home/runner/workspace/models/embedding/model.onnx"}
+{"ts": "2026-03-11T08:40:47.958485", "level": "WARNING", "module": "cache", "msg": "redis paketi yüklü değil, in-memory fallback aktif"}
+{"ts": "2026-03-11T08:40:47.963504", "level": "INFO", "module": "cache", "msg": "Cache service başlatıldı"}
+{"ts": "2026-03-11T08:40:48.160558", "level": "INFO", "module": "api", "msg": "GET /api/auth/ldap-domains - Status: 200", "request_path": "/api/auth/ldap-domains"}
+{"ts": "2026-03-11T08:40:51.877433", "level": "WARNING", "module": "rag", "msg": "Offline model yüklenemedi, online deneniyor: We couldn't connect to 'https://huggingface.co' to load the files, and couldn't find them in the cached files.\nCheck your internet connection or see how to run the library in offline mode at 'https://huggingface.co/docs/transformers/installation#offline-mode'."}
+{"ts": "2026-03-11T08:40:51.890581", "level": "ERROR", "module": "rag", "msg": "RAG preload hatası: We couldn't connect to 'https://huggingface.co' to load the files, and couldn't find them in the cached files.\nCheck your internet connection or see how to run the library in offline mode at 'https://huggingface.co/docs/transformers/installation#offline-mode'."}
+{"ts": "2026-03-11T08:40:51.894282", "level": "INFO", "module": "startup", "msg": "✅ RAG Service preload tamamlandı!"}
+{"ts": "2026-03-11T08:40:52.026243", "level": "INFO", "module": "api", "msg": "GET /api/auth/ldap-domains - Status: 200", "request_path": "/api/auth/ldap-domains"}
+{"ts": "2026-03-11T10:20:22.893323", "level": "INFO", "module": "api", "msg": "GET /api/auth/ldap-domains - Status: 200", "request_path": "/api/auth/ldap-domains"}
+{"ts": "2026-03-11T10:20:42.352680", "level": "INFO", "module": "api", "msg": "POST /api/auth/login - Status: 200", "request_path": "/api/auth/login"}
+{"ts": "2026-03-11T10:20:45.863368", "level": "DEBUG", "module": "permissions", "msg": "[Permissions] GET /resources"}
+{"ts": "2026-03-11T10:20:45.870392", "level": "DEBUG", "module": "permissions", "msg": "[Permissions] GET /my/permissions - role: admin"}
+{"ts": "2026-03-11T10:20:45.879254", "level": "DEBUG", "module": "permissions", "msg": "[Permissions] Response: 6 permissions"}
+{"ts": "2026-03-11T10:20:45.882698", "level": "INFO", "module": "api", "msg": "GET /api/permissions/resources - Status: 200", "request_path": "/api/permissions/resources"}
+{"ts": "2026-03-11T10:20:45.886462", "level": "INFO", "module": "api", "msg": "GET /api/permissions/my/permissions - Status: 200", "request_path": "/api/permissions/my/permissions"}
+{"ts": "2026-03-11T10:20:46.084653", "level": "INFO", "module": "api", "msg": "GET /api/users/me - Status: 200", "request_path": "/api/users/me"}
+{"ts": "2026-03-11T10:20:46.098166", "level": "INFO", "module": "dialog", "msg": "Dialog #16 oluşturuldu (source: vyra_chat)", "user_id": 1}
+{"ts": "2026-03-11T10:20:46.101526", "level": "INFO", "module": "api", "msg": "GET /api/dialogs/active - Status: 200", "request_path": "/api/dialogs/active"}
+{"ts": "2026-03-11T10:20:46.261421", "level": "INFO", "module": "websocket", "msg": "WebSocket bağlantısı kuruldu: user_id=1"}
+{"ts": "2026-03-11T10:20:46.347390", "level": "INFO", "module": "api", "msg": "GET /api/dialogs/16/messages - Status: 200", "request_path": "/api/dialogs/16/messages"}
+{"ts": "2026-03-11T10:21:02.542274", "level": "INFO", "module": "api", "msg": "GET /api/system/maturity-threshold - Status: 200", "request_path": "/api/system/maturity-threshold"}
+{"ts": "2026-03-11T10:21:02.560863", "level": "INFO", "module": "api", "msg": "GET /api/organizations - Status: 200", "request_path": "/api/organizations"}
+{"ts": "2026-03-11T10:21:02.579626", "level": "INFO", "module": "dialog", "msg": "Dialog #16 kapatıldı", "user_id": 1}
+{"ts": "2026-03-11T10:21:02.582788", "level": "INFO", "module": "api", "msg": "POST /api/dialogs/16/close - Status: 200", "request_path": "/api/dialogs/16/close"}
+{"ts": "2026-03-11T10:21:02.738839", "level": "INFO", "module": "api", "msg": "GET /api/system/maturity-threshold - Status: 200", "request_path": "/api/system/maturity-threshold"}
+{"ts": "2026-03-11T10:21:02.752404", "level": "INFO", "module": "api", "msg": "GET /api/rag/files - Status: 200", "request_path": "/api/rag/files"}
+{"ts": "2026-03-11T10:21:02.756649", "level": "INFO", "module": "api", "msg": "GET /api/rag/stats - Status: 200", "request_path": "/api/rag/stats"}
+{"ts": "2026-03-11T10:21:02.762238", "level": "INFO", "module": "api", "msg": "GET /api/organizations - Status: 200", "request_path": "/api/organizations"}
+{"ts": "2026-03-11T10:21:02.944113", "level": "INFO", "module": "api", "msg": "GET /api/rag/stats - Status: 200", "request_path": "/api/rag/stats"}
+{"ts": "2026-03-11T10:21:02.950384", "level": "INFO", "module": "api", "msg": "GET /api/rag/files - Status: 200", "request_path": "/api/rag/files"}
+{"ts": "2026-03-11T10:21:07.300718", "level": "INFO", "module": "system", "msg": "Maturity threshold güncellendi: 67"}
+{"ts": "2026-03-11T10:21:07.304519", "level": "INFO", "module": "api", "msg": "PUT /api/system/maturity-threshold - Status: 200", "request_path": "/api/system/maturity-threshold"}
+{"ts": "2026-03-11T10:21:08.575529", "level": "INFO", "module": "system", "msg": "Maturity threshold güncellendi: 63"}
+{"ts": "2026-03-11T10:21:08.579100", "level": "INFO", "module": "api", "msg": "PUT /api/system/maturity-threshold - Status: 200", "request_path": "/api/system/maturity-threshold"}
+{"ts": "2026-03-11T10:21:12.036579", "level": "INFO", "module": "system", "msg": "Maturity threshold güncellendi: 79"}
+{"ts": "2026-03-11T10:21:12.041480", "level": "INFO", "module": "api", "msg": "PUT /api/system/maturity-threshold - Status: 200", "request_path": "/api/system/maturity-threshold"}
+{"ts": "2026-03-11T10:21:17.238729", "level": "INFO", "module": "api", "msg": "GET /api/users/roles - Status: 200", "request_path": "/api/users/roles"}
+{"ts": "2026-03-11T10:21:17.436373", "level": "INFO", "module": "api", "msg": "GET /api/users/roles - Status: 200", "request_path": "/api/users/roles"}
+{"ts": "2026-03-11T10:21:17.440892", "level": "INFO", "module": "api", "msg": "GET /api/organizations - Status: 200", "request_path": "/api/organizations"}
+{"ts": "2026-03-11T10:21:17.640613", "level": "INFO", "module": "api", "msg": "GET /api/organizations - Status: 200", "request_path": "/api/organizations"}
+{"ts": "2026-03-11T10:21:17.645724", "level": "INFO", "module": "api", "msg": "GET /api/users/list - Status: 200", "request_path": "/api/users/list"}
+{"ts": "2026-03-11T10:21:17.841501", "level": "INFO", "module": "api", "msg": "GET /api/users/list - Status: 200", "request_path": "/api/users/list"}
+{"ts": "2026-03-11T10:21:35.635529", "level": "DEBUG", "module": "permissions", "msg": "[Permissions] GET /user"}
+{"ts": "2026-03-11T10:21:35.685995", "level": "DEBUG", "module": "permissions", "msg": "[Permissions] Response: 3 permissions for user"}
+{"ts": "2026-03-11T10:21:35.693301", "level": "INFO", "module": "api", "msg": "GET /api/permissions/user - Status: 200", "request_path": "/api/permissions/user"}
+{"ts": "2026-03-11T10:21:35.891904", "level": "DEBUG", "module": "permissions", "msg": "[Permissions] GET /user"}
+{"ts": "2026-03-11T10:21:35.897523", "level": "DEBUG", "module": "permissions", "msg": "[Permissions] Response: 3 permissions for user"}
+{"ts": "2026-03-11T10:21:35.902246", "level": "INFO", "module": "api", "msg": "GET /api/permissions/user - Status: 200", "request_path": "/api/permissions/user"}
+{"ts": "2026-03-11T10:21:43.301627", "level": "INFO", "module": "api", "msg": "GET /api/organizations - Status: 200", "request_path": "/api/organizations"}
+{"ts": "2026-03-11T10:21:43.498843", "level": "INFO", "module": "api", "msg": "GET /api/organizations - Status: 200", "request_path": "/api/organizations"}
+{"ts": "2026-03-11T10:21:45.180010", "level": "INFO", "module": "api", "msg": "GET /api/users/roles - Status: 200", "request_path": "/api/users/roles"}
+{"ts": "2026-03-11T10:21:45.368218", "level": "INFO", "module": "api", "msg": "GET /api/users/roles - Status: 200", "request_path": "/api/users/roles"}
+{"ts": "2026-03-11T10:21:45.374983", "level": "INFO", "module": "api", "msg": "GET /api/organizations - Status: 200", "request_path": "/api/organizations"}
+{"ts": "2026-03-11T10:21:45.566257", "level": "INFO", "module": "api", "msg": "GET /api/organizations - Status: 200", "request_path": "/api/organizations"}
+{"ts": "2026-03-11T10:21:45.572336", "level": "INFO", "module": "api", "msg": "GET /api/users/list - Status: 200", "request_path": "/api/users/list"}
+{"ts": "2026-03-11T10:21:45.782225", "level": "INFO", "module": "api", "msg": "GET /api/users/list - Status: 200", "request_path": "/api/users/list"}
+{"ts": "2026-03-11T10:21:47.107507", "level": "INFO", "module": "api", "msg": "GET /api/organizations - Status: 200", "request_path": "/api/organizations"}
+{"ts": "2026-03-11T10:21:47.303665", "level": "INFO", "module": "api", "msg": "GET /api/organizations - Status: 200", "request_path": "/api/organizations"}
+{"ts": "2026-03-11T10:22:10.616268", "level": "INFO", "module": "api", "msg": "POST /api/organizations - Status: 201", "request_path": "/api/organizations"}
+{"ts": "2026-03-11T10:22:10.819748", "level": "INFO", "module": "api", "msg": "GET /api/organizations - Status: 200", "request_path": "/api/organizations"}
+{"ts": "2026-03-11T10:22:14.966147", "level": "INFO", "module": "api", "msg": "GET /api/users/roles - Status: 200", "request_path": "/api/users/roles"}
+{"ts": "2026-03-11T10:22:15.163202", "level": "INFO", "module": "api", "msg": "GET /api/organizations - Status: 200", "request_path": "/api/organizations"}
+{"ts": "2026-03-11T10:22:15.167018", "level": "INFO", "module": "api", "msg": "GET /api/users/roles - Status: 200", "request_path": "/api/users/roles"}
+{"ts": "2026-03-11T10:22:15.357498", "level": "INFO", "module": "api", "msg": "GET /api/organizations - Status: 200", "request_path": "/api/organizations"}
+{"ts": "2026-03-11T10:22:15.363451", "level": "INFO", "module": "api", "msg": "GET /api/users/list - Status: 200", "request_path": "/api/users/list"}
+{"ts": "2026-03-11T10:22:15.560368", "level": "INFO", "module": "api", "msg": "GET /api/users/list - Status: 200", "request_path": "/api/users/list"}
+{"ts": "2026-03-11T10:22:19.628408", "level": "INFO", "module": "api", "msg": "GET /api/system/maturity-threshold - Status: 200", "request_path": "/api/system/maturity-threshold"}
+{"ts": "2026-03-11T10:22:19.633650", "level": "INFO", "module": "api", "msg": "GET /api/organizations - Status: 200", "request_path": "/api/organizations"}
+{"ts": "2026-03-11T10:22:19.822127", "level": "INFO", "module": "api", "msg": "GET /api/system/maturity-threshold - Status: 200", "request_path": "/api/system/maturity-threshold"}
+{"ts": "2026-03-11T10:22:19.827431", "level": "INFO", "module": "api", "msg": "GET /api/organizations - Status: 200", "request_path": "/api/organizations"}
+{"ts": "2026-03-11T10:22:19.833122", "level": "INFO", "module": "api", "msg": "GET /api/rag/files - Status: 200", "request_path": "/api/rag/files"}
+{"ts": "2026-03-11T10:22:20.017234", "level": "INFO", "module": "api", "msg": "GET /api/rag/stats - Status: 200", "request_path": "/api/rag/stats"}
+{"ts": "2026-03-11T10:22:20.027874", "level": "INFO", "module": "api", "msg": "GET /api/rag/files - Status: 200", "request_path": "/api/rag/files"}
+{"ts": "2026-03-11T10:22:20.216135", "level": "INFO", "module": "api", "msg": "GET /api/rag/stats - Status: 200", "request_path": "/api/rag/stats"}
+{"ts": "2026-03-11T12:01:32.571760", "level": "INFO", "module": "websocket", "msg": "WebSocket bağlantısı kapatıldı: user_id=1"}
+{"ts": "2026-03-11T12:44:13.480494", "level": "INFO", "module": "api", "msg": "GET /api/auth/me - Status: 401", "request_path": "/api/auth/me"}
+{"ts": "2026-03-11T12:44:13.876735", "level": "INFO", "module": "api", "msg": "GET /api/auth/ldap-domains - Status: 200", "request_path": "/api/auth/ldap-domains"}
+{"ts": "2026-03-11T12:45:26.771427", "level": "INFO", "module": "api", "msg": "GET /api/auth/ldap-domains - Status: 200", "request_path": "/api/auth/ldap-domains"}
+{"ts": "2026-03-11T13:53:35.805840", "level": "INFO", "module": "api", "msg": "GET /api/auth/me - Status: 401", "request_path": "/api/auth/me"}
+{"ts": "2026-03-11T13:53:36.076676", "level": "INFO", "module": "api", "msg": "GET /api/auth/ldap-domains - Status: 200", "request_path": "/api/auth/ldap-domains"}
+{"ts": "2026-03-11T13:53:40.291646", "level": "DEBUG", "module": "startup", "msg": "Crash recovery: Takılı dosya bulunamadı"}
+{"ts": "2026-03-11T13:53:40.296819", "level": "INFO", "module": "startup", "msg": "🚀 RAG Service preload başlıyor (model + cache warm-up)..."}
+{"ts": "2026-03-11T13:53:40.297218", "level": "INFO", "module": "scheduler", "msg": "[Scheduler] ML Training schedule checker baslatildi"}

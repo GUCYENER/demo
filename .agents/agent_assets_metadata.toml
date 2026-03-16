@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "s0qxqJ__o6RBUsDfdrKBT"
+uri = "file://docs/NGSSAI_Teknik_Business_Analiz.md"
+type = "text"
+title = "NGSSAI — Teknik & Business Analiz Dokümanı"

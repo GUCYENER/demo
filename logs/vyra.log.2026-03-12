@@ -1,0 +1,32 @@
+{"ts": "2026-03-12T10:26:48.164842", "level": "DEBUG", "module": "startup", "msg": "Crash recovery: Takılı dosya bulunamadı"}
+{"ts": "2026-03-12T10:26:48.181689", "level": "INFO", "module": "startup", "msg": "🚀 RAG Service preload başlıyor (model + cache warm-up)..."}
+{"ts": "2026-03-12T10:26:48.182043", "level": "INFO", "module": "scheduler", "msg": "[Scheduler] ML Training schedule checker baslatildi"}
+{"ts": "2026-03-12T10:26:48.185711", "level": "INFO", "module": "rag", "msg": "🚀 RAG Service preload başlıyor..."}
+{"ts": "2026-03-12T10:26:48.194010", "level": "DEBUG", "module": "rag", "msg": "ONNX model bulunamadı: /home/runner/workspace/models/embedding/model.onnx"}
+{"ts": "2026-03-12T10:27:22.311726", "level": "WARNING", "module": "rag", "msg": "Offline model yüklenemedi, online deneniyor: We couldn't connect to 'https://huggingface.co' to load the files, and couldn't find them in the cached files.\nCheck your internet connection or see how to run the library in offline mode at 'https://huggingface.co/docs/transformers/installation#offline-mode'."}
+{"ts": "2026-03-12T10:27:22.325041", "level": "ERROR", "module": "rag", "msg": "RAG preload hatası: We couldn't connect to 'https://huggingface.co' to load the files, and couldn't find them in the cached files.\nCheck your internet connection or see how to run the library in offline mode at 'https://huggingface.co/docs/transformers/installation#offline-mode'."}
+{"ts": "2026-03-12T10:27:22.328328", "level": "INFO", "module": "startup", "msg": "✅ RAG Service preload tamamlandı!"}
+{"ts": "2026-03-12T10:27:48.667141", "level": "WARNING", "module": "cache", "msg": "redis paketi yüklü değil, in-memory fallback aktif"}
+{"ts": "2026-03-12T10:27:48.716624", "level": "INFO", "module": "cache", "msg": "Cache service başlatıldı"}
+{"ts": "2026-03-12T10:27:48.724088", "level": "INFO", "module": "api", "msg": "GET /api/auth/me - Status: 401", "request_path": "/api/auth/me"}
+{"ts": "2026-03-12T10:27:48.822404", "level": "INFO", "module": "api", "msg": "GET /api/auth/ldap-domains - Status: 200", "request_path": "/api/auth/ldap-domains"}
+{"ts": "2026-03-12T10:37:19.077103", "level": "INFO", "module": "api", "msg": "POST /api/auth/login - Status: 401", "request_path": "/api/auth/login"}
+{"ts": "2026-03-12T10:37:25.703864", "level": "INFO", "module": "api", "msg": "POST /api/auth/login - Status: 200", "request_path": "/api/auth/login"}
+{"ts": "2026-03-12T10:37:28.970438", "level": "DEBUG", "module": "permissions", "msg": "[Permissions] GET /my/permissions - role: admin"}
+{"ts": "2026-03-12T10:37:28.976977", "level": "DEBUG", "module": "permissions", "msg": "[Permissions] Response: 6 permissions"}
+{"ts": "2026-03-12T10:37:28.981869", "level": "INFO", "module": "api", "msg": "GET /api/permissions/my/permissions - Status: 200", "request_path": "/api/permissions/my/permissions"}
+{"ts": "2026-03-12T10:37:28.987366", "level": "DEBUG", "module": "permissions", "msg": "[Permissions] GET /resources"}
+{"ts": "2026-03-12T10:37:28.990669", "level": "INFO", "module": "api", "msg": "GET /api/permissions/resources - Status: 200", "request_path": "/api/permissions/resources"}
+{"ts": "2026-03-12T10:37:31.323649", "level": "INFO", "module": "api", "msg": "GET /api/auth/ldap-domains - Status: 200", "request_path": "/api/auth/ldap-domains"}
+{"ts": "2026-03-12T10:37:31.328123", "level": "INFO", "module": "api", "msg": "GET /api/auth/me - Status: 200", "request_path": "/api/auth/me"}
+{"ts": "2026-03-12T10:37:31.929649", "level": "DEBUG", "module": "permissions", "msg": "[Permissions] GET /resources"}
+{"ts": "2026-03-12T10:37:31.933929", "level": "DEBUG", "module": "permissions", "msg": "[Permissions] GET /my/permissions - role: admin"}
+{"ts": "2026-03-12T10:37:31.937480", "level": "DEBUG", "module": "permissions", "msg": "[Permissions] Response: 6 permissions"}
+{"ts": "2026-03-12T10:37:31.940936", "level": "INFO", "module": "api", "msg": "GET /api/permissions/resources - Status: 200", "request_path": "/api/permissions/resources"}
+{"ts": "2026-03-12T10:37:31.946361", "level": "INFO", "module": "api", "msg": "GET /api/permissions/my/permissions - Status: 200", "request_path": "/api/permissions/my/permissions"}
+{"ts": "2026-03-12T10:37:31.951248", "level": "INFO", "module": "api", "msg": "GET /api/users/me - Status: 200", "request_path": "/api/users/me"}
+{"ts": "2026-03-12T10:37:32.150441", "level": "INFO", "module": "dialog", "msg": "Dialog #17 oluşturuldu (source: vyra_chat)", "user_id": 1}
+{"ts": "2026-03-12T10:37:32.154017", "level": "INFO", "module": "api", "msg": "GET /api/dialogs/active - Status: 200", "request_path": "/api/dialogs/active"}
+{"ts": "2026-03-12T10:37:32.353507", "level": "INFO", "module": "api", "msg": "GET /api/dialogs/17/messages - Status: 200", "request_path": "/api/dialogs/17/messages"}
+{"ts": "2026-03-12T10:37:32.477722", "level": "INFO", "module": "websocket", "msg": "WebSocket bağlantısı kuruldu: user_id=1"}
+{"ts": "2026-03-12T10:37:36.920850", "level": "INFO", "module": "websocket", "msg": "WebSocket bağlantısı kapatıldı: user_id=1"}
