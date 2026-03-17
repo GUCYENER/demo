@@ -285,13 +285,66 @@ def extract_ocr_texts(images: List[bytes]) -> Tuple[str, List[str], Dict[str, st
 # MAIN PROCESSING
 # =============================================================================
 
+def _process_widget_direct_llm(query: str, widget_config: dict) -> str:
+    """
+    Widget için RAG'sız direkt LLM çağrısı (use_rag=False durumu).
+    Prompt ve LLM override'larını uygular.
+    """
+    from app.core.llm import (get_active_llm, get_llm_by_id,
+                               get_prompt_by_id, call_llm_api,
+                               call_llm_api_with_config)
+
+    llm_cfg_id = widget_config.get("llm_config_id")
+    prompt_id  = widget_config.get("prompt_id")
+
+    config = get_llm_by_id(llm_cfg_id) if llm_cfg_id else get_active_llm()
+    system_prompt = (get_prompt_by_id(prompt_id) if prompt_id
+                     else "Sen yardımsever bir müşteri destek asistanısın. Kullanıcıya kısa ve net yanıtlar ver.")
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user",   "content": query},
+    ]
+
+    if config:
+        return call_llm_api_with_config(messages, config)
+    return call_llm_api(messages)
+
+
+def _process_widget_direct_llm_stream(query: str, widget_config: dict):
+    """
+    Widget için RAG'sız direkt LLM streaming çağrısı (use_rag=False + stream).
+    """
+    from app.core.llm import (get_active_llm, get_llm_by_id,
+                               get_prompt_by_id, call_llm_api_stream,
+                               call_llm_api_stream_with_config)
+
+    llm_cfg_id = widget_config.get("llm_config_id")
+    prompt_id  = widget_config.get("prompt_id")
+
+    config = get_llm_by_id(llm_cfg_id) if llm_cfg_id else get_active_llm()
+    system_prompt = (get_prompt_by_id(prompt_id) if prompt_id
+                     else "Sen yardımsever bir müşteri destek asistanısın. Kullanıcıya kısa ve net yanıtlar ver.")
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user",   "content": query},
+    ]
+
+    if config:
+        yield from call_llm_api_stream_with_config(messages, config)
+    else:
+        yield from call_llm_api_stream(messages)
+
+
 def process_user_message(
     dialog_id: int,
     user_id: int,
     content: str,
     images: List[bytes] = None,
     org_ids: List[int] = None,  # Deprecated - user_id ile org filtering yapılıyor
-    use_deep_think: bool = True  # v2.28.0: Deep Think default ON
+    use_deep_think: bool = True,  # v2.28.0: Deep Think default ON
+    widget_config: dict = None,  # v2.61.0: Widget veri kaynağı override
 ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
     """
     Kullanıcı mesajını işle ve AI yanıtı üret.
@@ -327,8 +380,20 @@ def process_user_message(
     quick_reply = None
     assistant_metadata = {"rag_results": []}
     
+    # 🆕 v2.61.0: Widget RAG-off → direkt LLM çağrısı
+    if widget_config and not widget_config.get("use_rag", True):
+        t0 = time.time()
+        try:
+            assistant_content = _process_widget_direct_llm(search_query, widget_config)
+            assistant_metadata["widget_direct"] = True
+            assistant_metadata["use_rag"] = False
+        except Exception as e:
+            log_error(f"Widget direkt LLM hatası: {e}", "dialog")
+            assistant_content = "Üzgünüm, şu anda yanıt üretemiyorum. Lütfen tekrar deneyin."
+        timings["widget_llm"] = time.time() - t0
+
     # 🧠 v2.28.0: Deep Think Pipeline
-    if use_deep_think:
+    elif use_deep_think:
         t0 = time.time()
         try:
             from app.services.deep_think_service import get_deep_think_service
@@ -432,7 +497,8 @@ def process_user_message_stream(
     dialog_id: int,
     user_id: int,
     content: str,
-    images: Optional[List[bytes]] = None
+    images: Optional[List[bytes]] = None,
+    widget_config: dict = None,  # v2.61.0: Widget veri kaynağı override
 ):
     """
     🆕 v2.50.0: Streaming mesaj işleme orchestrator'ı.
@@ -477,6 +543,23 @@ def process_user_message_stream(
     # 3. Arama sorgusunu hazırla
     search_query = f"{content}\n{ocr_text}".strip() if ocr_text else content
     
+    # 🆕 v2.61.0: Widget RAG-off → direkt LLM streaming
+    if widget_config and not widget_config.get("use_rag", True):
+        full_response = ""
+        try:
+            for token in _process_widget_direct_llm_stream(search_query, widget_config):
+                full_response += token
+                yield {"type": "token", "data": token}
+        except Exception as e:
+            log_error(f"Widget stream hatası: {e}", "dialog")
+            full_response = "Üzgünüm, şu anda yanıt üretemiyorum. Lütfen tekrar deneyin."
+            yield {"type": "token", "data": full_response}
+
+        msg_id = add_message(dialog_id, "assistant", full_response, "text",
+                             {"widget_direct": True, "use_rag": False})
+        yield {"type": "done", "data": {"content": full_response, "message_id": msg_id}}
+        return
+
     # 4. Deep Think Streaming Pipeline
     try:
         from app.services.deep_think_service import get_deep_think_service

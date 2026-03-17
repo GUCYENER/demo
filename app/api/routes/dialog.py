@@ -247,12 +247,22 @@ async def send_message(
             except Exception as e:
                 log_warning(f"Base64 görsel decode hatası: {e}", "dialog")
     
+    # Widget config (JWT'den — use_rag, prompt_id, llm_config_id)
+    widget_config = None
+    if user.get("widget"):
+        widget_config = {
+            "use_rag": user.get("widget_use_rag", True),
+            "prompt_id": user.get("widget_prompt_id"),
+            "llm_config_id": user.get("widget_llm_config_id"),
+        }
+
     # AI işleme
     assistant_msg, quick_reply = process_user_message(
         dialog_id=dialog_id,
         user_id=user["id"],
         content=request.content,
-        images=images
+        images=images,
+        widget_config=widget_config,
     )
     
     # WebSocket üzerinden bildirim gönder (async context'teyiz)
@@ -316,6 +326,15 @@ async def send_message_stream(
             except Exception as e:
                 log_warning(f"Base64 görsel decode hatası: {e}", "dialog")
     
+    # Widget config (JWT'den)
+    stream_widget_config = None
+    if user.get("widget"):
+        stream_widget_config = {
+            "use_rag": user.get("widget_use_rag", True),
+            "prompt_id": user.get("widget_prompt_id"),
+            "llm_config_id": user.get("widget_llm_config_id"),
+        }
+
     def event_generator():
         """SSE event stream generator."""
         try:
@@ -323,7 +342,8 @@ async def send_message_stream(
                 dialog_id=dialog_id,
                 user_id=user["id"],
                 content=request.content,
-                images=images
+                images=images,
+                widget_config=stream_widget_config,
             ):
                 event_type = event.get("type", "token")
                 event_data = event.get("data", "")

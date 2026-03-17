@@ -30,6 +30,7 @@
     // ------------------------------------------------------------------
     let orgs = [];
     let keys = [];
+    let widgetOptions = { prompts: [], llms: [] };
 
     // ------------------------------------------------------------------
     // Orgs yükle (select için)
@@ -59,6 +60,42 @@
     }
 
     // ------------------------------------------------------------------
+    // Options yükle (prompt & LLM select'leri için)
+    // ------------------------------------------------------------------
+    async function loadOptions() {
+        try {
+            const resp = await apiRequest("GET", "/api/widget/options");
+            if (resp.ok) widgetOptions = await resp.json();
+        } catch {}
+    }
+
+    function populatePromptSelect(selectedId) {
+        const sel = document.getElementById("widgetKeyPrompt");
+        if (!sel) return;
+        sel.innerHTML = '<option value="">— Varsayılan sistem promptu kullan —</option>';
+        (widgetOptions.prompts || []).forEach(p => {
+            const opt = document.createElement("option");
+            opt.value = p.id;
+            opt.textContent = `${p.title} (${p.category})`;
+            if (selectedId && p.id === selectedId) opt.selected = true;
+            sel.appendChild(opt);
+        });
+    }
+
+    function populateLlmSelect(selectedId) {
+        const sel = document.getElementById("widgetKeyLlm");
+        if (!sel) return;
+        sel.innerHTML = '<option value="">— Varsayılan aktif model kullan —</option>';
+        (widgetOptions.llms || []).forEach(l => {
+            const opt = document.createElement("option");
+            opt.value = l.id;
+            opt.textContent = l.label;
+            if (selectedId && l.id === selectedId) opt.selected = true;
+            sel.appendChild(opt);
+        });
+    }
+
+    // ------------------------------------------------------------------
     // Key listesini yükle ve tabloya render et
     // ------------------------------------------------------------------
     async function loadKeys() {
@@ -66,7 +103,7 @@
         const empty = document.getElementById("widgetKeysEmpty");
         if (!tbody) return;
 
-        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:32px">
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--text-3);padding:32px">
             <i class="fa-solid fa-spinner fa-spin"></i> Yükleniyor...
         </td></tr>`;
 
@@ -75,7 +112,7 @@
             if (!resp.ok) throw new Error("Yüklenemedi");
             keys = await resp.json();
         } catch (e) {
-            tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--red);padding:24px">
+            tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--red);padding:24px">
                 Anahtarlar yüklenemedi: ${e.message}
             </td></tr>`;
             return;
@@ -102,12 +139,23 @@
                 ? `<span class="badge badge-green"><span class="badge-dot"></span>Aktif</span>`
                 : `<span class="badge badge-red"><span class="badge-dot"></span>Pasif</span>`;
 
+            const ragBadge = k.use_rag !== false
+                ? `<span class="badge badge-green" style="font-size:10px"><i class="fa-solid fa-database" style="margin-right:3px"></i>RAG</span>`
+                : `<span class="badge" style="font-size:10px;background:var(--bg-3);color:var(--text-3)">Direkt LLM</span>`;
+            const promptLabel = k.prompt_title
+                ? `<span style="font-size:11px;color:var(--text-2);display:block;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis" title="${escHtml(k.prompt_title)}"><i class="fa-solid fa-file-lines" style="margin-right:3px;opacity:.6"></i>${escHtml(k.prompt_title)}</span>`
+                : "";
+            const llmLabel = k.llm_model_name
+                ? `<span style="font-size:11px;color:var(--text-2);display:block;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis" title="${escHtml(k.llm_model_name)}"><i class="fa-solid fa-microchip" style="margin-right:3px;opacity:.6"></i>${escHtml(k.llm_model_name)}</span>`
+                : "";
+
             return `
                 <tr data-key-id="${k.id}">
                     <td style="font-weight:500;color:var(--text-1)">${escHtml(k.name)}</td>
                     <td><code style="font-family:monospace;font-size:12px;background:var(--bg-3);padding:2px 7px;border-radius:5px">${escHtml(k.key_prefix)}…</code></td>
                     <td><span class="badge badge-purple" style="font-size:11px">${escHtml(k.org_code)}</span></td>
                     <td>${domains}</td>
+                    <td style="min-width:130px">${ragBadge}${promptLabel}${llmLabel}</td>
                     <td style="font-size:12px;color:var(--text-2)">${lastUsed}</td>
                     <td>${statusBadge}</td>
                     <td>
@@ -151,10 +199,13 @@
         const modal = document.getElementById("widgetKeyModal");
         if (!modal) return;
         populateOrgSelect();
+        populatePromptSelect(null);
+        populateLlmSelect(null);
         document.getElementById("widgetKeyName").value = "";
         document.getElementById("widgetKeyOrg").value = "";
         document.getElementById("widgetKeyDomains").value = "";
         document.getElementById("widgetKeyActive").checked = true;
+        document.getElementById("widgetKeyUseRag").checked = true;
         modal.classList.remove("hidden");
     }
 
@@ -167,6 +218,11 @@
         const orgId = parseInt(document.getElementById("widgetKeyOrg")?.value);
         const domainsRaw = document.getElementById("widgetKeyDomains")?.value.trim();
         const isActive = document.getElementById("widgetKeyActive")?.checked ?? true;
+        const useRag = document.getElementById("widgetKeyUseRag")?.checked ?? true;
+        const promptRaw = document.getElementById("widgetKeyPrompt")?.value;
+        const llmRaw = document.getElementById("widgetKeyLlm")?.value;
+        const promptId = promptRaw ? parseInt(promptRaw) : null;
+        const llmConfigId = llmRaw ? parseInt(llmRaw) : null;
 
         if (!name) { showToast("Anahtar adı zorunludur", "error"); return; }
         if (!orgId) { showToast("Organizasyon seçin", "error"); return; }
@@ -181,6 +237,7 @@
         try {
             const resp = await apiRequest("POST", "/api/widget/keys", {
                 name, org_id: orgId, allowed_domains: allowedDomains, is_active: isActive,
+                prompt_id: promptId, llm_config_id: llmConfigId, use_rag: useRag,
             });
 
             if (!resp.ok) {
@@ -323,7 +380,7 @@
         const baseUrlSpan = document.getElementById("widgetBaseUrl");
         if (baseUrlSpan) baseUrlSpan.textContent = window.location.origin;
 
-        await Promise.all([loadOrgs(), loadKeys()]);
+        await Promise.all([loadOrgs(), loadOptions(), loadKeys()]);
 
         // Yeni Anahtar butonu
         document.getElementById("btnNewWidgetKey")

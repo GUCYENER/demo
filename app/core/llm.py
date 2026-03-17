@@ -110,6 +110,34 @@ def get_active_llm() -> Optional[Dict[str, Any]]:
         return None
 
 
+def get_llm_by_id(llm_config_id: int) -> Optional[Dict[str, Any]]:
+    """Belirli ID'li LLM konfigürasyonunu çeker (widget override için)."""
+    try:
+        conn = get_db_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM llm_config WHERE id = %s AND is_active = TRUE", (llm_config_id,))
+        row = cur.fetchone()
+        conn.close()
+        return dict(row) if row else None
+    except Exception as e:
+        log_error(f"LLM config {llm_config_id} çekilirken hata: {e}", "llm")
+        return None
+
+
+def get_prompt_by_id(prompt_id: int) -> Optional[str]:
+    """Belirli ID'li prompt şablonunu çeker (widget override için)."""
+    try:
+        conn = get_db_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT content FROM prompt_templates WHERE id = %s AND is_active = TRUE", (prompt_id,))
+        row = cur.fetchone()
+        conn.close()
+        return row["content"] if row else None
+    except Exception as e:
+        log_error(f"Prompt {prompt_id} çekilirken hata: {e}", "llm")
+        return None
+
+
 def get_prompt_by_category(category: str) -> str:
     """
     v2.26.0: Belirtilen kategorideki aktif prompt'u çeker.
@@ -331,6 +359,83 @@ def call_llm_api(messages: list) -> str:
         error_msg = f"LLM Beklenmeyen Hata: {str(e)}"
         log_error(f"LLM beklenmeyen hata: {str(e)}", "llm", error_detail=str(e))
         raise LLMConnectionError(error_msg)
+
+
+# ============================================
+# Widget Override: Belirli config ile LLM çağrısı
+# ============================================
+
+def call_llm_api_with_config(messages: list, config: dict) -> str:
+    """Verilen LLM config dict ile API çağrısı yapar (widget override)."""
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    headers = {"Content-Type": "application/json"}
+    if config.get('api_token'):
+        headers["Authorization"] = f"Bearer {config['api_token']}"
+
+    payload = {
+        "model": config['model_name'],
+        "messages": messages,
+        "temperature": config.get('temperature', 0.7),
+        "top_p": config.get('top_p', 1.0),
+    }
+
+    try:
+        timeout_seconds = config.get('timeout_seconds', 60)
+        response = requests.post(config['api_url'], headers=headers, json=payload,
+                                  timeout=timeout_seconds, verify=False)
+        response.raise_for_status()
+        data = response.json()
+        if "choices" in data and data["choices"]:
+            return data["choices"][0]["message"]["content"]
+        raise LLMResponseError(f"API beklenmedik format: {data}")
+    except requests.exceptions.Timeout:
+        raise LLMConnectionError(f"LLM zaman aşımı ({config.get('timeout_seconds', 60)}s)")
+    except requests.exceptions.RequestException as e:
+        raise LLMConnectionError(f"LLM bağlantı hatası: {e}")
+
+
+def call_llm_api_stream_with_config(messages: list, config: dict):
+    """Verilen LLM config dict ile streaming API çağrısı yapar (widget override)."""
+    import json, urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    headers = {"Content-Type": "application/json"}
+    if config.get('api_token'):
+        headers["Authorization"] = f"Bearer {config['api_token']}"
+
+    payload = {
+        "model": config['model_name'],
+        "messages": messages,
+        "temperature": config.get('temperature', 0.7),
+        "top_p": config.get('top_p', 1.0),
+        "stream": True,
+    }
+
+    try:
+        timeout_seconds = config.get('timeout_seconds', 120)
+        with requests.post(config['api_url'], headers=headers, json=payload,
+                           timeout=timeout_seconds, verify=False, stream=True) as resp:
+            resp.raise_for_status()
+            for line in resp.iter_lines():
+                if not line:
+                    continue
+                decoded = line.decode("utf-8")
+                if decoded.startswith("data: "):
+                    decoded = decoded[6:]
+                if decoded.strip() == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(decoded)
+                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                    token = delta.get("content", "")
+                    if token:
+                        yield token
+                except Exception:
+                    continue
+    except requests.exceptions.RequestException as e:
+        raise LLMConnectionError(f"Widget LLM stream hatası: {e}")
 
 
 # ============================================

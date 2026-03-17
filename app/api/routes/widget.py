@@ -40,12 +40,18 @@ class WidgetKeyCreate(BaseModel):
     org_id: int
     allowed_domains: List[str] = Field(default_factory=list)
     is_active: bool = True
+    prompt_id: Optional[int] = None
+    llm_config_id: Optional[int] = None
+    use_rag: bool = True
 
 
 class WidgetKeyUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=100)
     allowed_domains: Optional[List[str]] = None
     is_active: Optional[bool] = None
+    prompt_id: Optional[int] = None
+    llm_config_id: Optional[int] = None
+    use_rag: Optional[bool] = None
 
 
 class WidgetTokenRequest(BaseModel):
@@ -118,7 +124,7 @@ async def get_widget_token(body: WidgetTokenRequest, request: Request):
         cur = conn.cursor()
         cur.execute("""
             SELECT wk.id, wk.org_id, wk.allowed_domains, wk.is_active, wk.widget_user_id,
-                   og.org_code
+                   og.org_code, wk.prompt_id, wk.llm_config_id, wk.use_rag
             FROM widget_api_keys wk
             JOIN organization_groups og ON og.id = wk.org_id
             WHERE wk.key_hash = %s
@@ -134,6 +140,9 @@ async def get_widget_token(body: WidgetTokenRequest, request: Request):
     is_active = row["is_active"]
     widget_user_id = row["widget_user_id"]
     org_code = row["org_code"]
+    prompt_id = row["prompt_id"]
+    llm_config_id = row["llm_config_id"]
+    use_rag = row["use_rag"] if row["use_rag"] is not None else True
 
     if not is_active:
         raise HTTPException(status_code=403, detail="Bu API anahtarı devre dışı")
@@ -168,6 +177,9 @@ async def get_widget_token(body: WidgetTokenRequest, request: Request):
             "widget": True,
             "org_id": org_id,
             "org_code": org_code,
+            "widget_prompt_id": prompt_id,
+            "widget_llm_config_id": llm_config_id,
+            "widget_use_rag": use_rag,
         },
         expires_delta=timedelta(hours=8),
         token_type="access",
@@ -196,10 +208,15 @@ async def list_widget_keys(current_user=Depends(get_current_user)):
             SELECT wk.id, wk.name, wk.key_prefix, wk.org_id,
                    og.org_name, og.org_code, wk.allowed_domains,
                    wk.is_active, wk.created_at, wk.last_used_at,
-                   u.full_name AS created_by_name
+                   u.full_name AS created_by_name,
+                   wk.prompt_id, wk.llm_config_id, wk.use_rag,
+                   pt.title AS prompt_title,
+                   lc.model_name AS llm_model_name
             FROM widget_api_keys wk
             JOIN organization_groups og ON og.id = wk.org_id
             LEFT JOIN users u ON u.id = wk.created_by
+            LEFT JOIN prompt_templates pt ON pt.id = wk.prompt_id
+            LEFT JOIN llm_config lc ON lc.id = wk.llm_config_id
             ORDER BY wk.created_at DESC
         """)
         rows = cur.fetchall()
@@ -217,6 +234,11 @@ async def list_widget_keys(current_user=Depends(get_current_user)):
             "created_at": r["created_at"].isoformat() if r["created_at"] else None,
             "last_used_at": r["last_used_at"].isoformat() if r["last_used_at"] else None,
             "created_by_name": r["created_by_name"],
+            "prompt_id": r["prompt_id"],
+            "prompt_title": r["prompt_title"],
+            "llm_config_id": r["llm_config_id"],
+            "llm_model_name": r["llm_model_name"],
+            "use_rag": r["use_rag"] if r["use_rag"] is not None else True,
         }
         for r in rows
     ]
@@ -244,13 +266,15 @@ async def create_widget_key(body: WidgetKeyCreate, current_user=Depends(get_curr
         cur.execute("""
             INSERT INTO widget_api_keys
                 (name, key_prefix, key_hash, widget_user_id, org_id,
-                 allowed_domains, is_active, created_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                 allowed_domains, is_active, created_by,
+                 prompt_id, llm_config_id, use_rag)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id, created_at
         """, (
             body.name, prefix, key_hash, widget_user_id, body.org_id,
             __import__('json').dumps(body.allowed_domains),
-            body.is_active, current_user["id"]
+            body.is_active, current_user["id"],
+            body.prompt_id, body.llm_config_id, body.use_rag,
         ))
         row_created = cur.fetchone()
         key_id = row_created["id"]
@@ -267,6 +291,9 @@ async def create_widget_key(body: WidgetKeyCreate, current_user=Depends(get_curr
         "org_id": body.org_id,
         "allowed_domains": body.allowed_domains,
         "is_active": body.is_active,
+        "prompt_id": body.prompt_id,
+        "llm_config_id": body.llm_config_id,
+        "use_rag": body.use_rag,
         "created_at": created_at.isoformat(),
         "note": "Bu anahtar yalnızca bir kez gösterilmektedir. Güvenli bir yerde saklayın.",
     }
@@ -298,6 +325,15 @@ async def update_widget_key(
         if body.is_active is not None:
             updates.append("is_active = %s")
             params.append(body.is_active)
+        if body.prompt_id is not None:
+            updates.append("prompt_id = %s")
+            params.append(body.prompt_id)
+        if body.llm_config_id is not None:
+            updates.append("llm_config_id = %s")
+            params.append(body.llm_config_id)
+        if body.use_rag is not None:
+            updates.append("use_rag = %s")
+            params.append(body.use_rag)
 
         if updates:
             params.append(key_id)
@@ -329,4 +365,41 @@ async def delete_widget_key(key_id: int, current_user=Depends(get_current_user))
             cur.execute("DELETE FROM users WHERE id = %s", (widget_user_id,))
         conn.commit()
 
-    logger.info(f"[Widget] API key silindi: id={key_id}")
+
+# ------------------------------------------------------------------
+# Options endpoint — admin dropdown'ları için prompt ve LLM listesi
+# ------------------------------------------------------------------
+
+@router.get("/widget/options")
+async def get_widget_options(current_user=Depends(get_current_user)):
+    """Admin UI dropdown'ları için prompt şablonları ve LLM config listesi."""
+    if not current_user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Yalnızca admin erişebilir")
+
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, title, category
+            FROM prompt_templates
+            WHERE is_active = TRUE
+            ORDER BY category, title
+        """)
+        prompts = [{"id": r["id"], "title": r["title"], "category": r["category"]}
+                   for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT id, vendor_code, provider, model_name
+            FROM llm_config
+            WHERE is_active = TRUE
+            ORDER BY provider, model_name
+        """)
+        llms = [
+            {
+                "id": r["id"],
+                "label": f"{r['provider']} — {r['model_name']}",
+                "vendor_code": r["vendor_code"],
+            }
+            for r in cur.fetchall()
+        ]
+
+    return {"prompts": prompts, "llms": llms}

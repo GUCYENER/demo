@@ -672,13 +672,14 @@
                             <th>Prefix</th>
                             <th>Organizasyon</th>
                             <th>İzinli Domain'ler</th>
+                            <th>Veri Kaynağı</th>
                             <th>Son Kullanım</th>
                             <th>Durum</th>
                             <th>İşlemler</th>
                         </tr>
                     </thead>
                     <tbody id="widgetKeysTableBody">
-                        <tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:32px">Yükleniyor...</td></tr>
+                        <tr><td colspan="8" style="text-align:center;color:var(--text-3);padding:32px">Yükleniyor...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -711,6 +712,33 @@
                     <label>İzinli Domain'ler <span style="color:var(--text-3);font-weight:400">(Boşsa herkese açık)</span></label>
                     <input class="inp" type="text" id="widgetKeyDomains" placeholder="example.com, app.company.com">
                     <span style="font-size:11.5px;color:var(--text-3)">Virgülle ayırın. Boş bırakırsanız tüm domain'lerden erişime izin verilir.</span>
+                </div>
+                <div style="border-top:1px solid var(--border-1);padding-top:14px;margin-top:2px">
+                    <div style="font-size:12px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">
+                        <i class="fa-solid fa-sliders" style="margin-right:5px"></i>Veri Kaynağı Yapılandırması
+                    </div>
+                    <div class="fg-label" style="margin-bottom:12px">
+                        <label>Prompt Şablonu <span style="color:var(--text-3);font-weight:400">(Varsayılan: Sistem promotu)</span></label>
+                        <select class="inp" id="widgetKeyPrompt">
+                            <option value="">— Varsayılan sistem promptu kullan —</option>
+                        </select>
+                    </div>
+                    <div class="fg-label" style="margin-bottom:12px">
+                        <label>LLM Modeli <span style="color:var(--text-3);font-weight:400">(Varsayılan: Aktif model)</span></label>
+                        <select class="inp" id="widgetKeyLlm">
+                            <option value="">— Varsayılan aktif model kullan —</option>
+                        </select>
+                    </div>
+                    <div class="toggle-wrap">
+                        <div class="toggle-label">
+                            <span style="color:var(--text-1);font-weight:500">Bilgi Bankası (RAG)</span>
+                            <span style="color:var(--text-3);font-size:12px">Belge araması yaparak yanıt oluştur</span>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="widgetKeyUseRag" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
                 </div>
                 <div class="toggle-wrap">
                     <div class="toggle-label">
