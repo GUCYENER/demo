@@ -398,17 +398,21 @@ class OrganizationManager {
             return;
         }
 
-        if (!confirm(`"${orgCode}" organizasyonunu silmek istediğinize emin misiniz?\n\nBu işlem geri alınamaz ve tüm kullanıcı/doküman ilişkileri silinecektir.`)) {
-            return;
-        }
-
-        try {
-            await makeAuthRequest(`/api/organizations/${orgId}`, { method: 'DELETE' });
-            showToast('Organizasyon silindi', 'success');
-            await this.loadOrganizations();
-        } catch (error) {
-            showToast('Silme hatası: ' + error.message, 'error');
-        }
+        VyraModal.danger({
+            title: 'Organizasyon Sil',
+            message: `"${orgCode}" organizasyonunu silmek istediğinize emin misiniz? Bu işlem geri alınamaz ve tüm kullanıcı/doküman ilişkileri silinecektir.`,
+            confirmText: 'Sil',
+            cancelText: 'İptal',
+            onConfirm: async () => {
+                try {
+                    await makeAuthRequest(`/api/organizations/${orgId}`, { method: 'DELETE' });
+                    showToast('Organizasyon silindi', 'success');
+                    await this.loadOrganizations();
+                } catch (error) {
+                    showToast('Silme hatası: ' + error.message, 'error');
+                }
+            }
+        });
     }
 }
 

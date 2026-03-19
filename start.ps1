@@ -2,8 +2,17 @@
 # VYRA L1 Support API - Tam Baslatma Scripti
 # ============================================================
 
+# Self-relaunch: ExecutionPolicy kisitlamasini bypass et
+if ($ExecutionContext.SessionState.LanguageMode -ne 'NoLanguage') {
+    $policy = (Get-ExecutionPolicy -Scope Process)
+    if ($policy -notin @('Bypass', 'Unrestricted')) {
+        powershell.exe -ExecutionPolicy Bypass -File $MyInvocation.MyCommand.Path @args
+        exit $LASTEXITCODE
+    }
+}
+
 $ProjectRoot = $PSScriptRoot
-if (-not $ProjectRoot) { $ProjectRoot = "d:\vyra_l1_fastapi" }
+if (-not $ProjectRoot) { $ProjectRoot = "d:\demo_vyra" }
 
 # Venv Python yolu
 $VenvPython = "$ProjectRoot\python\Scripts\python.exe"

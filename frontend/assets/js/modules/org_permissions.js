@@ -270,28 +270,34 @@ window.OrgPermissionsModule = (function () {
 
     // ── Delete ──
     async function handleDelete(id) {
-        if (!confirm('Bu yetki kaydını silmek istediğinize emin misiniz?')) return;
+        VyraModal.danger({
+            title: 'Yetki Kaydını Sil',
+            message: 'Bu yetki kaydını silmek istediğinize emin misiniz?',
+            confirmText: 'Sil',
+            cancelText: 'İptal',
+            onConfirm: async () => {
+                try {
+                    const token = localStorage.getItem('access_token');
+                    const resp = await fetch(`${ENDPOINT}/${id}`, {
+                        method: 'DELETE',
+                        headers: { 'Authorization': `Bearer ${token}` },
+                    });
 
-        try {
-            const token = localStorage.getItem('access_token');
-            const resp = await fetch(`${ENDPOINT}/${id}`, {
-                method: 'DELETE',
-                headers: { 'Authorization': `Bearer ${token}` },
-            });
+                    if (!resp.ok && resp.status !== 204) {
+                        throw new Error(`HTTP ${resp.status}`);
+                    }
 
-            if (!resp.ok && resp.status !== 204) {
-                throw new Error(`HTTP ${resp.status}`);
+                    // Eğer silinen satır düzenleniyorsa iptal et
+                    if (editingId === String(id)) cancelEdit();
+
+                    showToast('Yetki kaydı silindi.', 'success');
+                    await load();
+                } catch (err) {
+                    console.error('[OrgPermissions] Delete error:', err);
+                    showToast('Silme başarısız.', 'error');
+                }
             }
-
-            // Eğer silinen satır düzenleniyorsa iptal et
-            if (editingId === String(id)) cancelEdit();
-
-            showToast('Yetki kaydı silindi.', 'success');
-            await load();
-        } catch (err) {
-            console.error('[OrgPermissions] Delete error:', err);
-            showToast('Silme başarısız.', 'error');
-        }
+        });
     }
 
     // ── Toast Helper ──

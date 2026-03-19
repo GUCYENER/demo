@@ -56,14 +56,12 @@ def _preload_embedding_model():
     """
     🚀 Embedding modelini ve sık kullanılan sorguları arka planda yükler.
     v2.23.0: Artık cache warm-up da yapılır.
+    Not: Loglama preload_rag_service() içinde yapılır (çift log önleme).
     """
     try:
         from app.services.rag_service import preload_rag_service
-        from app.services.logging_service import log_system_event
         
-        log_system_event("INFO", "🚀 RAG Service preload başlıyor (model + cache warm-up)...", "startup")
-        preload_rag_service()  # Model yükle + cache warm-up
-        log_system_event("INFO", "✅ RAG Service preload tamamlandı!", "startup")
+        preload_rag_service()  # Model yükle + cache warm-up (loglama servis içinde)
     except Exception as e:
         from app.services.logging_service import log_error
         log_error(f"RAG preload hatası: {e}", "startup")

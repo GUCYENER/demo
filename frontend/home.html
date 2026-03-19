@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NGSSAI — AIOps Platform</title>
-<link rel="icon" type="image/png" href="/api/assets/favicon" />
+<link rel="icon" type="image/png" id="faviconLink" href="/api/assets/favicon" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Geist:wght@300;400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/vendor/fontawesome/all.min.css" />
@@ -183,6 +183,7 @@ body::before{
 }
 .tb-btn:hover{background:var(--bg-hover);color:var(--text-1);border-color:var(--border-strong)}
 .tb-btn svg{width:12px;height:12px;stroke:currentColor;fill:none}
+.tb-btn i{font-size:12px;color:inherit}
 .tb-btn.primary{background:var(--accent-subtle);border-color:var(--border-accent);color:var(--text-acc)}
 .tb-btn.primary:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
 #dialogNewBtn{
@@ -526,7 +527,7 @@ select.inp{-webkit-appearance:none;cursor:pointer}
 .stat-val{font-family:'IBM Plex Mono',monospace;font-size:26px;font-weight:400;line-height:1;color:var(--text-1)}
 .stat-meta{font-size:11.5px;color:var(--text-3);margin-top:4px}
 
-.model-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px 18px;backdrop-filter:blur(12px);display:flex;align-items:flex-start;gap:14px;transition:border-color .18s;position:relative;overflow:hidden;margin-bottom:10px}
+.model-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px 18px;backdrop-filter:blur(12px);display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;transition:border-color .18s;position:relative;overflow:hidden;margin-bottom:10px}
 .model-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--grad-acc);opacity:.5;border-radius:12px 12px 0 0}
 .model-card:hover{border-color:var(--border-accent)}
 .model-card-icon{width:40px;height:40px;border-radius:10px;background:var(--accent-subtle);border:1px solid var(--border-accent);display:flex;align-items:center;justify-content:center;flex-shrink:0}
@@ -537,10 +538,13 @@ select.inp{-webkit-appearance:none;cursor:pointer}
 .model-id{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text-acc);margin-top:2px}
 .model-tag{display:inline-flex;align-items:center;gap:4px;margin-top:8px;font-size:11px;color:var(--text-3)}
 .model-meta{display:grid;grid-template-columns:1fr 1fr;gap:6px 20px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+.model-meta.model-meta-3col{grid-template-columns:repeat(3,1fr);gap:6px 24px;flex-basis:100%}
+.model-meta-3col .mm-item:nth-child(2){align-items:center}
+.model-meta-3col .mm-item:nth-child(3){align-items:flex-end}
 .mm-item{display:flex;flex-direction:column;gap:2px}
 .mm-key{font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--text-3);letter-spacing:.05em}
 .mm-val{font-size:12.5px;color:var(--text-1);font-weight:500}
-.model-actions{display:flex;align-items:flex-start;gap:7px;flex-shrink:0}
+.model-actions{display:flex;align-items:center;gap:7px;flex-shrink:0}
 
 .slider-wrap{padding:0 2px}
 .slider{width:100%;height:4px;border-radius:4px;-webkit-appearance:none;appearance:none;background:linear-gradient(90deg,var(--accent) 80%,var(--border-md) 80%);cursor:pointer;outline:none}
@@ -602,7 +606,7 @@ select.inp{-webkit-appearance:none;cursor:pointer}
 
 @media(max-width:660px){.n-sidebar{display:none}}
 </style>
-<link rel="stylesheet" href="dist/bundle.min.css?v=2.52.0" />
+<link rel="stylesheet" href="dist/bundle.min.css?v=2.52.2" />
 </head>
 <body>
 
@@ -635,7 +639,7 @@ select.inp{-webkit-appearance:none;cursor:pointer}
       <span class="ni-label">Ana Sayfa</span>
     </div>
 
-    <div class="nav-section-label">Yonetim</div>
+    <div class="nav-section-label">Yönetim</div>
 
     <div class="nav-item" id="menuParameters">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 010 14.14M4.93 4.93a10 10 0 000 14.14"/></svg>
@@ -643,7 +647,7 @@ select.inp{-webkit-appearance:none;cursor:pointer}
     </div>
     <div class="nav-item" id="menuKnowledgeBase">
       <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
-      <span class="ni-label">Bilgi Tabani</span>
+      <span class="ni-label">Bilgi Tabanı</span>
     </div>
     <div class="nav-item admin-only hidden" id="menuAuthorization">
       <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
@@ -682,18 +686,18 @@ select.inp{-webkit-appearance:none;cursor:pointer}
         <div class="tb-agent-name">NGSSAI Asistan</div>
         <div class="tb-agent-status" id="wsConnectionStatus">
           <div class="status-dot"></div>
-          <span class="status-text">Cevrimici</span>
+          <span class="status-text">Çevrimiçi</span>
         </div>
       </div>
     </div>
     <div class="tb-actions">
       <button class="tb-btn" id="chatModeToggleBtn" onclick="if(window.DialogChatModule)DialogChatModule.toggleChatMode()" title="Sohbet modu">
-        <svg viewBox="0 0 24 24" id="chatModeIcon"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        <i class="fa-solid fa-comments" id="chatModeIcon"></i>
         <span id="chatModeLabel">Sohbet</span>
       </button>
       <button class="tb-btn" id="dialogTicketBtn">
         <svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81 19.79 19.79 0 01.12 1.18 2 2 0 012.11 0h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 7.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
-        Cagri Ac
+        Çağrı Aç
       </button>
       <button class="tb-btn primary" id="dialogNewBtn">
         <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -709,11 +713,11 @@ select.inp{-webkit-appearance:none;cursor:pointer}
   <div class="tabs-bar" id="mainTabBar">
     <button class="n-tab-btn active" id="tabDialog" data-tab="dialog">
       <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
-      Bilgi Tabani
+      Bilgi Tabanı
     </button>
     <button class="n-tab-btn" id="tabHistory" data-tab="history">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-      Gecmis Cozumler
+      Geçmiş Çözümler
     </button>
     <div class="tabs-spacer"></div>
   </div>
@@ -774,9 +778,9 @@ select.inp{-webkit-appearance:none;cursor:pointer}
   </div>
 
   <div class="status-bar" id="statusBar">
-    <div class="s-item"><div class="s-dot"></div> <span id="statusKb">Bilgi Tabani Aktif</span></div>
+    <div class="s-item"><div class="s-dot"></div> <span id="statusKb">Bilgi Tabanı Aktif</span></div>
     <div class="s-sep"></div>
-    <div class="s-item"><div class="s-dot" id="statusWsDot"></div> <span id="statusWs">Baglanti Aktif</span></div>
+    <div class="s-item"><div class="s-dot" id="statusWsDot"></div> <span id="statusWs">Bağlantı Aktif</span></div>
     <div class="s-spacer"></div>
     <div class="s-item"><span id="statusVersion">NGSSAI Platform</span></div>
   </div>
@@ -787,8 +791,16 @@ select.inp{-webkit-appearance:none;cursor:pointer}
 <div id="modals-slot"></div>
 
 <script src="assets/js/partial_loader.js?v=2.52.0"></script>
-<script defer src="dist/bundle.min.js?v=2.52.0"></script>
+<script defer src="dist/bundle.min.js?v=2.52.2"></script>
 <script>
+// Favicon: Development ortamında backend URL'ini kullan (port 5500 → 8002)
+(function() {
+  var isDev = window.location.port === '5500';
+  if (isDev) {
+    var fav = document.getElementById('faviconLink');
+    if (fav) fav.href = 'http://localhost:8002/api/assets/favicon';
+  }
+})();
 document.getElementById('themeToggleBtn').addEventListener('click', function() {
   var html = document.documentElement;
   var isLight = html.getAttribute('data-theme') === 'light';

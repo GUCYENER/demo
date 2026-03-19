@@ -112,11 +112,11 @@
         const totalPages = Math.ceil(total / perPage) || 1;
 
         let html = `
-            <button class="pg-btn" onclick="window.authorizationModule.goToUsersPage(${page - 1})" ${page === 1 ? 'disabled style="opacity:.4;cursor:not-allowed"' : ''}>
+            <button class="pg-btn" onclick="window.authorizationModule.goToUsersPage(${page - 1})" ${page === 1 ? 'disabled' : ''}>
                 <i class="fa-solid fa-chevron-left" style="font-size:9px"></i>
             </button>
             <button class="pg-btn pg-cur">${page} / ${totalPages}</button>
-            <button class="pg-btn" onclick="window.authorizationModule.goToUsersPage(${page + 1})" ${page >= totalPages ? 'disabled style="opacity:.4;cursor:not-allowed"' : ''}>
+            <button class="pg-btn" onclick="window.authorizationModule.goToUsersPage(${page + 1})" ${page >= totalPages ? 'disabled' : ''}>
                 <i class="fa-solid fa-chevron-right" style="font-size:9px"></i>
             </button>
         `;

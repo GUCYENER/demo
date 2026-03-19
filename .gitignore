@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.eggs/
+dist/
+build/
+*.whl
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Environment Variables
+.env
+.env.local
+.env.production
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Database (Local PostgreSQL)
+pgsql/
+
+# Redis (Local)
+redis/
+
+# Node
+frontend/node_modules/
+
+# Nginx (Local Config)
+nginx/
+
+# Temporary Files
+Gecici_Dosyalar_Sil/
+tmp/
+temp/
+
+# Byte-compiled
+*.pyc
+
+# Migrations cache
+migrations/__pycache__/
+migrations/versions/__pycache__/

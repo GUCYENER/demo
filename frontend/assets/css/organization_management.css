@@ -244,48 +244,8 @@
     color: #6b7280;
 }
 
-/* Pagination */
-.pagination {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 8px;
-    margin-top: 24px;
-}
-
-.page-btn {
-    min-width: 40px;
-    height: 40px;
-    padding: 0 12px;
-    border: 1px solid #e0e0e0;
-    background: white;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 14px;
-    color: #666;
-    transition: all 0.2s;
-}
-
-.page-btn:hover:not(:disabled) {
-    border-color: var(--primary-color, #4B70F5);
-    color: var(--primary-color, #4B70F5);
-}
-
-.page-btn.active {
-    background: var(--primary-color, #4B70F5);
-    border-color: var(--primary-color, #4B70F5);
-    color: white;
-}
-
-.page-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-.page-dots {
-    color: #999;
-    padding: 0 8px;
-}
+/* Pagination — home.css'deki global .pagination ve .page-btn stilleri kullanılır */
+/* Ek page-dots stili de home.css'de tanımlıdır */
 
 /* Empty State */
 .empty-state {
@@ -416,23 +376,7 @@
     display: none;
 }
 
-/* Footer with Total Count and Pagination */
-.org-footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-top: 24px;
-    padding: 16px 0;
-}
-
-.org-total-count {
-    font-size: 13px;
-    color: #666;
-    background: #f3f4f6;
-    padding: 6px 14px;
-    border-radius: 20px;
-    font-weight: 500;
-}
+/* Footer with Total Count and Pagination — home.css'deki global .org-footer ve .org-total-count stilleri kullanılır */
 
 /* Back Button Container */
 .org-back-button-wrapper {

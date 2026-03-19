@@ -231,3 +231,321 @@
         width: 100%;
     }
 }
+
+/* ================================================
+   Genel Modal System (modal-overlay + modal-box)
+   Widget, LLM ve diğer modüller için kullanılır
+   ================================================ */
+
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    padding: 20px;
+    animation: modalOverlayIn 0.25s ease;
+}
+
+.modal-overlay.hidden {
+    display: none !important;
+}
+
+@keyframes modalOverlayIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.modal-box {
+    background: linear-gradient(180deg, #1e2536 0%, #141822 100%);
+    border: 1px solid rgba(75, 85, 99, 0.45);
+    border-radius: 20px;
+    box-shadow:
+        0 25px 60px rgba(0, 0, 0, 0.55),
+        0 0 0 1px rgba(255, 255, 255, 0.04),
+        0 0 80px rgba(99, 102, 241, 0.06);
+    width: 100%;
+    max-width: 500px;
+    overflow: hidden;
+    animation: modalBoxIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes modalBoxIn {
+    from {
+        opacity: 0;
+        transform: scale(0.92) translateY(-16px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+/* Modal Header */
+.modal-box .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 24px;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(139, 92, 246, 0.05) 100%);
+    border-bottom: 1px solid rgba(99, 102, 241, 0.12);
+}
+
+.modal-box .modal-header h3 {
+    font-size: 17px;
+    font-weight: 700;
+    color: #f3f4f6;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    letter-spacing: -0.3px;
+}
+
+.modal-box .modal-header h3 i {
+    color: #818cf8;
+    font-size: 18px;
+}
+
+.modal-box .modal-close {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    border: 1px solid rgba(75, 85, 99, 0.5);
+    background: rgba(255, 255, 255, 0.04);
+    color: #9ca3af;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    font-size: 14px;
+}
+
+.modal-box .modal-close:hover {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border-color: rgba(239, 68, 68, 0.3);
+}
+
+/* Modal Body */
+.modal-box .modal-body {
+    padding: 24px;
+}
+
+/* Modal Footer */
+.modal-box .modal-footer {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+    padding: 16px 24px 24px;
+    border-top: 1px solid rgba(75, 85, 99, 0.3);
+}
+
+/* Form labels (fg-label) inside modal-box */
+.modal-box .fg-label {
+    margin-bottom: 16px;
+}
+
+.modal-box .fg-label label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: #d1d5db;
+    margin-bottom: 6px;
+}
+
+.modal-box .inp {
+    width: 100%;
+    padding: 10px 14px;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(75, 85, 99, 0.5);
+    border-radius: 10px;
+    color: #f3f4f6;
+    font-size: 14px;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    box-sizing: border-box;
+}
+
+.modal-box .inp:focus {
+    outline: none;
+    border-color: rgba(99, 102, 241, 0.5);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.modal-box select.inp {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%239ca3af' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 36px;
+}
+
+/* Toggle wrap inside modal-box — genel .toggle-wrap stili kullanılır */
+
+/* Modal Footer Buttons */
+.modal-box .modal-footer .btn {
+    padding: 10px 22px;
+    border-radius: 10px;
+    font-size: 13.5px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid rgba(75, 85, 99, 0.5);
+    background: rgba(55, 65, 81, 0.6);
+    color: #d1d5db;
+    transition: all 0.2s ease;
+}
+
+.modal-box .modal-footer .btn:hover {
+    background: rgba(75, 85, 99, 0.7);
+    transform: translateY(-1px);
+}
+
+.modal-box .modal-footer .btn.primary {
+    background: linear-gradient(135deg, #6366f1 0%, #818cf8 100%);
+    color: white;
+    border: none;
+    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.3);
+}
+
+.modal-box .modal-footer .btn.primary:hover {
+    box-shadow: 0 6px 20px rgba(99, 102, 241, 0.45);
+    transform: translateY(-1px);
+}
+
+/* Responsive */
+@media (max-width: 540px) {
+    .modal-box {
+        max-width: 95%;
+        border-radius: 16px;
+    }
+
+    .modal-box .modal-header {
+        padding: 16px 18px;
+    }
+
+    .modal-box .modal-body {
+        padding: 18px;
+    }
+
+    .modal-box .modal-footer {
+        flex-direction: column;
+        padding: 14px 18px 18px;
+    }
+
+    .modal-box .modal-footer .btn {
+        width: 100%;
+    }
+}
+
+/* ========================================
+   MODERN SAAS TOGGLE SWITCH
+   Premium iOS-tarzı toggle bileşeni
+======================================== */
+
+/* Toggle wrap container */
+.toggle-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 0;
+    gap: 16px;
+}
+
+/* Toggle label group */
+.toggle-label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.toggle-label span:first-child {
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--text-1, #f1f5f9);
+}
+
+.toggle-label span:last-child {
+    font-size: 12px;
+    color: var(--text-3, #64748b);
+    font-weight: 400;
+}
+
+/* Toggle switch — saas-toggle (home.html inline .toggle/.slider ile çakışmaz) */
+.saas-toggle {
+    position: relative;
+    display: inline-block;
+    width: 48px;
+    min-width: 48px;
+    height: 26px;
+    cursor: pointer;
+    margin: 0;
+    flex-shrink: 0;
+}
+
+.saas-toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+    position: absolute;
+}
+
+/* Track */
+.saas-toggle .saas-toggle-track {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(55, 65, 81, 0.7);
+    border: 1px solid rgba(100, 116, 139, 0.35);
+    border-radius: 26px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Knob */
+.saas-toggle .saas-toggle-track::before {
+    content: "";
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    left: 2px;
+    bottom: 2px;
+    background: #94a3b8;
+    border-radius: 50%;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+
+/* Checked state */
+.saas-toggle input:checked + .saas-toggle-track {
+    background: linear-gradient(135deg, #6366f1 0%, #818cf8 100%);
+    border-color: rgba(99, 102, 241, 0.5);
+    box-shadow: 0 0 14px rgba(99, 102, 241, 0.3);
+}
+
+.saas-toggle input:checked + .saas-toggle-track::before {
+    transform: translateX(22px);
+    background: #fff;
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
+}
+
+/* Hover */
+.saas-toggle:hover .saas-toggle-track {
+    border-color: rgba(99, 102, 241, 0.45);
+}
+
+.saas-toggle:hover .saas-toggle-track::before {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+/* Focus */
+.saas-toggle input:focus-visible + .saas-toggle-track {
+    outline: 2px solid rgba(99, 102, 241, 0.5);
+    outline-offset: 2px;
+}

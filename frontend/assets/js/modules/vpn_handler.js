@@ -33,8 +33,8 @@ window.isVPNNetworkError = function (errorMessage) {
 window.showVPNErrorPopup = function () {
     if (typeof VyraModal !== 'undefined' && VyraModal.vpnError) {
         VyraModal.vpnError();
-    } else {
-        alert('Corpix desteği için, şirket VPN ya da Wi-Fi açık olmalıdır. Lütfen bağlantı sağlayarak tekrar deneyin.');
+    } else if (typeof VyraModal !== 'undefined') {
+        VyraModal.warning({ title: 'Bağlantı Hatası', message: 'Corpix desteği için, şirket VPN ya da Wi-Fi açık olmalıdır. Lütfen bağlantı sağlayarak tekrar deneyin.' });
     }
 };
 

@@ -741,7 +741,11 @@ window.MLTrainingModule = (function () {
                 confirmText: 'Kapat'
             });
         } else {
-            alert('HATA DETAYI:\n\n' + errorMsg);
+            VyraModal.error({
+                title: 'Eğitim Hata Detayı',
+                message: `<pre class="detail-error">${escapeHtml(errorMsg)}</pre>`,
+                confirmText: 'Kapat'
+            });
         }
     }
 
@@ -802,7 +806,11 @@ window.MLTrainingModule = (function () {
                 confirmText: 'Kapat'
             });
         } else {
-            alert(`Eğitim #${job.id}\nKaynak: ${typeLabel}\nÖrnek: ${job.samples}\nSüre: ${duration}\nDurum: ${statusLabel}`);
+            VyraModal.info({
+                title: `Eğitim #${job.id}`,
+                message: `Kaynak: ${typeLabel}<br>Örnek: ${job.samples}<br>Süre: ${duration}<br>Durum: ${statusLabel}`,
+                confirmText: 'Kapat'
+            });
         }
     }
 
@@ -1075,7 +1083,11 @@ window.MLTrainingModule = (function () {
                         confirmText: 'Kapat'
                     });
                 } else {
-                    alert('Bu eğitim için örnek bulunamadı.');
+                    VyraModal.info({
+                        title: `Eğitim Örnekleri #${jobId}`,
+                        message: '<div class="job-detail-modal"><p>Bu eğitim için örnek bulunamadı.</p><p class="samples-note">Not: Örnek kayıtları v2.33.0 sonrası eğitimlerden itibaren saklanmaktadır.</p></div>',
+                        confirmText: 'Kapat'
+                    });
                 }
                 return;
             }
@@ -1225,7 +1237,11 @@ window.MLTrainingModule = (function () {
                     _bindFilterEvents(offset);
                 });
             } else {
-                alert(`${total} eğitim örneği yüklendi.`);
+                VyraModal.info({
+                    title: 'Eğitim Örnekleri',
+                    message: `${total} eğitim örneği yüklendi.`,
+                    confirmText: 'Tamam'
+                });
             }
 
         } catch (error) {

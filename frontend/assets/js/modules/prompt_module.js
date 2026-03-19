@@ -186,7 +186,7 @@ window.PromptModule = (function () {
 
         const id = el.inputs.id.value;
         if (!id) {
-            alert('Geçersiz prompt ID');
+            VyraModal.warning({ title: 'Hata', message: 'Geçersiz prompt ID' });
             return;
         }
 
@@ -205,7 +205,7 @@ window.PromptModule = (function () {
             loadPrompts();
             showToast('success', 'Prompt güncellendi');
         } catch (err) {
-            alert("İşlem başarısız: " + err.message);
+            VyraModal.error({ title: 'Hata', message: 'İşlem başarısız: ' + err.message });
         }
     }
 

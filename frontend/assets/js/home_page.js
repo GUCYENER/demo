@@ -441,7 +441,7 @@ if (suggestBtn) {
 
             const problem = document.getElementById("problemText").value.trim();
             if (!problem) {
-                alert("Lütfen sorununuzu detaylı yazın.");
+                VyraModal.warning({ title: 'Eksik Bilgi', message: 'Lütfen sorununuzu detaylı yazın.' });
                 return;
             }
 
@@ -610,7 +610,7 @@ if (suggestBtn) {
 
             } catch (err) {
                 loadingBox.classList.add("hidden");
-                alert("Hata oluştu: " + err.message);
+                VyraModal.error({ title: 'Hata', message: 'Hata oluştu: ' + err.message });
                 console.error("Chat Error:", err);
 
                 // Hata durumunda da buton'u aktif et
@@ -652,7 +652,9 @@ if (showCYM) {
 if (copyBtn) {
     copyBtn.addEventListener("click", () => {
         if (cymText) navigator.clipboard.writeText(cymText.textContent);
-        alert("Çağrı metni kopyalandı.");
+        if (typeof VyraToast !== 'undefined') {
+            VyraToast.success('Çağrı metni kopyalandı.');
+        }
     });
 }
 

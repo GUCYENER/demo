@@ -56,11 +56,11 @@ window.RAGFileList = {
         const totalPages = Math.ceil(total / perPage) || 1;
 
         let html = `
-            <button class="pg-btn" onclick="RAGUpload.goToFilesPage(${page - 1})" ${page === 1 ? 'disabled style="opacity:0.4;pointer-events:none"' : ''}>
+            <button class="pg-btn" onclick="RAGUpload.goToFilesPage(${page - 1})" ${page === 1 ? 'disabled' : ''}>
                 <i class="fa-solid fa-chevron-left" style="font-size:10px"></i>
             </button>
             <button class="pg-btn pg-cur">${page} / ${totalPages}</button>
-            <button class="pg-btn" onclick="RAGUpload.goToFilesPage(${page + 1})" ${page >= totalPages ? 'disabled style="opacity:0.4;pointer-events:none"' : ''}>
+            <button class="pg-btn" onclick="RAGUpload.goToFilesPage(${page + 1})" ${page >= totalPages ? 'disabled' : ''}>
                 <i class="fa-solid fa-chevron-right" style="font-size:10px"></i>
             </button>
         `;

@@ -313,6 +313,11 @@
     margin-bottom: 0;
 }
 
+/* URL alanı geniş, Timeout alanı dar */
+#ldapSettingModal .form-row-url {
+    grid-template-columns: 3fr 1fr;
+}
+
 #ldapSettingModal .form-group {
     margin-bottom: 16px;
 }

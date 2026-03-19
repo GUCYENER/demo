@@ -701,8 +701,8 @@ window.SolutionDisplayModule = (function () {
 
                 if (typeof VyraToast !== 'undefined') {
                     VyraToast.success("Çağrı metni kopyalandı.");
-                } else {
-                    alert("Çağrı metni kopyalandı.");
+                } else if (typeof window.showToast === 'function') {
+                    window.showToast('Çağrı metni kopyalandı.', 'success');
                 }
             });
         }

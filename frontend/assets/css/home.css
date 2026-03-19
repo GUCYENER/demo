@@ -1671,6 +1671,95 @@ textarea.drag-over {
     gap: 16px;
 }
 
+.form-row-3col {
+    grid-template-columns: repeat(3, 1fr);
+}
+
+/* ============================================
+   Modern SaaS Number Input Spinners
+   Native okları gizle, custom butonlar ekle
+   ============================================ */
+
+/* Native spinner'ları gizle */
+.form-input[type="number"]::-webkit-inner-spin-button,
+.form-input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+.form-input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+
+/* Custom Number Spinner Wrapper */
+.num-spinner-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid rgba(75, 85, 99, 0.5);
+    background: rgba(31, 41, 55, 0.8);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.num-spinner-wrap:focus-within {
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+}
+
+.num-spinner-wrap .num-spinner-input {
+    border: none;
+    border-radius: 0;
+    text-align: center;
+    padding: 10px 4px;
+    flex: 1;
+    min-width: 0;
+    font-weight: 600;
+    font-size: 14px;
+    background: transparent;
+}
+
+.num-spinner-wrap .num-spinner-input:focus {
+    box-shadow: none;
+    border: none;
+    outline: none;
+}
+
+.num-spinner-btn {
+    width: 36px;
+    min-width: 36px;
+    height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(99, 102, 241, 0.08);
+    border: none;
+    color: #818cf8;
+    cursor: pointer;
+    font-size: 11px;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+}
+
+.num-spinner-btn:hover {
+    background: rgba(99, 102, 241, 0.2);
+    color: #a5b4fc;
+}
+
+.num-spinner-btn:active {
+    background: rgba(99, 102, 241, 0.3);
+    transform: scale(0.95);
+}
+
+.num-spinner-btn.num-dec {
+    border-right: 1px solid rgba(75, 85, 99, 0.35);
+}
+
+.num-spinner-btn.num-inc {
+    border-left: 1px solid rgba(75, 85, 99, 0.35);
+}
+
 .form-label {
     font-size: 14px;
     font-weight: 600;
@@ -5208,4 +5297,161 @@ textarea.drag-over {
 .readonly-field:focus {
     border-color: rgba(55, 65, 81, 0.8) !important;
     box-shadow: none !important;
+}
+
+/* ========================================
+   GLOBAL PAGER & PAGINATION (SaaS Dark)
+   Bilgi Tabanı, Organizasyonlar, Yetkilendirme
+   Not: home.html inline CSS ile uyumlu CSS değişkenleri kullanılır
+======================================== */
+
+/* Pager container — inline CSS override */
+.pager {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 18px;
+    border-top: 1px solid var(--border);
+    margin-top: 4px;
+}
+
+.pager-info {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-3);
+    background: var(--bg-chip);
+    padding: 5px 14px;
+    border-radius: 20px;
+    letter-spacing: 0.2px;
+    border: 1px solid var(--border);
+}
+
+.pager-btns {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+/* pg-btn: Tek stile sahip pagination butonları */
+.pg-btn {
+    min-width: 28px;
+    height: 28px;
+    padding: 0 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-chip);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    color: var(--text-2);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    line-height: 1;
+}
+
+.pg-btn:hover:not(:disabled):not(.pg-cur) {
+    background: var(--accent-subtle);
+    border-color: var(--border-accent);
+    color: var(--text-acc);
+    transform: translateY(-1px);
+}
+
+.pg-btn:active:not(:disabled):not(.pg-cur) {
+    transform: translateY(0);
+}
+
+.pg-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+/* pg-cur: Aktif sayfa bilgisi */
+.pg-btn.pg-cur {
+    background: var(--accent-subtle);
+    border-color: var(--border-accent, var(--accent));
+    color: var(--text-acc);
+    font-weight: 600;
+    cursor: default;
+    letter-spacing: 0.3px;
+}
+
+/* page-btn: Organizasyon Yönetimi numaralı butonlar */
+.pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 0;
+}
+
+.page-btn {
+    min-width: 28px;
+    height: 28px;
+    padding: 0 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-chip);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    color: var(--text-2);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-family: inherit;
+    line-height: 1;
+}
+
+.page-btn:hover:not(:disabled):not(.active) {
+    background: var(--accent-subtle);
+    border-color: var(--border-accent);
+    color: var(--text-acc);
+    transform: translateY(-1px);
+}
+
+.page-btn.active {
+    background: var(--accent-subtle);
+    border-color: var(--accent);
+    color: var(--text-acc);
+    font-weight: 600;
+}
+
+.page-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.page-dots {
+    color: var(--text-3);
+    padding: 0 4px;
+    font-size: 13px;
+    letter-spacing: 2px;
+}
+
+/* Org footer (organizasyon yönetimi alt kısım) */
+.org-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 18px;
+    border-top: 1px solid var(--border);
+    margin-top: 4px;
+}
+
+.org-total-count {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-3);
+    background: var(--bg-chip);
+    padding: 5px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
 }

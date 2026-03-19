@@ -155,13 +155,21 @@
                 <textarea id="llmDesc" rows="2" class="form-textarea" placeholder="Opsiyonel açıklama..."></textarea>
             </div>
 
-            <div class="form-row">
+            <div class="form-row form-row-3col">
                 <!-- Temperature -->
                 <div class="form-group">
                     <label for="llmTemp" class="form-label">
                         <i class="fa-solid fa-temperature-half"></i> Temperature
                     </label>
-                    <input type="number" id="llmTemp" step="0.1" min="0" max="2" value="0.7" class="form-input">
+                    <div class="num-spinner-wrap">
+                        <button type="button" class="num-spinner-btn num-dec" data-target="llmTemp" data-step="0.1" data-min="0">
+                            <i class="fa-solid fa-minus"></i>
+                        </button>
+                        <input type="number" id="llmTemp" step="0.1" min="0" max="2" value="0.7" class="form-input num-spinner-input">
+                        <button type="button" class="num-spinner-btn num-inc" data-target="llmTemp" data-step="0.1" data-max="2">
+                            <i class="fa-solid fa-plus"></i>
+                        </button>
+                    </div>
                     <p class="form-hint">0=Tutarlı, 0.7=Dengeli, 2=Yaratıcı</p>
                 </div>
 
@@ -170,16 +178,32 @@
                     <label for="llmTopP" class="form-label">
                         <i class="fa-solid fa-layer-group"></i> Top P
                     </label>
-                    <input type="number" id="llmTopP" step="0.1" min="0" max="1" value="1.0" class="form-input">
+                    <div class="num-spinner-wrap">
+                        <button type="button" class="num-spinner-btn num-dec" data-target="llmTopP" data-step="0.1" data-min="0">
+                            <i class="fa-solid fa-minus"></i>
+                        </button>
+                        <input type="number" id="llmTopP" step="0.1" min="0" max="1" value="1.0" class="form-input num-spinner-input">
+                        <button type="button" class="num-spinner-btn num-inc" data-target="llmTopP" data-step="0.1" data-max="1">
+                            <i class="fa-solid fa-plus"></i>
+                        </button>
+                    </div>
                     <p class="form-hint">0.9 önerilir (dengeli çeşitlilik)</p>
                 </div>
 
                 <!-- Timeout -->
                 <div class="form-group">
                     <label for="llmTimeout" class="form-label">
-                        <i class="fa-solid fa-clock"></i> Timeout (saniye)
+                        <i class="fa-solid fa-clock"></i> Timeout (sn)
                     </label>
-                    <input type="number" id="llmTimeout" min="5" max="300" value="60" class="form-input">
+                    <div class="num-spinner-wrap">
+                        <button type="button" class="num-spinner-btn num-dec" data-target="llmTimeout" data-step="5" data-min="5">
+                            <i class="fa-solid fa-minus"></i>
+                        </button>
+                        <input type="number" id="llmTimeout" min="5" max="300" value="60" class="form-input num-spinner-input">
+                        <button type="button" class="num-spinner-btn num-inc" data-target="llmTimeout" data-step="5" data-max="300">
+                            <i class="fa-solid fa-plus"></i>
+                        </button>
+                    </div>
                     <p class="form-hint">API yanıt bekleme süresi (5-300 sn)</p>
                 </div>
             </div>

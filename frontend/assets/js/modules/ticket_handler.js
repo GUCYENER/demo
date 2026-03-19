@@ -16,7 +16,7 @@ function handleTicketError(error, suggestBtn, problemTextArea) {
     } else if (typeof VyraToast !== 'undefined') {
         VyraToast.error('Çözüm hazırlanamadı: ' + error);
     } else {
-        alert('Çözüm hazırlanamadı: ' + error);
+        VyraModal.error({ title: 'Hata', message: 'Çözüm hazırlanamadı: ' + error });
     }
 
     isProcessingRequest = false;

@@ -651,7 +651,10 @@ CREATE TABLE IF NOT EXISTS widget_api_keys (
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     created_by INTEGER REFERENCES users(id),
-    last_used_at TIMESTAMP
+    last_used_at TIMESTAMP,
+    prompt_id INTEGER REFERENCES prompt_templates(id) ON DELETE SET NULL,
+    llm_config_id INTEGER REFERENCES llm_config(id) ON DELETE SET NULL,
+    use_rag BOOLEAN DEFAULT TRUE
 );
 
 CREATE INDEX IF NOT EXISTS idx_widget_api_keys_hash ON widget_api_keys(key_hash);

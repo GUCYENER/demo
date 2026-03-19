@@ -8,14 +8,14 @@
 (function () {
     "use strict";
 
-    const API = window.VYRA_API || window.NGSSAI_API || "";
+    const API_BASE = (window.API_BASE_URL || "http://localhost:8002") + "/api";
 
     function getToken() {
         return localStorage.getItem("access_token") || "";
     }
 
     function apiRequest(method, path, body) {
-        return fetch(`${API}${path}`, {
+        return fetch(`${API_BASE}${path}`, {
             method,
             headers: {
                 "Authorization": `Bearer ${getToken()}`,
@@ -37,12 +37,14 @@
     // ------------------------------------------------------------------
     async function loadOrgs() {
         try {
-            const resp = await apiRequest("GET", "/api/organizations");
+            const resp = await apiRequest("GET", "/organizations");
             if (resp.ok) {
                 const data = await resp.json();
-                orgs = Array.isArray(data) ? data : (data.items || []);
+                orgs = data.organizations || data.items || (Array.isArray(data) ? data : []);
             }
-        } catch {}
+        } catch (e) {
+            console.error("[Widget] Orgs yüklenemedi:", e);
+        }
     }
 
     function populateOrgSelect() {
@@ -64,7 +66,7 @@
     // ------------------------------------------------------------------
     async function loadOptions() {
         try {
-            const resp = await apiRequest("GET", "/api/widget/options");
+            const resp = await apiRequest("GET", "/widget/options");
             if (resp.ok) widgetOptions = await resp.json();
         } catch {}
     }
@@ -108,7 +110,7 @@
         </td></tr>`;
 
         try {
-            const resp = await apiRequest("GET", "/api/widget/keys");
+            const resp = await apiRequest("GET", "/widget/keys");
             if (!resp.ok) throw new Error("Yüklenemedi");
             keys = await resp.json();
         } catch (e) {
@@ -235,7 +237,7 @@
         if (saveBtn) { saveBtn.disabled = true; saveBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Oluşturuluyor...'; }
 
         try {
-            const resp = await apiRequest("POST", "/api/widget/keys", {
+            const resp = await apiRequest("POST", "/widget/keys", {
                 name, org_id: orgId, allowed_domains: allowedDomains, is_active: isActive,
                 prompt_id: promptId, llm_config_id: llmConfigId, use_rag: useRag,
             });
@@ -304,7 +306,7 @@
     // ------------------------------------------------------------------
     async function toggleKey(keyId, currentlyActive) {
         try {
-            const resp = await apiRequest("PUT", `/api/widget/keys/${keyId}`, {
+            const resp = await apiRequest("PUT", `/widget/keys/${keyId}`, {
                 is_active: !currentlyActive,
             });
             if (!resp.ok) throw new Error("Güncellenemedi");
@@ -320,16 +322,22 @@
     // ------------------------------------------------------------------
     async function deleteKey(keyId) {
         const key = keys.find(k => k.id === keyId);
-        if (!confirm(`"${key?.name || 'Bu anahtar'}" silinecek. Emin misiniz?`)) return;
-
-        try {
-            const resp = await apiRequest("DELETE", `/api/widget/keys/${keyId}`);
-            if (!resp.ok) throw new Error("Silinemedi");
-            showToast("Anahtar silindi", "success");
-            await loadKeys();
-        } catch (e) {
-            showToast(e.message, "error");
-        }
+        VyraModal.danger({
+            title: 'Widget Anahtarını Sil',
+            message: `"${key?.name || 'Bu anahtar'}" silinecek. Emin misiniz?`,
+            confirmText: 'Sil',
+            cancelText: 'İptal',
+            onConfirm: async () => {
+                try {
+                    const resp = await apiRequest("DELETE", `/widget/keys/${keyId}`);
+                    if (!resp.ok) throw new Error("Silinemedi");
+                    showToast("Anahtar silindi", "success");
+                    await loadKeys();
+                } catch (e) {
+                    showToast(e.message, "error");
+                }
+            }
+        });
     }
 
     // ------------------------------------------------------------------
@@ -416,11 +424,15 @@
             );
         });
 
-        // Modal dışına tıklayınca kapat
-        ["widgetKeyModal", "widgetKeyCreatedModal"].forEach(id => {
-            document.getElementById(id)?.addEventListener("click", (e) => {
-                if (e.target.id === id) document.getElementById(id).classList.add("hidden");
-            });
+        // Overlay tıklamasıyla kapatma devre dışı (veri kaybı önleme)
+        // Modallar yalnızca X/İptal butonu veya ESC ile kapatılır
+
+        // ESC ile modal kapat
+        document.addEventListener("keydown", (e) => {
+            if (e.key === "Escape") {
+                closeNewKeyModal();
+                closeCreatedModal();
+            }
         });
     }
 

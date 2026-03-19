@@ -317,17 +317,30 @@ def test_ldap_connection(setting_id: int) -> Dict[str, Any]:
     try:
         url = setting["url"]
         host, port = _parse_ldap_url(url)
+        timeout = setting.get("timeout", 10)
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(setting["timeout"])
-        result = sock.connect_ex((host, port))
-        sock.close()
-
-        if result == 0:
-            steps.append({"step": 1, "name": "TCP Bağlantı", "status": "success", "message": f"{host}:{port} erişilebilir"})
-        else:
-            steps.append({"step": 1, "name": "TCP Bağlantı", "status": "error", "message": f"{host}:{port} erişilemiyor (code: {result})"})
+        sock.settimeout(timeout)
+        try:
+            sock.connect((host, port))
+            steps.append({
+                "step": 1, "name": "TCP Bağlantı", "status": "success",
+                "message": f"{host}:{port} erişilebilir"
+            })
+        except (socket.timeout, TimeoutError):
+            steps.append({
+                "step": 1, "name": "TCP Bağlantı", "status": "error",
+                "message": f"{host}:{port} zaman aşımına uğradı ({timeout}s)"
+            })
+            return {"success": False, "message": f"TCP bağlantı zaman aşımı: {host}:{port}", "steps": steps}
+        except OSError as sock_err:
+            steps.append({
+                "step": 1, "name": "TCP Bağlantı", "status": "error",
+                "message": f"{host}:{port} erişilemiyor ({sock_err})"
+            })
             return {"success": False, "message": f"TCP bağlantı başarısız: {host}:{port}", "steps": steps}
+        finally:
+            sock.close()
     except Exception as e:
         steps.append({"step": 1, "name": "TCP Bağlantı", "status": "error", "message": str(e)})
         return {"success": False, "message": f"TCP hatası: {e}", "steps": steps}

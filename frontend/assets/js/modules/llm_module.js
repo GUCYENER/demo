@@ -128,10 +128,6 @@ window.LLMModule = (function() {
                     </div>
                     <div class="model-id">${llm.model_name}</div>
                     ${desc}
-                    <div class="model-meta">
-                        <div class="mm-item"><span class="mm-key">Vendor</span><span class="mm-val">${llm.vendor_code}</span></div>
-                        <div class="mm-item"><span class="mm-key">Temp / TopP</span><span class="mm-val">${llm.temperature} / ${llm.top_p}</span></div>
-                    </div>
                 </div>
                 <div class="model-actions">
                     <div class="toggle-wrap">
@@ -144,6 +140,11 @@ window.LLMModule = (function() {
                     <button class="act-btn del" ${deleteDisabled} onclick="LLMModule.delete(${llm.id}, ${isActive})" title="Sil">
                         <i class="fa-solid fa-trash"></i>
                     </button>
+                </div>
+                <div class="model-meta model-meta-3col">
+                    <div class="mm-item"><span class="mm-key">Temperature</span><span class="mm-val">${llm.temperature}</span></div>
+                    <div class="mm-item"><span class="mm-key">Top P</span><span class="mm-val">${llm.top_p}</span></div>
+                    <div class="mm-item"><span class="mm-key">Timeout</span><span class="mm-val">${llm.timeout_seconds || 60}s</span></div>
                 </div>
             `;
             el.grid.appendChild(card);
@@ -204,11 +205,7 @@ window.LLMModule = (function() {
         }
 
         if (!payload.provider || !payload.model_name || !payload.api_url) {
-            if (typeof VyraToast !== 'undefined') {
-                VyraToast.warning('Lütfen zorunlu alanları doldurun: Provider, Model ve API URL');
-            } else {
-                alert('Lütfen zorunlu alanları doldurun: Provider, Model ve API URL');
-            }
+            VyraModal.warning({ title: 'Eksik Alanlar', message: 'Lütfen zorunlu alanları doldurun: Provider, Model ve API URL' });
             return;
         }
 
@@ -246,14 +243,10 @@ window.LLMModule = (function() {
                 errorMsg = err.message;
             }
 
-            if (typeof VyraModal !== 'undefined') {
-                VyraModal.error({
-                    title: 'Hata',
-                    message: errorMsg
-                });
-            } else {
-                alert("İşlem başarısız: " + errorMsg);
-            }
+            VyraModal.error({
+                title: 'Hata',
+                message: errorMsg
+            });
         }
     }
 
@@ -287,7 +280,7 @@ window.LLMModule = (function() {
             await window.VYRA_API.request(`/llm-config/${id}/activate`, { method: "POST" });
             loadConfigs();
         } catch (err) {
-            alert("Aktif etme başarısız: " + err.message);
+            VyraModal.error({ title: 'Hata', message: 'Aktif etme başarısız: ' + err.message });
             loadConfigs();
         }
     }
@@ -307,6 +300,32 @@ window.LLMModule = (function() {
         if (el.btnClose) el.btnClose.addEventListener("click", closeModal);
         if (el.btnCancel) el.btnCancel.addEventListener("click", closeModal);
         if (el.form) el.form.addEventListener("submit", handleSubmit);
+
+        // Modern SaaS Spinner Butonları (Event Delegation)
+        document.addEventListener('click', function(e) {
+            const btn = e.target.closest('.num-spinner-btn');
+            if (!btn) return;
+
+            const targetId = btn.dataset.target;
+            const input = document.getElementById(targetId);
+            if (!input) return;
+
+            const step = parseFloat(btn.dataset.step) || 1;
+            const min = parseFloat(btn.dataset.min);
+            const max = parseFloat(btn.dataset.max);
+            let val = parseFloat(input.value) || 0;
+
+            if (btn.classList.contains('num-inc')) {
+                val = Math.round((val + step) * 100) / 100;
+                if (!isNaN(max) && val > max) val = max;
+            } else {
+                val = Math.round((val - step) * 100) / 100;
+                if (!isNaN(min) && val < min) val = min;
+            }
+
+            input.value = val;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        });
     }
 
     // Public API

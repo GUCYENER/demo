@@ -328,23 +328,29 @@ window.LdapSettingsModule = (function () {
     //  Delete Setting
     // ---------------------------------------------------------
     async function deleteSetting(id, domain) {
-        if (!confirm(`"${domain}" LDAP sunucusunu silmek istediğinize emin misiniz?`)) return;
+        VyraModal.danger({
+            title: 'LDAP Sunucu Sil',
+            message: `"${domain}" LDAP sunucusunu silmek istediğinize emin misiniz?`,
+            confirmText: 'Sil',
+            cancelText: 'İptal',
+            onConfirm: async () => {
+                try {
+                    const response = await fetch(`${API_BASE}/api/ldap-settings/${id}`, {
+                        method: 'DELETE',
+                        headers: authHeaders()
+                    });
 
-        try {
-            const response = await fetch(`${API_BASE}/api/ldap-settings/${id}`, {
-                method: 'DELETE',
-                headers: authHeaders()
-            });
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.detail || 'Silme başarısız');
 
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.detail || 'Silme başarısız');
-
-            if (window.showToast) window.showToast(data.message || 'Silindi', 'success');
-            load();
-        } catch (err) {
-            console.error('[LDAP] Delete error:', err);
-            if (window.showToast) window.showToast(err.message, 'error');
-        }
+                    if (window.showToast) window.showToast(data.message || 'Silindi', 'success');
+                    load();
+                } catch (err) {
+                    console.error('[LDAP] Delete error:', err);
+                    if (window.showToast) window.showToast(err.message, 'error');
+                }
+            }
+        });
     }
 
     // ---------------------------------------------------------
@@ -362,19 +368,23 @@ window.LdapSettingsModule = (function () {
             const data = await response.json();
 
             if (data.success) {
-                let msg = '✅ LDAP bağlantısı başarılı!\n\n';
-                (data.steps || []).forEach(s => {
-                    msg += `${s.status === 'success' ? '✅' : '❌'} ${s.name}: ${s.message}\n`;
-                });
+                let stepsHtml = (data.steps || []).map(s =>
+                    `<div style="padding:4px 0;font-size:13px">${s.status === 'success' ? '✅' : '❌'} <strong>${s.name}</strong>: ${s.message}</div>`
+                ).join('');
                 if (window.showToast) window.showToast(data.message, 'success');
-                alert(msg);
-            } else {
-                let msg = '❌ LDAP bağlantı hatası\n\n';
-                (data.steps || []).forEach(s => {
-                    msg += `${s.status === 'success' ? '✅' : '❌'} ${s.name}: ${s.message}\n`;
+                VyraModal.success({
+                    title: 'LDAP Bağlantı Başarılı',
+                    htmlMessage: `<div style="margin-top:8px">${stepsHtml}</div>`
                 });
+            } else {
+                let stepsHtml = (data.steps || []).map(s =>
+                    `<div style="padding:4px 0;font-size:13px">${s.status === 'success' ? '✅' : '❌'} <strong>${s.name}</strong>: ${s.message}</div>`
+                ).join('');
                 if (window.showToast) window.showToast(data.message, 'error');
-                alert(msg);
+                VyraModal.error({
+                    title: 'LDAP Bağlantı Hatası',
+                    htmlMessage: `<div style="margin-top:8px">${stepsHtml}</div>`
+                });
             }
         } catch (err) {
             console.error('[LDAP] Test error:', err);

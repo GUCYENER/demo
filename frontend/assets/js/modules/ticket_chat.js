@@ -163,7 +163,7 @@ window.TicketChatModule = (function () {
 
         const problem = el.problemTextArea ? el.problemTextArea.value.trim() : "";
         if (!problem) {
-            alert("Lütfen sorununuzu detaylı yazın.");
+            VyraModal.warning({ title: 'Eksik Bilgi', message: 'Lütfen sorununuzu detaylı yazın.' });
             return;
         }
 
@@ -176,7 +176,7 @@ window.TicketChatModule = (function () {
                 if (typeof VyraToast !== 'undefined') {
                     VyraToast.warning('⚠️ Doküman organizasyon yetkiniz bulunamamıştır. Lütfen yöneticinizle iletişime geçin.');
                 } else {
-                    alert('Doküman organizasyon yetkiniz bulunamamıştır. Lütfen yöneticinizle iletişime geçin.');
+                    VyraModal.warning({ title: 'Yetki Eksik', message: 'Doküman organizasyon yetkiniz bulunamamıştır. Lütfen yöneticinizle iletişime geçin.' });
                 }
                 return;
             }
@@ -230,7 +230,7 @@ window.TicketChatModule = (function () {
                         } else if (typeof VyraToast !== 'undefined') {
                             VyraToast.error('Çözüm hazırlanamadı: ' + error);
                         } else {
-                            alert('Çözüm hazırlanamadı: ' + error);
+                            VyraModal.error({ title: 'Hata', message: 'Çözüm hazırlanamadı: ' + error });
                         }
 
                         // Hata durumunda reset
@@ -275,7 +275,7 @@ window.TicketChatModule = (function () {
             if (window.SolutionDisplayModule) {
                 window.SolutionDisplayModule.hide();
             }
-            alert("Hata oluştu: " + err.message);
+            VyraModal.error({ title: 'Hata', message: 'Hata oluştu: ' + err.message });
             console.error("Chat Error:", err);
 
             el.suggestBtn.disabled = false;

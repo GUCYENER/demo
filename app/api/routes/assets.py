@@ -5,13 +5,20 @@ Sistem görselleri (logo, favicon vb.) için API endpoint'leri.
 Bu görseller veritabanında BLOB olarak saklanır ve reset'te korunur.
 """
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from fastapi.responses import Response
+from fastapi.responses import Response, FileResponse
 from typing import Optional
 
 from app.core.db import get_db_conn
 from app.services.logging_service import log_system_event, log_error
 from app.api.routes.auth import get_current_user
+
+# Statik dosya fallback dizini
+_STATIC_FALLBACK_DIR = os.path.join(
+    os.path.dirname(__file__), "..", "..", "..", "frontend", "assets", "images"
+)
 
 router = APIRouter()
 
@@ -39,6 +46,22 @@ async def get_asset(asset_key: str):
         
         row = cur.fetchone()
         if not row:
+            # DB'de yoksa statik dosyalardan fallback dene
+            _FALLBACK_MAP = {
+                "favicon": "favicon.png",
+                "login_logo": "vyra_logo.png",
+                "sidebar_logo": "vyra_logo.png",
+            }
+            fallback_file = _FALLBACK_MAP.get(asset_key)
+            if fallback_file:
+                fallback_path = os.path.normpath(
+                    os.path.join(_STATIC_FALLBACK_DIR, fallback_file)
+                )
+                if os.path.isfile(fallback_path):
+                    return FileResponse(
+                        fallback_path,
+                        headers={"Cache-Control": "public, max-age=86400"},
+                    )
             raise HTTPException(status_code=404, detail=f"Asset bulunamadı: {asset_key}")
         
         # Binary data döndür

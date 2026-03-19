@@ -95,17 +95,17 @@
 
         // Her zaman göster (tek sayfa olsa bile navigasyon bilgisi için)
         let html = `
-            <button class="pg-btn" onclick="window.orgModule.goToPage(1)" ${page === 1 ? 'disabled style="opacity:.4;cursor:not-allowed"' : ''}>
+            <button class="pg-btn" onclick="window.orgModule.goToPage(1)" ${page === 1 ? 'disabled' : ''}>
                 <i class="fa-solid fa-angles-left" style="font-size:10px"></i>
             </button>
-            <button class="pg-btn" onclick="window.orgModule.goToPage(${page - 1})" ${page === 1 ? 'disabled style="opacity:.4;cursor:not-allowed"' : ''}>
+            <button class="pg-btn" onclick="window.orgModule.goToPage(${page - 1})" ${page === 1 ? 'disabled' : ''}>
                 <i class="fa-solid fa-chevron-left" style="font-size:10px"></i>
             </button>
             <span class="pg-btn pg-cur">${page} / ${totalPages}</span>
-            <button class="pg-btn" onclick="window.orgModule.goToPage(${page + 1})" ${page >= totalPages ? 'disabled style="opacity:.4;cursor:not-allowed"' : ''}>
+            <button class="pg-btn" onclick="window.orgModule.goToPage(${page + 1})" ${page >= totalPages ? 'disabled' : ''}>
                 <i class="fa-solid fa-chevron-right" style="font-size:10px"></i>
             </button>
-            <button class="pg-btn" onclick="window.orgModule.goToPage(${totalPages})" ${page >= totalPages ? 'disabled style="opacity:.4;cursor:not-allowed"' : ''}>
+            <button class="pg-btn" onclick="window.orgModule.goToPage(${totalPages})" ${page >= totalPages ? 'disabled' : ''}>
                 <i class="fa-solid fa-angles-right" style="font-size:10px"></i>
             </button>
         `;
@@ -255,23 +255,29 @@
             return;
         }
 
-        if (!confirm(`"${orgCode}" organizasyonunu silmek istediğinize emin misiniz?`)) return;
+        VyraModal.danger({
+            title: 'Organizasyon Sil',
+            message: `"${orgCode}" organizasyonunu silmek istediğinize emin misiniz?`,
+            confirmText: 'Sil',
+            cancelText: 'İptal',
+            onConfirm: async () => {
+                const token = localStorage.getItem("access_token");
+                try {
+                    const response = await fetch(`${API_BASE}/organizations/${orgId}`, {
+                        method: "DELETE",
+                        headers: { "Authorization": `Bearer ${token}` }
+                    });
 
-        const token = localStorage.getItem("access_token");
-        try {
-            const response = await fetch(`${API_BASE}/organizations/${orgId}`, {
-                method: "DELETE",
-                headers: { "Authorization": `Bearer ${token}` }
-            });
+                    if (!response.ok) throw new Error("Silme başarısız");
 
-            if (!response.ok) throw new Error("Silme başarısız");
+                    showToast("Organizasyon silindi", "success");
+                    loadOrganizations();
 
-            showToast("Organizasyon silindi", "success");
-            loadOrganizations();
-
-        } catch (error) {
-            showToast(error.message, "error");
-        }
+                } catch (error) {
+                    showToast(error.message, "error");
+                }
+            }
+        });
     }
 
     function escapeHtml(text) {

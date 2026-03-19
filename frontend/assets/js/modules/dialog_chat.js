@@ -347,7 +347,7 @@ window.DialogChatModule = (function () {
                 currentDialogId = dialog.id;
                 clearMessages();
                 resetNewDialogButtonHighlight(); // Animasyonu kaldır
-                addSystemMessage('🎉 VYRA\'ya yeni soru sorabilirsiniz. Size nasıl yardımcı olabilirim?');
+                addSystemMessage('🎉 NGSSAI\'ye yeni soru sorabilirsiniz. Size nasıl yardımcı olabilirim?');
 
                 // Çağrı Aç butonunu pasifleştir (yeni dialog boş)
                 setTicketButtonEnabled(false);
@@ -1476,7 +1476,7 @@ window.DialogChatModule = (function () {
                     data-query="${escapeHtml(originalQuery)}"
                     onclick="DialogChatModule.handleEnhance(this)"
                     title="LLM ile cevabı iyileştir">
-                    <i class="fa-solid fa-wand-magic-sparkles"></i> Vyra önerisi al
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> NGSSAI önerisi al
                 </button>
             </div>
         ` : '';
@@ -1497,7 +1497,7 @@ window.DialogChatModule = (function () {
         const corpixChatBtn = noRelevantResult ? `
             <div class="vyra-corpix-container">
                 <button class="vyra-corpix-btn" onclick="DialogChatModule.switchToCorpixMode()">
-                    <i class="fa-solid fa-comments"></i> Vyra ile Sohbet Et
+                    <i class="fa-solid fa-comments"></i> NGSSAI ile Sohbet Et
                 </button>
             </div>
         ` : '';
@@ -1815,7 +1815,7 @@ window.DialogChatModule = (function () {
 
         // Browser notification (kullanıcı başka sekmede veya menüdeyse)
         if (document.hidden || !isDialogSectionVisible()) {
-            showToast('info', '🤖 VYRA yanıtladı! Dialog sekmesine bakın.');
+            showToast('info', '🤖 NGSSAI yanıtladı! Dialog sekmesine bakın.');
         }
     }
 
@@ -1916,7 +1916,7 @@ window.DialogChatModule = (function () {
         // Button → spinner
         container.innerHTML = `
             <div class="vyra-enhance-loading">
-                <i class="fa-solid fa-spinner fa-spin"></i> Vyra düşünüyor...
+                <i class="fa-solid fa-spinner fa-spin"></i> NGSSAI düşünüyor...
             </div>
         `;
 
@@ -1950,7 +1950,7 @@ window.DialogChatModule = (function () {
                 // Butonu kaldır
                 container.innerHTML = `
                     <div class="vyra-enhance-success">
-                        <i class="fa-solid fa-check"></i> Vyra önerisi uygulandı 
+                        <i class="fa-solid fa-check"></i> NGSSAI önerisi uygulandı 
                         <span class="enhance-time">(${(data.elapsed_ms / 1000).toFixed(1)}s)</span>
                     </div>
                 `;
@@ -2020,8 +2020,8 @@ window.DialogChatModule = (function () {
             const mch = document.getElementById('modeChat');
             if (mkb) mkb.classList.remove('selected');
             if (mch) mch.classList.add('selected');
-            showToast('info', '💬 Vyra sohbet modu aktif');
-            addSystemMessage('💬 Vyra ile sohbet moduna geçildi.');
+            showToast('info', '💬 NGSSAI sohbet modu aktif');
+            addSystemMessage('💬 NGSSAI ile sohbet moduna geçildi.');
         },
         switchToRagMode: () => {
             chatMode = 'rag';
