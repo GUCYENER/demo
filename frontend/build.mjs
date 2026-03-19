@@ -100,6 +100,7 @@ const JS_FILES = [
     'assets/js/modules/ldap_settings.js',
     'assets/js/modules/org_permissions.js',
     'assets/js/modules/widget_module.js',
+    'assets/js/modules/company_module.js',
 ];
 
 // ===================================================

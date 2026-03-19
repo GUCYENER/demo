@@ -43,6 +43,7 @@ class WidgetKeyCreate(BaseModel):
     prompt_id: Optional[int] = None
     llm_config_id: Optional[int] = None
     use_rag: bool = True
+    company_id: Optional[int] = None
 
 
 class WidgetKeyUpdate(BaseModel):
@@ -198,13 +199,16 @@ async def get_widget_token(body: WidgetTokenRequest, request: Request):
 # ------------------------------------------------------------------
 
 @router.get("/widget/keys")
-async def list_widget_keys(current_user=Depends(get_current_user)):
+async def list_widget_keys(
+    company_id: Optional[int] = None,
+    current_user=Depends(get_current_user)
+):
     if not current_user.get("is_admin"):
         raise HTTPException(status_code=403, detail="Yalnızca admin erişebilir")
 
     with get_db_context() as conn:
         cur = conn.cursor()
-        cur.execute("""
+        base_query = """
             SELECT wk.id, wk.name, wk.key_prefix, wk.org_id,
                    og.org_name, og.org_code, wk.allowed_domains,
                    wk.is_active, wk.created_at, wk.last_used_at,
@@ -217,8 +221,14 @@ async def list_widget_keys(current_user=Depends(get_current_user)):
             LEFT JOIN users u ON u.id = wk.created_by
             LEFT JOIN prompt_templates pt ON pt.id = wk.prompt_id
             LEFT JOIN llm_config lc ON lc.id = wk.llm_config_id
-            ORDER BY wk.created_at DESC
-        """)
+        """
+        if company_id:
+            base_query += " WHERE wk.company_id = %s"
+            base_query += " ORDER BY wk.created_at DESC"
+            cur.execute(base_query, (company_id,))
+        else:
+            base_query += " ORDER BY wk.created_at DESC"
+            cur.execute(base_query)
         rows = cur.fetchall()
 
     return [
@@ -267,14 +277,14 @@ async def create_widget_key(body: WidgetKeyCreate, current_user=Depends(get_curr
             INSERT INTO widget_api_keys
                 (name, key_prefix, key_hash, widget_user_id, org_id,
                  allowed_domains, is_active, created_by,
-                 prompt_id, llm_config_id, use_rag)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 prompt_id, llm_config_id, use_rag, company_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id, created_at
         """, (
             body.name, prefix, key_hash, widget_user_id, body.org_id,
             __import__('json').dumps(body.allowed_domains),
             body.is_active, current_user["id"],
-            body.prompt_id, body.llm_config_id, body.use_rag,
+            body.prompt_id, body.llm_config_id, body.use_rag, body.company_id,
         ))
         row_created = cur.fetchone()
         key_id = row_created["id"]

@@ -27,6 +27,7 @@ def list_users(
     page: int = Query(1, ge=1, le=10000),
     per_page: int = Query(10, ge=1, le=100),
     search: Optional[str] = Query(None, max_length=200),
+    company_id: Optional[int] = Query(None),
     admin: Dict[str, Any] = Depends(get_current_admin)
 ):
     """Tüm kullanıcıları listeler (Admin yetkisi gerekli)."""
@@ -45,6 +46,10 @@ def list_users(
             where_conditions.append("(u.username ILIKE %s OR u.full_name ILIKE %s OR u.email ILIKE %s)")
             search_pattern = f"%{search}%"
             params.extend([search_pattern, search_pattern, search_pattern])
+        
+        if company_id is not None:
+            where_conditions.append("u.company_id = %s")
+            params.append(company_id)
         
         where_clause = ""
         if where_conditions:

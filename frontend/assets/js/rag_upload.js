@@ -38,6 +38,7 @@ const RAGUpload = {
         this.setupFileInput();
         this.setupEventListeners();
 
+        await this.loadCompanySelector();
         await this.loadOrgs();   // Org gruplarını yükle
         await this.loadMaturityThreshold(); // Eşik değerini yükle
         await this.loadFiles();
@@ -273,6 +274,13 @@ const RAGUpload = {
             }
             if (urlParams.length > 0) {
                 uploadUrl += `?${urlParams.join('&')}`;
+            }
+
+            // Firma ID ekle
+            const compSel = document.getElementById('ragCompanySelect');
+            if (compSel && compSel.value) {
+                const sep = uploadUrl.includes('?') ? '&' : '?';
+                uploadUrl += `${sep}company_id=${compSel.value}`;
             }
 
             const response = await fetch(uploadUrl, {
@@ -557,6 +565,38 @@ const RAGUpload = {
         } catch (err) {
             console.error('[RAGUpload] Threshold kayıt hatası:', err);
             this.showToast('Eşik değeri kaydedilemedi.', 'error');
+        }
+    },
+
+    // --- Firma Selector ---
+    async loadCompanySelector() {
+        const select = document.getElementById('ragCompanySelect');
+        if (!select) return;
+
+        try {
+            const token = localStorage.getItem('access_token') || '';
+            const res = await fetch(this.API_BASE + '/companies', {
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+            if (!res.ok) return;
+            const companies = await res.json();
+
+            select.innerHTML = '<option value="">Tüm Firmalar</option>';
+            companies.forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = c.id;
+                opt.textContent = c.name;
+                select.appendChild(opt);
+            });
+
+            // Firma değişince dosya listesi ve stats'i yeniden yükle
+            select.addEventListener('change', () => {
+                this.filesCurrentPage = 1;
+                this.loadFiles();
+                this.loadStats();
+            });
+        } catch (err) {
+            console.warn('[RAGUpload] Firma selector yüklenemedi:', err);
         }
     },
 

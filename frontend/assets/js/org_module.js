@@ -32,6 +32,12 @@
             if (searchTerm) params.append("search", searchTerm);
             if (filterActive !== null) params.append("is_active", filterActive);
 
+            // Firma bazlı filtreleme
+            const compSel = document.getElementById('orgCompanySelect');
+            if (compSel && compSel.value) {
+                params.append('company_id', compSel.value);
+            }
+
             const response = await fetch(`${API_BASE}/organizations?${params}`, {
                 headers: { "Authorization": `Bearer ${token}` }
             });
@@ -222,6 +228,12 @@
             payload.org_code = document.getElementById("modalOrgCode").value.trim().toUpperCase();
         }
 
+        // Firma ID ekle
+        const compSel = document.getElementById('orgCompanySelect');
+        if (compSel && compSel.value) {
+            payload.company_id = parseInt(compSel.value, 10);
+        }
+
         try {
             const url = editingOrgId ? `${API_BASE}/organizations/${editingOrgId}` : `${API_BASE}/organizations`;
             const method = editingOrgId ? "PUT" : "POST";
@@ -343,8 +355,40 @@
     }
 
     // ---- Init ----
-    function init() {
+    async function init() {
         setupEventListeners();
+        await loadCompanySelector();
+    }
+
+    // ---- Firma Selector ----
+    async function loadCompanySelector() {
+        const select = document.getElementById('orgCompanySelect');
+        if (!select) return;
+
+        try {
+            const token = localStorage.getItem('access_token') || '';
+            const res = await fetch(`${API_BASE}/companies`, {
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+            if (!res.ok) return;
+            const companies = await res.json();
+
+            select.innerHTML = '<option value="">Tüm Firmalar</option>';
+            companies.forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = c.id;
+                opt.textContent = c.name;
+                select.appendChild(opt);
+            });
+
+            // Firma değişince listeyi yeniden yükle
+            select.addEventListener('change', () => {
+                currentPage = 1;
+                loadOrganizations();
+            });
+        } catch (err) {
+            console.warn('[OrgModule] Firma selector yüklenemedi:', err);
+        }
     }
 
     // Export

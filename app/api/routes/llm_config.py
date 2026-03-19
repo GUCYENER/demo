@@ -31,7 +31,7 @@ class LLMConfigBase(BaseModel):
 
 
 class LLMConfigCreate(LLMConfigBase):
-    pass
+    company_id: Optional[int] = None
 
 
 class LLMConfigUpdate(BaseModel):
@@ -44,11 +44,13 @@ class LLMConfigUpdate(BaseModel):
     timeout_seconds: Optional[int] = Field(None, ge=1, le=300)
     description: Optional[str] = Field(None, max_length=500)
     vendor_code: Optional[str] = Field(None, max_length=50)
+    company_id: Optional[int] = None
 
 
 class LLMConfigOut(LLMConfigBase):
     id: int
     is_active: bool
+    company_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 
@@ -56,12 +58,18 @@ class LLMConfigOut(LLMConfigBase):
 # --- Endpoints ---
 
 @router.get("/", response_model=List[LLMConfigOut])
-def get_llm_configs(admin: Dict[str, Any] = Depends(get_current_admin)):
-    """Tüm LLM konfigürasyonlarını listeler."""
+def get_llm_configs(
+    company_id: Optional[int] = None,
+    admin: Dict[str, Any] = Depends(get_current_admin)
+):
+    """LLM konfigürasyonlarını listeler. company_id ile filtrelenebilir."""
     conn = get_db_conn()
     try:
         cur = conn.cursor()
-        cur.execute("SELECT * FROM llm_config ORDER BY id DESC")
+        if company_id:
+            cur.execute("SELECT * FROM llm_config WHERE company_id = %s ORDER BY id DESC", (company_id,))
+        else:
+            cur.execute("SELECT * FROM llm_config ORDER BY id DESC")
         rows = cur.fetchall()
         return [dict(row) for row in rows]
     finally:
@@ -85,13 +93,14 @@ def create_llm_config(config: LLMConfigCreate, admin: Dict[str, Any] = Depends(g
         
         cur.execute("""
             INSERT INTO llm_config (
-                vendor_code, provider, model_name, api_url, api_token, temperature, top_p, timeout_seconds, description, is_active
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                vendor_code, provider, model_name, api_url, api_token,
+                temperature, top_p, timeout_seconds, description, is_active, company_id
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
         """, (
             config.vendor_code, config.provider, config.model_name, config.api_url, 
-            config.api_token, config.temperature, config.top_p, config.timeout_seconds, config.description,
-            is_first_record  # İlk kayıt ise True, değilse False
+            config.api_token, config.temperature, config.top_p, config.timeout_seconds,
+            config.description, is_first_record, config.company_id
         ))
         row = cur.fetchone()
         conn.commit()
@@ -176,8 +185,12 @@ def activate_llm_config(llm_id: int, admin: Dict[str, Any] = Depends(get_current
         if not cur.fetchone():
             raise HTTPException(status_code=404, detail="LLM config not found")
         
-        # Hepsini pasif yap
-        cur.execute("UPDATE llm_config SET is_active = FALSE")
+        # Hepsini pasif yap (aynı firma scope'unda)
+        cur.execute("""
+            UPDATE llm_config SET is_active = FALSE
+            WHERE company_id = (SELECT company_id FROM llm_config WHERE id = %s)
+               OR (company_id IS NULL AND (SELECT company_id FROM llm_config WHERE id = %s) IS NULL)
+        """, (llm_id, llm_id))
         # Seçileni aktif yap
         cur.execute("UPDATE llm_config SET is_active = TRUE WHERE id = %s", (llm_id,))
         conn.commit()

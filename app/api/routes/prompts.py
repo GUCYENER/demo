@@ -23,6 +23,7 @@ class PromptCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     content: str = Field(..., min_length=1, max_length=50000)
     description: Optional[str] = Field(None, max_length=500)
+    company_id: Optional[int] = None
 
 
 class PromptUpdate(BaseModel):
@@ -30,6 +31,7 @@ class PromptUpdate(BaseModel):
     title: Optional[str] = Field(None, min_length=1, max_length=200)
     content: Optional[str] = Field(None, min_length=1, max_length=50000)
     description: Optional[str] = Field(None, max_length=500)
+    company_id: Optional[int] = None
 
 
 class PromptOut(BaseModel):
@@ -39,17 +41,24 @@ class PromptOut(BaseModel):
     content: str
     is_active: bool
     description: Optional[str]
+    company_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 
 
 @router.get("/", response_model=List[PromptOut])
-def list_prompts(admin: Dict[str, Any] = Depends(get_current_admin)):
-    """Tüm prompt'ları listele"""
+def list_prompts(
+    company_id: Optional[int] = None,
+    admin: Dict[str, Any] = Depends(get_current_admin)
+):
+    """Prompt'ları listele. company_id ile filtrelenebilir."""
     conn = get_db_conn()
     try:
         cur = conn.cursor()
-        cur.execute("SELECT * FROM prompt_templates ORDER BY created_at DESC")
+        if company_id:
+            cur.execute("SELECT * FROM prompt_templates WHERE company_id = %s ORDER BY created_at DESC", (company_id,))
+        else:
+            cur.execute("SELECT * FROM prompt_templates ORDER BY created_at DESC")
         rows = cur.fetchall()
         
         log_system_event("INFO", "Prompt listesi görüntülendi", "prompts", user_id=admin["id"])
@@ -77,10 +86,10 @@ def create_prompt(payload: PromptCreate, admin: Dict[str, Any] = Depends(get_cur
         is_first_record = existing_count == 0
         
         cur.execute("""
-            INSERT INTO prompt_templates (category, title, content, description, is_active)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO prompt_templates (category, title, content, description, is_active, company_id)
+            VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING *
-        """, (payload.category, payload.title, payload.content, payload.description, is_first_record))
+        """, (payload.category, payload.title, payload.content, payload.description, is_first_record, payload.company_id))
         row = cur.fetchone()
         conn.commit()
         
@@ -115,6 +124,9 @@ def update_prompt(prompt_id: int, payload: PromptUpdate, admin: Dict[str, Any] =
         if payload.description is not None:
             updates.append("description = %s")
             params.append(payload.description)
+        if payload.company_id is not None:
+            updates.append("company_id = %s")
+            params.append(payload.company_id)
         
         if not updates:
             raise HTTPException(400, "Güncellenecek alan belirtilmedi")
@@ -186,8 +198,12 @@ def activate_prompt(prompt_id: int, admin: Dict[str, Any] = Depends(get_current_
         if not cur.fetchone():
             raise HTTPException(404, "Prompt bulunamadı")
         
-        # Tüm prompt'ları pasif yap
-        cur.execute("UPDATE prompt_templates SET is_active = FALSE")
+        # Tüm prompt'ları pasif yap (aynı firma scope'unda)
+        cur.execute("""
+            UPDATE prompt_templates SET is_active = FALSE
+            WHERE company_id = (SELECT company_id FROM prompt_templates WHERE id = %s)
+               OR (company_id IS NULL AND (SELECT company_id FROM prompt_templates WHERE id = %s) IS NULL)
+        """, (prompt_id, prompt_id))
         
         # Seçili prompt'u aktif et
         cur.execute("UPDATE prompt_templates SET is_active = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (prompt_id,))

@@ -1,10 +1,41 @@
-﻿# VYRA L1 Support API - README
+# VYRA L1 Support API - README
 
 ## 📋 Proje Hakkında
 
 VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmented Generation) teknolojisi ile bilgi tabanından semantik arama yaparak kullanıcılara otomatik çözüm önerileri sunar.
 
 ## 🚀 Versiyon Geçmişi
+
+### 🆕 v2.53.0 (2026-03-19) - Login Firma Branding + Company ID Gap Fix
+
+**🏢 Login Ekranı Firma Branding:**
+- ✅ **URL'den firma eşleşmesi:** `GET /api/companies/by-url` (auth gerektirmez) — companies.website ile ILIKE eşleşme
+- ✅ **Login formu üstünde:** Firma logosu (56x56) + firma adı + "Firma Tanımlı" read-only badge
+- ✅ **Glassmorphism kart:** Gradient üst çizgi, smooth animasyon, modern SaaS tasarım
+- ✅ **Modüler yapı:** `login_branding.js` — IIFE pattern, null-check kontrolleri, try/catch
+
+**🔧 Company ID Gap Düzeltmeleri (8 dosya, 12+ değişiklik):**
+- ✅ **`companies.py` GET list SELECT:** `website` sütunu eksikti → eklendi (kayıt sonrası görünüm düzeltildi)
+- ✅ **`system.py` reset:** Firma bazlı filtre tutarsızlığı — 8 tablo artık company_id ile filtreleniyor
+- ✅ **`rag_upload.py`/`rag_files.py`:** company_id param + INSERT/WHERE eklendi
+- ✅ **`auth.py`:** Register + LDAP register'a company_id eklendi
+- ✅ **`ticket_service.py`:** 3 INSERT'e user→company_id çekimi
+- ✅ **`rag_search.py`:** stats endpoint'ine company_id param eklendi
+
+**📁 Yeni Dosyalar:**
+- `frontend/assets/js/login_branding.js` — Login firma branding modülü (102 satır)
+
+**📁 Değişen Dosyalar:**
+- `app/api/routes/companies.py` — `by-url` endpoint + GET list SELECT düzeltmesi
+- `app/api/routes/system.py` — Firma bazlı reset tutarlılığı
+- `app/api/routes/rag_upload.py` — company_id INSERT
+- `app/api/routes/rag_files.py` — company_id WHERE
+- `app/api/routes/auth.py` — register/LDAP company_id
+- `app/api/routes/rag_search.py` — stats company_id
+- `app/services/ticket_service.py` — 3 ticket INSERT company_id
+- `frontend/login.html` — Firma branding bloğu + CSS
+
+---
 
 ### 🆕 v2.52.1 (2026-03-05) - İlgisiz İçerik Filtreleme + CatBoost Bypass Fix + Enhance API Fix
 

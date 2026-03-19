@@ -27,6 +27,7 @@ async def list_files(
     page: int = Query(1, ge=1, le=10000),
     per_page: int = Query(10, ge=1, le=100),
     search: Optional[str] = Query(None, max_length=200),
+    company_id: Optional[int] = Query(None),
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     """Yüklenen dosyaları listeler (org grupları ile)"""
@@ -35,14 +36,22 @@ async def list_files(
         cur = conn.cursor()
         
         # Count query
-        count_query = "SELECT COUNT(*) as cnt FROM uploaded_files"
+        where_clauses = []
         count_params = []
         
         if search:
-            count_query += " WHERE file_name ILIKE %s"
+            where_clauses.append("f.file_name ILIKE %s")
             count_params.append(f"%{search}%")
+        
+        if company_id is not None:
+            where_clauses.append("f.company_id = %s")
+            count_params.append(company_id)
+        
+        where_sql = ""
+        if where_clauses:
+            where_sql = "WHERE " + " AND ".join(where_clauses)
             
-        cur.execute(count_query, count_params)
+        cur.execute(f"SELECT COUNT(*) as cnt FROM uploaded_files f {where_sql}", count_params)
         total = cur.fetchone()['cnt']
         
         # Dosya listesini al (pagination ile)
@@ -53,11 +62,10 @@ async def list_files(
             FROM uploaded_files f
             LEFT JOIN users u ON f.uploaded_by = u.id
         """
-        params = []
+        params = list(count_params)  # Same WHERE params
         
-        if search:
-            query += " WHERE f.file_name ILIKE %s"
-            params.append(f"%{search}%")
+        if where_sql:
+            query += f" {where_sql}"
             
         query += " ORDER BY f.uploaded_at DESC"
         query += " LIMIT %s OFFSET %s"

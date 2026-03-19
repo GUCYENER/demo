@@ -25,7 +25,7 @@ window.LLMModule = (function() {
                 modalTitle: document.getElementById("llmModalTitle"),
                 inputs: {
                     id: document.getElementById("llmId"),
-                    vendor: document.getElementById("llmVendor"),
+                    companyId: document.getElementById("llmCompanyId"),
                     provider: document.getElementById("llmProvider"),
                     model: document.getElementById("llmModel"),
                     apiUrl: document.getElementById("llmApiUrl"),
@@ -41,7 +41,7 @@ window.LLMModule = (function() {
     }
 
     // --- YÜKLEMESİ ---
-    async function loadConfigs() {
+    async function loadConfigs(companyId) {
         const token = localStorage.getItem('access_token');
         const el = getElements();
         
@@ -60,7 +60,8 @@ window.LLMModule = (function() {
         try {
             el.grid.innerHTML = '<div style="padding:20px;color:var(--text-3);font-size:13px"><i class="fa-solid fa-spinner fa-spin" style="margin-right:8px"></i>Yükleniyor...</div>';
 
-            const data = await window.VYRA_API.request("/llm-config/");
+            const url = companyId ? '/llm-config/?company_id=' + companyId : '/llm-config/';
+            const data = await window.VYRA_API.request(url);
 
             if (!data || !Array.isArray(data)) {
                 console.log('[NGSSAI] LLM config verisi boş veya geçersiz:', data);
@@ -155,15 +156,17 @@ window.LLMModule = (function() {
     }
 
     // --- MODAL İŞLEMLERİ ---
-    function openModal(llm = null) {
+    async function openModal(llm = null) {
         const el = getElements();
         el.modal.classList.remove("hidden");
         el.form.reset();
 
+        // Firma dropdown'ı doldur (await ile beklenir)
+        await populateCompanySelect(el.inputs.companyId, llm ? llm.company_id : null);
+
         if (llm) {
             el.modalTitle.textContent = "LLM Düzenle";
             el.inputs.id.value = llm.id;
-            el.inputs.vendor.value = llm.vendor_code || "12000533461";
             el.inputs.provider.value = llm.provider;
             el.inputs.model.value = llm.model_name;
             el.inputs.apiUrl.value = llm.api_url;
@@ -174,6 +177,11 @@ window.LLMModule = (function() {
         } else {
             el.modalTitle.textContent = "Yeni LLM Ekle";
             el.inputs.id.value = "";
+            // Global selector'dan seçili firmayı öntanımlı yap
+            const globalSel = document.getElementById('globalCompanySelect');
+            if (globalSel && globalSel.value && el.inputs.companyId) {
+                el.inputs.companyId.value = globalSel.value;
+            }
         }
     }
 
@@ -188,8 +196,8 @@ window.LLMModule = (function() {
         const el = getElements();
 
         const id = el.inputs.id.value;
+        const companyVal = el.inputs.companyId ? el.inputs.companyId.value : '';
         const payload = {
-            vendor_code: el.inputs.vendor.value,
             provider: el.inputs.provider.value,
             model_name: el.inputs.model.value,
             api_url: el.inputs.apiUrl.value,
@@ -198,6 +206,11 @@ window.LLMModule = (function() {
             top_p: parseFloat(el.inputs.topP.value),
             timeout_seconds: parseInt(el.inputs.timeout.value) || 60,
         };
+
+        // company_id hem POST hem PUT'ta gönder
+        if (companyVal) {
+            payload.company_id = parseInt(companyVal, 10);
+        }
 
         const tokenVal = el.inputs.token.value.trim();
         if (tokenVal) {

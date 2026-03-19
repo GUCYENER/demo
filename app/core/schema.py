@@ -660,4 +660,97 @@ CREATE TABLE IF NOT EXISTS widget_api_keys (
 CREATE INDEX IF NOT EXISTS idx_widget_api_keys_hash ON widget_api_keys(key_hash);
 CREATE INDEX IF NOT EXISTS idx_widget_api_keys_active ON widget_api_keys(is_active);
 CREATE INDEX IF NOT EXISTS idx_widget_api_keys_org ON widget_api_keys(org_id);
+
+-- =====================================================
+-- Türkiye Adres Tabloları (v2.53.0)
+-- =====================================================
+
+CREATE TABLE IF NOT EXISTS address_provinces (
+    id INTEGER PRIMARY KEY,
+    name VARCHAR(100) NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS address_districts (
+    id INTEGER PRIMARY KEY,
+    province_id INTEGER NOT NULL REFERENCES address_provinces(id),
+    name VARCHAR(100) NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_address_districts_province ON address_districts(province_id);
+
+CREATE TABLE IF NOT EXISTS address_neighborhoods (
+    id SERIAL PRIMARY KEY,
+    district_id INTEGER NOT NULL REFERENCES address_districts(id),
+    name VARCHAR(200) NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_address_neighborhoods_district ON address_neighborhoods(district_id);
+
+-- =====================================================
+-- Companies (Multi-Tenant) Table (v2.53.0)
+-- =====================================================
+
+CREATE TABLE IF NOT EXISTS companies (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,                -- Firma ünvanı
+    tax_type VARCHAR(4) NOT NULL DEFAULT 'vd', -- 'vd' veya 'tckn'
+    tax_number VARCHAR(11) NOT NULL UNIQUE,   -- VD veya TCKN numarası (benzersiz)
+    address_il VARCHAR(100),                   -- İl
+    address_ilce VARCHAR(100),                 -- İlçe
+    address_mahalle VARCHAR(200),              -- Mahalle
+    address_text TEXT,                          -- Serbest adres alanı
+    phone VARCHAR(20) NOT NULL,
+    email VARCHAR(255) NOT NULL,
+    website VARCHAR(500),                      -- Canlı web adresi
+    contact_name VARCHAR(100) NOT NULL,        -- Yetkili kişi adı
+    contact_surname VARCHAR(100) NOT NULL,     -- Yetkili kişi soyadı
+    logo_data BYTEA,                           -- Firma logosu (binary)
+    logo_mime VARCHAR(50),                     -- 'image/png', 'image/jpeg' vb.
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_by INTEGER REFERENCES users(id)
+);
+
+-- Companies indexes
+CREATE INDEX IF NOT EXISTS idx_companies_name ON companies(name);
+CREATE INDEX IF NOT EXISTS idx_companies_tax ON companies(tax_number);
+CREATE INDEX IF NOT EXISTS idx_companies_active ON companies(is_active);
+
+-- =====================================================
+-- Multi-Tenant Migration: company_id FK to existing tables
+-- =====================================================
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id);
+ALTER TABLE llm_config ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id);
+ALTER TABLE prompt_templates ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id);
+ALTER TABLE uploaded_files ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id);
+ALTER TABLE widget_api_keys ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id);
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id);
+ALTER TABLE dialogs ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id);
+ALTER TABLE ldap_settings ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id);
+ALTER TABLE organization_groups ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id);
+
+-- company_id indexes
+CREATE INDEX IF NOT EXISTS idx_users_company ON users(company_id);
+CREATE INDEX IF NOT EXISTS idx_llm_config_company ON llm_config(company_id);
+CREATE INDEX IF NOT EXISTS idx_prompt_templates_company ON prompt_templates(company_id);
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_company ON uploaded_files(company_id);
+CREATE INDEX IF NOT EXISTS idx_widget_api_keys_company ON widget_api_keys(company_id);
+CREATE INDEX IF NOT EXISTS idx_tickets_company ON tickets(company_id);
+CREATE INDEX IF NOT EXISTS idx_dialogs_company ON dialogs(company_id);
+CREATE INDEX IF NOT EXISTS idx_ldap_settings_company ON ldap_settings(company_id);
+CREATE INDEX IF NOT EXISTS idx_org_groups_company ON organization_groups(company_id);
+
+-- Varsayılan firma (migration: mevcut veriler için)
+INSERT INTO companies (name, tax_type, tax_number, phone, email, contact_name, contact_surname)
+VALUES ('Varsayılan Firma', 'vd', '0000000000', '-', 'info@default.com', 'Admin', 'User')
+ON CONFLICT (tax_number) DO NOTHING;
+
+-- Mevcut kayıtlara varsayılan firma ata (admin HARİÇ — admin firmaya bağlı değildir)
+UPDATE users SET company_id = (SELECT id FROM companies WHERE tax_number = '0000000000' LIMIT 1) WHERE company_id IS NULL AND is_admin = FALSE;
+UPDATE llm_config SET company_id = (SELECT id FROM companies WHERE tax_number = '0000000000' LIMIT 1) WHERE company_id IS NULL;
+UPDATE prompt_templates SET company_id = (SELECT id FROM companies WHERE tax_number = '0000000000' LIMIT 1) WHERE company_id IS NULL;
+UPDATE uploaded_files SET company_id = (SELECT id FROM companies WHERE tax_number = '0000000000' LIMIT 1) WHERE company_id IS NULL;
+UPDATE tickets SET company_id = (SELECT id FROM companies WHERE tax_number = '0000000000' LIMIT 1) WHERE company_id IS NULL;
+UPDATE dialogs SET company_id = (SELECT id FROM companies WHERE tax_number = '0000000000' LIMIT 1) WHERE company_id IS NULL;
+UPDATE organization_groups SET company_id = (SELECT id FROM companies WHERE tax_number = '0000000000' LIMIT 1) WHERE company_id IS NULL;
 """

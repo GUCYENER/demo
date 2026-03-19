@@ -4,10 +4,9 @@ VYRA L1 Support API - System Management Routes
 Sistem yönetimi endpoint'leri (reset, maintenance vb.)
 """
 
-from typing import List
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from typing import List, Optional
 
 from app.core.db import get_db_conn
 from app.services.logging_service import log_system_event, log_error
@@ -24,7 +23,10 @@ class ResetResponse(BaseModel):
 
 
 @router.post("/reset", response_model=ResetResponse)
-async def reset_system(current_user: dict = Depends(get_current_user)):
+async def reset_system(
+    company_id: Optional[int] = Query(None),
+    current_user: dict = Depends(get_current_user)
+):
     """
     Sistemi sıfırlar.
     
@@ -59,15 +61,32 @@ async def reset_system(current_user: dict = Depends(get_current_user)):
     try:
         cur = conn.cursor()
         
+        # Firma bazlı filtre (varsa)
+        co_filter = ""
+        co_params = []
+        if company_id is not None:
+            co_filter = "WHERE company_id = %s"
+            co_params = [company_id]
+        
         # 1️⃣ Ticket mesajları sil
-        cur.execute("SELECT COUNT(*) as cnt FROM ticket_messages")
-        deleted_counts["ticket_messages"] = cur.fetchone()["cnt"]
-        cur.execute("DELETE FROM ticket_messages")
+        if company_id is not None:
+            cur.execute("SELECT COUNT(*) as cnt FROM ticket_messages WHERE ticket_id IN (SELECT id FROM tickets WHERE company_id = %s)", co_params)
+            deleted_counts["ticket_messages"] = cur.fetchone()["cnt"]
+            cur.execute("DELETE FROM ticket_messages WHERE ticket_id IN (SELECT id FROM tickets WHERE company_id = %s)", co_params)
+        else:
+            cur.execute("SELECT COUNT(*) as cnt FROM ticket_messages")
+            deleted_counts["ticket_messages"] = cur.fetchone()["cnt"]
+            cur.execute("DELETE FROM ticket_messages")
         
         # 2️⃣ Ticket adımları sil
-        cur.execute("SELECT COUNT(*) as cnt FROM ticket_steps")
-        deleted_counts["ticket_steps"] = cur.fetchone()["cnt"]
-        cur.execute("DELETE FROM ticket_steps")
+        if company_id is not None:
+            cur.execute("SELECT COUNT(*) as cnt FROM ticket_steps WHERE ticket_id IN (SELECT id FROM tickets WHERE company_id = %s)", co_params)
+            deleted_counts["ticket_steps"] = cur.fetchone()["cnt"]
+            cur.execute("DELETE FROM ticket_steps WHERE ticket_id IN (SELECT id FROM tickets WHERE company_id = %s)", co_params)
+        else:
+            cur.execute("SELECT COUNT(*) as cnt FROM ticket_steps")
+            deleted_counts["ticket_steps"] = cur.fetchone()["cnt"]
+            cur.execute("DELETE FROM ticket_steps")
         
         # 3️⃣ Çözüm logları sil
         cur.execute("SELECT COUNT(*) as cnt FROM solution_logs")
@@ -75,19 +94,34 @@ async def reset_system(current_user: dict = Depends(get_current_user)):
         cur.execute("DELETE FROM solution_logs")
         
         # 4️⃣ Ticket'ları sil
-        cur.execute("SELECT COUNT(*) as cnt FROM tickets")
-        deleted_counts["tickets"] = cur.fetchone()["cnt"]
-        cur.execute("DELETE FROM tickets")
+        if company_id is not None:
+            cur.execute(f"SELECT COUNT(*) as cnt FROM tickets {co_filter}", co_params)
+            deleted_counts["tickets"] = cur.fetchone()["cnt"]
+            cur.execute(f"DELETE FROM tickets {co_filter}", co_params)
+        else:
+            cur.execute("SELECT COUNT(*) as cnt FROM tickets")
+            deleted_counts["tickets"] = cur.fetchone()["cnt"]
+            cur.execute("DELETE FROM tickets")
         
         # 5️⃣ Dialog mesajlarını sil (FK: dialogs -> dialog_messages)
-        cur.execute("SELECT COUNT(*) as cnt FROM dialog_messages")
-        deleted_counts["dialog_messages"] = cur.fetchone()["cnt"]
-        cur.execute("DELETE FROM dialog_messages")
+        if company_id is not None:
+            cur.execute("SELECT COUNT(*) as cnt FROM dialog_messages WHERE dialog_id IN (SELECT id FROM dialogs WHERE user_id IN (SELECT id FROM users WHERE company_id = %s))", co_params)
+            deleted_counts["dialog_messages"] = cur.fetchone()["cnt"]
+            cur.execute("DELETE FROM dialog_messages WHERE dialog_id IN (SELECT id FROM dialogs WHERE user_id IN (SELECT id FROM users WHERE company_id = %s))", co_params)
+        else:
+            cur.execute("SELECT COUNT(*) as cnt FROM dialog_messages")
+            deleted_counts["dialog_messages"] = cur.fetchone()["cnt"]
+            cur.execute("DELETE FROM dialog_messages")
         
         # 6️⃣ Dialog'ları sil
-        cur.execute("SELECT COUNT(*) as cnt FROM dialogs")
-        deleted_counts["dialogs"] = cur.fetchone()["cnt"]
-        cur.execute("DELETE FROM dialogs")
+        if company_id is not None:
+            cur.execute("SELECT COUNT(*) as cnt FROM dialogs WHERE user_id IN (SELECT id FROM users WHERE company_id = %s)", co_params)
+            deleted_counts["dialogs"] = cur.fetchone()["cnt"]
+            cur.execute("DELETE FROM dialogs WHERE user_id IN (SELECT id FROM users WHERE company_id = %s)", co_params)
+        else:
+            cur.execute("SELECT COUNT(*) as cnt FROM dialogs")
+            deleted_counts["dialogs"] = cur.fetchone()["cnt"]
+            cur.execute("DELETE FROM dialogs")
         
         # 7️⃣ RAG feedback'lerini sil
         cur.execute("SELECT COUNT(*) as cnt FROM user_feedback")
@@ -95,19 +129,34 @@ async def reset_system(current_user: dict = Depends(get_current_user)):
         cur.execute("DELETE FROM user_feedback")
         
         # 8️⃣ RAG chunk'larını sil
-        cur.execute("SELECT COUNT(*) as cnt FROM rag_chunks")
-        deleted_counts["rag_chunks"] = cur.fetchone()["cnt"]
-        cur.execute("DELETE FROM rag_chunks")
+        if company_id is not None:
+            cur.execute("SELECT COUNT(*) as cnt FROM rag_chunks WHERE file_id IN (SELECT id FROM uploaded_files WHERE company_id = %s)", co_params)
+            deleted_counts["rag_chunks"] = cur.fetchone()["cnt"]
+            cur.execute("DELETE FROM rag_chunks WHERE file_id IN (SELECT id FROM uploaded_files WHERE company_id = %s)", co_params)
+        else:
+            cur.execute("SELECT COUNT(*) as cnt FROM rag_chunks")
+            deleted_counts["rag_chunks"] = cur.fetchone()["cnt"]
+            cur.execute("DELETE FROM rag_chunks")
         
         # 8️⃣.5 Doküman görsellerini sil (FK: uploaded_files -> document_images)
-        cur.execute("SELECT COUNT(*) as cnt FROM document_images")
-        deleted_counts["document_images"] = cur.fetchone()["cnt"]
-        cur.execute("DELETE FROM document_images")
+        if company_id is not None:
+            cur.execute("SELECT COUNT(*) as cnt FROM document_images WHERE file_id IN (SELECT id FROM uploaded_files WHERE company_id = %s)", co_params)
+            deleted_counts["document_images"] = cur.fetchone()["cnt"]
+            cur.execute("DELETE FROM document_images WHERE file_id IN (SELECT id FROM uploaded_files WHERE company_id = %s)", co_params)
+        else:
+            cur.execute("SELECT COUNT(*) as cnt FROM document_images")
+            deleted_counts["document_images"] = cur.fetchone()["cnt"]
+            cur.execute("DELETE FROM document_images")
         
         # 9️⃣ Yüklenen dosyaları sil
-        cur.execute("SELECT COUNT(*) as cnt FROM uploaded_files")
-        deleted_counts["uploaded_files"] = cur.fetchone()["cnt"]
-        cur.execute("DELETE FROM uploaded_files")
+        if company_id is not None:
+            cur.execute(f"SELECT COUNT(*) as cnt FROM uploaded_files {co_filter}", co_params)
+            deleted_counts["uploaded_files"] = cur.fetchone()["cnt"]
+            cur.execute(f"DELETE FROM uploaded_files {co_filter}", co_params)
+        else:
+            cur.execute("SELECT COUNT(*) as cnt FROM uploaded_files")
+            deleted_counts["uploaded_files"] = cur.fetchone()["cnt"]
+            cur.execute("DELETE FROM uploaded_files")
         
         # 9️⃣.5 Dinamik topic'leri sil (v2.34.0)
         cur.execute("SELECT COUNT(*) as cnt FROM document_topics")
@@ -145,9 +194,14 @@ async def reset_system(current_user: dict = Depends(get_current_user)):
         cur.execute("DELETE FROM system_logs")
         
         # 1️⃣3️⃣ Admin olmayan kullanıcıları sil
-        cur.execute("SELECT COUNT(*) as cnt FROM users WHERE is_admin = FALSE")
-        deleted_counts["non_admin_users"] = cur.fetchone()["cnt"]
-        cur.execute("DELETE FROM users WHERE is_admin = FALSE")
+        if company_id is not None:
+            cur.execute("SELECT COUNT(*) as cnt FROM users WHERE is_admin = FALSE AND company_id = %s", co_params)
+            deleted_counts["non_admin_users"] = cur.fetchone()["cnt"]
+            cur.execute("DELETE FROM users WHERE is_admin = FALSE AND company_id = %s", co_params)
+        else:
+            cur.execute("SELECT COUNT(*) as cnt FROM users WHERE is_admin = FALSE")
+            deleted_counts["non_admin_users"] = cur.fetchone()["cnt"]
+            cur.execute("DELETE FROM users WHERE is_admin = FALSE")
         
         conn.commit()
         
@@ -174,7 +228,10 @@ async def reset_system(current_user: dict = Depends(get_current_user)):
 
 
 @router.get("/info")
-async def get_system_info(current_user: dict = Depends(get_current_user)):
+async def get_system_info(
+    company_id: Optional[int] = Query(None),
+    current_user: dict = Depends(get_current_user)
+):
     """Sistem bilgilerini döndürür (sıfırlama öncesi özet)"""
     if not current_user.get("is_admin"):
         raise HTTPException(status_code=403, detail="Bu işlem için admin yetkisi gerekli")
@@ -390,7 +447,10 @@ async def clear_ml_cache(current_user: dict = Depends(get_current_user)):
 # ============================================
 
 @router.get("/ml/training/stats")
-async def get_training_stats(current_user: dict = Depends(get_current_user)):
+async def get_training_stats(
+    company_id: Optional[int] = Query(None),
+    current_user: dict = Depends(get_current_user)
+):
     """
     Eğitim istatistiklerini döndürür.
     
@@ -466,6 +526,7 @@ async def get_training_status(current_user: dict = Depends(get_current_user)):
 @router.get("/ml/training/history")
 async def get_training_history(
     limit: int = 20,
+    company_id: Optional[int] = Query(None),
     current_user: dict = Depends(get_current_user)
 ):
     """
@@ -603,7 +664,10 @@ class HybridScheduleRequest(BaseModel):
 
 
 @router.get("/ml/training/schedule")
-async def get_schedule(current_user: dict = Depends(get_current_user)):
+async def get_schedule(
+    company_id: Optional[int] = Query(None),
+    current_user: dict = Depends(get_current_user)
+):
     """
     Tüm zamanlanmış eğitim ayarlarını döndürür (hibrit).
     """

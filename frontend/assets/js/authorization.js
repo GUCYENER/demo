@@ -33,6 +33,12 @@
             url.searchParams.set("page", usersCurrentPage);
             url.searchParams.set("per_page", usersPerPage);
 
+            // Firma bazlı filtreleme
+            const compSel = document.getElementById('authCompanySelect');
+            if (compSel && compSel.value) {
+                url.searchParams.set("company_id", compSel.value);
+            }
+
             console.log("[Authorization] Kullanıcılar yükleniyor...", url.toString());
 
             const response = await fetch(url, {
@@ -141,8 +147,41 @@
         }
     }
 
+    // Firma selector'ı yükle
+    async function loadCompanySelector() {
+        const select = document.getElementById('authCompanySelect');
+        if (!select) return;
+
+        try {
+            const token = localStorage.getItem('access_token') || '';
+            const res = await fetch(`${API_BASE}/companies`, {
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+            if (!res.ok) return;
+            const companies = await res.json();
+
+            select.innerHTML = '<option value="">Tüm Firmalar</option>';
+            companies.forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = c.id;
+                opt.textContent = c.name;
+                select.appendChild(opt);
+            });
+
+            // Firma değişince listeyi yeniden yükle
+            select.addEventListener('change', () => {
+                usersCurrentPage = 1;
+                const pendingOnly = document.getElementById('filterPendingOnly')?.checked || false;
+                loadUsers(pendingOnly);
+            });
+        } catch (err) {
+            console.warn('[Authorization] Firma selector yüklenemedi:', err);
+        }
+    }
+
     // Sıralı yükleme - roller ve org'lar yüklenince users yükle
     async function loadAuthData() {
+        await loadCompanySelector();
         await loadRoles();
         await loadOrgs();
         await loadUsers();

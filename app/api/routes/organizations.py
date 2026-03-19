@@ -26,6 +26,7 @@ class OrganizationCreate(BaseModel):
     org_name: str = Field(..., min_length=3, max_length=255, description="Organizasyon adı")
     description: Optional[str] = Field(None, description="Açıklama")
     is_active: bool = Field(True, description="Aktif mi?")
+    company_id: Optional[int] = Field(None, description="Firma ID")
 
 
 class OrganizationUpdate(BaseModel):
@@ -33,6 +34,7 @@ class OrganizationUpdate(BaseModel):
     org_name: Optional[str] = Field(None, min_length=3, max_length=255)
     description: Optional[str] = None
     is_active: Optional[bool] = None
+    company_id: Optional[int] = None
 
 
 class OrganizationItem(BaseModel):
@@ -82,6 +84,7 @@ async def list_organizations(
     per_page: int = Query(10, ge=1, le=100),
     search: Optional[str] = Query(None, max_length=200),
     is_active: Optional[bool] = None,
+    company_id: Optional[int] = Query(None),
     admin: Dict[str, Any] = Depends(get_current_admin)
 ):
     """
@@ -108,6 +111,10 @@ async def list_organizations(
         if is_active is not None:
             where_clauses.append("og.is_active = %s")
             params.append(is_active)
+        
+        if company_id is not None:
+            where_clauses.append("og.company_id = %s")
+            params.append(company_id)
         
         where_sql = ""
         if where_clauses:
@@ -176,15 +183,16 @@ async def create_organization(
         
         # Insert
         cur.execute("""
-            INSERT INTO organization_groups (org_code, org_name, description, is_active, created_by)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO organization_groups (org_code, org_name, description, is_active, created_by, company_id)
+            VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING id, org_code, org_name, created_at
         """, (
             payload.org_code,
             payload.org_name,
             payload.description,
             payload.is_active,
-            admin["id"]
+            admin["id"],
+            payload.company_id
         ))
         org = cur.fetchone()
         
@@ -272,6 +280,10 @@ async def update_organization(
         if payload.is_active is not None:
             updates.append("is_active = %s")
             params.append(payload.is_active)
+        
+        if payload.company_id is not None:
+            updates.append("company_id = %s")
+            params.append(payload.company_id)
         
         if not updates:
             raise HTTPException(status_code=400, detail="Güncellenecek alan belirtilmedi")

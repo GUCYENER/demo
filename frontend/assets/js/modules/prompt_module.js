@@ -53,7 +53,7 @@ window.PromptModule = (function () {
     };
 
     // --- YÜKLEME ---
-    async function loadPrompts() {
+    async function loadPrompts(companyId) {
         const token = localStorage.getItem('access_token');
         const el = getElements();
 
@@ -72,7 +72,8 @@ window.PromptModule = (function () {
         try {
             el.grid.innerHTML = '<div style="padding:20px;color:var(--text-3);font-size:13px"><i class="fa-solid fa-spinner fa-spin" style="margin-right:8px"></i>Yükleniyor...</div>';
 
-            const data = await window.VYRA_API.request("/prompts/");
+            const url = companyId ? '/prompts/?company_id=' + companyId : '/prompts/';
+            const data = await window.VYRA_API.request(url);
 
             if (!data || !Array.isArray(data)) {
                 console.log('[NGSSAI] Prompt verisi boş veya geçersiz:', data);
@@ -157,19 +158,30 @@ window.PromptModule = (function () {
     }
 
     // --- MODAL İŞLEMLERİ ---
-    function openModal(prompt = null) {
+    async function openModal(prompt = null) {
         const el = getElements();
         el.modal.classList.remove("hidden");
         el.form.reset();
 
+        // Firma dropdown'ı doldur
+        const compSel = document.getElementById('promptCompanyId');
+        if (compSel && window.populateCompanySelect) {
+            await window.populateCompanySelect(compSel, prompt ? prompt.company_id : null);
+        }
+
         if (prompt) {
             el.modalTitle.textContent = "Prompt Düzenle";
             el.inputs.id.value = prompt.id;
-            // v2.26.0: Kategoriyi okunabilir ad olarak göster
             el.inputs.category.value = categoryNames[prompt.category] || prompt.category;
             el.inputs.title.value = prompt.title;
             el.inputs.content.value = prompt.content;
             el.inputs.description.value = prompt.description || "";
+        } else {
+            // Global selector'dan öntanımlı firma
+            const globalSel = document.getElementById('globalCompanySelect');
+            if (globalSel && globalSel.value && compSel) {
+                compSel.value = globalSel.value;
+            }
         }
         // v2.26.0: Yeni prompt ekleme devre dışı
     }
@@ -191,9 +203,12 @@ window.PromptModule = (function () {
         }
 
         // v2.26.0: Sadece content güncellenebilir
+        const compSel = document.getElementById('promptCompanyId');
+        const companyVal = compSel ? compSel.value : '';
         const payload = {
             content: el.inputs.content.value
         };
+        if (companyVal) payload.company_id = parseInt(companyVal, 10);
 
         try {
             await window.VYRA_API.request(`/prompts/${id}`, {

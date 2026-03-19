@@ -16,7 +16,11 @@
 
     <!-- Sub Tabs -->
     <div class="sub-tabs">
-        <button id="tabLlmConfig" class="sub-tab active">
+        <button id="tabCompanies" class="sub-tab active admin-only">
+            <i class="fa-solid fa-building"></i>
+            Firmalar
+        </button>
+        <button id="tabLlmConfig" class="sub-tab">
             <i class="fa-solid fa-brain"></i>
             LLM Tanımları
         </button>
@@ -46,8 +50,40 @@
         </button>
     </div>
 
+    <!-- Global Firma Seçici (v2.54.0) -->
+    <div id="companyFilterBar" class="company-filter-bar">
+        <div class="company-filter-inner">
+            <i class="fa-solid fa-building"></i>
+            <label for="globalCompanySelect" class="company-filter-label">Firma:</label>
+            <select id="globalCompanySelect" class="company-filter-select admin-only">
+                <option value="">Tüm Firmalar</option>
+            </select>
+            <span id="globalCompanyName" class="company-filter-name"></span>
+        </div>
+    </div>
+
+    <!-- Firmalar İçeriği (v2.53.0) -->
+    <div id="contentCompanies" class="param-content admin-only">
+        <div class="company-header-row">
+            <button id="btnNewCompany" class="btn primary">
+                <i class="fa-solid fa-plus"></i>
+                Yeni Firma Ekle
+            </button>
+        </div>
+        <div id="companyGrid" class="param-grid">
+            <!-- Placeholder: veri yokken gösterilir -->
+            <div id="companyEmptyState" class="empty-state-card">
+                <div class="empty-state-icon">
+                    <i class="fa-solid fa-building"></i>
+                </div>
+                <h3 class="empty-state-title">Henüz firma tanımlanmadı</h3>
+                <p class="empty-state-desc">İlk firmanızı ekleyerek çoklu firma yönetimini başlatın.</p>
+            </div>
+        </div>
+    </div>
+
     <!-- LLM Tanımları İçeriği -->
-    <div id="contentLlmConfig" class="param-content">
+    <div id="contentLlmConfig" class="param-content hidden">
         <div style="margin-bottom:16px">
             <button id="btnNewLLM" class="btn primary">
                 <i class="fa-solid fa-plus"></i>
@@ -549,6 +585,14 @@
             <div class="modal-body">
                 <form id="ldapSettingForm">
 
+                    <!-- Firma Seçimi (v2.54.0) -->
+                    <div class="form-group" style="margin-bottom:16px">
+                        <label><i class="fa-solid fa-building"></i> Firma</label>
+                        <select id="ldapCompanyId" class="inp">
+                            <option value="">Firma seçin...</option>
+                        </select>
+                    </div>
+
                     <div class="form-section-title">
                         <i class="fa-solid fa-server"></i> Sunucu Bilgileri
                     </div>
@@ -700,6 +744,13 @@
                 <button class="modal-close" id="closeWidgetKeyModal"><i class="fa-solid fa-times"></i></button>
             </div>
             <div class="modal-body" style="display:flex;flex-direction:column;gap:16px;max-height:65vh;overflow-y:auto">
+                <!-- Firma Seçimi (v2.54.0) -->
+                <div class="fg-label">
+                    <label><i class="fa-solid fa-building"></i> Firma</label>
+                    <select class="inp" id="widgetCompanyId">
+                        <option value="">Firma seçin...</option>
+                    </select>
+                </div>
                 <div class="fg-label">
                     <label>Anahtar Adı <span style="color:var(--red)">*</span></label>
                     <input class="inp" type="text" id="widgetKeyName" placeholder="Örn: Destek Sitesi Widget'ı">

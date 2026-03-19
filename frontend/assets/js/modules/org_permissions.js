@@ -22,10 +22,15 @@ window.OrgPermissionsModule = (function () {
     }
 
     // ── Load & Render ──
-    async function load() {
+    let _currentCompanyId = null;
+
+    async function load(companyId) {
+        _currentCompanyId = companyId || null;
         try {
             const token = localStorage.getItem('access_token');
-            const resp = await fetch(ENDPOINT, {
+            let url = ENDPOINT;
+            if (companyId) url += `?company_id=${companyId}`;
+            const resp = await fetch(url, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
 
@@ -216,6 +221,12 @@ window.OrgPermissionsModule = (function () {
 
     // ── Add / Update ──
     async function handleAddOrUpdate() {
+        // Firma seçim kontrolü
+        if (!_currentCompanyId) {
+            showToast('Lütfen önce üst menüden firma seçin.', 'error');
+            return;
+        }
+
         const domainInput = document.getElementById('orgPermDomain');
         const orgInput = document.getElementById('orgPermOrgCode');
         const descInput = document.getElementById('orgPermDescription');
@@ -244,7 +255,12 @@ window.OrgPermissionsModule = (function () {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`,
                 },
-                body: JSON.stringify({ domain, org_code: orgCode, description }),
+                body: JSON.stringify({
+                    domain,
+                    org_code: orgCode,
+                    description,
+                    company_id: _currentCompanyId || undefined
+                }),
             });
 
             if (!resp.ok) {

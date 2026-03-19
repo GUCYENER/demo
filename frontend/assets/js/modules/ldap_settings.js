@@ -35,9 +35,11 @@ window.LdapSettingsModule = (function () {
     // ---------------------------------------------------------
     //  Load LDAP Settings List
     // ---------------------------------------------------------
-    async function load() {
+    async function load(companyId) {
         try {
-            const response = await fetch(`${API_BASE}/api/ldap-settings`, {
+            let url = `${API_BASE}/api/ldap-settings`;
+            if (companyId) url += `?company_id=${companyId}`;
+            const response = await fetch(url, {
                 headers: authHeaders()
             });
             if (!response.ok) throw new Error('LDAP ayarları yüklenemedi');
@@ -168,6 +170,15 @@ window.LdapSettingsModule = (function () {
         populateDomainDropdown('');
         renderOrgCheckboxes('', []);
 
+        // Firma dropdown'ı doldur
+        const compSel = document.getElementById('ldapCompanyId');
+        if (compSel && window.populateCompanySelect) {
+            await window.populateCompanySelect(compSel, null);
+            // Global selector'dan öntanımlı firma
+            const globalSel = document.getElementById('globalCompanySelect');
+            if (globalSel && globalSel.value) compSel.value = globalSel.value;
+        }
+
         // Form temizle
         const domainSel = document.getElementById('ldapDomain');
         if (domainSel) { domainSel.value = ''; domainSel.disabled = false; }
@@ -207,6 +218,12 @@ window.LdapSettingsModule = (function () {
             if (!setting) {
                 if (window.showToast) window.showToast('LDAP ayari bulunamadi', 'error');
                 return;
+            }
+
+            // Firma dropdown'ı doldur (setting tanımlandıktan SONRA)
+            const compSel = document.getElementById('ldapCompanyId');
+            if (compSel && window.populateCompanySelect) {
+                await window.populateCompanySelect(compSel, setting.company_id || null);
             }
 
             const titleEl = document.getElementById('ldapModalTitle');
@@ -296,6 +313,10 @@ window.LdapSettingsModule = (function () {
 
         if (!editingId) body.domain = domain;
         if (bindPassword) body.bind_password = bindPassword;
+
+        // Firma ID ekle
+        const compSel = document.getElementById('ldapCompanyId');
+        if (compSel && compSel.value) body.company_id = parseInt(compSel.value, 10);
 
         try {
             const method = editingId ? 'PUT' : 'POST';

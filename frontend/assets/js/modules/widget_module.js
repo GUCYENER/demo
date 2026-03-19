@@ -100,7 +100,7 @@
     // ------------------------------------------------------------------
     // Key listesini yükle ve tabloya render et
     // ------------------------------------------------------------------
-    async function loadKeys() {
+    async function loadKeys(companyId) {
         const tbody = document.getElementById("widgetKeysTableBody");
         const empty = document.getElementById("widgetKeysEmpty");
         if (!tbody) return;
@@ -110,7 +110,9 @@
         </td></tr>`;
 
         try {
-            const resp = await apiRequest("GET", "/widget/keys");
+            let keysUrl = "/widget/keys";
+            if (companyId) keysUrl += `?company_id=${companyId}`;
+            const resp = await apiRequest("GET", keysUrl);
             if (!resp.ok) throw new Error("Yüklenemedi");
             keys = await resp.json();
         } catch (e) {
@@ -197,7 +199,7 @@
     // ------------------------------------------------------------------
     // Yeni key oluştur
     // ------------------------------------------------------------------
-    function openNewKeyModal() {
+    async function openNewKeyModal() {
         const modal = document.getElementById("widgetKeyModal");
         if (!modal) return;
         populateOrgSelect();
@@ -208,6 +210,15 @@
         document.getElementById("widgetKeyDomains").value = "";
         document.getElementById("widgetKeyActive").checked = true;
         document.getElementById("widgetKeyUseRag").checked = true;
+
+        // Firma dropdown'ı doldur (await ile beklenir)
+        const compSel = document.getElementById('widgetCompanyId');
+        if (compSel && window.populateCompanySelect) {
+            await window.populateCompanySelect(compSel, null);
+            const globalSel = document.getElementById('globalCompanySelect');
+            if (globalSel && globalSel.value) compSel.value = globalSel.value;
+        }
+
         modal.classList.remove("hidden");
     }
 
@@ -229,6 +240,9 @@
         if (!name) { showToast("Anahtar adı zorunludur", "error"); return; }
         if (!orgId) { showToast("Organizasyon seçin", "error"); return; }
 
+        const companyIdEl = document.getElementById('widgetCompanyId');
+        const companyIdVal = companyIdEl ? companyIdEl.value : '';
+
         const allowedDomains = domainsRaw
             ? domainsRaw.split(",").map(d => d.trim().toLowerCase()).filter(Boolean)
             : [];
@@ -240,6 +254,7 @@
             const resp = await apiRequest("POST", "/widget/keys", {
                 name, org_id: orgId, allowed_domains: allowedDomains, is_active: isActive,
                 prompt_id: promptId, llm_config_id: llmConfigId, use_rag: useRag,
+                company_id: companyIdVal ? parseInt(companyIdVal) : null,
             });
 
             if (!resp.ok) {
@@ -383,12 +398,12 @@
     // ------------------------------------------------------------------
     // Başlat — tab açıldığında çağrılır
     // ------------------------------------------------------------------
-    async function init() {
+    async function init(companyId) {
         // base url span
         const baseUrlSpan = document.getElementById("widgetBaseUrl");
         if (baseUrlSpan) baseUrlSpan.textContent = window.location.origin;
 
-        await Promise.all([loadOrgs(), loadOptions(), loadKeys()]);
+        await Promise.all([loadOrgs(), loadOptions(), loadKeys(companyId)]);
 
         // Yeni Anahtar butonu
         document.getElementById("btnNewWidgetKey")

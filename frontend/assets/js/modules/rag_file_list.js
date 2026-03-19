@@ -22,6 +22,12 @@ window.RAGFileList = {
                 params.append('search', this.filesSearchTerm);
             }
 
+            // Firma bazlı filtreleme
+            const compSel = document.getElementById('ragCompanySelect');
+            if (compSel && compSel.value) {
+                params.append('company_id', compSel.value);
+            }
+
             const response = await fetch(`${this.API_BASE}/rag/files?${params}`, {
                 headers: {
                     'Authorization': `Bearer ${token}`
@@ -128,7 +134,15 @@ window.RAGFileList = {
     async loadStats() {
         try {
             const token = localStorage.getItem('access_token');
-            const response = await fetch(`${this.API_BASE}/rag/stats`, {
+            let statsUrl = `${this.API_BASE}/rag/stats`;
+
+            // Firma bazlı filtreleme
+            const compSel = document.getElementById('ragCompanySelect');
+            if (compSel && compSel.value) {
+                statsUrl += `?company_id=${compSel.value}`;
+            }
+
+            const response = await fetch(statsUrl, {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }

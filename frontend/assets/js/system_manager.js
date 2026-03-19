@@ -127,12 +127,13 @@ window.SystemManagerModule = (function () {
     }
 
     // --- SİSTEM SIFIRLAMA ---
-    async function loadSystemResetInfo() {
+    async function loadSystemResetInfo(companyId) {
         const protectedStats = document.getElementById("protectedStats");
         const deletableStats = document.getElementById("deletableStats");
 
         try {
-            const data = await window.VYRA_API.request("/system/info");
+            const qp = companyId ? `?company_id=${companyId}` : '';
+            const data = await window.VYRA_API.request("/system/info" + qp);
 
             if (protectedStats && data.protected) {
                 protectedStats.innerHTML = `

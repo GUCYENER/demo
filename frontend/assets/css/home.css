@@ -5455,3 +5455,339 @@ textarea.drag-over {
     border-radius: 20px;
     border: 1px solid var(--border);
 }
+
+/* =====================================================
+   Companies Module (v2.53.0)
+   ===================================================== */
+
+.company-website-link {
+    color: var(--accent);
+    text-decoration: none;
+    transition: opacity 0.2s;
+}
+.company-website-link:hover {
+    opacity: 0.8;
+    text-decoration: underline;
+}
+
+/* --- Company Filter Bar (v2.54.0) --- */
+.company-filter-bar {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 16px;
+    margin-bottom: 16px;
+}
+.company-filter-inner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.company-filter-inner > i {
+    color: var(--accent);
+    font-size: 14px;
+}
+.company-filter-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+.company-filter-select {
+    flex: 1;
+    max-width: 320px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg-main);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: inherit;
+    transition: border-color .2s;
+}
+.company-filter-select:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+.company-filter-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.company-header-row {
+    margin-bottom: 16px;
+}
+
+.company-modal-icon {
+    background: var(--accent-subtle);
+}
+
+.company-modal-icon i {
+    color: var(--accent);
+}
+
+/* --- Company Cards --- */
+.company-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.company-card:hover {
+    border-color: var(--accent);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+.company-card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 18px 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+.company-logo-wrap {
+    width: 48px;
+    height: 48px;
+    border-radius: 10px;
+    overflow: hidden;
+    flex-shrink: 0;
+    background: var(--bg-hover);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.company-logo-img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.company-logo-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-3);
+    font-size: 20px;
+}
+
+.company-card-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.company-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.company-badge.active {
+    background: var(--green-dim);
+    color: var(--green);
+}
+
+.company-badge.inactive {
+    background: var(--red-dim);
+    color: var(--red);
+}
+
+.company-badge i {
+    font-size: 6px;
+}
+
+.btn-icon {
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    background: var(--bg-hover);
+    color: var(--text-2);
+    transition: background 0.15s, color 0.15s;
+}
+
+.btn-icon:hover {
+    background: var(--accent-subtle);
+    color: var(--accent);
+}
+
+.btn-icon-danger:hover {
+    background: var(--red-dim);
+    color: var(--red);
+}
+
+.company-card-body {
+    padding: 14px 18px 16px;
+}
+
+.company-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-1);
+    margin-bottom: 10px;
+}
+
+.company-meta-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.company-meta-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    color: var(--text-2);
+}
+
+.company-meta-item i {
+    width: 14px;
+    text-align: center;
+    color: var(--text-3);
+    font-size: 11px;
+    flex-shrink: 0;
+}
+
+/* --- Empty State --- */
+.empty-state-card {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 24px;
+    text-align: center;
+}
+
+.empty-state-icon {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: var(--bg-hover);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 16px;
+}
+
+.empty-state-icon i {
+    font-size: 24px;
+    color: var(--text-3);
+}
+
+.empty-state-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-1);
+    margin-bottom: 6px;
+}
+
+.empty-state-desc {
+    font-size: 13px;
+    color: var(--text-3);
+}
+
+/* --- Logo Upload (Modal) --- */
+.company-logo-upload-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 16px;
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    background: var(--bg-hover);
+    transition: border-color 0.2s;
+}
+
+.company-logo-upload-area:hover {
+    border-color: var(--accent);
+}
+
+.company-logo-preview {
+    width: 80px;
+    height: 80px;
+    border-radius: 10px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+}
+
+.company-logo-preview-img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.company-logo-upload-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 16px;
+    border-radius: 6px;
+    background: var(--accent-subtle);
+    color: var(--accent);
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.company-logo-upload-btn:hover {
+    background: var(--accent);
+    color: #fff;
+}
+
+/* --- Form Layout Helpers --- */
+.form-row-2col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.form-row-3col {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+}
+
+.form-section-divider {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 10px 0 4px;
+    margin-top: 6px;
+    border-top: 1px solid var(--border);
+}
+
+.form-section-divider i {
+    font-size: 12px;
+}
+
+.required {
+    color: var(--red);
+}

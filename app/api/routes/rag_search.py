@@ -6,9 +6,9 @@ Semantik arama ve istatistik endpoint'leri.
 
 from __future__ import annotations
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.routes.auth import get_current_user
 from app.api.schemas.rag_schemas import (
@@ -56,6 +56,7 @@ async def search_knowledge_base(
 
 @router.get("/stats", response_model=RAGStatsResponse)
 async def get_stats(
+    company_id: Optional[int] = Query(None),
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     """RAG istatistiklerini döndürür"""

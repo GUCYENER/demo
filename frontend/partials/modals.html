@@ -18,6 +18,17 @@
         <form id="promptForm" class="llm-modal-form">
             <input type="hidden" id="promptId" />
 
+            <!-- Firma Seçimi (v2.54.0) -->
+            <div class="form-group">
+                <label for="promptCompanyId" class="form-label">
+                    <i class="fa-solid fa-building"></i> Firma
+                </label>
+                <select id="promptCompanyId" class="form-select">
+                    <option value="">Firma seçin...</option>
+                </select>
+                <p class="form-hint">Bu prompt'un hangi firmaya ait olduğunu seçin</p>
+            </div>
+
             <!-- Kategori (Salt Okunur) -->
             <div class="form-group">
                 <label for="promptCategory" class="form-label">
@@ -96,13 +107,13 @@
         <form id="llmForm" class="llm-modal-form">
             <input type="hidden" id="llmId" />
 
-            <!-- Firma Seçimi -->
+            <!-- Firma Seçimi (v2.54.0) -->
             <div class="form-group">
-                <label for="llmVendor" class="form-label">
-                    <i class="fa-regular fa-building"></i> Firma
+                <label for="llmCompanyId" class="form-label">
+                    <i class="fa-solid fa-building"></i> Firma
                 </label>
-                <select id="llmVendor" class="form-select">
-                    <option value="12000533461">Dolap Ticaret A.Ş.</option>
+                <select id="llmCompanyId" class="form-select">
+                    <option value="">Firma seçin...</option>
                 </select>
                 <p class="form-hint">Bu konfigürasyonun hangi firmaya ait olduğunu seçin</p>
             </div>
@@ -267,6 +278,157 @@
                     Kopyala
                 </button>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- COMPANY MODAL (v2.53.0) -->
+<div id="companyModal" class="llm-modal-overlay hidden">
+    <div class="llm-modal-container">
+
+        <!-- Header -->
+        <div class="llm-modal-header">
+            <div class="llm-modal-title-wrapper">
+                <div class="llm-modal-icon company-modal-icon">
+                    <i class="fa-solid fa-building"></i>
+                </div>
+                <h2 id="companyModalTitle" class="llm-modal-title">Yeni Firma Ekle</h2>
+            </div>
+            <button id="btnCloseCompanyModal" class="llm-modal-close" aria-label="Kapat">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+
+        <form id="companyForm" class="llm-modal-form">
+
+            <!-- Logo Yükleme -->
+            <div class="form-group">
+                <label class="form-label">
+                    <i class="fa-solid fa-image"></i> Firma Logosu
+                </label>
+                <div class="company-logo-upload-area">
+                    <div id="companyLogoPreview" class="company-logo-preview"></div>
+                    <label class="company-logo-upload-btn">
+                        <i class="fa-solid fa-cloud-arrow-up"></i>
+                        <span>Logo Seç</span>
+                        <input type="file" id="companyLogoFile" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden>
+                    </label>
+                    <p class="form-hint">PNG, JPG, WebP veya SVG — Maks 2MB</p>
+                </div>
+            </div>
+
+            <!-- Firma Ünvanı -->
+            <div class="form-group">
+                <label for="companyName" class="form-label">
+                    <i class="fa-solid fa-building"></i> Firma Ünvanı <span class="required">*</span>
+                </label>
+                <input type="text" id="companyName" class="form-input" placeholder="Örn: Dolap Ticaret A.Ş." required>
+            </div>
+
+            <!-- Vergi / TCKN -->
+            <div class="form-row-2col">
+                <div class="form-group">
+                    <label class="form-label">
+                        <i class="fa-solid fa-id-card"></i> Kimlik Türü <span class="required">*</span>
+                    </label>
+                    <select id="companyTaxType" class="form-input">
+                        <option value="vd">Vergi Dairesi (VD)</option>
+                        <option value="tckn">T.C. Kimlik No (TCKN)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="companyTaxNumber" class="form-label">
+                        <i class="fa-solid fa-hashtag"></i> Numara <span class="required">*</span>
+                    </label>
+                    <input type="text" id="companyTaxNumber" class="form-input" placeholder="VD veya TCKN numarası" maxlength="11" required>
+                </div>
+            </div>
+
+            <!-- Adres -->
+            <div class="form-section-divider">
+                <i class="fa-solid fa-location-dot"></i> Adres Bilgileri
+            </div>
+
+            <div class="form-row-3col">
+                <div class="form-group">
+                    <label for="companyAddressIl" class="form-label">İl</label>
+                    <select id="companyAddressIl" class="form-input">
+                        <option value="">İl Seçin...</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="companyAddressIlce" class="form-label">İlçe</label>
+                    <select id="companyAddressIlce" class="form-input" disabled>
+                        <option value="">Önce il seçin...</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="companyAddressMahalle" class="form-label">Mahalle</label>
+                    <select id="companyAddressMahalle" class="form-input" disabled>
+                        <option value="">Önce ilçe seçin...</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="companyAddressText" class="form-label">Açık Adres</label>
+                <textarea id="companyAddressText" class="form-input" rows="2" placeholder="Cadde, sokak, bina no vb."></textarea>
+            </div>
+
+            <!-- İletişim -->
+            <div class="form-section-divider">
+                <i class="fa-solid fa-address-book"></i> İletişim Bilgileri
+            </div>
+
+            <div class="form-row-2col">
+                <div class="form-group">
+                    <label for="companyPhone" class="form-label">
+                        <i class="fa-solid fa-phone"></i> Telefon <span class="required">*</span>
+                    </label>
+                    <input type="text" id="companyPhone" class="form-input" placeholder="0 (5XX) XXX XX XX" required>
+                </div>
+                <div class="form-group">
+                    <label for="companyEmail" class="form-label">
+                        <i class="fa-solid fa-envelope"></i> E-posta <span class="required">*</span>
+                    </label>
+                    <input type="email" id="companyEmail" class="form-input" placeholder="info@firma.com" required>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="companyWebsite" class="form-label">
+                    <i class="fa-solid fa-globe"></i> Web Adresi
+                </label>
+                <input type="url" id="companyWebsite" class="form-input" placeholder="https://www.firma.com">
+            </div>
+
+            <!-- Yetkili Kişi -->
+            <div class="form-section-divider">
+                <i class="fa-solid fa-user-tie"></i> Yetkili Kişi
+            </div>
+
+            <div class="form-row-2col">
+                <div class="form-group">
+                    <label for="companyContactName" class="form-label">
+                        Ad <span class="required">*</span>
+                    </label>
+                    <input type="text" id="companyContactName" class="form-input" placeholder="Ad" required>
+                </div>
+                <div class="form-group">
+                    <label for="companyContactSurname" class="form-label">
+                        Soyad <span class="required">*</span>
+                    </label>
+                    <input type="text" id="companyContactSurname" class="form-input" placeholder="Soyad" required>
+                </div>
+            </div>
+        </form>
+
+        <!-- Footer -->
+        <div class="llm-modal-footer">
+            <button type="button" id="btnCancelCompany" class="btn-modal-cancel">İptal</button>
+            <button type="button" id="btnSaveCompany" class="btn-modal-save">
+                <i class="fa-solid fa-save"></i> Kaydet
+            </button>
         </div>
     </div>
 </div>

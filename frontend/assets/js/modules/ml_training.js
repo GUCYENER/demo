@@ -96,11 +96,12 @@ window.MLTrainingModule = (function () {
     // Stats
     // ============================================
 
-    async function loadStats() {
+    async function loadStats(companyId) {
         const el = getElements();
 
         try {
-            const data = await apiCall('/ml/training/stats');
+            const qp = companyId ? `?company_id=${companyId}` : '';
+            const data = await apiCall('/ml/training/stats' + qp);
             console.log('[MLTraining] Stats API response:', data);
 
             // Feedback count
@@ -258,11 +259,12 @@ window.MLTrainingModule = (function () {
     // Schedule
     // ============================================
 
-    async function loadSchedule() {
+    async function loadSchedule(companyId) {
         const el = getElements();
 
         try {
-            const data = await apiCall('/ml/training/schedule');
+            const qp = companyId ? `?company_id=${companyId}` : '';
+            const data = await apiCall('/ml/training/schedule' + qp);
 
             if (data.schedules) {
                 // Hibrit schedule - her koşul için ayrı kontrol
@@ -419,12 +421,13 @@ window.MLTrainingModule = (function () {
     // History
     // ============================================
 
-    async function loadHistory() {
+    async function loadHistory(companyId) {
         const el = getElements();
         if (!el.trainingHistoryBody) return;
 
         try {
-            const data = await apiCall('/ml/training/history');
+            const qp = companyId ? `?company_id=${companyId}` : '';
+            const data = await apiCall('/ml/training/history' + qp);
             const history = data.history || [];
 
             if (history.length === 0) {

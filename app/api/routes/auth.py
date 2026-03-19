@@ -53,6 +53,7 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str = Field(..., min_length=6, max_length=256)
+    company_id: Optional[int] = None  # Firma ID (opsiyonel)
 
 
 class UserLogin(BaseModel):
@@ -232,11 +233,11 @@ def register_user(request: Request, response: Response, payload: UserCreate):
 
         cur.execute(
             """
-            INSERT INTO users (full_name, username, email, phone, password, role_id, is_admin)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO users (full_name, username, email, phone, password, role_id, is_admin, company_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id, full_name, username, email, phone, role_id, is_admin
             """,
-            (payload.full_name, payload.username, payload.email, payload.phone, hashed, role_id, False),
+            (payload.full_name, payload.username, payload.email, payload.phone, hashed, role_id, False, payload.company_id),
         )
         row = cur.fetchone()
         conn.commit()
@@ -543,20 +544,32 @@ def _find_or_create_ldap_user(ldap_result: Dict[str, Any]) -> Dict[str, Any]:
         # domain boş string güvenliği
         email_domain = domain.lower() if domain else "ldap.local"
 
+        # Domain üzerinden firma eşleştirmesi (ldap_settings.company_id)
+        ldap_company_id = None
+        if domain:
+            cur.execute(
+                "SELECT company_id FROM ldap_settings WHERE domain_name = %s AND company_id IS NOT NULL LIMIT 1",
+                (domain,)
+            )
+            ldap_co_row = cur.fetchone()
+            if ldap_co_row:
+                ldap_company_id = ldap_co_row['company_id']
+
         cur.execute("""
             INSERT INTO users (
                 full_name, username, email, phone, password,
                 role_id, is_admin, is_approved,
                 auth_type, domain, organization, department, title,
-                last_login
+                last_login, company_id
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s)
             RETURNING id, full_name, username, email, phone, role_id, is_admin, is_approved
         """, (
             display_name, username, email or f"{username}@{email_domain}",
             "", random_password,
             role_id, False, True,
             "ldap", domain, organization, department, title,
+            ldap_company_id,
         ))
         new_user = cur.fetchone()
         conn.commit()

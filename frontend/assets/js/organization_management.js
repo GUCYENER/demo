@@ -20,6 +20,7 @@ class OrganizationManager {
 
     async init() {
         this.setupEventListeners();
+        await this.loadCompanySelector();
         await this.loadOrganizations();
     }
 
@@ -83,6 +84,12 @@ class OrganizationManager {
 
             if (this.searchTerm) params.append('search', this.searchTerm);
             if (this.filterActive !== null) params.append('is_active', this.filterActive);
+
+            // Firma bazlı filtreleme
+            const compSel = document.getElementById('orgCompanySelect');
+            if (compSel && compSel.value) {
+                params.append('company_id', compSel.value);
+            }
 
             const response = await makeAuthRequest(`/api/organizations?${params}`);
 
@@ -364,6 +371,12 @@ class OrganizationManager {
             is_active: isActive
         };
 
+        // Firma ID ekle
+        const compSel = document.getElementById('orgCompanySelect');
+        if (compSel && compSel.value) {
+            payload.company_id = parseInt(compSel.value, 10);
+        }
+
         try {
             if (this.editingOrgId) {
                 // Update
@@ -413,6 +426,30 @@ class OrganizationManager {
                 }
             }
         });
+    }
+
+    async loadCompanySelector() {
+        const select = document.getElementById('orgCompanySelect');
+        if (!select) return;
+
+        try {
+            const data = await makeAuthRequest('/api/companies');
+            select.innerHTML = '<option value="">Tüm Firmalar</option>';
+            (data || []).forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = c.id;
+                opt.textContent = c.name;
+                select.appendChild(opt);
+            });
+
+            // Firma değişince listeyi yeniden yükle
+            select.addEventListener('change', () => {
+                this.currentPage = 1;
+                this.loadOrganizations();
+            });
+        } catch (err) {
+            console.warn('[OrgManager] Firma selector yüklenemedi:', err);
+        }
     }
 }
 

@@ -408,6 +408,70 @@ body::before {
   .brand-panel, .vdivider { display: none; }
   .form-panel { width: 100%; min-width: 0; border-left: none; }
 }
+/* Company Branding Block */
+.company-branding {
+  width: 100%; max-width: 360px;
+  display: none;
+  flex-direction: column; align-items: center;
+  gap: 10px;
+  padding: 20px 20px 16px;
+  margin-bottom: 20px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  position: relative; z-index: 2;
+  animation: cardIn 0.55s cubic-bezier(0.22,1,0.36,1) 0.05s both;
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+.company-branding::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: var(--grad-acc);
+  border-radius: 14px 14px 0 0;
+  opacity: 0.7;
+}
+.company-branding.visible { display: flex; }
+.cb-logo-wrap {
+  width: 56px; height: 56px; border-radius: 14px;
+  overflow: hidden; flex-shrink: 0;
+  border: 1px solid var(--border-md);
+  background: var(--bg-input);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+  display: flex; align-items: center; justify-content: center;
+}
+.cb-logo-wrap img {
+  width: 100%; height: 100%; object-fit: contain;
+  display: none;
+}
+.cb-logo-placeholder {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px; font-weight: 700;
+  color: var(--text-1);
+  background: var(--grad-logo);
+  -webkit-text-fill-color: #fff;
+}
+.cb-company-name {
+  font-size: 15px; font-weight: 600;
+  color: var(--text-1);
+  letter-spacing: -0.01em;
+  text-align: center;
+  line-height: 1.3;
+}
+.cb-readonly-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: 6px;
+  background: var(--gold-dim);
+  color: var(--gold);
+  font-size: 10.5px; font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.cb-readonly-badge svg {
+  width: 11px; height: 11px; stroke: currentColor; fill: none; stroke-width: 2;
+}
 </style>
 </head>
 <body>
@@ -501,6 +565,20 @@ body::before {
   <div class="vdivider"></div>
 
   <div class="form-panel">
+
+    <!-- Firma Branding Bloğu (URL eşleşmesine göre gizli/görünür) -->
+    <div class="company-branding" id="companyBrandingBlock">
+      <div class="cb-logo-wrap">
+        <img id="companyBrandLogo" alt="Firma Logo" />
+        <div class="cb-logo-placeholder" id="companyBrandPlaceholder">?</div>
+      </div>
+      <div class="cb-company-name" id="companyBrandName"></div>
+      <div class="cb-readonly-badge">
+        <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+        Firma Tanımlı
+      </div>
+    </div>
+
     <div class="form-card">
 
       <div class="fc-header">
@@ -655,7 +733,8 @@ body::before {
 
 </div>
 
-<script src="assets/js/config.js?v=2.52.0"></script>
+<script src="assets/js/config.js?v=2.53.0"></script>
+<script src="assets/js/login_branding.js?v=2.53.0"></script>
 <script>
 (function() {
   "use strict";

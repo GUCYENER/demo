@@ -81,11 +81,16 @@ def create_ticket_rag_only(
         user_org_rows = cur.fetchall()
         user_org_ids = [row['org_id'] for row in user_org_rows]
         
+        # Kullanıcının company_id'sini al
+        cur.execute("SELECT company_id FROM users WHERE id = %s", (user_id,))
+        user_row = cur.fetchone()
+        user_company_id = user_row['company_id'] if user_row else None
+        
         cur.execute(
             """
             INSERT INTO tickets (user_id, title, description, source_type, 
-                                 rag_results, interaction_type, source_org_ids)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                 rag_results, interaction_type, source_org_ids, company_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """,
             (
@@ -93,9 +98,10 @@ def create_ticket_rag_only(
                 plan.title,
                 query,
                 "rag" if rag_results else None,
-                json.dumps(rag_results),  # 🆕 RAG sonuçları JSON olarak
-                "rag_only",  # 🆕 Henüz AI değerlendirmesi yok
+                json.dumps(rag_results),
+                "rag_only",
                 user_org_ids,
+                user_company_id,
             ),
         )
         ticket_id = cur.fetchone()["id"]
@@ -311,13 +317,18 @@ def create_ticket_from_chat(
         """, (user_id,))
         user_org_ids = [row['org_id'] for row in cur.fetchall()]
         
+        # Kullanıcının company_id'sini al
+        cur.execute("SELECT company_id FROM users WHERE id = %s", (user_id,))
+        user_row = cur.fetchone()
+        user_company_id = user_row['company_id'] if user_row else None
+        
         cur.execute("""
             INSERT INTO tickets (user_id, title, description, final_solution, 
-                                 cym_text, interaction_type, source_org_ids)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                 cym_text, interaction_type, source_org_ids, company_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (user_id, plan.title, query, verifier.final_solution, 
-              verifier.cym_text, 'ai_evaluation', user_org_ids))
+              verifier.cym_text, 'ai_evaluation', user_org_ids, user_company_id))
         ticket_id = cur.fetchone()["id"]
         conn.commit()
     finally:
@@ -369,11 +380,16 @@ def create_ticket_direct(
         user_org_rows = cur.fetchall()
         user_org_ids = [row['org_id'] for row in user_org_rows]
         
+        # Kullanıcının company_id'sini al
+        cur.execute("SELECT company_id FROM users WHERE id = %s", (user_id,))
+        user_row = cur.fetchone()
+        user_company_id = user_row['company_id'] if user_row else None
+        
         cur.execute(
             """
             INSERT INTO tickets (user_id, title, description, source_type, source_name,
-                                 final_solution, cym_text, cym_portal_url, source_org_ids)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                 final_solution, cym_text, cym_portal_url, source_org_ids, company_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """,
             (
@@ -386,6 +402,7 @@ def create_ticket_direct(
                 cym_text,
                 None,
                 user_org_ids,
+                user_company_id,
             ),
         )
         ticket_id = cur.fetchone()["id"]

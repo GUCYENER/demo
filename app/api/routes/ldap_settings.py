@@ -46,6 +46,7 @@ class LdapSettingCreate(BaseModel):
     enabled: bool = True
     use_ssl: bool = False
     timeout: int = 10
+    company_id: Optional[int] = None
 
 
 class LdapSettingUpdate(BaseModel):
@@ -92,16 +93,24 @@ def _safe_setting_dict(row: Dict[str, Any]) -> Dict[str, Any]:
 
 @router.get("")
 def list_ldap_settings(
+    company_id: Optional[int] = None,
     current_admin: Dict[str, Any] = Depends(get_current_admin),
 ):
-    """Tüm aktif LDAP ayarlarını listeler."""
+    """LDAP ayarlarını listeler. company_id ile filtrelenebilir."""
     with get_db_context() as conn:
         cur = conn.cursor()
-        cur.execute("""
-            SELECT * FROM ldap_settings 
-            WHERE is_deleted = FALSE 
-            ORDER BY domain
-        """)
+        if company_id:
+            cur.execute("""
+                SELECT * FROM ldap_settings 
+                WHERE is_deleted = FALSE AND company_id = %s
+                ORDER BY domain
+            """, (company_id,))
+        else:
+            cur.execute("""
+                SELECT * FROM ldap_settings 
+                WHERE is_deleted = FALSE 
+                ORDER BY domain
+            """)
         rows = cur.fetchall()
 
     return {
@@ -138,9 +147,9 @@ def create_ldap_setting(
                 domain, display_name, url, bind_dn, bind_password,
                 search_base, search_filter, allowed_orgs,
                 enabled, use_ssl, timeout,
-                created_by
+                created_by, company_id
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             (
@@ -149,7 +158,7 @@ def create_ldap_setting(
                 payload.search_base.strip(), payload.search_filter.strip(),
                 payload.allowed_orgs,
                 payload.enabled, payload.use_ssl, payload.timeout,
-                current_admin["id"],
+                current_admin["id"], payload.company_id,
             ),
         )
         new_row = cur.fetchone()

@@ -12,7 +12,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import auth, chat, health, rag as rag_routes, tickets, llm_config, prompts, users, system, websocket as ws_routes, organizations, feedback, dialog, permissions, assets, ldap_settings, domain_org_api, widget as widget_routes
+from app.api.routes import auth, chat, health, rag as rag_routes, tickets, llm_config, prompts, users, system, websocket as ws_routes, organizations, feedback, dialog, permissions, assets, ldap_settings, domain_org_api, widget as widget_routes, companies, address
 from app.core.config import settings
 from app.core.db import init_db
 from app.core.rate_limiter import limiter, get_rate_limit_handler, get_rate_limit_exception
@@ -137,7 +137,10 @@ async def lifespan(app: FastAPI):
     _scheduler_running = True
     scheduler_thread = threading.Thread(target=_run_schedule_checker, daemon=True)
     scheduler_thread.start()
-    
+
+    # v2.53.0: Türkiye adres verisi sync (API → DB)
+    address.start_address_sync()
+
     yield
     
     # Shutdown: Schedule checker'ı durdur
@@ -264,6 +267,8 @@ def create_app() -> FastAPI:
     app.include_router(ldap_settings.router)  # v2.46.0 - LDAP/AD Integration
     app.include_router(domain_org_api.router, prefix="/api")  # v2.46.0 - Domain Org Permissions
     app.include_router(widget_routes.router, prefix="/api")  # v2.60.0 - Web Widget
+    app.include_router(companies.router)  # v2.53.0 - Multi-Tenant Companies
+    app.include_router(address.router)  # v2.53.0 - Turkish Address Data
 
     import os
     from pathlib import Path

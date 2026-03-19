@@ -19,7 +19,7 @@ from typing import List, Optional, Dict, Any, Tuple
 import io
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
 from app.core.config import settings
 from app.core.db import get_db_conn
@@ -39,6 +39,7 @@ async def upload_files(
     files: List[UploadFile] = File(...),
     org_ids: Optional[str] = None,  # Virgülle ayrılmış org id'leri (örn: "1,2,3")
     maturity_scores: Optional[str] = None,  # Virgülle ayrılmış maturity skorları (örn: "85.3,72.1")
+    company_id: Optional[int] = Query(None),  # Firma ID
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     """
@@ -105,11 +106,11 @@ async def upload_files(
             # Dosyayı PostgreSQL'e kaydet — status='processing'
             cur.execute(
                 """
-                INSERT INTO uploaded_files (file_name, file_type, file_size_bytes, file_content, mime_type, uploaded_by, status)
-                VALUES (%s, %s, %s, %s, %s, %s, 'processing')
+                INSERT INTO uploaded_files (file_name, file_type, file_size_bytes, file_content, mime_type, uploaded_by, status, company_id)
+                VALUES (%s, %s, %s, %s, %s, %s, 'processing', %s)
                 RETURNING id
                 """,
-                (f.filename, ext, file_size, content, mime_type, current_user["id"]),
+                (f.filename, ext, file_size, content, mime_type, current_user["id"], company_id),
             )
             file_id = cur.fetchone()["id"]
             
