@@ -59,35 +59,44 @@ class CompanyUpdate(BaseModel):
 def get_company_by_url(url: str = Query(..., description="Eşleştirilecek URL")):
     """
     URL'den firma eşleştirme. Auth gerektirmez (login ekranı için).
-    companies.website alanında ILIKE eşleşme yapar.
+    Host:port bazlı eşleşme — path kısmı yok sayılır.
     """
+    import re
+
+    # URL'den host:port çıkar (protocol ve path hariç)
+    match = re.match(r'https?://([^/]+)', url)
+    if not match:
+        return {"found": False, "company": None}
+
+    request_host = match.group(1).lower()  # örn: "localhost:5500"
+
     with get_db_context() as conn:
         cur = conn.cursor()
-        # URL'deki protocol/port kısmını esnek eşleştir
+        # DB'deki website'lardan da host:port çıkarıp eşleştir
         cur.execute("""
-            SELECT id, name, (logo_data IS NOT NULL) as has_logo
+            SELECT id, name, website, (logo_data IS NOT NULL) as has_logo
             FROM companies
             WHERE website IS NOT NULL 
               AND website != ''
               AND is_active = TRUE
-              AND %s ILIKE '%%' || REPLACE(REPLACE(website, 'https://', ''), 'http://', '') || '%%'
-            ORDER BY LENGTH(website) DESC
-            LIMIT 1
-        """, (url,))
-        row = cur.fetchone()
+        """)
+        rows = cur.fetchall()
 
-    if not row:
-        return {"found": False, "company": None}
+    # Python tarafında host:port eşleşmesi
+    for row in rows:
+        db_match = re.match(r'https?://([^/]+)', row["website"] or "")
+        if db_match and db_match.group(1).lower() == request_host:
+            return {
+                "found": True,
+                "company": {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "has_logo": row["has_logo"],
+                    "logo_url": f"/api/companies/{row['id']}/logo" if row["has_logo"] else None
+                }
+            }
 
-    return {
-        "found": True,
-        "company": {
-            "id": row["id"],
-            "name": row["name"],
-            "has_logo": row["has_logo"],
-            "logo_url": f"/api/companies/{row['id']}/logo" if row["has_logo"] else None
-        }
-    }
+    return {"found": False, "company": None}
 
 @router.get("/")
 def get_companies(current_user: Dict[str, Any] = Depends(get_current_user)):
