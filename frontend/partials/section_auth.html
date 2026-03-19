@@ -11,8 +11,16 @@
                             <p>Kullanıcı rolleri ve erişim izinlerini yönetin</p>
                         </div>
                     </div>
-                    <div class="company-selector-wrap" style="display:flex;align-items:center;gap:8px;">
-                        <select id="authCompanySelect" class="inp" style="min-width:180px;height:34px;font-size:12px;"></select>
+                    <div class="company-selector-wrap">
+                        <div class="company-filter-bar">
+                            <div class="company-filter-inner">
+                                <i class="fa-solid fa-building"></i>
+                                <label for="authCompanySelect" class="company-filter-label">Firma:</label>
+                                <select id="authCompanySelect" class="company-filter-select admin-only">
+                                    <option value="">Tüm Firmalar</option>
+                                </select>
+                            </div>
+                        </div>
                     </div>
                 </div>
 

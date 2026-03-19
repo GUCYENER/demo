@@ -5330,13 +5330,14 @@ textarea.drag-over {
 .pager-btns {
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 6px;
+    flex-wrap: wrap;
 }
 
 /* pg-btn: Tek stile sahip pagination butonları */
 .pg-btn {
-    min-width: 28px;
-    height: 28px;
+    min-width: 32px;
+    height: 32px;
     padding: 0 10px;
     display: inline-flex;
     align-items: center;
@@ -5346,7 +5347,7 @@ textarea.drag-over {
     border-radius: 7px;
     color: var(--text-2);
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.15s ease;
@@ -5378,6 +5379,9 @@ textarea.drag-over {
     font-weight: 600;
     cursor: default;
     letter-spacing: 0.3px;
+    white-space: nowrap;
+    min-width: auto;
+    padding: 0 14px;
 }
 
 /* page-btn: Organizasyon Yönetimi numaralı butonlar */
