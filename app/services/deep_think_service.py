@@ -208,6 +208,16 @@ class DeepThinkService(DeepThinkFormattingMixin, DeepThinkFallbackMixin):
         # 🔧 v2.33.2: Eşikler düşürüldü - PDF dokümanları için embedding kalitesi daha düşük olabiliyor
         min_score = 0.25 if intent.intent_type == IntentType.LIST_REQUEST else 0.30
         
+        # 🆕 v2.53.1: Kısa/anlamsız sorgularda eşik yükselt
+        meaningful_chars = len(query.strip().replace('.', '').replace('?', '').replace(' ', ''))
+        if meaningful_chars < 8:
+            min_score = max(min_score, 0.45)
+            log_system_event(
+                "INFO",
+                f"Deep Think: Kısa sorgu tespit ({meaningful_chars} harf) → min_score={min_score}",
+                "deep_think"
+            )
+        
         # 🆕 v2.28.0: Liste sorguları için diversity filter'ı kaldır
         max_per_file = None if intent.intent_type == IntentType.LIST_REQUEST else 2
         
@@ -497,6 +507,70 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
     # 4. Main Pipeline
     # ========================================
     
+    def _is_short_meaningless_query(self, query: str) -> bool:
+        """
+        🆕 v2.53.1: Kısa/anlamsız sorgu tespiti.
+        Cache kontrolünden ÖNCE çağrılarak eski yanlış cache sonuçlarının
+        dönmesi engellenir.
+        
+        Kriterler:
+        - Tek kelimelik sorgular
+        - Toplam anlamlı karakter sayısı < 10
+        - Kesik kelime tespiti (nokta ile biten kısa parçalar: "bilg.", "yet.")
+        """
+        stripped = query.strip()
+        
+        # Noktalama temizle
+        cleaned = stripped.rstrip('.?!,;:')
+        
+        # Kelimelere ayır (len >= 2)
+        words = [w for w in cleaned.split() if len(w) >= 2]
+        
+        # Tek kelime veya kelime yok → anlamsız
+        if len(words) < 2:
+            return True
+        
+        # Toplam anlamlı karakter sayısı
+        total_chars = sum(len(w) for w in words)
+        if total_chars < 10:
+            return True
+        
+        # Kesik kelime tespiti: orijinal metinde "." ile biten kelimeler
+        # Örnek: "yeterli bilg." → "bilg." kesik kelime
+        original_words = stripped.split()
+        truncated_count = 0
+        for w in original_words:
+            # Nokta ile biten ama kısaltma olmayan kelime (2-5 harf + nokta)
+            w_clean = w.rstrip('.?!,;:')
+            if w.endswith('.') and 2 <= len(w_clean) <= 5 and w_clean.isalpha():
+                # Kısaltma olabileceği durumları hariç tut (vb., vs., dr.)
+                known_abbreviations = {'vb', 'vs', 'dr', 'mr', 'ms', 'st', 'ave', 'inc'}
+                if w_clean.lower() not in known_abbreviations:
+                    truncated_count += 1
+        
+        # Kesik kelime varsa → anlamsız
+        if truncated_count > 0:
+            return True
+        
+        return False
+    
+    def _empty_result(self, query: str) -> DeepThinkResult:
+        """Boş sonuç döndürür (anlamsız sorgular için)."""
+        return DeepThinkResult(
+            synthesized_response=(
+                "🤔 Bu konuda bilgi tabanında ilgili bir kayıt bulunamadı.\n\n"
+                "Farklı anahtar kelimeler kullanarak tekrar deneyebilir veya "
+                "Vyra ile sohbet modunda sorabilirsiniz."
+            ),
+            sources=[],
+            intent=self.analyze_intent(query),
+            rag_result_count=0,
+            processing_time_ms=0,
+            best_score=0.0,
+            image_ids=[],
+            heading_images={}
+        )
+    
     def process(self, query: str, user_id: int) -> DeepThinkResult:
         """
         Deep Think ana pipeline'ı.
@@ -508,6 +582,11 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
         🚀 v2.32.0: Response cache ile tekrar sorgularda ~%90 hız artışı
         """
         import time
+        
+        # 🆕 v2.53.1: Kısa/anlamsız sorgu koruması (cache'ten ÖNCE)
+        if self._is_short_meaningless_query(query):
+            log_system_event("INFO", f"Deep Think: Kısa sorgu reddedildi: '{query}'", "deep_think")
+            return self._empty_result(query)
         import re as regex_mod
         import hashlib
         start_time = time.time()
@@ -704,6 +783,19 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
         import time
         import hashlib
         start_time = time.time()
+        
+        # 🆕 v2.53.1: Kısa/anlamsız sorgu koruması (cache'ten ÖNCE)
+        if self._is_short_meaningless_query(query):
+            log_system_event("INFO", f"Deep Think STREAM: Kısa sorgu reddedildi: '{query}'", "deep_think")
+            yield {"type": "done", "data": {
+                "content": (
+                    "🤔 Bu konuda bilgi tabanında ilgili bir kayıt bulunamadı.\n\n"
+                    "Farklı anahtar kelimeler kullanarak tekrar deneyebilir veya "
+                    "Vyra ile sohbet modunda sorabilirsiniz."
+                ),
+                "metadata": {"rag_result_count": 0, "best_score": 0, "deep_think": True, "short_query_rejected": True}
+            }}
+            return
         
         # Cache kontrolü — cache hit varsa streaming gereksiz
         from app.core.cache import cache_service

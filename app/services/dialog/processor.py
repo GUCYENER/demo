@@ -561,6 +561,35 @@ def process_user_message_stream(
         return
 
     # 4. Deep Think Streaming Pipeline
+    # 🆕 v2.53.1: Kısa/anlamsız sorgu koruması (Deep Think'e gitmeden ÖNCE)
+    _sq = search_query.strip().rstrip('.?!,;:')
+    _sq_words = [w for w in _sq.split() if len(w) >= 2]
+    _sq_total = sum(len(w) for w in _sq_words)
+    # Kesik kelime kontrolü: "bilg.", "yet." gibi
+    _sq_orig_words = search_query.strip().split()
+    _sq_truncated = any(
+        w.endswith('.') and 2 <= len(w.rstrip('.?!,;:')) <= 5 and w.rstrip('.?!,;:').isalpha()
+        and w.rstrip('.?!,;:').lower() not in {'vb', 'vs', 'dr', 'mr', 'ms', 'st', 'ave', 'inc'}
+        for w in _sq_orig_words
+    )
+    _is_meaningless = len(_sq_words) < 2 or _sq_total < 10 or _sq_truncated
+    
+    if _is_meaningless:
+        log_system_event("INFO", f"Dialog: Kısa/anlamsız sorgu reddedildi: '{search_query}'", "dialog", user_id)
+        _no_result_msg = (
+            "🤔 Bu konuda bilgi tabanında ilgili bir kayıt bulunamadı.\n\n"
+            "Farklı anahtar kelimeler kullanarak tekrar deneyebilir veya "
+            "Vyra ile sohbet modunda sorabilirsiniz."
+        )
+        msg_id = add_message(dialog_id, "assistant", _no_result_msg, "text",
+                             {"deep_think": True, "short_query_rejected": True, "rag_result_count": 0})
+        yield {"type": "done", "data": {
+            "content": _no_result_msg,
+            "message_id": msg_id,
+            "metadata": {"rag_result_count": 0, "best_score": 0, "deep_think": True, "short_query_rejected": True}
+        }}
+        return
+    
     try:
         from app.services.deep_think_service import get_deep_think_service
         deep_think = get_deep_think_service()

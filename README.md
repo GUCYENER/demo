@@ -6,6 +6,30 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v2.53.1 (2026-03-22) - RAG Kısa Sorgu Koruması + Deep Think Pipeline Guard
+
+**🔍 RAG Normalizasyon Düzeltmesi:**
+- ✅ **Akıllı normalizasyon (`scoring.py`):** Tek sonuçta ham skor korunur, 2 sonuçta oransal, 3+ sonuçta Min-Max — `original_raw_score` saklanır
+- ✅ **Mutlak minimum ham skor filtresi (`service.py`):** `ABSOLUTE_MIN_RAW_SCORE = 0.42` — düşük kaliteli eşleşmeler elenir
+- ✅ **Kısa sorgu eşik yükseltme (`rag.py`):** 5 karakterden az anlamlı içerik → `min_score = 0.55`
+
+**🛡️ Deep Think Kısa Sorgu Guard (3 katman):**
+- ✅ **`_is_short_meaningless_query()`:** Kesik kelime tespiti ("bilg.", "yet."), tek kelime ve toplam <10 char kontrolü
+- ✅ **`process()` + `process_stream()` guard:** Cache kontrolünden ÖNCE çalışır → eski yanlış cache sonuçları da engellenir
+- ✅ **`processor.py` guard:** Dialog seviyesinde Deep Think'e gitmeden ÖNCE anlamsız sorgu filtresi
+
+**⚡ Expanded Retrieval İyileştirme:**
+- ✅ **Kısa sorgu min_score:** 8 karakterden az anlamlı içerik → `min_score = 0.45` (Deep Think pipeline)
+
+**📁 Değişen Dosyalar:**
+- `app/services/rag/scoring.py` — Akıllı normalizasyon stratejisi
+- `app/services/rag/service.py` — ABSOLUTE_MIN_RAW_SCORE filtresi
+- `app/core/rag.py` — Kısa sorgu eşik yükseltme
+- `app/services/deep_think_service.py` — Kısa sorgu guard + expanded_retrieval iyileştirme
+- `app/services/dialog/processor.py` — Dialog seviyesi kısa sorgu koruması
+
+---
+
 ### 🆕 v2.53.0 (2026-03-19) - Login Firma Branding + Company ID Gap Fix
 
 **🏢 Login Ekranı Firma Branding:**

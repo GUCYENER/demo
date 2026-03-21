@@ -119,11 +119,11 @@
 
         let html = `
             <button class="pg-btn" onclick="window.authorizationModule.goToUsersPage(${page - 1})" ${page === 1 ? 'disabled' : ''}>
-                <i class="fa-solid fa-chevron-left" style="font-size:9px"></i>
+                <i class="fa-solid fa-chevron-left pg-icon"></i>
             </button>
             <button class="pg-btn pg-cur">${page} / ${totalPages}</button>
             <button class="pg-btn" onclick="window.authorizationModule.goToUsersPage(${page + 1})" ${page >= totalPages ? 'disabled' : ''}>
-                <i class="fa-solid fa-chevron-right" style="font-size:9px"></i>
+                <i class="fa-solid fa-chevron-right pg-icon"></i>
             </button>
         `;
         container.innerHTML = html;

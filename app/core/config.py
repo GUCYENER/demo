@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "NGSSAI"
     debug: bool = True
-    APP_VERSION: str = "2.53.0"  # Login Firma Branding + Company ID Gap Fix + System Reset Firma Filtresi
+    APP_VERSION: str = "2.53.1"  # RAG Kısa Sorgu Koruması + Deep Think Pipeline Guard
 
     # Frontend & API prefix
     api_prefix: str = "/api"

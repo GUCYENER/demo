@@ -139,26 +139,57 @@ def reciprocal_rank_fusion(rankings: List[List[Dict]], k: int = 60) -> List[Dict
 
 def normalize_scores(results: List[Dict], score_key: str = "score") -> List[Dict]:
     """
-    🆕 v2.25.0: Min-max normalizasyon
-    Best practice: Skorları 0-1 arasına normalize et
+    v2.53.1: Akıllı normalizasyon — sonuç sayısına göre strateji seçer.
+    
+    Sorun: Min-Max normalizasyon tek sonuçta otomatik 1.0 verir,
+    bu da düşük kaliteli eşleşmeleri "mükemmel" gibi gösterir.
+    
+    Çözüm:
+    - 1 sonuç: Ham skor korunur (normalizasyon yok)
+    - 2 sonuç: Oransal normalizasyon (ham skora göre 0.0-ham_skor arası)
+    - 3+ sonuç: Min-Max normalizasyon + ham skor alt sınır koruması
+    
+    Her sonuca `original_raw_score` eklenir → debug ve UI için kullanılabilir.
     """
     if not results:
         return results
     
-    scores = [r.get(score_key, 0) for r in results]
-    min_score = min(scores)
-    max_score = max(scores)
+    # Her sonuca ham skoru kaydet (her zaman korunsun)
+    for r in results:
+        r["original_raw_score"] = r.get(score_key, 0)
     
-    if max_score == min_score:
-        # Tüm skorlar eşit - 1.0 ver
-        for r in results:
-            r[f"{score_key}_normalized"] = 1.0
+    scores = [r.get(score_key, 0) for r in results]
+    min_s = min(scores)
+    max_s = max(scores)
+    
+    if len(results) == 1:
+        # ✅ Tek sonuç: Normalizasyon YOK — ham skor direkt kullanılır
+        # Bu, düşük kaliteli eşleşmelerin 1.0 olarak gösterilmesini engeller
+        r = results[0]
+        r[f"{score_key}_normalized"] = r.get(score_key, 0)
         return results
     
+    if max_s == min_s:
+        # Tüm skorlar eşit — ham skoru koru
+        for r in results:
+            r[f"{score_key}_normalized"] = r.get(score_key, 0)
+        return results
+    
+    if len(results) == 2:
+        # 2 sonuç: Oransal — max skoru referans al, min'i ham oranına göre düşür
+        for r in results:
+            raw = r.get(score_key, 0)
+            # max_s'a yakınsa yüksek normalized skor, uzaksa düşük
+            r[f"{score_key}_normalized"] = raw / max_s if max_s > 0 else 0
+        return results
+    
+    # 3+ sonuç: Min-Max normalizasyon + ham skor alt sınır koruması
     for r in results:
-        original = r.get(score_key, 0)
-        normalized = (original - min_score) / (max_score - min_score)
-        r[f"{score_key}_normalized"] = normalized
+        raw = r.get(score_key, 0)
+        normalized = (raw - min_s) / (max_s - min_s)
+        # Alt sınır: normalize edilmiş skor, ham skorun altına düşmesin
+        # Bu, düşük ham skorlu sonuçların normalize ile şişmesini engeller
+        r[f"{score_key}_normalized"] = min(normalized, max(raw, normalized))
     
     return results
 

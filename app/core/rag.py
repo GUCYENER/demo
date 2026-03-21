@@ -110,6 +110,14 @@ def search_knowledge_base(
         from app.services.rag_service import RAGService
         
         rag_service = RAGService()
+        
+        # 🆕 v2.53.1: Kısa/anlamsız sorgularda eşik yükselt
+        # 5 karakterden az anlamlı içerik → min_score artır
+        meaningful_chars = len(query.strip().replace('.', '').replace('?', '').replace(' ', ''))
+        if meaningful_chars < 5:
+            min_score = max(min_score, 0.55)
+            log_system_event("DEBUG", f"Kısa sorgu tespit: '{query}' ({meaningful_chars} harf) → min_score={min_score}", "rag")
+        
         # 🔒 ORG FILTERING + 🆕 DIVERSITY CONTROL
         response = rag_service.search(
             query, 

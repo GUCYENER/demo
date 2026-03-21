@@ -831,14 +831,31 @@ class RAGService:
                     "metadata": item.get("metadata")
                 })
         
-        # 5️⃣ Min-Max Normalizasyon
-        # Best practice: Skorları 0-1 arasına normalize et
+        # 5️⃣ Akıllı Normalizasyon
+        # v2.53.1: Tek sonuçta ham skor korunur (eski: 1.0 yapılırdı)
         scored_results = scoring.normalize_scores(scored_results, "score")
         
         # Normalize edilmiş skorla kendi score'u güncelle
         for r in scored_results:
             r["original_score"] = r["score"]
             r["score"] = r.get("score_normalized", r["score"])
+        
+        # 🆕 v2.53.1: MUTLAK MİNİMUM HAM SKOR FİLTRESİ
+        # Normalizasyon sonrasında bile, ham skoru (original_raw_score) düşük olan
+        # sonuçları ele. Bu, anlamsız sorgularda sahte yüksek skor gösterilmesini önler.
+        ABSOLUTE_MIN_RAW_SCORE = 0.42  # Ham hibrit skor alt sınırı
+        pre_filter_count = len(scored_results)
+        scored_results = [
+            r for r in scored_results 
+            if r.get("original_raw_score", r.get("original_score", 0)) >= ABSOLUTE_MIN_RAW_SCORE
+        ]
+        if len(scored_results) < pre_filter_count:
+            log_system_event(
+                "INFO", 
+                f"Ham skor filtresi: {pre_filter_count - len(scored_results)} sonuç elendi "
+                f"(eşik: {ABSOLUTE_MIN_RAW_SCORE}, kalan: {len(scored_results)})",
+                "rag"
+            )
         
         # 6️⃣ DIVERSITY FILTERING
         # 🆕 v2.28.0: max_per_file=None ise filtreleme atlanır (liste sorguları için)

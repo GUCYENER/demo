@@ -5302,86 +5302,141 @@ textarea.drag-over {
 /* ========================================
    GLOBAL PAGER & PAGINATION (SaaS Dark)
    Bilgi Tabanı, Organizasyonlar, Yetkilendirme
-   Not: home.html inline CSS ile uyumlu CSS değişkenleri kullanılır
+   v2.53.1: Modern SaaS Pagination Redesign
 ======================================== */
 
-/* Pager container — inline CSS override */
+/* Pager container */
 .pager {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 14px 18px;
+    padding: 16px 24px;
     border-top: 1px solid var(--border);
-    margin-top: 4px;
+    margin: 2px -24px -24px -24px;
+    background: linear-gradient(180deg, transparent 0%, rgba(15, 23, 42, 0.3) 100%);
+    gap: 16px;
 }
 
+/* Pager bilgi badge'i */
 .pager-info {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 11px;
+    font-size: 11.5px;
     font-weight: 500;
     color: var(--text-3);
-    background: var(--bg-chip);
-    padding: 5px 14px;
+    background: rgba(30, 41, 59, 0.6);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    padding: 7px 16px;
     border-radius: 20px;
-    letter-spacing: 0.2px;
+    letter-spacing: 0.3px;
     border: 1px solid var(--border);
+    white-space: nowrap;
+    transition: all 0.2s ease;
 }
 
+.pager-info:hover {
+    border-color: rgba(139, 92, 246, 0.25);
+    background: rgba(30, 41, 59, 0.8);
+}
+
+/* Pagination buton grubu */
 .pager-btns {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     flex-wrap: wrap;
 }
 
-/* pg-btn: Tek stile sahip pagination butonları */
+/* pg-btn: Pagination butonları */
 .pg-btn {
-    min-width: 32px;
-    height: 32px;
-    padding: 0 10px;
+    min-width: 36px;
+    height: 36px;
+    padding: 0 12px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    background: var(--bg-chip);
+    background: rgba(30, 41, 59, 0.5);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     border: 1px solid var(--border);
-    border-radius: 7px;
+    border-radius: 10px;
     color: var(--text-2);
     font-family: 'IBM Plex Mono', monospace;
     font-size: 12px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     line-height: 1;
 }
 
 .pg-btn:hover:not(:disabled):not(.pg-cur) {
     background: var(--accent-subtle);
-    border-color: var(--border-accent);
+    border-color: rgba(139, 92, 246, 0.45);
     color: var(--text-acc);
-    transform: translateY(-1px);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.15);
 }
 
 .pg-btn:active:not(:disabled):not(.pg-cur) {
     transform: translateY(0);
+    box-shadow: none;
 }
 
 .pg-btn:disabled {
-    opacity: 0.35;
+    opacity: 0.3;
     cursor: not-allowed;
     pointer-events: none;
 }
 
 /* pg-cur: Aktif sayfa bilgisi */
 .pg-btn.pg-cur {
-    background: var(--accent-subtle);
-    border-color: var(--border-accent, var(--accent));
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(99, 102, 241, 0.1) 100%);
+    border-color: rgba(139, 92, 246, 0.45);
     color: var(--text-acc);
     font-weight: 600;
     cursor: default;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.5px;
     white-space: nowrap;
     min-width: auto;
-    padding: 0 14px;
+    padding: 0 16px;
+    box-shadow: 0 0 12px rgba(139, 92, 246, 0.08);
+}
+
+/* pg-icon: Pagination chevron ikonları */
+.pg-icon {
+    font-size: 11px;
+    line-height: 1;
+}
+
+/* Tablo taşma koruması */
+.card {
+    overflow-x: auto;
+    overflow-y: visible;
+}
+
+.data-table {
+    width: 100%;
+    min-width: 780px;
+    border-collapse: collapse;
+    table-layout: auto;
+}
+
+
+/* Pager responsive — dar ekranlarda düzgün sarılma */
+@media (max-width: 768px) {
+    .pager {
+        flex-wrap: wrap;
+        gap: 10px;
+        justify-content: center;
+    }
+    .pager-info {
+        order: 2;
+        width: 100%;
+        text-align: center;
+    }
+    .pager-btns {
+        order: 1;
+    }
 }
 
 /* page-btn: Organizasyon Yönetimi numaralı butonlar */

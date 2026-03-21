@@ -25,17 +25,44 @@ window.SystemManagerModule = (function () {
     }
 
     // --- OTURUM SAYACI ---
+    // v2.53.1: Sayaç son login zamanından itibaren sayar.
+    // login.js başarılı girişte session_start_time'ı set eder.
+    // PC kapansa/tarayıcı kapansa bile sonraki login'de sıfırlanır.
     let sessionStartTime = null;
     let sessionTimerInterval = null;
 
     function startSessionTimer() {
         const storedStartTime = localStorage.getItem('session_start_time');
+
         if (storedStartTime) {
-            sessionStartTime = new Date(storedStartTime);
+            const storedDate = new Date(storedStartTime);
+
+            // Geçerlilik kontrolü: JWT token expire ile karşılaştır
+            // Eğer saklanan süre > token expire süresi ise eski oturumdur, sıfırla
+            try {
+                const token = localStorage.getItem('access_token');
+                if (token) {
+                    const payload = JSON.parse(atob(token.split('.')[1]));
+                    const tokenIssuedAt = new Date(payload.iat * 1000);
+                    // Saklanan zaman, token'ın oluşturulma zamanından eskiyse → eski oturum
+                    if (storedDate < tokenIssuedAt) {
+                        sessionStartTime = tokenIssuedAt;
+                        localStorage.setItem('session_start_time', tokenIssuedAt.toISOString());
+                    } else {
+                        sessionStartTime = storedDate;
+                    }
+                } else {
+                    sessionStartTime = storedDate;
+                }
+            } catch (e) {
+                sessionStartTime = storedDate;
+            }
         } else {
+            // Fallback: session_start_time yoksa (eski sürümden gelen kullanıcılar)
             sessionStartTime = new Date();
             localStorage.setItem('session_start_time', sessionStartTime.toISOString());
         }
+
         updateSessionTimer();
         sessionTimerInterval = setInterval(updateSessionTimer, 1000);
     }

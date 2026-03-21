@@ -186,6 +186,9 @@
             localStorage.setItem("access_token", data.access_token);
             localStorage.setItem("refresh_token", data.refresh_token);
 
+            // Oturum sayacını sıfırla (her login'de yeniden başlat)
+            localStorage.setItem("session_start_time", new Date().toISOString());
+
             if (rememberMe) {
                 localStorage.setItem("remember_user", username);
             } else {

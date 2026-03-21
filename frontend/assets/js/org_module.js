@@ -102,17 +102,17 @@
         // Her zaman göster (tek sayfa olsa bile navigasyon bilgisi için)
         let html = `
             <button class="pg-btn" onclick="window.orgModule.goToPage(1)" ${page === 1 ? 'disabled' : ''}>
-                <i class="fa-solid fa-angles-left" style="font-size:10px"></i>
+                <i class="fa-solid fa-angles-left pg-icon"></i>
             </button>
             <button class="pg-btn" onclick="window.orgModule.goToPage(${page - 1})" ${page === 1 ? 'disabled' : ''}>
-                <i class="fa-solid fa-chevron-left" style="font-size:10px"></i>
+                <i class="fa-solid fa-chevron-left pg-icon"></i>
             </button>
             <span class="pg-btn pg-cur">${page} / ${totalPages}</span>
             <button class="pg-btn" onclick="window.orgModule.goToPage(${page + 1})" ${page >= totalPages ? 'disabled' : ''}>
-                <i class="fa-solid fa-chevron-right" style="font-size:10px"></i>
+                <i class="fa-solid fa-chevron-right pg-icon"></i>
             </button>
             <button class="pg-btn" onclick="window.orgModule.goToPage(${totalPages})" ${page >= totalPages ? 'disabled' : ''}>
-                <i class="fa-solid fa-angles-right" style="font-size:10px"></i>
+                <i class="fa-solid fa-angles-right pg-icon"></i>
             </button>
         `;
         container.innerHTML = html;
