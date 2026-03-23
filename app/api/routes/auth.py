@@ -548,7 +548,7 @@ def _find_or_create_ldap_user(ldap_result: Dict[str, Any]) -> Dict[str, Any]:
         ldap_company_id = None
         if domain:
             cur.execute(
-                "SELECT company_id FROM ldap_settings WHERE domain_name = %s AND company_id IS NOT NULL LIMIT 1",
+                "SELECT company_id FROM ldap_settings WHERE domain = %s AND company_id IS NOT NULL LIMIT 1",
                 (domain,)
             )
             ldap_co_row = cur.fetchone()

@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "NGSSAI"
     debug: bool = True
-    APP_VERSION: str = "2.53.1"  # RAG Kısa Sorgu Koruması + Deep Think Pipeline Guard
+    APP_VERSION: str = "2.55.0"  # Veri Kaynakları (DB, File Server, FTP, SharePoint, Manuel) + Bilgi Tabanı Entegrasyonu
 
     # Frontend & API prefix
     api_prefix: str = "/api"

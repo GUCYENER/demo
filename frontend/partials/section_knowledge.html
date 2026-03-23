@@ -78,6 +78,31 @@
         </div>
     </div>
 
+    <!-- Veri Kaynağı Seçici (v2.55.0) -->
+    <div class="card" style="margin-bottom:16px">
+        <div class="sec-head">
+            <div class="sec-title">
+                <i class="fa-solid fa-plug-circle-check" style="color:var(--accent);font-size:13px"></i>
+                Veri Kaynağı
+            </div>
+        </div>
+        <div style="padding:12px 18px 16px">
+            <div class="rag-source-select-wrap">
+                <label><i class="fa-solid fa-database"></i> Kaynak:</label>
+                <select id="rag-data-source-select" class="inp" style="min-width:220px;height:34px;font-size:12.5px">
+                    <option value="manual_file">📄 Manuel Dosya Ekleme</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Kaynak Tipi Placeholder (DB/FileServer seçildiğinde görünür) -->
+    <div id="rag-source-placeholder" class="rag-source-placeholder hidden">
+        <i class="fa-solid fa-plug-circle-exclamation"></i>
+        <h4>Bu kaynak tipi yakında aktif olacak</h4>
+        <p>Seçilen veri kaynağı entegrasyonu şu an geliştirme aşamasındadır.</p>
+    </div>
+
     <!-- Drop zone -->
     <div class="drop-zone" id="rag-upload-zone">
         <label class="sr-only">Bilgi tabanına dosya yükle</label>

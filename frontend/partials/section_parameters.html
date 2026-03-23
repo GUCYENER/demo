@@ -48,6 +48,10 @@
             <i class="fa-solid fa-puzzle-piece"></i>
             Web Widget
         </button>
+        <button id="tabDataSources" class="sub-tab admin-only">
+            <i class="fa-solid fa-plug-circle-plus"></i>
+            Kaynaklar
+        </button>
     </div>
 
     <!-- Global Firma Seçici (v2.54.0) -->
@@ -844,6 +848,25 @@
             </div>
             <div class="modal-footer">
                 <button class="btn primary" id="closeWidgetCreatedOk">Tamam, Anladım</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Veri Kaynakları (v2.55.0) -->
+    <div id="contentDataSources" class="param-content hidden admin-only">
+        <div class="company-header-row">
+            <button id="btnNewDataSource" class="btn primary">
+                <i class="fa-solid fa-plus"></i>
+                Yeni Kaynak Ekle
+            </button>
+        </div>
+        <div id="dataSourcesGrid" class="ds-grid">
+            <div class="ds-empty-state">
+                <div class="ds-empty-icon">
+                    <i class="fa-solid fa-plug-circle-plus"></i>
+                </div>
+                <h3>Henüz veri kaynağı tanımlanmadı</h3>
+                <p>Yeni bir veri kaynağı ekleyerek RAG sistemine veri akışı sağlayın.</p>
             </div>
         </div>
     </div>

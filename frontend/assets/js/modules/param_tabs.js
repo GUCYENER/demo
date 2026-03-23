@@ -28,6 +28,7 @@ window.ParamTabsModule = (function () {
                     ldapSettings: document.getElementById("tabLdapSettings"),
                     orgPermissions: document.getElementById("tabOrgPermissions"),
                     widgetKeys: document.getElementById("tabWidgetKeys"),
+                    dataSources: document.getElementById("tabDataSources"),
                 },
                 content: {
                     companies: document.getElementById("contentCompanies"),
@@ -38,6 +39,7 @@ window.ParamTabsModule = (function () {
                     ldapSettings: document.getElementById("contentLdapSettings"),
                     orgPermissions: document.getElementById("contentOrgPermissions"),
                     widgetKeys: document.getElementById("contentWidgetKeys"),
+                    dataSources: document.getElementById("contentDataSources"),
                 }
             };
         }
@@ -122,6 +124,14 @@ window.ParamTabsModule = (function () {
                     window.widgetModule.init(cid);
                 }
                 break;
+
+            case "dataSources":
+                if (el.tabs.dataSources) el.tabs.dataSources.classList.add("active");
+                if (el.content.dataSources) el.content.dataSources.classList.remove("hidden");
+                if (window.DataSourcesModule) {
+                    window.DataSourcesModule.load(cid);
+                }
+                break;
         }
     }
 
@@ -159,6 +169,18 @@ window.ParamTabsModule = (function () {
 
         if (el.tabs.widgetKeys) {
             el.tabs.widgetKeys.addEventListener("click", () => activateTab("widgetKeys"));
+        }
+
+        if (el.tabs.dataSources) {
+            el.tabs.dataSources.addEventListener("click", () => activateTab("dataSources"));
+        }
+
+        // Yeni Kaynak Ekle butonu
+        const btnNew = document.getElementById('btnNewDataSource');
+        if (btnNew) {
+            btnNew.addEventListener('click', () => {
+                if (window.DataSourcesModule) window.DataSourcesModule.openModal();
+            });
         }
     }
 

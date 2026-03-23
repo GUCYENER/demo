@@ -93,6 +93,7 @@ class ProfileResponse(BaseModel):
     department: Optional[str] = None
     title: Optional[str] = None
     organization: Optional[str] = None
+    company_id: Optional[int] = None
 
 
 class UpdateProfileRequest(BaseModel):

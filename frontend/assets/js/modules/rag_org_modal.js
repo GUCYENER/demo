@@ -56,9 +56,17 @@ window.RAGOrgModal = {
      */
     setupOrgEditButton() {
         const btn = document.getElementById('btn-rag-edit-orgs');
-        if (btn) {
-            btn.addEventListener('click', () => this.openOrgModal());
-        }
+        if (!btn) return;
+
+        // Duplicate listener koruması — init() her tab geçişinde çağrılıyor
+        if (btn.hasAttribute('data-listener-added')) return;
+        btn.setAttribute('data-listener-added', 'true');
+
+        btn.addEventListener('click', () => {
+            // 🔒 Firma kontrolü — firma seçilmeden org seçimine geçilemez
+            if (window.RAGUpload && !window.RAGUpload._checkCompanySelected()) return;
+            this.openOrgModal();
+        });
     },
 
     /**
@@ -328,6 +336,12 @@ window.RAGOrgModal = {
         this.closeOrgModal();
         this.showToast(`${this.selectedOrgIds.length} org grubu seçildi`, 'success');
         console.log('[RAGUpload] Selected orgs:', this.selectedOrgIds);
+
+        // 🔒 Firma kontrolü — firma seçilmeden dosya yüklemeye geçilemez
+        if (window.RAGUpload && !window.RAGUpload._checkCompanySelected()) {
+            this.pendingFiles = null; // Bekleyen dosyaları temizle
+            return;
+        }
 
         // Bekleyen aksiyonlar
         if (this.pendingFiles && this.pendingFiles.length > 0) {

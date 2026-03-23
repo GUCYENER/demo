@@ -297,6 +297,7 @@ window.RAGFileList = {
                         <th>Olgunluk</th>
                         <th>Yüklenme Tarihi</th>
                         <th>Ekleyen</th>
+                        <th>Veri Kaynağı</th>
                         <th>Org Grupları</th>
                         <th>İşlem</th>
                     </tr>
@@ -482,6 +483,9 @@ window.RAGFileList = {
                 <td class="file-maturity">${window.MaturityScoreModal ? MaturityScoreModal.renderBadge(file.maturity_score) : '-'}</td>
                 <td class="file-date">${uploadDate}</td>
                 <td class="file-uploader">${file.uploaded_by_name || '-'}</td>
+                <td class="file-source">
+                    ${typeof this.renderSourceBadge === 'function' ? this.renderSourceBadge(file) : '<span class="ds-source-badge ds-badge-manual">📄 Manuel</span>'}
+                </td>
                 <td class="file-orgs">
                     ${file.org_groups && file.org_groups.length > 0
                 ? file.org_groups.map(orgCode => {
@@ -521,6 +525,28 @@ window.RAGFileList = {
             'txt': 'fas fa-file-alt'
         };
         return icons[fileType] || 'fas fa-file';
+    },
+
+    /**
+     * Dosyanın veri kaynağı badge'ini render eder
+     */
+    renderSourceBadge(file) {
+        // Şimdilik seçili kaynağı dropdown'dan kontrol et
+        const select = document.getElementById('rag-data-source-select');
+        const selectedOpt = select ? select.options[select.selectedIndex] : null;
+        const label = selectedOpt ? selectedOpt.textContent.trim() : 'Manuel Dosya';
+
+        // Kaynak tipi belirle
+        const sourceType = file.data_source_type || 'manual_file';
+        const TYPE_CONFIG = {
+            'manual_file': { icon: 'fa-solid fa-file-arrow-up', label: '📄 Manuel', cls: 'ds-badge-manual' },
+            'database':    { icon: 'fa-solid fa-database',      label: '🗄 Veritabanı', cls: 'ds-badge-db' },
+            'file_server': { icon: 'fa-solid fa-server',        label: '🖥 File Server', cls: 'ds-badge-fs' },
+            'ftp':         { icon: 'fa-solid fa-arrow-right-arrow-left', label: '🔀 FTP', cls: 'ds-badge-ftp' },
+            'sharepoint':  { icon: 'fa-brands fa-microsoft',    label: '🟦 SharePoint', cls: 'ds-badge-sp' }
+        };
+        const cfg = TYPE_CONFIG[sourceType] || TYPE_CONFIG['manual_file'];
+        return `<span class="ds-source-badge ${cfg.cls}">${cfg.label}</span>`;
     },
 
 };

@@ -42,7 +42,7 @@ window.DialogImagesModule = (function () {
 
     function addImage(file) {
         if (pendingImages.length >= 5) {
-            showToast('warning', 'Maksimum 5 görsel ekleyebilirsiniz');
+            showToast('Maksimum 5 görsel ekleyebilirsiniz', 'warning');
             return;
         }
 

@@ -228,6 +228,27 @@ window.SidebarModule = (function () {
         applyUserPermissions();
     }
 
+    // --- Boş kategori başlıklarını gizle/göster ---
+    function _updateSectionLabels() {
+        const labels = document.querySelectorAll('#sidebar .nav-section-label');
+        labels.forEach(label => {
+            // Label'dan sonraki kardeş nav-item'ları topla
+            // Bir sonraki nav-section-label veya nav'ın sonuna kadar
+            const items = [];
+            let sibling = label.nextElementSibling;
+            while (sibling && !sibling.classList.contains('nav-section-label')) {
+                if (sibling.classList.contains('nav-item')) {
+                    items.push(sibling);
+                }
+                sibling = sibling.nextElementSibling;
+            }
+
+            // Tüm nav-item'lar gizli mi kontrol et
+            const allHidden = items.length === 0 || items.every(item => item.classList.contains('hidden'));
+            label.classList.toggle('hidden', allHidden);
+        });
+    }
+
     // --- Kullanıcı yetkilerini uygula ---
     async function applyUserPermissions() {
         try {
@@ -248,6 +269,7 @@ window.SidebarModule = (function () {
             // Admin tüm yetkilere sahip
             if (isAdmin) {
                 console.log('[Sidebar] Admin detected, all permissions granted');
+                _updateSectionLabels();
                 return;
             }
 
@@ -274,6 +296,9 @@ window.SidebarModule = (function () {
                     menuElement.classList.remove('hidden');
                 }
             });
+
+            // Boş kategori başlıklarını gizle
+            _updateSectionLabels();
 
             console.log('[Sidebar] Permissions applied', permissions);
 

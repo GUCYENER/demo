@@ -221,12 +221,6 @@ window.OrgPermissionsModule = (function () {
 
     // ── Add / Update ──
     async function handleAddOrUpdate() {
-        // Firma seçim kontrolü
-        if (!_currentCompanyId) {
-            showToast('Lütfen önce üst menüden firma seçin.', 'error');
-            return;
-        }
-
         const domainInput = document.getElementById('orgPermDomain');
         const orgInput = document.getElementById('orgPermOrgCode');
         const descInput = document.getElementById('orgPermDescription');
@@ -249,18 +243,18 @@ window.OrgPermissionsModule = (function () {
             const url = isUpdate ? `${ENDPOINT}/${editingId}` : ENDPOINT;
             const method = isUpdate ? 'PUT' : 'POST';
 
+            const payload = { domain, org_code: orgCode, description };
+            if (_currentCompanyId) {
+                payload.company_id = _currentCompanyId;
+            }
+
             const resp = await fetch(url, {
                 method,
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`,
                 },
-                body: JSON.stringify({
-                    domain,
-                    org_code: orgCode,
-                    description,
-                    company_id: _currentCompanyId || undefined
-                }),
+                body: JSON.stringify(payload),
             });
 
             if (!resp.ok) {
@@ -275,7 +269,7 @@ window.OrgPermissionsModule = (function () {
                     : `${domain} / ${orgCode} yetkisi eklendi.`,
                 'success'
             );
-            await load();
+            await load(_currentCompanyId);
         } catch (err) {
             console.error('[OrgPermissions] Save error:', err);
             showToast(err.message || 'İşlem başarısız.', 'error');
@@ -318,8 +312,14 @@ window.OrgPermissionsModule = (function () {
 
     // ── Toast Helper ──
     function showToast(message, type) {
-        if (window.NgssNotification && typeof window.NgssNotification.add === 'function') {
-            window.NgssNotification.add(message, type === 'error' ? 'error' : 'success');
+        if (window.NgssNotification) {
+            if (type === 'error') {
+                NgssNotification.error('İşlem Hatası', message);
+            } else if (type === 'success') {
+                NgssNotification.success('Başarılı', message);
+            } else {
+                NgssNotification.warning('Uyarı', message);
+            }
         } else {
             console.log(`[OrgPermissions] ${type}: ${message}`);
         }

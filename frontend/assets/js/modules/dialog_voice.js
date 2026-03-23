@@ -72,11 +72,11 @@ window.DialogVoiceModule = (function () {
             console.error('[DialogChat] Ses tanıma hatası:', event.error);
             stopRecording();
             if (event.error === 'not-allowed') {
-                showToast('error', 'Mikrofon izni gerekli. Lütfen tarayıcı ayarlarından izin verin.');
+                showToast('Mikrofon izni gerekli. Lütfen tarayıcı ayarlarından izin verin.', 'error');
             } else if (event.error === 'no-speech') {
-                showToast('warning', 'Ses algılanamadı. Tekrar deneyin.');
+                showToast('Ses algılanamadı. Tekrar deneyin.', 'warning');
             } else if (event.error === 'network') {
-                showToast('error', 'Ağ hatası. İnternet bağlantınızı kontrol edin.');
+                showToast('Ağ hatası. İnternet bağlantınızı kontrol edin.', 'error');
             }
         };
 
@@ -99,7 +99,7 @@ window.DialogVoiceModule = (function () {
 
     function startRecording() {
         if (!recognition) {
-            showToast('error', 'Ses tanıma desteklenmiyor');
+            showToast('Ses tanıma desteklenmiyor', 'error');
             return;
         }
 
@@ -151,7 +151,7 @@ window.DialogVoiceModule = (function () {
     function speakMessage(messageId, btn = null) {
         const messageEl = document.querySelector(`[data-message-id="${messageId}"] .message-content`);
         if (!messageEl) {
-            showToast('warning', 'Mesaj bulunamadı');
+            showToast('Mesaj bulunamadı', 'warning');
             return;
         }
         // DOM'dan text içeriğini al (HTML tag'leri olmadan)
@@ -172,7 +172,7 @@ window.DialogVoiceModule = (function () {
         activeSpeakBtn = btn;
 
         if (!('speechSynthesis' in window)) {
-            showToast('error', 'Tarayıcı sesli okumayı desteklemiyor');
+            showToast('Tarayıcı sesli okumayı desteklemiyor', 'error');
             return;
         }
 
@@ -186,7 +186,7 @@ window.DialogVoiceModule = (function () {
             .trim();
 
         if (!cleanText) {
-            showToast('warning', 'Okunacak metin yok');
+            showToast('Okunacak metin yok', 'warning');
             return;
         }
 

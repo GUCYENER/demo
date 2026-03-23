@@ -79,6 +79,7 @@ def get_my_profile(current_user: Dict[str, Any] = Depends(get_current_user)):
         department=user.get('department'),
         title=user.get('title'),
         organization=user.get('organization'),
+        company_id=user.get('company_id'),
     )
 
 

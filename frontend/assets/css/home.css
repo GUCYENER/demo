@@ -5310,9 +5310,9 @@ textarea.drag-over {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 16px 24px;
+    padding: 16px 0;
     border-top: 1px solid var(--border);
-    margin: 2px -24px -24px -24px;
+    margin-top: 2px;
     background: linear-gradient(180deg, transparent 0%, rgba(15, 23, 42, 0.3) 100%);
     gap: 16px;
 }
@@ -5849,4 +5849,16 @@ textarea.drag-over {
 
 .required {
     color: var(--red);
+}
+
+/* Input Error Flash — zorunlu alan uyarısı */
+.inp-error-flash {
+    animation: inpErrorFlash 0.5s ease 3;
+    border-color: var(--red) !important;
+    box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.2) !important;
+}
+
+@keyframes inpErrorFlash {
+    0%, 100% { border-color: var(--red); box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.2); }
+    50% { border-color: var(--border, #444); box-shadow: none; }
 }

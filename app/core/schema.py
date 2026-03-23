@@ -511,7 +511,7 @@ CREATE INDEX IF NOT EXISTS idx_system_settings_key ON system_settings(setting_ke
 
 -- Varsayılan ayarlar
 INSERT INTO system_settings (setting_key, setting_value, description) VALUES
-    ('app_version', '2.52.1', 'Uygulama versiyonu'),
+    ('app_version', '2.55.0', 'Uygulama versiyonu'),
     ('cl_interval_minutes', '30', 'Sürekli öğrenme aralığı (dakika)'),
     ('cl_is_active', 'true', 'Sürekli öğrenme aktiflik durumu'),
     ('maturity_enhance_threshold', '80', 'Maturity iyileştirme eşik değeri (0-100)')
@@ -753,4 +753,27 @@ UPDATE uploaded_files SET company_id = (SELECT id FROM companies WHERE tax_numbe
 UPDATE tickets SET company_id = (SELECT id FROM companies WHERE tax_number = '0000000000' LIMIT 1) WHERE company_id IS NULL;
 UPDATE dialogs SET company_id = (SELECT id FROM companies WHERE tax_number = '0000000000' LIMIT 1) WHERE company_id IS NULL;
 UPDATE organization_groups SET company_id = (SELECT id FROM companies WHERE tax_number = '0000000000' LIMIT 1) WHERE company_id IS NULL;
+
+-- Veri Kaynakları (v2.55.0)
+CREATE TABLE IF NOT EXISTS data_sources (
+    id SERIAL PRIMARY KEY,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    name VARCHAR(200) NOT NULL,
+    source_type VARCHAR(50) NOT NULL,
+    db_type VARCHAR(50),
+    host VARCHAR(500),
+    port INTEGER,
+    db_name VARCHAR(200),
+    db_user VARCHAR(200),
+    db_password_encrypted VARCHAR(500),
+    file_server_path VARCHAR(1000),
+    description TEXT,
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    created_by INTEGER REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_data_sources_company ON data_sources(company_id);
+CREATE INDEX IF NOT EXISTS idx_data_sources_type ON data_sources(source_type);
+CREATE INDEX IF NOT EXISTS idx_data_sources_active ON data_sources(is_active);
 """

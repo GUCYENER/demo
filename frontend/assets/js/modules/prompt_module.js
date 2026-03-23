@@ -218,7 +218,7 @@ window.PromptModule = (function () {
 
             closeModal();
             loadPrompts();
-            showToast('success', 'Prompt güncellendi');
+            showToast('Prompt güncellendi', 'success');
         } catch (err) {
             VyraModal.error({ title: 'Hata', message: 'İşlem başarısız: ' + err.message });
         }

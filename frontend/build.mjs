@@ -38,6 +38,7 @@ const CSS_FILES = [
     'assets/css/modules/rag_image_lightbox.css',
     'assets/css/modules/ldap_settings.css',
     'assets/css/modules/org_permissions.css',
+    'assets/css/modules/data_sources.css',
 ];
 
 const JS_FILES = [
@@ -101,6 +102,7 @@ const JS_FILES = [
     'assets/js/modules/org_permissions.js',
     'assets/js/modules/widget_module.js',
     'assets/js/modules/company_module.js',
+    'assets/js/modules/data_sources_module.js',
 ];
 
 // ===================================================

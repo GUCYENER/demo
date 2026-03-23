@@ -41,6 +41,7 @@ const RAGUpload = {
         await this.loadCompanySelector();
         await this.loadOrgs();   // Org gruplarını yükle
         await this.loadMaturityThreshold(); // Eşik değerini yükle
+        await this.loadDataSources(); // v2.55.0: Veri kaynağı seçici
         await this.loadFiles();
         await this.loadStats();
 
@@ -80,14 +81,23 @@ const RAGUpload = {
         dropZone.addEventListener('drop', (e) => {
             const files = e.dataTransfer.files;
             if (files.length) {
+                // 🔒 Firma kontrolü (drop)
+                if (!this._checkCompanySelected()) return;
                 this.handleFiles(files);
             }
         });
 
-        // dropZone tıklandığında - ÖNCELİKLE ORG KONTROLÜ YAP
+        // dropZone tıklandığında - ÖNCELİKLE FİRMA VE ORG KONTROLÜ YAP
         dropZone.addEventListener('click', (e) => {
             // File input element'ine veya içine tıklandıysa native davranış devam etsin
             if (e.target.closest('#rag-file-input') || e.target.id === 'rag-file-input') {
+                return;
+            }
+
+            // 🔒 FİRMA KONTROLÜ - Firma seçilmeden işlem yapılamaz
+            if (!this._checkCompanySelected()) {
+                e.preventDefault();
+                e.stopPropagation();
                 return;
             }
 
@@ -179,6 +189,7 @@ const RAGUpload = {
             return;
         }
 
+        // Not: Firma kontrolü burada yapılmaz — çağrı noktalarında (dropZone click/drop, orgModal) kontrol edilir.
         const files = Array.from(fileList);
 
         // Hedef org seçili mi kontrol et
@@ -575,29 +586,198 @@ const RAGUpload = {
 
         try {
             const token = localStorage.getItem('access_token') || '';
-            const res = await fetch(this.API_BASE + '/companies', {
-                headers: { 'Authorization': 'Bearer ' + token }
-            });
+            const headers = { 'Authorization': 'Bearer ' + token };
+
+            // Kullanıcı bilgisini al (is_admin, company_id)
+            let userProfile = null;
+            try {
+                const meRes = await fetch(this.API_BASE + '/users/me', { headers });
+                if (meRes.ok) userProfile = await meRes.json();
+            } catch (e) {
+                console.warn('[RAGUpload] Kullanıcı profili alınamadı:', e);
+            }
+
+            const isAdmin = userProfile && (userProfile.is_admin === true || userProfile.role_name === 'admin');
+            const userCompanyId = userProfile ? userProfile.company_id : null;
+
+            // Firma listesini yükle
+            const res = await fetch(this.API_BASE + '/companies', { headers });
             if (!res.ok) return;
             const companies = await res.json();
 
-            select.innerHTML = '<option value="">Tüm Firmalar</option>';
-            companies.forEach(c => {
-                const opt = document.createElement('option');
-                opt.value = c.id;
-                opt.textContent = c.name;
-                select.appendChild(opt);
-            });
+            if (isAdmin) {
+                // Admin: Firma seçimi zorunlu, tüm firmalar listelenir
+                select.innerHTML = '<option value="" disabled selected>Firma Seçiniz...</option>';
+                companies.forEach(c => {
+                    const opt = document.createElement('option');
+                    opt.value = c.id;
+                    opt.textContent = c.name;
+                    select.appendChild(opt);
+                });
+                select.disabled = false;
+            } else {
+                // Normal kullanıcı: Kendi firması otomatik seçili, değiştiremesin
+                select.innerHTML = '';
+                if (userCompanyId) {
+                    const userCompany = companies.find(c => c.id === userCompanyId);
+                    if (userCompany) {
+                        const opt = document.createElement('option');
+                        opt.value = userCompany.id;
+                        opt.textContent = userCompany.name;
+                        opt.selected = true;
+                        select.appendChild(opt);
+                    } else {
+                        // Firma listede bulunamazsa fallback
+                        const opt = document.createElement('option');
+                        opt.value = userCompanyId;
+                        opt.textContent = 'Firma #' + userCompanyId;
+                        opt.selected = true;
+                        select.appendChild(opt);
+                    }
+                    select.disabled = true;
+                } else if (companies.length === 1) {
+                    // Kullanıcının company_id'si yoksa ama tek firma varsa onu seç
+                    const opt = document.createElement('option');
+                    opt.value = companies[0].id;
+                    opt.textContent = companies[0].name;
+                    opt.selected = true;
+                    select.appendChild(opt);
+                    select.disabled = true;
+                } else {
+                    // Birden fazla firma var, hangi firmanın seçileceği belli değil
+                    select.innerHTML = '<option value="" disabled selected>Firma Seçiniz...</option>';
+                    companies.forEach(c => {
+                        const opt = document.createElement('option');
+                        opt.value = c.id;
+                        opt.textContent = c.name;
+                        select.appendChild(opt);
+                    });
+                    select.disabled = false;
+                }
+            }
 
-            // Firma değişince dosya listesi ve stats'i yeniden yükle
+            // Firma değişince dosya listesi, stats ve veri kaynaklarını yeniden yükle
             select.addEventListener('change', () => {
                 this.filesCurrentPage = 1;
                 this.loadFiles();
                 this.loadStats();
+                this.loadDataSources(); // v2.55.0: Kaynak listesini yenile
             });
         } catch (err) {
             console.warn('[RAGUpload] Firma selector yüklenemedi:', err);
         }
+    },
+
+    /**
+     * Firma seçimi yapılmış mı kontrol eder.
+     * Seçilmemişse uyarı gösterir ve dropdown'ı vurgular.
+     * @returns {boolean} Firma seçili ise true, değilse false
+     */
+    _checkCompanySelected() {
+        const compSel = document.getElementById('ragCompanySelect');
+        if (!compSel) return true; // Selector yoksa engelleme
+
+        if (!compSel.value) {
+            // 🔔 Anlık görünür toast uyarısı göster
+            if (typeof VyraToast !== 'undefined') {
+                VyraToast.warning('Dosya yüklemek için önce bir firma seçmelisiniz.');
+            } else if (typeof showToast === 'function') {
+                showToast('Dosya yüklemek için önce bir firma seçmelisiniz.', 'warning');
+            }
+
+            // Dropdown'ı vurgula (kısa animasyon)
+            compSel.classList.add('inp-error-flash');
+            compSel.focus();
+            setTimeout(() => compSel.classList.remove('inp-error-flash'), 2000);
+
+            return false;
+        }
+        return true;
+    },
+
+    // ─── v2.55.0: Veri Kaynağı Seçici ──────────────────────
+
+    /**
+     * Firma bazlı veri kaynaklarını dropdown'a yükler
+     */
+    async loadDataSources() {
+        const select = document.getElementById('rag-data-source-select');
+        if (!select) return;
+
+        // Duplicate listener koruması
+        if (!select.hasAttribute('data-ds-listener')) {
+            select.setAttribute('data-ds-listener', 'true');
+            select.addEventListener('change', () => this.handleDataSourceChange());
+        }
+
+        try {
+            const companyId = this._getCompanyId();
+            if (!companyId) {
+                select.innerHTML = '<option value="manual_file">📄 Manuel Dosya Ekleme</option>';
+                return;
+            }
+
+            const token = localStorage.getItem('access_token') || '';
+            const res = await fetch(
+                this.API_BASE.replace('/api', '') + '/api/data-sources?company_id=' + companyId,
+                { headers: { 'Authorization': 'Bearer ' + token } }
+            );
+
+            if (!res.ok) {
+                select.innerHTML = '<option value="manual_file">📄 Manuel Dosya Ekleme</option>';
+                return;
+            }
+
+            const sources = await res.json();
+            select.innerHTML = '<option value="manual_file">📄 Manuel Dosya Ekleme</option>';
+
+            const TYPE_EMOJI = { 'database': '🗄', 'file_server': '🖥', 'ftp': '🔀', 'sharepoint': '🟦', 'manual_file': '📄' };
+            sources.filter(s => s.is_active).forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s.source_type + ':' + s.id;
+                opt.textContent = (TYPE_EMOJI[s.source_type] || '📦') + ' ' + s.name;
+                select.appendChild(opt);
+            });
+        } catch (err) {
+            console.warn('[RAGUpload] Veri kaynakları yüklenemedi:', err);
+        }
+    },
+
+    /**
+     * Veri kaynağı seçimi değiştiğinde UI'yı günceller
+     */
+    handleDataSourceChange() {
+        const select = document.getElementById('rag-data-source-select');
+        const dropZone = document.getElementById('rag-upload-zone');
+        const placeholder = document.getElementById('rag-source-placeholder');
+        if (!select) return;
+
+        const val = select.value;
+        const isManual = (val === 'manual_file');
+
+        if (dropZone) {
+            if (isManual) {
+                dropZone.classList.remove('hidden');
+            } else {
+                dropZone.classList.add('hidden');
+            }
+        }
+
+        if (placeholder) {
+            if (isManual) {
+                placeholder.classList.add('hidden');
+            } else {
+                placeholder.classList.remove('hidden');
+            }
+        }
+    },
+
+    /**
+     * Firma ID'sini RAG company select'ten alır
+     */
+    _getCompanyId() {
+        const sel = document.getElementById('ragCompanySelect');
+        return sel && sel.value ? sel.value : null;
     },
 
 };

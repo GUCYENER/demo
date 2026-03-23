@@ -12,7 +12,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import auth, chat, health, rag as rag_routes, tickets, llm_config, prompts, users, system, websocket as ws_routes, organizations, feedback, dialog, permissions, assets, ldap_settings, domain_org_api, widget as widget_routes, companies, address
+from app.api.routes import auth, chat, health, rag as rag_routes, tickets, llm_config, prompts, users, system, websocket as ws_routes, organizations, feedback, dialog, permissions, assets, ldap_settings, domain_org_api, widget as widget_routes, companies, address, data_sources_api
 from app.core.config import settings
 from app.core.db import init_db
 from app.core.rate_limiter import limiter, get_rate_limit_handler, get_rate_limit_exception
@@ -269,6 +269,7 @@ def create_app() -> FastAPI:
     app.include_router(widget_routes.router, prefix="/api")  # v2.60.0 - Web Widget
     app.include_router(companies.router)  # v2.53.0 - Multi-Tenant Companies
     app.include_router(address.router)  # v2.53.0 - Turkish Address Data
+    app.include_router(data_sources_api.router)  # v2.55.0 - Data Sources
 
     import os
     from pathlib import Path

@@ -6,6 +6,41 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v2.55.0 (2026-03-23) - Veri Kaynakları Yönetimi + Bilgi Tabanı Entegrasyonu
+
+**🔌 Veri Kaynakları (Parametreler → Kaynaklar Sekmesi):**
+- ✅ **5 kaynak tipi:** Veri Tabanı (PostgreSQL/MSSQL/MySQL/Oracle), File Server, FTP/SFTP, SharePoint, Manuel Dosya
+- ✅ **CRUD API:** `data_sources_api.py` — JWT auth, Fernet şifreleme, firma bazlı yetki
+- ✅ **Dinamik modal:** Kaynak tipine göre form alanları değişiyor (DB bağlantı, FTP protokol, SharePoint Azure AD)
+- ✅ **Modern SaaS UI:** Kart grid, tip badge, durum göstergesi, glassmorphism modal
+- ✅ **Firma bazlı:** Admin tüm firmaları görür, kullanıcı sadece kendi firması
+
+**📋 Bilgi Tabanı Entegrasyonu:**
+- ✅ **Kaynak seçimi:** Dosya yükleme alanı üstünde tanımlı veri kaynağı dropdown'ı
+- ✅ **Dosya listesi kolonu:** "Veri Kaynağı" kolonu badge'li gösterim (5 tip × renk kodu)
+
+**🗄️ Veritabanı:**
+- ✅ **`data_sources` tablosu:** `schema.py` + Alembic migration `002_data_sources.py`
+- ✅ **İndeksler:** `company_id`, `source_type`, `is_active`
+
+**📁 Yeni Dosyalar:**
+- `app/api/routes/data_sources_api.py` — CRUD API (270 satır)
+- `frontend/assets/js/modules/data_sources_module.js` — Frontend modülü (598 satır)
+- `frontend/assets/css/modules/data_sources.css` — CSS stilleri (356 satır)
+- `migrations/versions/002_data_sources.py` — Alembic migration
+
+**📁 Değişen Dosyalar:**
+- `app/api/main.py` — data_sources router kaydı
+- `app/core/schema.py` — data_sources tablo, app_version
+- `frontend/partials/section_parameters.html` — Kaynaklar sekmesi
+- `frontend/assets/js/modules/param_tabs.js` — Tab switch desteği
+- `frontend/assets/js/rag_upload.js` — Kaynak seçimi dropdown
+- `frontend/assets/js/modules/rag_file_list.js` — Veri Kaynağı kolonu
+- `frontend/build.mjs` — Yeni JS/CSS bundle
+- `frontend/home.html` — Cache busting v2.55.0
+
+---
+
 ### 🆕 v2.53.1 (2026-03-22) - RAG Kısa Sorgu Koruması + Deep Think Pipeline Guard
 
 **🔍 RAG Normalizasyon Düzeltmesi:**
