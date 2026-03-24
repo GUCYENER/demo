@@ -147,7 +147,7 @@ class TestLearningResultsEndpoint:
                     headers=ds_auth_headers
                 )
 
-        mock_fn.assert_called_once_with(mock_conn, 2, "aggregate_query", 10)
+        mock_fn.assert_called_once_with(mock_conn, 2, "aggregate_query", None, 10)
         assert response.status_code == 200
 
     def test_default_limit_is_50(self, ds_learning_client, ds_auth_headers, mock_learning_results_data):
@@ -163,7 +163,7 @@ class TestLearningResultsEndpoint:
                     headers=ds_auth_headers
                 )
 
-        mock_fn.assert_called_once_with(mock_conn, 2, None, 50)
+        mock_fn.assert_called_once_with(mock_conn, 2, None, None, 50)
 
     def test_unauthorized_returns_401(self, ds_learning_client):
         """Auth olmadan 401 dönmeli."""
@@ -329,6 +329,85 @@ class TestScheduleEndpoint:
 
 
 # =============================================================================
+# TEST: POST /learning-schedule (Schedule Save)
+# =============================================================================
+
+class TestScheduleSaveEndpoint:
+    """POST /{source_id}/learning-schedule endpoint testleri."""
+
+    def test_save_schedule_returns_200(self, ds_learning_client, ds_auth_headers):
+        """Schedule kaydedilince 200 dönmeli."""
+        with patch('app.api.routes.data_sources_api.get_db_context') as mock_ctx:
+            mock_conn = MagicMock()
+            mock_ctx.return_value.__enter__ = lambda s: mock_conn
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            with patch('app.services.ds_learning_service.upsert_schedule',
+                       return_value={"success": True, "message": "Zamanlama kaydedildi", "schedule_type": "weekly", "is_active": True}):
+                response = ds_learning_client.post(
+                    "/api/data-sources/2/learning-schedule",
+                    json={"schedule_type": "weekly", "interval_value": 168, "is_active": True},
+                    headers=ds_auth_headers
+                )
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+
+    def test_save_schedule_unauthorized(self, ds_learning_client):
+        """Auth olmadan 401 dönmeli."""
+        response = ds_learning_client.post(
+            "/api/data-sources/2/learning-schedule",
+            json={"schedule_type": "daily"}
+        )
+        assert response.status_code in [401, 403]
+
+    def test_save_schedule_calls_upsert(self, ds_learning_client, ds_auth_headers):
+        """Endpoint upsert_schedule servis fonksiyonunu çağırmalı."""
+        with patch('app.api.routes.data_sources_api.get_db_context') as mock_ctx:
+            mock_conn = MagicMock()
+            mock_ctx.return_value.__enter__ = lambda s: mock_conn
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            with patch('app.services.ds_learning_service.upsert_schedule',
+                       return_value={"success": True}) as mock_fn:
+                ds_learning_client.post(
+                    "/api/data-sources/2/learning-schedule",
+                    json={"schedule_type": "daily", "interval_value": 24, "is_active": True},
+                    headers=ds_auth_headers
+                )
+
+        mock_fn.assert_called_once_with(mock_conn, 2, "daily", 24, True)
+
+
+# =============================================================================
+# TEST: GET /job-result-stats
+# =============================================================================
+
+class TestJobResultStatsEndpoint:
+    """GET /{source_id}/job-result-stats endpoint testleri."""
+
+    def test_returns_200(self, ds_learning_client, ds_auth_headers):
+        """200 dönmeli."""
+        mock_stats = [{"job_id": 1, "job_type": "qa_generation", "result_count": 225}]
+        with patch('app.api.routes.data_sources_api.get_db_context') as mock_ctx:
+            mock_conn = MagicMock()
+            mock_ctx.return_value.__enter__ = lambda s: mock_conn
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            with patch('app.services.ds_learning_service.get_job_result_stats',
+                       return_value=mock_stats):
+                response = ds_learning_client.get(
+                    "/api/data-sources/2/job-result-stats",
+                    headers=ds_auth_headers
+                )
+
+        assert response.status_code == 200
+        assert "stats" in response.json()
+
+    def test_unauthorized(self, ds_learning_client):
+        """Auth olmadan 401 dönmeli."""
+        response = ds_learning_client.get("/api/data-sources/2/job-result-stats")
+        assert response.status_code in [401, 403]
+
+
+# =============================================================================
 # TEST: OpenAPI Route Registration
 # =============================================================================
 
@@ -359,6 +438,18 @@ class TestRouteRegistration:
         response = ds_learning_client.get("/openapi.json")
         paths = response.json().get("paths", {})
         assert "/api/data-sources/{source_id}/schedule" in paths
+
+    def test_learning_schedule_save_route_exists(self, ds_learning_client):
+        """learning-schedule POST route OpenAPI'de kayıtlı olmalı."""
+        response = ds_learning_client.get("/openapi.json")
+        paths = response.json().get("paths", {})
+        assert "/api/data-sources/{source_id}/learning-schedule" in paths
+
+    def test_job_result_stats_route_exists(self, ds_learning_client):
+        """job-result-stats route OpenAPI'de kayıtlı olmalı."""
+        response = ds_learning_client.get("/openapi.json")
+        paths = response.json().get("paths", {})
+        assert "/api/data-sources/{source_id}/job-result-stats" in paths
 
     def test_learning_results_is_get(self, ds_learning_client):
         """learning-results GET methodu ile kayıtlı olmalı."""

@@ -10,6 +10,7 @@ Version: 2.56.0
 import logging
 import time
 import json
+import hashlib
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -673,26 +674,33 @@ def get_learning_history(vyra_conn, source_id: int, limit: int = 20) -> list:
     return history
 
 
-def get_learning_results(vyra_conn, source_id: int, content_type: str = None, limit: int = 50) -> dict:
+def get_learning_results(vyra_conn, source_id: int, content_type: str = None,
+                         job_id: int = None, limit: int = 50) -> dict:
     """ML pipeline'ın ürettiği öğrenme sonuçlarını (QA çiftleri) döner."""
     cur = vyra_conn.cursor()
 
+    # Dinamik WHERE builder
+    conditions = ["source_id = %s"]
+    params = [source_id]
+
     if content_type:
-        cur.execute("""
-            SELECT id, content_type, content_text, metadata, created_at
-            FROM ds_learning_results
-            WHERE source_id = %s AND content_type = %s
-            ORDER BY created_at DESC
-            LIMIT %s
-        """, (source_id, content_type, limit))
-    else:
-        cur.execute("""
-            SELECT id, content_type, content_text, metadata, created_at
-            FROM ds_learning_results
-            WHERE source_id = %s
-            ORDER BY created_at DESC
-            LIMIT %s
-        """, (source_id, limit))
+        conditions.append("content_type = %s")
+        params.append(content_type)
+
+    if job_id:
+        conditions.append("job_id = %s")
+        params.append(job_id)
+
+    where_clause = " AND ".join(conditions)
+    params.append(limit)
+
+    cur.execute(f"""
+        SELECT id, content_type, content_text, metadata, created_at, job_id
+        FROM ds_learning_results
+        WHERE {where_clause}
+        ORDER BY created_at DESC
+        LIMIT %s
+    """, tuple(params))
 
     results = []
     for row in cur.fetchall():
@@ -709,6 +717,7 @@ def get_learning_results(vyra_conn, source_id: int, content_type: str = None, li
             "question": meta.get("question", "") if meta else "",
             "table_name": meta.get("table_name", "") if meta else "",
             "metadata": meta,
+            "job_id": row["job_id"],
             "created_at": row["created_at"].isoformat() if row["created_at"] else None
         })
 
@@ -725,6 +734,40 @@ def get_learning_results(vyra_conn, source_id: int, content_type: str = None, li
         type_counts[row["content_type"]] = row["cnt"]
 
     return {"results": results, "type_counts": type_counts, "total": sum(type_counts.values())}
+
+
+def get_job_result_stats(vyra_conn, source_id: int) -> list:
+    """Her job_id bazlı sonuç istatistiklerini döner (iş geçmişi dropdown için)."""
+    cur = vyra_conn.cursor()
+    cur.execute("""
+        SELECT
+            r.job_id,
+            j.job_type,
+            j.started_at,
+            j.status,
+            j.duration_ms,
+            COUNT(*) as result_count,
+            COUNT(DISTINCT r.content_type) as type_count
+        FROM ds_learning_results r
+        LEFT JOIN ds_discovery_jobs j ON j.id = r.job_id
+        WHERE r.source_id = %s AND r.job_id IS NOT NULL
+        GROUP BY r.job_id, j.job_type, j.started_at, j.status, j.duration_ms
+        ORDER BY j.started_at DESC
+    """, (source_id,))
+
+    stats = []
+    for row in cur.fetchall():
+        stats.append({
+            "job_id": row["job_id"],
+            "job_type": row["job_type"],
+            "started_at": row["started_at"].isoformat() if row["started_at"] else None,
+            "status": row["status"],
+            "duration_ms": row["duration_ms"],
+            "result_count": row["result_count"],
+            "type_count": row["type_count"]
+        })
+    return stats
+
 
 # =====================================================
 # Faz 2: Sentetik QA Üretimi (Template-Based)
@@ -780,10 +823,26 @@ def generate_synthetic_qa(source_id: int, vyra_conn) -> dict:
     """, (source_id,))
     all_samples = {row["object_id"]: row for row in cur.fetchall()}
 
-    # Eski QA sonuçlarını temizle
-    cur.execute("DELETE FROM ds_learning_results WHERE source_id = %s", (source_id,))
+    # Dedup: Mevcut soru hash'lerini al (aynı soruları tekrar üretme)
+    cur.execute("""
+        SELECT md5(metadata->>'question') as q_hash
+        FROM ds_learning_results
+        WHERE source_id = %s
+    """, (source_id,))
+    existing_hashes = {row["q_hash"] for row in cur.fetchall()}
+    logger.info(f"[DSLearning] Mevcut {len(existing_hashes)} unique QA hash bulundu")
+
+    # Mevcut job_id al (create_job ile oluşturulmuş olabilir)
+    cur.execute("""
+        SELECT id FROM ds_discovery_jobs
+        WHERE source_id = %s AND job_type = 'qa_generation' AND status = 'running'
+        ORDER BY started_at DESC LIMIT 1
+    """, (source_id,))
+    job_row = cur.fetchone()
+    current_job_id = job_row["id"] if job_row else None
 
     qa_count = 0
+    skipped_count = 0
     total_pairs = []
 
     # 1) Schema Description QA'ları
@@ -965,29 +1024,37 @@ def generate_synthetic_qa(source_id: int, vyra_conn) -> dict:
             batch_embs = emb_mgr.get_embeddings_batch(batch)
             all_embeddings.extend(batch_embs)
 
-        # DB'ye yaz
+        # DB'ye yaz (dedup hash kontrolü ile)
         for pair, embedding in zip(total_pairs, all_embeddings):
+            # Hash kontrolü
+            q_hash = hashlib.md5(pair["question_text"].encode()).hexdigest()
+            if q_hash in existing_hashes:
+                skipped_count += 1
+                continue
+
             cur.execute("""
                 INSERT INTO ds_learning_results
-                    (source_id, content_type, content_text, embedding, metadata, score)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                    (source_id, job_id, content_type, content_text, embedding, metadata, score)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, (
                 source_id,
+                current_job_id,
                 pair["content_type"],
                 pair["content_text"],
                 embedding,
                 json.dumps({
                     "question": pair["question_text"],
-                    "object_name": pair["object_name"]
+                    "table_name": pair["object_name"]
                 }),
                 1.0  # Pre-computed, yüksek güvenilirlik
             ))
+            existing_hashes.add(q_hash)  # Batch içi dedup
             qa_count += 1
 
         vyra_conn.commit()
 
     elapsed = int((time.time() - start) * 1000)
-    logger.info(f"[DSLearning] Sentetik QA üretimi: {qa_count} çift, {elapsed}ms")
+    logger.info(f"[DSLearning] Sentetik QA üretimi: {qa_count} yeni, {skipped_count} atlandı (dedup), {elapsed}ms")
 
     return {
         "success": True,
@@ -1232,9 +1299,10 @@ def upsert_schedule(vyra_conn, source_id: int, schedule_type: str,
     """Schedule oluşturur veya günceller."""
     cur = vyra_conn.cursor()
 
-    # Mevcut schedule var mı?
-    cur.execute("SELECT id FROM ds_learning_schedules WHERE source_id = %s", (source_id,))
-    existing = cur.fetchone()
+    # company_id'yi data_sources'tan al
+    cur.execute("SELECT company_id FROM data_sources WHERE id = %s", (source_id,))
+    source = cur.fetchone()
+    company_id = source["company_id"] if source else None
 
     # next_run_at hesapla
     next_run = None
@@ -1243,18 +1311,20 @@ def upsert_schedule(vyra_conn, source_id: int, schedule_type: str,
         hours = interval_hours or (24 if schedule_type == "daily" else 12)
         next_run = datetime.now(timezone.utc) + timedelta(hours=hours)
 
-    if existing:
-        cur.execute("""
-            UPDATE ds_learning_schedules
-            SET schedule_type = %s, interval_value = %s, is_active = %s, next_run_at = %s
-            WHERE source_id = %s
-        """, (schedule_type, interval_hours, is_active, next_run, source_id))
-    else:
-        cur.execute("""
-            INSERT INTO ds_learning_schedules (source_id, schedule_type, interval_value, is_active, next_run_at)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (source_id, schedule_type, interval_hours, is_active, next_run))
+    # ON CONFLICT upsert (unique constraint: source_id)
+    cur.execute("""
+        INSERT INTO ds_learning_schedules
+            (source_id, company_id, schedule_type, interval_value, is_active, next_run_at)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (source_id) DO UPDATE SET
+            schedule_type = EXCLUDED.schedule_type,
+            interval_value = EXCLUDED.interval_value,
+            is_active = EXCLUDED.is_active,
+            next_run_at = EXCLUDED.next_run_at,
+            updated_at = NOW()
+    """, (source_id, company_id, schedule_type, interval_hours, is_active, next_run))
 
     vyra_conn.commit()
-    return {"success": True, "schedule_type": schedule_type, "is_active": is_active}
+    return {"success": True, "message": "Zamanlama kaydedildi", "schedule_type": schedule_type, "is_active": is_active}
+
 

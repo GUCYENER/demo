@@ -637,46 +637,20 @@ def save_learning_schedule(
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """Öğrenme zamanlaması oluştur/güncelle."""
-    is_admin = current_user.get("is_admin", False) or current_user.get("role") == "admin"
-
-    with get_db_context() as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT id, company_id FROM data_sources WHERE id = %s", (source_id,))
-        source = cur.fetchone()
-        if not source:
-            raise HTTPException(status_code=404, detail="Veri kaynağı bulunamadı.")
-
-        company_id = source[1]
+    try:
         schedule_type = body.get("schedule_type", "manual_only")
         interval_value = body.get("interval_value", 24)
         is_active = body.get("is_active", True)
 
-        # Upsert
-        cur.execute("""
-            INSERT INTO ds_learning_schedules (source_id, company_id, schedule_type, interval_value, is_active)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (source_id) DO UPDATE SET
-                schedule_type = EXCLUDED.schedule_type,
-                interval_value = EXCLUDED.interval_value,
-                is_active = EXCLUDED.is_active,
-                updated_at = NOW()
-            RETURNING id
-        """, (source_id, company_id, schedule_type, interval_value, is_active))
+        with get_db_context() as conn:
+            result = ds_learning_service.upsert_schedule(
+                conn, source_id, schedule_type, interval_value, is_active
+            )
+            return result
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Schedule kaydetme hatası: {e}")
+        raise HTTPException(status_code=500, detail="Zamanlama kaydedilemedi")
 
-        # Unique constraint eklenmemiş olabilir, alternatif yaklaşım
-        try:
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            # Unique constraint yoksa delete + insert
-            cur.execute("DELETE FROM ds_learning_schedules WHERE source_id = %s", (source_id,))
-            cur.execute("""
-                INSERT INTO ds_learning_schedules (source_id, company_id, schedule_type, interval_value, is_active)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (source_id, company_id, schedule_type, interval_value, is_active))
-            conn.commit()
-
-        return {"success": True, "message": "Zamanlama kaydedildi"}
 
 
 @router.get("/{source_id}/learning-history")
@@ -694,13 +668,26 @@ def get_learning_history(
 def api_get_learning_results(
     source_id: int,
     content_type: str = None,
+    job_id: int = None,
     limit: int = 50,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """ML pipeline'ın ürettiği öğrenme sonuçlarını (QA çiftleri) döner."""
     with get_db_context() as conn:
-        data = ds_learning_service.get_learning_results(conn, source_id, content_type, limit)
+        data = ds_learning_service.get_learning_results(conn, source_id, content_type, job_id, limit)
         return data
+
+
+@router.get("/{source_id}/job-result-stats")
+def api_get_job_result_stats(
+    source_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Her job_id bazlı sonuç istatistiklerini döner."""
+    with get_db_context() as conn:
+        stats = ds_learning_service.get_job_result_stats(conn, source_id)
+        return {"stats": stats}
+
 
 
 @router.post("/{source_id}/generate-qa")

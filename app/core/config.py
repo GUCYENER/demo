@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "NGSSAI"
     debug: bool = True
-    APP_VERSION: str = "2.56.1"  # ML Öğrenme Sonuçları Popup + QA Buton Disable Fix + Zamanlama Tarih Fix
+    APP_VERSION: str = "2.56.2"  # Schedule Fix + İş Geçmişi Dropdown + QA Dedup Mekanizması
 
     # Frontend & API prefix
     api_prefix: str = "/api"

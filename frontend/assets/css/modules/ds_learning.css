@@ -1209,3 +1209,52 @@
     padding: 40px;
     color: var(--red, #ef4444);
 }
+
+/* Learning Results Job Filter Dropdown */
+
+.ds-lr-job-filter {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 1.5rem;
+    background: rgba(99, 102, 241, 0.06);
+    border-bottom: 1px solid rgba(99, 102, 241, 0.15);
+}
+
+.ds-lr-job-filter label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary, #94a3b8);
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.ds-lr-job-filter label i {
+    color: var(--primary, #6366f1);
+}
+
+.ds-lr-job-select {
+    flex: 1;
+    padding: 0.35rem 0.75rem;
+    font-size: 13px;
+    border-radius: 6px;
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    background: rgba(15, 23, 42, 0.5);
+    color: var(--text-primary, #e2e8f0);
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.ds-lr-job-select:hover,
+.ds-lr-job-select:focus {
+    border-color: var(--primary, #6366f1);
+}
+
+.ds-lr-job-select option {
+    background: #1e293b;
+    color: #e2e8f0;
+}
+

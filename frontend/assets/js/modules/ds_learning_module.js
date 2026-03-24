@@ -868,6 +868,12 @@ window.DSLearningModule = (function () {
                         <i class="fa-solid fa-times"></i>
                     </button>
                 </div>
+                <div class="ds-lr-job-filter" id="dsLrJobFilter">
+                    <label><i class="fa-solid fa-clock-rotate-left"></i> İş Geçmişi:</label>
+                    <select id="dsLrJobSelect" class="ds-form-select ds-lr-job-select">
+                        <option value="">Tüm İşler</option>
+                    </select>
+                </div>
                 <div class="ds-lr-tabs" id="dsLrTabs">
                     <button class="ds-lr-tab active" data-type="">Tümü</button>
                     <button class="ds-lr-tab" data-type="schema_description">Şema Bilgileri</button>
@@ -877,7 +883,7 @@ window.DSLearningModule = (function () {
                 </div>
                 <div class="ds-lr-summary" id="dsLrSummary"></div>
                 <div class="ds-wizard-body ds-details-body ds-lr-body" id="dsLrBody">
-                    <div style="text-align: center; padding: 40px;"><i class="fa-solid fa-spinner fa-spin"></i> Yükleniyor...</div>
+                    <div class="ds-lr-loading"><i class="fa-solid fa-spinner fa-spin"></i> Yükleniyor...</div>
                 </div>
             </div>
         `;
@@ -891,20 +897,44 @@ window.DSLearningModule = (function () {
             if (e.key === 'Escape') { closeLr(); document.removeEventListener('keydown', escLr); }
         });
 
+        // İş geçmişi dropdown'ını doldur
+        try {
+            const statsData = await apiCall(`/${sourceId}/job-result-stats`);
+            const select = document.getElementById('dsLrJobSelect');
+            if (statsData.stats && statsData.stats.length > 0) {
+                statsData.stats.forEach(s => {
+                    const date = s.started_at ? _formatDateTime(s.started_at) : '?';
+                    const opt = document.createElement('option');
+                    opt.value = s.job_id;
+                    opt.textContent = `${date} — ${s.result_count} QA (${s.type_count} tip)`;
+                    select.appendChild(opt);
+                });
+            }
+        } catch (e) { /* dropdown opsiyonel */ }
+
+        // Dropdown seçimi
+        document.getElementById('dsLrJobSelect').addEventListener('change', () => {
+            const activeTab = document.querySelector('.ds-lr-tab.active');
+            const contentType = activeTab ? activeTab.dataset.type || null : null;
+            const jobId = document.getElementById('dsLrJobSelect').value || null;
+            _loadLearningResults(sourceId, contentType, jobId);
+        });
+
         // Tab tıklama
         document.getElementById('dsLrTabs').addEventListener('click', (e) => {
             const tab = e.target.closest('.ds-lr-tab');
             if (!tab) return;
             document.querySelectorAll('.ds-lr-tab').forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
-            _loadLearningResults(sourceId, tab.dataset.type || null);
+            const jobId = document.getElementById('dsLrJobSelect').value || null;
+            _loadLearningResults(sourceId, tab.dataset.type || null, jobId);
         });
 
         // İlk yükleme
-        await _loadLearningResults(sourceId, null);
+        await _loadLearningResults(sourceId, null, null);
     }
 
-    async function _loadLearningResults(sourceId, contentType) {
+    async function _loadLearningResults(sourceId, contentType, jobId) {
         const body = document.getElementById('dsLrBody');
         const summary = document.getElementById('dsLrSummary');
         if (!body) return;
@@ -914,6 +944,7 @@ window.DSLearningModule = (function () {
         try {
             let url = `/${sourceId}/learning-results?limit=100`;
             if (contentType) url += `&content_type=${contentType}`;
+            if (jobId) url += `&job_id=${jobId}`;
             const data = await apiCall(url);
             const results = data.results || [];
             const typeCounts = data.type_counts || {};

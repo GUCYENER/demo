@@ -33,6 +33,7 @@ def sample_learning_results():
             "content_type": "schema_description",
             "content_text": "users tablosu: id (PK), username, email, created_at alanlarını içerir.",
             "metadata": {"question": "users tablosunda hangi alanlar var?", "table_name": "users"},
+            "job_id": 1,
             "created_at": datetime(2026, 3, 24, 18, 0, 0)
         },
         {
@@ -40,6 +41,7 @@ def sample_learning_results():
             "content_type": "aggregate_query",
             "content_text": "users tablosundaki kayıt sayısı: SELECT COUNT(*) FROM users;",
             "metadata": {"question": "users tablosunda kaç kayıt var?", "table_name": "users"},
+            "job_id": 1,
             "created_at": datetime(2026, 3, 24, 18, 0, 1)
         },
         {
@@ -47,6 +49,7 @@ def sample_learning_results():
             "content_type": "sample_insight",
             "content_text": "users tablosundan örnek: admin, testuser, devuser kullanıcıları mevcut.",
             "metadata": {"question": "users tablosunda hangi kullanıcılar var?", "table_name": "users"},
+            "job_id": 1,
             "created_at": datetime(2026, 3, 24, 18, 0, 2)
         },
         {
@@ -54,6 +57,7 @@ def sample_learning_results():
             "content_type": "relationship_map",
             "content_text": "users.id → tickets.user_id (1:N ilişki)",
             "metadata": {"question": "users ile tickets arasında nasıl bir ilişki var?", "table_name": "users"},
+            "job_id": 1,
             "created_at": datetime(2026, 3, 24, 18, 0, 3)
         }
     ]
@@ -128,6 +132,7 @@ class TestGetLearningResults:
             {"id": 1, "content_type": "aggregate_query",
              "content_text": "SELECT COUNT(*) FROM users;",
              "metadata": {"question": "Kaç kayıt var?", "table_name": "users"},
+             "job_id": 1,
              "created_at": datetime(2026, 3, 24, 18, 0)}
         ]]
         mock_cursor.fetchall.side_effect = [filtered, sample_type_counts]
@@ -162,6 +167,7 @@ class TestGetLearningResults:
             "content_type": "schema_description",
             "content_text": "test",
             "metadata": '{"question": "Test soru?", "table_name": "test_table"}',
+            "job_id": 1,
             "created_at": datetime(2026, 3, 24, 18, 0)
         }]
         mock_cursor.fetchall.side_effect = [row_with_str_meta, sample_type_counts]
@@ -180,6 +186,7 @@ class TestGetLearningResults:
             "content_type": "schema_description",
             "content_text": "test",
             "metadata": "INVALID_JSON{{{",
+            "job_id": None,
             "created_at": datetime(2026, 3, 24, 18, 0)
         }]
         mock_cursor.fetchall.side_effect = [row_with_bad_meta, sample_type_counts]
@@ -199,6 +206,7 @@ class TestGetLearningResults:
             "content_type": "schema_description",
             "content_text": "test",
             "metadata": None,
+            "job_id": None,
             "created_at": None
         }]
         mock_cursor.fetchall.side_effect = [row_with_none_meta, sample_type_counts]
