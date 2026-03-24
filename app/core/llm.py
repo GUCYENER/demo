@@ -596,11 +596,36 @@ def run_worker(user_query: str, plan: PlannerPlan, user_id: int = None) -> tuple
     # 🔒 ORG FILTERING: user_id geçirilerek sadece yetkili dokümanlar aranır
     rag_response = search_knowledge_base(user_query, n_results=5, min_score=0.4, user_id=user_id)
     
+    # 🆕 v2.56.0: DB Knowledge Araması (Pre-computed RAG)
+    db_knowledge_results = []
+    try:
+        from app.services.ds_learning_service import search_db_knowledge
+        db_knowledge_results = search_db_knowledge(user_query, min_score=0.40, max_results=3)
+        if db_knowledge_results:
+            log_system_event("INFO", f"Worker: DB Knowledge {len(db_knowledge_results)} sonuç (skor: {db_knowledge_results[0]['score']:.2f})", "llm")
+    except Exception as db_err:
+        log_system_event("WARNING", f"Worker: DB Knowledge arama hatası: {db_err}", "llm")
+    
+    # Sonuçları birleştir — en yüksek skorlu kaynağı belirle
+    db_best_score = db_knowledge_results[0]["score"] if db_knowledge_results else 0.0
+    
     if rag_response.has_results:
         # RAG'den sonuç bulundu
         context = rag_response.get_context_for_llm(max_results=3)
         sources = rag_response.get_sources_list()
         best_score = rag_response.best_score
+        
+        # 🆕 DB Knowledge sonuçları daha iyiyse context'e ekle
+        if db_knowledge_results and db_best_score > 0.35:
+            db_context_parts = []
+            for dbr in db_knowledge_results[:2]:
+                db_context_parts.append(f"--- Kaynak: {dbr['source_name']} ({dbr['content_type']}) ---\n{dbr['content']}")
+                sources.append(dbr["source_name"])
+            db_context = "\n\n".join(db_context_parts)
+            context = f"{context}\n\n{db_context}"
+            if db_best_score > best_score:
+                best_score = db_best_score
+            log_system_event("INFO", f"Worker: DB Knowledge context eklendi (skor: {db_best_score:.2f})", "llm")
         
         # ⚡ YÜKSEK SKOR KONTROLÜ - LLM atlanabilir mi?
         if rag_response.can_bypass_llm:
@@ -640,6 +665,28 @@ def run_worker(user_query: str, plan: PlannerPlan, user_id: int = None) -> tuple
         
         log_system_event("INFO", f"Worker: RAG'den {len(rag_response.results)} sonuç bulundu (skor: {best_score:.2f})", "llm")
         
+    elif db_knowledge_results:
+        # 🆕 RAG sonuç yok ama DB Knowledge var — DB bilgilerini kullan
+        log_system_event("INFO", f"Worker: RAG sonuç yok, DB Knowledge kullanılıyor (skor: {db_best_score:.2f})", "llm")
+        
+        db_context_parts = []
+        db_sources = []
+        for dbr in db_knowledge_results[:3]:
+            db_context_parts.append(f"--- Kaynak: {dbr['source_name']} ({dbr['content_type']}) ---\n{dbr['content']}")
+            db_sources.append(dbr["source_name"])
+        db_context = "\n\n".join(db_context_parts)
+        
+        source_info = SourceInfo(
+            source_type="rag",
+            source_names=db_sources,
+            context=db_context,
+            best_score=db_best_score
+        )
+        
+        results.append(WorkerResult(
+            step_index=1, 
+            notes=f"🗄️ DB Knowledge: {len(db_knowledge_results)} sonuç (skor: {db_best_score:.2f})"
+        ))
     else:
         # RAG sonuç vermedi - Web araması ATLA, direkt LLM
         # (Web araması da yavaş olduğu için atlıyoruz)

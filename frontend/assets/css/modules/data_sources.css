@@ -353,3 +353,176 @@
     color: #60a5fa;
     background: rgba(96, 165, 250, 0.10);
 }
+
+/* ─────────────────────────────────────────────
+   Connection Test Button
+   ───────────────────────────────────────────── */
+
+.ds-btn-test:hover {
+    border-color: #22d3ee !important;
+    color: #22d3ee !important;
+    background: rgba(34, 211, 238, 0.08) !important;
+}
+
+.ds-btn-testing {
+    border-color: #22d3ee !important;
+    color: #22d3ee !important;
+    pointer-events: none;
+    opacity: 0.7;
+}
+
+/* ─────────────────────────────────────────────
+   Connection Test Result Modal
+   ───────────────────────────────────────────── */
+
+.ds-test-modal-box {
+    max-width: 440px;
+    border-radius: 20px;
+    backdrop-filter: blur(20px);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    box-shadow:
+        0 24px 48px rgba(0, 0, 0, 0.25),
+        0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+    overflow: hidden;
+    transform: scale(0.92) translateY(12px);
+    opacity: 0;
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
+                opacity 0.25s ease;
+}
+
+.ds-test-modal-visible .ds-test-modal-box {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+}
+
+.ds-test-modal-closing .ds-test-modal-box {
+    transform: scale(0.95) translateY(8px);
+    opacity: 0;
+    transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.ds-test-modal-header {
+    display: flex;
+    justify-content: flex-end;
+    padding: 12px 16px 0;
+}
+
+.ds-test-modal-body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 8px 28px 24px;
+    text-align: center;
+}
+
+/* Büyük durum ikonu */
+.ds-test-icon-wrap {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 36px;
+    margin-bottom: 16px;
+    animation: dsTestIconPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) 0.15s both;
+}
+
+.ds-test-icon-wrap.ds-test-success {
+    background: rgba(16, 185, 129, 0.12);
+    color: #10b981;
+    box-shadow: 0 0 24px rgba(16, 185, 129, 0.15);
+}
+
+.ds-test-icon-wrap.ds-test-fail {
+    background: rgba(239, 68, 68, 0.12);
+    color: #ef4444;
+    box-shadow: 0 0 24px rgba(239, 68, 68, 0.15);
+}
+
+@keyframes dsTestIconPop {
+    0% { transform: scale(0.5); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+.ds-test-title {
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+
+.ds-test-title.ds-test-success {
+    color: #10b981;
+}
+
+.ds-test-title.ds-test-fail {
+    color: #ef4444;
+}
+
+.ds-test-source-name {
+    font-size: 13px;
+    color: var(--text-3);
+    margin-bottom: 20px;
+    font-weight: 500;
+}
+
+/* Detay satırları */
+.ds-test-details {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.ds-test-detail-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    text-align: left;
+}
+
+.ds-test-detail-label {
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.ds-test-detail-label i {
+    font-size: 10px;
+    opacity: 0.6;
+}
+
+.ds-test-detail-value {
+    font-size: 12.5px;
+    color: var(--text-1);
+    word-break: break-word;
+    line-height: 1.55;
+}
+
+.ds-test-server-info {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11.5px;
+    color: var(--text-2);
+}
+
+/* Modal footer */
+.ds-test-modal-footer {
+    display: flex;
+    justify-content: center;
+    padding: 0 28px 24px;
+}
+
+.ds-test-modal-footer .btn {
+    min-width: 120px;
+}
+

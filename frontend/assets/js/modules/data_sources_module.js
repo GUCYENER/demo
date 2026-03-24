@@ -152,6 +152,11 @@ window.DataSourcesModule = (function () {
         grid.innerHTML = sources.map(s => renderCard(s)).join('');
 
         // Event listener'lar
+        grid.querySelectorAll('.ds-btn-test').forEach(btn => {
+            btn.addEventListener('click', () => {
+                testConnection(parseInt(btn.dataset.id), btn.dataset.name);
+            });
+        });
         grid.querySelectorAll('.ds-btn-edit').forEach(btn => {
             btn.addEventListener('click', () => {
                 const id = parseInt(btn.dataset.id);
@@ -162,6 +167,22 @@ window.DataSourcesModule = (function () {
         grid.querySelectorAll('.ds-btn-delete').forEach(btn => {
             btn.addEventListener('click', () => {
                 deleteSource(parseInt(btn.dataset.id), btn.dataset.name);
+            });
+        });
+        // DB Keşif butonu
+        grid.querySelectorAll('.ds-btn-discover').forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (window.DSLearningModule) {
+                    DSLearningModule.openWizard(parseInt(btn.dataset.id), btn.dataset.name);
+                }
+            });
+        });
+        // Öğrenme Geçmişi butonu
+        grid.querySelectorAll('.ds-btn-history').forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (window.DSLearningModule) {
+                    DSLearningModule.showLearningHistory(parseInt(btn.dataset.id), btn.dataset.name);
+                }
             });
         });
     }
@@ -240,6 +261,15 @@ window.DataSourcesModule = (function () {
                     </div>
                     <div class="ds-card-actions">
                         <span class="ds-status ${statusClass}">${statusText}</span>
+                        <button class="ds-btn-test" data-id="${source.id}" data-name="${_escapeHtml(source.name)}" title="Bağlantı Testi">
+                            <i class="fa-solid fa-plug-circle-check"></i>
+                        </button>
+                        ${source.source_type === 'database' ? `<button class="ds-card-discover-btn ds-btn-discover" data-id="${source.id}" data-name="${_escapeHtml(source.name)}" title="DB Keşfet">
+                            <i class="fa-solid fa-magnifying-glass-chart"></i>
+                        </button>
+                        <button class="ds-card-history-btn ds-btn-history" data-id="${source.id}" data-name="${_escapeHtml(source.name)}" title="Öğrenme Geçmişi">
+                            <i class="fa-solid fa-brain"></i>
+                        </button>` : ''}
                         <button class="ds-btn-edit" data-id="${source.id}" title="Düzenle">
                             <i class="fa-solid fa-pen"></i>
                         </button>
@@ -628,6 +658,147 @@ window.DataSourcesModule = (function () {
         save(formData);
     }
 
+    // --- Connection Test ---
+
+    async function testConnection(id, name) {
+        // Test başlatma — buton spinnerı
+        const btn = document.querySelector(`.ds-btn-test[data-id="${id}"]`);
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+            btn.classList.add('ds-btn-testing');
+        }
+
+        try {
+            const token = localStorage.getItem('access_token') || '';
+            const res = await fetch(`${API_BASE}/${id}/test-connection`, {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.detail || 'Bağlantı testi başarısız');
+            }
+
+            const result = await res.json();
+            _showTestResultModal(name, result);
+
+        } catch (error) {
+            console.error('[DataSources] Test connection error:', error);
+            _showTestResultModal(name, {
+                success: false,
+                message: error.message || 'Bağlantı testi sırasında hata oluştu'
+            });
+        } finally {
+            // Buton state geri yükle
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fa-solid fa-plug-circle-check"></i>';
+                btn.classList.remove('ds-btn-testing');
+            }
+        }
+    }
+
+    function _showTestResultModal(sourceName, result) {
+        // Eski modal varsa kaldır
+        const existing = document.getElementById('dsTestResultModal');
+        if (existing) existing.remove();
+
+        const isSuccess = result.success;
+        const statusIcon = isSuccess ? 'fa-circle-check' : 'fa-circle-xmark';
+        const statusClass = isSuccess ? 'ds-test-success' : 'ds-test-fail';
+        const statusText = isSuccess ? 'Bağlantı Başarılı' : 'Bağlantı Başarısız';
+
+        // Detay satırları
+        let detailRows = '';
+        if (result.message) {
+            detailRows += `
+                <div class="ds-test-detail-row">
+                    <span class="ds-test-detail-label">
+                        <i class="fa-solid fa-message"></i> Mesaj
+                    </span>
+                    <span class="ds-test-detail-value">${_escapeHtml(result.message)}</span>
+                </div>
+            `;
+        }
+        if (result.server_info) {
+            detailRows += `
+                <div class="ds-test-detail-row">
+                    <span class="ds-test-detail-label">
+                        <i class="fa-solid fa-server"></i> Sunucu Bilgisi
+                    </span>
+                    <span class="ds-test-detail-value ds-test-server-info">${_escapeHtml(result.server_info)}</span>
+                </div>
+            `;
+        }
+        if (result.elapsed_ms !== undefined && result.elapsed_ms !== null) {
+            detailRows += `
+                <div class="ds-test-detail-row">
+                    <span class="ds-test-detail-label">
+                        <i class="fa-solid fa-stopwatch"></i> Süre
+                    </span>
+                    <span class="ds-test-detail-value">${result.elapsed_ms} ms</span>
+                </div>
+            `;
+        }
+
+        const modalHtml = `
+            <div id="dsTestResultModal" class="modal-overlay">
+                <div class="modal-box ds-test-modal-box">
+                    <div class="ds-test-modal-header">
+                        <button class="modal-close" id="dsTestModalClose">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                    <div class="ds-test-modal-body">
+                        <div class="ds-test-icon-wrap ${statusClass}">
+                            <i class="fa-solid ${statusIcon}"></i>
+                        </div>
+                        <h3 class="ds-test-title ${statusClass}">${statusText}</h3>
+                        <p class="ds-test-source-name">${_escapeHtml(sourceName)}</p>
+                        <div class="ds-test-details">
+                            ${detailRows}
+                        </div>
+                    </div>
+                    <div class="ds-test-modal-footer">
+                        <button class="btn primary" id="dsTestModalOk">
+                            <i class="fa-solid fa-check"></i> Tamam
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+        // Event listeners
+        const closeTest = () => {
+            const m = document.getElementById('dsTestResultModal');
+            if (m) {
+                m.classList.add('ds-test-modal-closing');
+                setTimeout(() => m.remove(), 200);
+            }
+        };
+        document.getElementById('dsTestModalClose').addEventListener('click', closeTest);
+        document.getElementById('dsTestModalOk').addEventListener('click', closeTest);
+
+        // ESC ile kapat
+        const escHandler = (e) => {
+            if (e.key === 'Escape') {
+                closeTest();
+                document.removeEventListener('keydown', escHandler);
+            }
+        };
+        document.addEventListener('keydown', escHandler);
+
+        // Animasyonlu giriş
+        requestAnimationFrame(() => {
+            const modal = document.getElementById('dsTestResultModal');
+            if (modal) modal.classList.add('ds-test-modal-visible');
+        });
+    }
+
     // --- Helpers ---
 
     function _getSelectedCompanyId() {
@@ -641,5 +812,5 @@ window.DataSourcesModule = (function () {
     }
 
     // --- Public API ---
-    return { load, openModal, deleteSource, closeModal };
+    return { load, openModal, deleteSource, closeModal, testConnection };
 })();

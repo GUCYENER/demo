@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "NGSSAI"
     debug: bool = True
-    APP_VERSION: str = "2.55.0"  # Veri Kaynakları (DB, File Server, FTP, SharePoint, Manuel) + Bilgi Tabanı Entegrasyonu
+    APP_VERSION: str = "2.56.1"  # ML Öğrenme Sonuçları Popup + QA Buton Disable Fix + Zamanlama Tarih Fix
 
     # Frontend & API prefix
     api_prefix: str = "/api"

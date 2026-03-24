@@ -39,6 +39,7 @@ const CSS_FILES = [
     'assets/css/modules/ldap_settings.css',
     'assets/css/modules/org_permissions.css',
     'assets/css/modules/data_sources.css',
+    'assets/css/modules/ds_learning.css',
 ];
 
 const JS_FILES = [
@@ -103,6 +104,7 @@ const JS_FILES = [
     'assets/js/modules/widget_module.js',
     'assets/js/modules/company_module.js',
     'assets/js/modules/data_sources_module.js',
+    'assets/js/modules/ds_learning_module.js',
 ];
 
 // ===================================================

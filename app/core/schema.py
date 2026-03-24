@@ -776,4 +776,104 @@ CREATE TABLE IF NOT EXISTS data_sources (
 CREATE INDEX IF NOT EXISTS idx_data_sources_company ON data_sources(company_id);
 CREATE INDEX IF NOT EXISTS idx_data_sources_type ON data_sources(source_type);
 CREATE INDEX IF NOT EXISTS idx_data_sources_active ON data_sources(is_active);
+
+-- =====================================================
+-- DB Learning / Discovery Tables (v2.56.0)
+-- =====================================================
+
+-- Keşif İş Takibi (her adım bir job kaydı)
+CREATE TABLE IF NOT EXISTS ds_discovery_jobs (
+    id SERIAL PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES data_sources(id) ON DELETE CASCADE,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    job_type VARCHAR(50) NOT NULL,         -- 'technology', 'objects', 'samples', 'learning'
+    status VARCHAR(20) DEFAULT 'pending',  -- 'pending','running','completed','failed'
+    result_summary JSONB,
+    error_message TEXT,
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    duration_ms INTEGER,
+    created_by INTEGER REFERENCES users(id),
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ds_disc_jobs_source ON ds_discovery_jobs(source_id);
+CREATE INDEX IF NOT EXISTS idx_ds_disc_jobs_company ON ds_discovery_jobs(company_id);
+CREATE INDEX IF NOT EXISTS idx_ds_disc_jobs_type ON ds_discovery_jobs(job_type);
+CREATE INDEX IF NOT EXISTS idx_ds_disc_jobs_status ON ds_discovery_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_ds_disc_jobs_created ON ds_discovery_jobs(created_at DESC);
+
+-- Keşfedilen DB Objeleri (tablolar, view'lar)
+CREATE TABLE IF NOT EXISTS ds_db_objects (
+    id SERIAL PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES data_sources(id) ON DELETE CASCADE,
+    schema_name VARCHAR(100),
+    object_name VARCHAR(200) NOT NULL,
+    object_type VARCHAR(50) NOT NULL,      -- 'table', 'view', 'materialized_view'
+    column_count INTEGER DEFAULT 0,
+    row_count_estimate BIGINT DEFAULT 0,
+    columns_json JSONB,                     -- [{name, data_type, is_nullable, is_pk, default_val}]
+    discovered_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ds_db_objects_source ON ds_db_objects(source_id);
+CREATE INDEX IF NOT EXISTS idx_ds_db_objects_type ON ds_db_objects(object_type);
+
+-- FK İlişkileri
+CREATE TABLE IF NOT EXISTS ds_db_relationships (
+    id SERIAL PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES data_sources(id) ON DELETE CASCADE,
+    from_schema VARCHAR(100),
+    from_table VARCHAR(200) NOT NULL,
+    from_column VARCHAR(200) NOT NULL,
+    to_schema VARCHAR(100),
+    to_table VARCHAR(200) NOT NULL,
+    to_column VARCHAR(200) NOT NULL,
+    constraint_name VARCHAR(200),
+    discovered_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ds_db_rels_source ON ds_db_relationships(source_id);
+
+-- Tablolardan Alınan Örnek Veriler
+CREATE TABLE IF NOT EXISTS ds_db_samples (
+    id SERIAL PRIMARY KEY,
+    object_id INTEGER NOT NULL REFERENCES ds_db_objects(id) ON DELETE CASCADE,
+    source_id INTEGER NOT NULL REFERENCES data_sources(id) ON DELETE CASCADE,
+    sample_query TEXT NOT NULL,
+    sample_data JSONB NOT NULL,
+    row_count INTEGER DEFAULT 0,
+    fetched_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ds_db_samples_obj ON ds_db_samples(object_id);
+CREATE INDEX IF NOT EXISTS idx_ds_db_samples_source ON ds_db_samples(source_id);
+
+-- Kaynak Bazlı Öğrenme Zamanlaması
+CREATE TABLE IF NOT EXISTS ds_learning_schedules (
+    id SERIAL PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES data_sources(id) ON DELETE CASCADE,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    schedule_type VARCHAR(50) NOT NULL,    -- 'interval_hours', 'daily', 'manual_only'
+    interval_value INTEGER DEFAULT 24,
+    is_active BOOLEAN DEFAULT TRUE,
+    last_run_at TIMESTAMP,
+    next_run_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ds_learn_sched_source ON ds_learning_schedules(source_id);
+CREATE INDEX IF NOT EXISTS idx_ds_learn_sched_active ON ds_learning_schedules(is_active);
+
+-- Öğrenme Sonuçları (RAG aranabilir)
+CREATE TABLE IF NOT EXISTS ds_learning_results (
+    id SERIAL PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES data_sources(id) ON DELETE CASCADE,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    job_id INTEGER REFERENCES ds_discovery_jobs(id) ON DELETE SET NULL,
+    content_type VARCHAR(50) NOT NULL,     -- 'schema_description', 'sample_insight', 'relationship_map'
+    content_text TEXT NOT NULL,
+    embedding FLOAT[],
+    metadata JSONB,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ds_learn_results_source ON ds_learning_results(source_id);
+CREATE INDEX IF NOT EXISTS idx_ds_learn_results_company ON ds_learning_results(company_id);
+CREATE INDEX IF NOT EXISTS idx_ds_learn_results_type ON ds_learning_results(content_type);
 """
