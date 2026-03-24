@@ -179,7 +179,7 @@ class TestProcessStream:
         mock_result.heading_images = {}
         mock_cache.deep_think.get.return_value = mock_result
 
-        events = list(deep_think_service.process_stream("test query", 1))
+        events = list(deep_think_service.process_stream("VPN bağlantı sorunu çözümü nedir", 1))
 
         assert len(events) == 1
         assert events[0]["type"] == "cached"

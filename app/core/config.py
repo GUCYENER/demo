@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "NGSSAI"
     debug: bool = True
-    APP_VERSION: str = "2.56.2"  # Schedule Fix + İş Geçmişi Dropdown + QA Dedup Mekanizması
+    APP_VERSION: str = "2.58.0"  # Hybrid Router Faz 2: LLM Text-to-SQL + Answer Merger + Streaming DB + SQL Audit
 
     # Frontend & API prefix
     api_prefix: str = "/api"
@@ -140,6 +140,10 @@ class Settings(BaseSettings):
     LLM_BYPASS_THRESHOLD: float = 0.70  # RAG skoru bu değerin üzerindeyse LLM atlanır
     PGVECTOR_INDEX: bool = True  # pgvector index kullanımı etkin mi
     REDIS_URL: str = "redis://localhost:6379/1"  # 🆕 v2.50.0: Deep Think cache persistence
+    
+    # 🆕 v2.57.0: Hybrid Router & Safe SQL Executor
+    SQL_EXEC_TIMEOUT: int = 5       # SQL sorgu timeout (saniye)
+    SQL_MAX_ROWS: int = 100         # Maksimum döndürülen satır sayısı
     
     # -------------------------------------------------
     #  Scheduler & System Ayarları (v2.27.2)

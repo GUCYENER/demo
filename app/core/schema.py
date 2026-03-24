@@ -511,7 +511,7 @@ CREATE INDEX IF NOT EXISTS idx_system_settings_key ON system_settings(setting_ke
 
 -- Varsayılan ayarlar
 INSERT INTO system_settings (setting_key, setting_value, description) VALUES
-    ('app_version', '2.55.0', 'Uygulama versiyonu'),
+    ('app_version', '2.58.0', 'Uygulama versiyonu'),
     ('cl_interval_minutes', '30', 'Sürekli öğrenme aralığı (dakika)'),
     ('cl_is_active', 'true', 'Sürekli öğrenme aktiflik durumu'),
     ('maturity_enhance_threshold', '80', 'Maturity iyileştirme eşik değeri (0-100)')
@@ -876,4 +876,31 @@ CREATE TABLE IF NOT EXISTS ds_learning_results (
 CREATE INDEX IF NOT EXISTS idx_ds_learn_results_source ON ds_learning_results(source_id);
 CREATE INDEX IF NOT EXISTS idx_ds_learn_results_company ON ds_learning_results(company_id);
 CREATE INDEX IF NOT EXISTS idx_ds_learn_results_type ON ds_learning_results(content_type);
+
+-- =====================================================
+-- SQL Audit Log (v2.58.0) - Hybrid Router SQL İzleme
+-- =====================================================
+
+-- Çalıştırılan her SQL sorgusunun audit kaydı
+CREATE TABLE IF NOT EXISTS sql_audit_log (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER,
+    company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+    source_id INTEGER,
+    source_name VARCHAR(200),
+    sql_text TEXT NOT NULL,
+    dialect VARCHAR(50),
+    status VARCHAR(30) NOT NULL DEFAULT 'success',  -- success, error, security_rejected, timeout
+    row_count INTEGER DEFAULT 0,
+    elapsed_ms NUMERIC(10,2) DEFAULT 0,
+    error_msg TEXT,
+    generation_method VARCHAR(30) DEFAULT 'template',  -- template, llm, manual
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sql_audit_log_user ON sql_audit_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_sql_audit_log_company ON sql_audit_log(company_id);
+CREATE INDEX IF NOT EXISTS idx_sql_audit_log_status ON sql_audit_log(status);
+CREATE INDEX IF NOT EXISTS idx_sql_audit_log_created ON sql_audit_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sql_audit_log_source ON sql_audit_log(source_id);
 """

@@ -20,6 +20,8 @@ class IntentType(Enum):
     COMPARISON = "comparison"          # "X ile Y arasındaki fark"
     TROUBLESHOOT = "troubleshoot"      # "Çalışmıyor", "Hata alıyorum"
     GENERAL = "general"                # Diğer
+    DATABASE_QUERY = "database_query"  # 🆕 v2.57.0: Canlı DB sorgusu ("son faturam kaç TL?")
+    HYBRID = "hybrid"                  # 🆕 v2.57.0: Hem doküman hem DB sorgusu
 
 
 @dataclass

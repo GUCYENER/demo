@@ -178,6 +178,20 @@ class DeepThinkService(DeepThinkFormattingMixin, DeepThinkFallbackMixin):
                 reasoning="Tekil cevap talebi tespit edildi"
             )
         
+        # 🆕 v2.57.0: Veritabanı sorgusu kontrolü (Hybrid Router)
+        try:
+            from app.services.hybrid_router import detect_db_intent
+            db_intent_type = detect_db_intent(query)
+            if db_intent_type is not None:
+                return IntentResult(
+                    intent_type=db_intent_type,
+                    confidence=0.7,
+                    suggested_n_results=10,
+                    reasoning="Veritabanı sorgusu intent'i tespit edildi"
+                )
+        except ImportError:
+            pass  # Hybrid router henüz yüklenmemişse atla
+        
         # Genel sorgu
         return IntentResult(
             intent_type=IntentType.GENERAL,
@@ -504,6 +518,189 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
 
     
     # ========================================
+    # 🆕 v2.57.0: Hybrid Synthesis
+    # ========================================
+    
+    def _synthesize_hybrid(self, query: str, hybrid_result, intent: 'IntentResult') -> str:
+        """
+        DB sorgu sonuçlarını kullanıcı dostu yanıta dönüştürür.
+        
+        Basit sonuçlar (tek satır/tek sütun) doğrudan formatlanır.
+        Karmaşık sonuçlar LLM ile sentezlenir.
+        
+        Args:
+            query: Kullanıcı sorusu
+            hybrid_result: HybridResult nesnesi
+            intent: Intent analiz sonucu
+            
+        Returns:
+            Formatlanmış yanıt metni
+        """
+        db_data = hybrid_result.db_results
+        sql = hybrid_result.sql_executed or ""
+        source_db = hybrid_result.source_db or "Veritabanı"
+        
+        if not db_data:
+            if hybrid_result.db_error:
+                return (
+                    f"❌ Veritabanı sorgusunda bir hata oluştu:\n\n"
+                    f"`{hybrid_result.db_error}`\n\n"
+                    f"Farklı bir şekilde sormayı deneyebilirsiniz."
+                )
+            return "Bu sorgu için veritabanında sonuç bulunamadı."
+        
+        # Basit sonuç: tek satır, tek/az sütun
+        if len(db_data) == 1 and len(db_data[0]) <= 3:
+            row = db_data[0]
+            parts = []
+            for col, val in row.items():
+                parts.append(f"**{col}**: {val}")
+            
+            return (
+                f"📊 **{source_db}** veritabanından sorgu sonucu:\n\n"
+                + "\n".join(parts)
+                + f"\n\n`{sql}`"
+            )
+        
+        # Çok satırlı sonuç: tablo formatında göster
+        if len(db_data) <= 20:
+            # Markdown tablo oluştur
+            columns = list(db_data[0].keys())
+            
+            # Header
+            header = "| " + " | ".join(str(c) for c in columns) + " |"
+            separator = "| " + " | ".join("---" for _ in columns) + " |"
+            
+            rows_md = []
+            for row in db_data:
+                row_vals = []
+                for c in columns:
+                    val = row.get(c, "")
+                    # Uzun değerleri kısalt
+                    val_str = str(val) if val is not None else "-"
+                    if len(val_str) > 50:
+                        val_str = val_str[:47] + "..."
+                    row_vals.append(val_str)
+                rows_md.append("| " + " | ".join(row_vals) + " |")
+            
+            table_md = "\n".join([header, separator] + rows_md)
+            
+            result = (
+                f"📊 **{source_db}** veritabanından **{len(db_data)}** kayıt:\n\n"
+                f"{table_md}\n\n"
+            )
+            
+            if hybrid_result.sql_executed:
+                result += f"🔍 Çalıştırılan sorgu: `{sql}`"
+            
+            return result
+        
+        # 20+ satır: özet + LLM sentez
+        try:
+            import json
+            context = json.dumps(db_data[:20], ensure_ascii=False, default=str)
+            
+            messages = [
+                {"role": "system", "content": (
+                    "Sen bir veritabanı analisti asistanısın. "
+                    "Kullanıcının sorusuna, veritabanından dönen sonuçları "
+                    "kullanarak kısa ve net bir yanıt üret. "
+                    "Sayısal değerleri vurgula. Markdown formatı kullan."
+                )},
+                {"role": "user", "content": (
+                    f"SORU: {query}\n\n"
+                    f"VERİTABANI SONUÇLARI ({len(db_data)} satır, ilk 20 gösteriliyor):\n"
+                    f"{context}\n\n"
+                    f"SQL: {sql}"
+                )},
+            ]
+            
+            response = call_llm_api(messages)
+            return response.strip()
+            
+        except Exception as e:
+            log_warning(f"Hybrid LLM sentez hatası: {e}", "deep_think")
+            # Fallback: ham veri göster
+            return (
+                f"📊 **{source_db}** veritabanından **{len(db_data)}** kayıt bulundu.\n\n"
+                f"🔍 Çalıştırılan sorgu: `{sql}`"
+            )
+
+    # ========================================
+    # 🆕 v2.58.0: Answer Merger (HYBRID intent)
+    # ========================================
+    
+    def _merge_hybrid_answer(
+        self, query: str, hybrid_result, rag_results: list, intent: 'IntentResult'
+    ) -> str:
+        """
+        DB sorgu sonuçları ve RAG doküman sonuçlarını LLM ile birleştirir.
+        
+        HYBRID intent'te çağrılır — hem veritabanı verileri hem de 
+        doküman bilgileri kullanılarak kapsamlı bir yanıt üretilir.
+        
+        Args:
+            query: Kullanıcı sorusu
+            hybrid_result: HybridResult nesnesi (DB verileri)
+            rag_results: RAG doküman sonuçları
+            intent: Intent analiz sonucu
+            
+        Returns:
+            Birleştirilmiş yanıt metni
+        """
+        import json
+        
+        db_data = hybrid_result.db_results
+        sql = hybrid_result.sql_executed or ""
+        source_db = hybrid_result.source_db or "Veritabanı"
+        
+        # DB context hazırla
+        db_context = json.dumps(
+            db_data[:15], ensure_ascii=False, default=str
+        ) if db_data else "Veri bulunamadı"
+        
+        # RAG context hazırla
+        rag_context_parts = []
+        for i, r in enumerate(rag_results[:5], 1):
+            content = r.get("content", "")[:300]
+            source = r.get("source_file", "")
+            rag_context_parts.append(f"[{i}] {source}: {content}")
+        rag_context = "\n".join(rag_context_parts) if rag_context_parts else "Doküman bulunamadı"
+        
+        # LLM ile birleştir
+        try:
+            messages = [
+                {"role": "system", "content": (
+                    "Sen bir bilgi asistanısın. Kullanıcının sorusuna iki kaynaktan gelen bilgileri "
+                    "birleştirerek kapsamlı bir yanıt üret:\n"
+                    "1. VERİTABANI: Canlı veriler (sayısal değerler, güncel kayıtlar)\n"
+                    "2. DOKÜMAN: Prosedür, açıklama ve referans bilgileri\n\n"
+                    "Her iki kaynağı da göz önünde bulundur. Sayısal verileri vurgula. "
+                    "Markdown formatı kullan. Kaynakları belirt."
+                )},
+                {"role": "user", "content": (
+                    f"SORU: {query}\n\n"
+                    f"📊 VERİTABANI SONUÇLARI ({source_db}, {len(db_data)} kayıt):\n"
+                    f"{db_context}\n"
+                    f"SQL: {sql}\n\n"
+                    f"📄 DOKÜMAN SONUÇLARI ({len(rag_results)} sonuç):\n"
+                    f"{rag_context}"
+                )},
+            ]
+            
+            response = call_llm_api(messages)
+            return response.strip()
+            
+        except Exception as e:
+            log_warning(f"Answer Merger LLM hatası: {e}", "deep_think")
+            # Fallback: DB sonuçlarını göster + RAG özetini ekle
+            db_part = self._synthesize_hybrid(query, hybrid_result, intent)
+            if rag_results:
+                rag_part = f"\n\n📄 **İlişkili doküman bilgisi:**\n{rag_results[0].get('content', '')[:200]}..."
+                return db_part + rag_part
+            return db_part
+
+    # ========================================
     # 4. Main Pipeline
     # ========================================
     
@@ -652,6 +849,81 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
             f"Deep Think: Intent={intent.intent_type.value}, n_results={intent.suggested_n_results}", 
             "deep_think"
         )
+        
+        # 🆕 v2.57.0: Hybrid Router — DB intent gelirse template SQL çalıştır
+        # 🆕 v2.58.0: HYBRID intent → DB + RAG merge desteği
+        if intent.intent_type in (IntentType.DATABASE_QUERY, IntentType.HYBRID) and category_index is None:
+            try:
+                from app.services.hybrid_router import HybridRouter
+                router = HybridRouter()
+                hybrid_result = router.route(query, user_id, intent)
+                
+                if hybrid_result and hybrid_result.db_results:
+                    if intent.intent_type == IntentType.HYBRID:
+                        # 🆕 v2.58.0: HYBRID — DB + RAG birleştir
+                        rag_results = self.expanded_retrieval(query, intent, user_id)
+                        synthesized = self._merge_hybrid_answer(
+                            query, hybrid_result, rag_results, intent
+                        )
+                        sources = list(set(
+                            [hybrid_result.source_db or ""] +
+                            [r.get("source_file", "") for r in rag_results if r.get("source_file")]
+                        ))
+                        sources = [s for s in sources if s]  # Boşları kaldır
+                    else:
+                        # DATABASE_QUERY — sadece DB sentezle
+                        synthesized = self._synthesize_hybrid(query, hybrid_result, intent)
+                        sources = [hybrid_result.source_db] if hybrid_result.source_db else []
+                    
+                    elapsed_ms = (time.time() - start_time) * 1000
+                    
+                    result = DeepThinkResult(
+                        synthesized_response=synthesized,
+                        sources=sources,
+                        intent=intent,
+                        rag_result_count=len(hybrid_result.db_results),
+                        processing_time_ms=elapsed_ms,
+                        best_score=0.9,
+                        image_ids=[],
+                        heading_images={}
+                    )
+                    
+                    if cache_key is not None:
+                        cache_service.deep_think.set(cache_key, result)
+                    
+                    log_system_event(
+                        "INFO",
+                        f"Hybrid Router: {intent.intent_type.value} başarılı — {len(hybrid_result.db_results)} satır, "
+                        f"{elapsed_ms:.0f}ms | SQL: {hybrid_result.sql_executed[:80] if hybrid_result.sql_executed else ''}",
+                        "deep_think"
+                    )
+                    
+                    # 🆕 v2.58.0: SQL Audit Log
+                    try:
+                        from app.services.sql_audit_log import log_sql_execution
+                        log_sql_execution(
+                            user_id=user_id,
+                            source_id=0,
+                            source_name=hybrid_result.source_db or "",
+                            sql_text=hybrid_result.sql_executed or "",
+                            dialect="",
+                            status="success" if not hybrid_result.db_error else "error",
+                            row_count=len(hybrid_result.db_results),
+                            elapsed_ms=hybrid_result.elapsed_ms,
+                            error_msg=hybrid_result.db_error,
+                        )
+                    except Exception:
+                        pass  # Audit log hatası ana akışı engellememeli
+                    
+                    return result
+                else:
+                    log_system_event(
+                        "INFO",
+                        "Hybrid Router: DB sonucu yok, RAG fallback",
+                        "deep_think"
+                    )
+            except Exception as hybrid_err:
+                log_warning(f"Hybrid Router hatası, RAG fallback: {hybrid_err}", "deep_think")
         
         # 2. Expanded Retrieval
         rag_results = self.expanded_retrieval(query, intent, user_id)
@@ -862,6 +1134,89 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
         
         # 1. Intent Detection (anlık)
         intent = self.analyze_intent(query)
+        
+        # 🆕 v2.58.0: DB intent → Hybrid Router (streaming)
+        if intent.intent_type in (IntentType.DATABASE_QUERY, IntentType.HYBRID):
+            try:
+                from app.services.hybrid_router import HybridRouter
+                router = HybridRouter()
+                hybrid_result = router.route(query, user_id, intent)
+                
+                if hybrid_result and hybrid_result.db_results:
+                    # DB sonuçları geldi sinyali
+                    yield {"type": "db_complete", "data": {
+                        "intent": intent.intent_type.value,
+                        "row_count": len(hybrid_result.db_results),
+                        "source_db": hybrid_result.source_db or "",
+                        "sql": hybrid_result.sql_executed or "",
+                        "elapsed_ms": hybrid_result.elapsed_ms,
+                    }}
+                    
+                    # HYBRID: DB + RAG birleştir
+                    if intent.intent_type == IntentType.HYBRID:
+                        rag_results = self.expanded_retrieval(query, intent, user_id)
+                        synthesized = self._merge_hybrid_answer(
+                            query, hybrid_result, rag_results, intent
+                        )
+                        sources = list(set(
+                            [hybrid_result.source_db or ""] +
+                            [r.get("source_file", "") for r in rag_results if r.get("source_file")]
+                        ))
+                        sources = [s for s in sources if s]
+                    else:
+                        synthesized = self._synthesize_hybrid(query, hybrid_result, intent)
+                        sources = [hybrid_result.source_db] if hybrid_result.source_db else []
+                    
+                    elapsed_ms = (time.time() - start_time) * 1000
+                    
+                    # Cache
+                    if cache_key is not None:
+                        result = DeepThinkResult(
+                            synthesized_response=synthesized,
+                            sources=sources,
+                            intent=intent,
+                            rag_result_count=len(hybrid_result.db_results),
+                            processing_time_ms=elapsed_ms,
+                            best_score=0.9,
+                            image_ids=[],
+                            heading_images={}
+                        )
+                        cache_service.deep_think.set(cache_key, result)
+                    
+                    yield {"type": "done", "data": {
+                        "content": synthesized,
+                        "metadata": {
+                            "rag_result_count": len(hybrid_result.db_results),
+                            "best_score": 0.9,
+                            "deep_think": True,
+                            "hybrid_db": True,
+                            "sources": sources,
+                            "sql_executed": hybrid_result.sql_executed or "",
+                        }
+                    }}
+                    
+                    # 🆕 v2.58.0: SQL Audit Log (streaming)
+                    try:
+                        from app.services.sql_audit_log import log_sql_execution
+                        log_sql_execution(
+                            user_id=user_id,
+                            source_id=0,
+                            source_name=hybrid_result.source_db or "",
+                            sql_text=hybrid_result.sql_executed or "",
+                            dialect="",
+                            status="success" if not hybrid_result.db_error else "error",
+                            row_count=len(hybrid_result.db_results),
+                            elapsed_ms=hybrid_result.elapsed_ms,
+                            error_msg=hybrid_result.db_error,
+                        )
+                    except Exception:
+                        pass
+                    
+                    return
+                else:
+                    log_system_event("INFO", "Stream: DB sonucu yok, RAG fallback", "deep_think")
+            except Exception as hybrid_err:
+                log_warning(f"Stream Hybrid Router hatası, RAG fallback: {hybrid_err}", "deep_think")
         
         # 2. Expanded Retrieval — RAG + CatBoost (batch, ~3s)
         rag_results = self.expanded_retrieval(query, intent, user_id)

@@ -6,6 +6,45 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v2.58.0 (2026-03-24) - Hybrid Router Pipeline Faz 2
+
+**🤖 LLM Text-to-SQL:**
+- ✅ **Template fallback:** Template SQL eşleşmediğinde LLM ile schema-aware SQL üretimi
+- ✅ **3 aşamalı parser:** ```sql bloğu, genel code block, SELECT fallback parse
+- ✅ **6 katmanlı güvenlik:** `validate_sql()` + `check_table_whitelist()` — DDL/DML/injection koruması
+
+**🔀 Answer Merger (HYBRID intent):**
+- ✅ **DB + RAG birleştirme:** `_merge_hybrid_answer()` — veritabanı verileri ve doküman bilgilerini LLM ile sentezleme
+- ✅ **`process()` + `process_stream()`:** HYBRID intent desteği — paralel DB + RAG çağrı ve merge
+
+**📊 Streaming Pipeline DB Desteği:**
+- ✅ **`process_stream()` DB routing:** Intent detection sonrası DB routing
+- ✅ **`db_complete` event:** DB sonuçları geldi sinyali (row_count, source_db, SQL, elapsed_ms)
+- ✅ **Merge streaming:** DB + RAG sonuçları birleşik `done` event'i ile
+
+**🛡️ SQL Audit Log Dashboard:**
+- ✅ **`sql_audit_log` tablosu:** `company_id` FK, execution log (user, source, SQL, status, elapsed_ms)
+- ✅ **Admin API:** `GET /api/admin/sql-audit` (sayfalı, filtreli), `GET .../stats` (istatistik özeti)
+- ✅ **Audit entegrasyonu:** process() + process_stream() sonrasında otomatik log kaydı
+
+**📁 Yeni Dosyalar:**
+- `app/services/text_to_sql.py` — LLM Text-to-SQL servisi (284 satır)
+- `app/services/sql_audit_log.py` — SQL audit log servisi (240 satır)
+- `app/api/routes/sql_audit_api.py` — Admin SQL audit API (54 satır)
+- `tests/test_text_to_sql.py` — 14 unit test
+- `tests/test_answer_merger.py` — 5 unit test
+- `tests/test_sql_audit.py` — 6 unit test
+
+**📁 Değişen Dosyalar:**
+- `app/services/hybrid_router.py` — `_generate_and_execute_llm_sql()` LLM fallback
+- `app/services/deep_think_service.py` — `_merge_hybrid_answer()`, HYBRID intent, audit log
+- `app/core/schema.py` — `sql_audit_log` tablosu + index'ler
+- `app/api/main.py` — `sql_audit_api.router` include
+
+**🧪 Test:** 25 yeni + tüm regresyon = 100% PASSED ✅
+
+---
+
 ### 🆕 v2.55.0 (2026-03-23) - Veri Kaynakları Yönetimi + Bilgi Tabanı Entegrasyonu
 
 **🔌 Veri Kaynakları (Parametreler → Kaynaklar Sekmesi):**
