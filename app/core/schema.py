@@ -934,6 +934,25 @@ ALTER TABLE companies ADD COLUMN IF NOT EXISTS theme_id INTEGER REFERENCES compa
 
 CREATE INDEX IF NOT EXISTS idx_companies_theme ON companies(theme_id);
 
+-- v2.60.0: Özel tema desteği
+ALTER TABLE company_themes ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE;
+ALTER TABLE company_themes ADD COLUMN IF NOT EXISTS is_custom BOOLEAN DEFAULT FALSE;
+
+CREATE INDEX IF NOT EXISTS idx_company_themes_company ON company_themes(company_id);
+
+-- v2.60.0: Firma-tema atamaları (bir firmaya birden fazla tema atanabilir)
+CREATE TABLE IF NOT EXISTS company_theme_assignments (
+    id SERIAL PRIMARY KEY,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    theme_id INTEGER NOT NULL REFERENCES company_themes(id) ON DELETE CASCADE,
+    is_default BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(company_id, theme_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cta_company ON company_theme_assignments(company_id);
+CREATE INDEX IF NOT EXISTS idx_cta_theme ON company_theme_assignments(theme_id);
+
 -- =====================================================
 -- 10 Hazır SaaS Tema (Default Data)
 -- =====================================================

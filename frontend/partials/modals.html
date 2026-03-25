@@ -334,20 +334,65 @@
                 <p class="form-hint">Login ve ana ekranda görünecek uygulama adı</p>
             </div>
 
-            <!-- Firma CSS Tasarımı (v2.59.0) -->
+            <!-- Firma CSS Tasarımı (v2.60.0) -->
+            <div class="form-section-divider">
+                <i class="fa-solid fa-palette"></i> Tasarım ve Tema Yönetimi
+            </div>
+
+            <!-- Mevcut tema seçimi (gizli, arka planda kullanılır) -->
+            <input type="hidden" id="companyThemeId" value="">
+
+            <!-- Firmaya atanmış temalar -->
             <div class="form-group">
-                <label for="companyThemeId" class="form-label">
-                    <i class="fa-solid fa-palette"></i> Firma CSS Tasarımı
+                <label class="form-label">
+                    <i class="fa-solid fa-swatchbook"></i> Firmaya Atanmış Temalar
                 </label>
-                <div class="company-theme-row">
-                    <select id="companyThemeId" class="form-input">
-                        <option value="">Varsayılan (Okyanus Mavisi)</option>
-                    </select>
-                    <button type="button" id="btnThemePreview" class="btn-theme-preview" title="Önizleme">
-                        <i class="fa-solid fa-eye"></i>
+                <div id="companyAssignedThemes" class="design-themes-grid">
+                    <!-- JS ile doldurulur -->
+                </div>
+            </div>
+
+            <!-- Tüm Temalar (atanabilir) -->
+            <div class="form-group">
+                <label class="form-label">
+                    <i class="fa-solid fa-th"></i> Tema Havuzu <span class="form-hint-inline">(seçerek firmaya atayın)</span>
+                </label>
+                <div id="companyThemePool" class="design-themes-grid">
+                    <!-- JS ile doldurulur -->
+                </div>
+            </div>
+
+            <!-- Yeni Tema Oluşturma -->
+            <div class="design-new-theme-box" id="newThemeBox">
+                <div class="design-new-theme-header">
+                    <h4><i class="fa-solid fa-plus-circle"></i> Yeni Özel Tema</h4>
+                </div>
+                <div class="design-color-row">
+                    <div class="design-color-picker">
+                        <label>Renk 1 (Ana)</label>
+                        <input type="color" id="newThemeColor1" value="#06B6D4">
+                    </div>
+                    <div class="design-color-picker">
+                        <label>Renk 2 (Vurgu)</label>
+                        <input type="color" id="newThemeColor2" value="#3B82F6">
+                    </div>
+                    <div class="design-color-preview" id="newThemePreview">
+                        <div class="design-color-preview-half" id="newThemePreviewHalf1" style="background:#06B6D4"></div>
+                        <div class="design-color-preview-half" id="newThemePreviewHalf2" style="background:#3B82F6"></div>
+                    </div>
+                    <button type="button" class="design-suggest-btn" id="btnSuggestColors">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> Öner
                     </button>
                 </div>
-                <p class="form-hint">Firma login ve ana ekranında kullanılacak renk teması</p>
+                <!-- Öneriler -->
+                <div id="colorSuggestions" class="design-suggestions hidden"></div>
+                <!-- Kaydetme -->
+                <div class="design-save-row">
+                    <input type="text" id="newThemeName" class="design-theme-name-input" placeholder="Tema adı girin...">
+                    <button type="button" class="design-save-btn" id="btnSaveNewTheme">
+                        <i class="fa-solid fa-save"></i> Oluştur
+                    </button>
+                </div>
             </div>
 
             <!-- Vergi / TCKN -->

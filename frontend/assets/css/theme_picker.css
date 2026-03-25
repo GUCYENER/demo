@@ -1,0 +1,464 @@
+/* ========================================
+   VYRA Theme Picker Popup (v2.60.0)
+   Ay butonu tema seçici popup stilleri
+   ======================================== */
+
+.tp-popup {
+    position: fixed;
+    top: 56px;
+    right: 20px;
+    width: 320px;
+    max-height: 480px;
+    background: var(--bg-sidebar, #161a24);
+    border: 1px solid var(--border, rgba(255,255,255,0.07));
+    border-radius: 16px;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04);
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: tpSlideIn 0.2s ease;
+}
+
+.tp-popup.hidden {
+    display: none;
+}
+
+@keyframes tpSlideIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Header */
+.tp-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid var(--border, rgba(255,255,255,0.07));
+}
+
+.tp-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-1, #f1f5ff);
+}
+
+.tp-close {
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: rgba(255,255,255,0.06);
+    border-radius: 8px;
+    color: var(--text-2, #9daac4);
+    font-size: 18px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+}
+
+.tp-close:hover {
+    background: rgba(255,255,255,0.12);
+    color: var(--text-1, #f1f5ff);
+}
+
+/* Dark/Light Toggle */
+.tp-mode-toggle {
+    display: flex;
+    gap: 6px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border, rgba(255,255,255,0.07));
+}
+
+.tp-mode-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px;
+    border: 1px solid var(--border, rgba(255,255,255,0.07));
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text-2, #9daac4);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.tp-mode-btn svg {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.tp-mode-btn:hover {
+    background: rgba(255,255,255,0.05);
+    border-color: var(--border-strong, rgba(255,255,255,0.12));
+}
+
+.tp-mode-btn.active {
+    background: var(--accent-subtle, rgba(77,153,255,0.08));
+    border-color: var(--accent, #4D99FF);
+    color: var(--accent, #4D99FF);
+}
+
+/* Tema Grid */
+.tp-themes-grid {
+    padding: 12px;
+    overflow-y: auto;
+    max-height: 340px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.tp-loading, .tp-empty {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 24px;
+    color: var(--text-3, #3d4a63);
+    font-size: 13px;
+}
+
+/* Tema Kartı */
+.tp-theme-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 8px;
+    border: 2px solid var(--border, rgba(255,255,255,0.07));
+    border-radius: 12px;
+    background: rgba(255,255,255,0.02);
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+}
+
+.tp-theme-card:hover {
+    background: rgba(255,255,255,0.06);
+    border-color: var(--border-strong, rgba(255,255,255,0.15));
+    transform: translateY(-2px);
+}
+
+.tp-theme-card.active {
+    border-color: var(--accent, #4D99FF);
+    background: var(--accent-subtle, rgba(77,153,255,0.08));
+    box-shadow: 0 4px 16px var(--accent-glow, rgba(77,153,255,0.15));
+}
+
+/* Renk Örnekleri */
+.tp-color-swatch {
+    width: 48px;
+    height: 28px;
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+.tp-swatch-half {
+    flex: 1;
+}
+
+.tp-theme-name {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-2, #9daac4);
+    text-align: center;
+    line-height: 1.2;
+}
+
+.tp-theme-card.active .tp-theme-name {
+    color: var(--accent, #4D99FF);
+    font-weight: 600;
+}
+
+.tp-default-badge {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    font-size: 8px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: var(--accent-subtle, rgba(77,153,255,0.12));
+    color: var(--accent, #4D99FF);
+}
+
+/* ==================================
+   COMPANY MODULE — Tasarım Sekmesi
+   ================================== */
+
+.design-tab-content {
+    padding: 16px;
+}
+
+.design-section-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-1, #f1f5ff);
+    margin-bottom: 12px;
+}
+
+/* Tema Kart Grid */
+.design-themes-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.design-theme-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 10px;
+    border: 2px solid var(--border-color, #374151);
+    border-radius: 12px;
+    background: rgba(255,255,255,0.02);
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+}
+
+.design-theme-card:hover {
+    border-color: var(--border-light, #4b5563);
+    background: rgba(255,255,255,0.05);
+    transform: translateY(-2px);
+}
+
+.design-theme-card.selected {
+    border-color: var(--primary, #FBBF24);
+    background: rgba(251,191,36,0.08);
+    box-shadow: 0 4px 16px rgba(251,191,36,0.15);
+}
+
+.design-theme-card .dt-swatch {
+    width: 56px;
+    height: 32px;
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+.design-theme-card .dt-swatch-half {
+    flex: 1;
+}
+
+.design-theme-card .dt-name {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary, #9ca3af);
+    text-align: center;
+}
+
+.design-theme-card.selected .dt-name {
+    color: var(--primary, #FBBF24);
+    font-weight: 600;
+}
+
+.design-theme-card .dt-check {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--primary, #FBBF24);
+    color: #000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.design-theme-card.selected .dt-check {
+    display: flex;
+}
+
+/* Yeni Tema Oluşturma */
+.design-new-theme-box {
+    border: 2px dashed var(--border-color, #374151);
+    border-radius: 12px;
+    padding: 20px;
+    margin-top: 16px;
+}
+
+.design-new-theme-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+}
+
+.design-new-theme-header h4 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary, #e5e7eb);
+}
+
+.design-color-row {
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
+    margin-bottom: 14px;
+}
+
+.design-color-picker {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.design-color-picker label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-muted, #6b7280);
+}
+
+.design-color-picker input[type="color"] {
+    width: 56px;
+    height: 36px;
+    border: 2px solid var(--border-color, #374151);
+    border-radius: 8px;
+    cursor: pointer;
+    background: transparent;
+    padding: 2px;
+}
+
+.design-color-picker input[type="color"]::-webkit-color-swatch-wrapper {
+    padding: 0;
+}
+
+.design-color-picker input[type="color"]::-webkit-color-swatch {
+    border: none;
+    border-radius: 5px;
+}
+
+.design-color-preview {
+    width: 80px;
+    height: 36px;
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    flex-shrink: 0;
+}
+
+.design-color-preview-half {
+    flex: 1;
+}
+
+.design-suggest-btn {
+    padding: 8px 14px;
+    border: 1px solid var(--border-color, #374151);
+    border-radius: 8px;
+    background: rgba(255,255,255,0.04);
+    color: var(--text-secondary, #9ca3af);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.design-suggest-btn:hover {
+    background: rgba(255,255,255,0.08);
+    border-color: var(--primary, #FBBF24);
+    color: var(--primary, #FBBF24);
+}
+
+/* Öneri Kartları */
+.design-suggestions {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 8px;
+    margin-bottom: 14px;
+}
+
+.design-suggest-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 8px;
+    border: 1px solid var(--border-color, #374151);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: rgba(255,255,255,0.02);
+}
+
+.design-suggest-card:hover {
+    border-color: var(--primary, #FBBF24);
+    background: rgba(251,191,36,0.06);
+}
+
+.design-suggest-card.exists {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.design-suggest-card .ds-swatch {
+    width: 40px;
+    height: 24px;
+    border-radius: 6px;
+    overflow: hidden;
+    display: flex;
+}
+
+.design-suggest-card .ds-swatch-half {
+    flex: 1;
+}
+
+.design-suggest-card .ds-label {
+    font-size: 10px;
+    color: var(--text-muted, #6b7280);
+    text-align: center;
+}
+
+/* Save Row */
+.design-save-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.design-theme-name-input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid var(--border-color, #374151);
+    border-radius: 8px;
+    background: var(--bg-card, #1f2937);
+    color: var(--text-primary, #e5e7eb);
+    font-size: 13px;
+}
+
+.design-save-btn {
+    padding: 8px 18px;
+    border: none;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--primary, #FBBF24), var(--primary-dark, #F59E0B));
+    color: #000;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.design-save-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(251,191,36,0.3);
+}

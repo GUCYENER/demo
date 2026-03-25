@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "NGSSAI"
     debug: bool = True
-    APP_VERSION: str = "2.58.0"  # Hybrid Router Faz 2: LLM Text-to-SQL + Answer Merger + Streaming DB + SQL Audit
+    APP_VERSION: str = "2.60.0"  # Özel Tema Oluşturucu, Kullanıcı Tema Seçici, Firma Tema Atama
 
     # Frontend & API prefix
     api_prefix: str = "/api"

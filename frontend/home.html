@@ -606,7 +606,7 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
 
 @media(max-width:660px){.n-sidebar{display:none}}
 </style>
-<link rel="stylesheet" href="dist/bundle.min.css?v=2.56.2" />
+<link rel="stylesheet" href="dist/bundle.min.css?v=2.59.1" />
 </head>
 <body>
 
@@ -791,9 +791,10 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
 <div id="modals-slot"></div>
 
 <!-- config.js bundle'da dahil, standalone yükleme kaldırıldı (v2.59.0 fix) -->
-<script src="assets/js/branding_engine.js?v=2.59.0"></script>
+<script src="assets/js/partial_loader.js?v=2.60.0"></script>
+<script src="assets/js/branding_engine.js?v=2.60.0"></script>
 <script>
-// v2.59.0: Login'den gelen branding verilerini home ekranına uygula
+// v2.59.1: Partial loader senkron, bu yüzden hemen çalışır
 (function() {
     if (!window.BrandingEngine) return;
     var bd = BrandingEngine.loadBranding();
@@ -803,17 +804,22 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
     }
 })();
 </script>
-<script src="assets/js/partial_loader.js?v=2.59.0"></script>
-<script defer src="dist/bundle.min.js?v=2.59.0"></script>
+<script defer src="dist/bundle.min.js?v=2.60.0"></script>
 <script>
 // v2.59.0: Favicon artık inline SVG kullanıyor, dev override gereksiz
-document.getElementById('themeToggleBtn').addEventListener('click', function() {
-  var html = document.documentElement;
-  var isLight = html.getAttribute('data-theme') === 'light';
-  html.setAttribute('data-theme', isLight ? 'dark' : 'light');
-  var sun  = '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>';
-  var moon = '<path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>';
-  document.getElementById('theme-ico').innerHTML = isLight ? moon : sun;
+document.getElementById('themeToggleBtn').addEventListener('click', function(e) {
+  e.stopPropagation();
+  if (window.ThemePickerPopup) {
+    ThemePickerPopup.toggle();
+  } else {
+    // Fallback: sadece dark/light toggle
+    var html = document.documentElement;
+    var isLight = html.getAttribute('data-theme') === 'light';
+    html.setAttribute('data-theme', isLight ? 'dark' : 'light');
+    var sun  = '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>';
+    var moon = '<path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>';
+    document.getElementById('theme-ico').innerHTML = isLight ? moon : sun;
+  }
 });
 
 window.selectChatMode = function(mode) {

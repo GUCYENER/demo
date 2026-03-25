@@ -6,6 +6,32 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v2.60.0 (2026-03-25) - Özel Tema Oluşturucu & Kullanıcı Tema Seçici
+
+**🎨 Özel Tema Oluşturucu (Admin):**
+- ✅ **Firma Tasarım Sekmesi:** Tema kart grid, color picker, canlı önizleme
+- ✅ **Renk Önerme:** Complementary, Analogous, Triadic, Split Complementary renk algoritması
+- ✅ **CSS Variable Engine:** İki ana renkten otomatik dark+light mod CSS değişken hesaplama
+- ✅ **Firma-Tema Atama:** `company_theme_assignments` tablosu ile çoklu tema atama
+- ✅ **Anlık Yansıtma:** Firma kaydedildiğinde tema anında uygulanıyor (BrandingEngine.applyAll)
+
+**🌙 Kullanıcı Tema Seçici:**
+- ✅ **Ay butonu popup:** Firma bazlı tema listesi, dark/light toggle
+- ✅ **Anlık uygulama:** Tema seçildiğinde sayfa yenilemesiz CSS güncelleme
+- ✅ **ESC desteği + Overlay koruması:** Modal standartlarına uygun
+
+**📁 Yeni Dosyalar:**
+- `frontend/assets/js/modules/theme_picker_popup.js` — Kullanıcı tema seçici popup
+- `frontend/assets/css/theme_picker.css` — Popup ve tasarım sekmesi stilleri
+
+**📁 Değişen Dosyalar:**
+- `app/api/routes/themes.py` — CRUD, suggest, assign, company-themes endpoint'leri (8 route)
+- `app/core/schema.py` — `company_theme_assignments` tablosu, `is_custom`/`company_id` sütunları
+- `frontend/assets/js/modules/company_module.js` — Tasarım sekmesi UI, tema atama, anlık yansıtma
+- `frontend/partials/modals.html` — Tasarım sekmesi HTML (color picker, öner butonu, kart grid)
+- `frontend/home.html` — Ay butonu → ThemePickerPopup.toggle()
+- `frontend/build.mjs` — Yeni dosyalar bundle'a dahil
+
 ### 🆕 v2.59.0 (2026-03-25) - Multi-Tenant Branding System
 
 **🎨 Firma Bazlı Dinamik Branding:**
