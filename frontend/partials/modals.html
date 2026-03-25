@@ -325,6 +325,31 @@
                 <input type="text" id="companyName" class="form-input" placeholder="Örn: Dolap Ticaret A.Ş." required>
             </div>
 
+            <!-- Uygulama Adı (v2.59.0) -->
+            <div class="form-group">
+                <label for="companyAppName" class="form-label">
+                    <i class="fa-solid fa-tag"></i> Uygulama Adı
+                </label>
+                <input type="text" id="companyAppName" class="form-input" placeholder="Örn: VYRA, MyApp (varsayılan: NGSSAI)" maxlength="200">
+                <p class="form-hint">Login ve ana ekranda görünecek uygulama adı</p>
+            </div>
+
+            <!-- Firma CSS Tasarımı (v2.59.0) -->
+            <div class="form-group">
+                <label for="companyThemeId" class="form-label">
+                    <i class="fa-solid fa-palette"></i> Firma CSS Tasarımı
+                </label>
+                <div class="company-theme-row">
+                    <select id="companyThemeId" class="form-input">
+                        <option value="">Varsayılan (Okyanus Mavisi)</option>
+                    </select>
+                    <button type="button" id="btnThemePreview" class="btn-theme-preview" title="Önizleme">
+                        <i class="fa-solid fa-eye"></i>
+                    </button>
+                </div>
+                <p class="form-hint">Firma login ve ana ekranında kullanılacak renk teması</p>
+            </div>
+
             <!-- Vergi / TCKN -->
             <div class="form-row-2col">
                 <div class="form-group">

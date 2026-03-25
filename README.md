@@ -6,6 +6,45 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v2.59.0 (2026-03-25) - Multi-Tenant Branding System
+
+**🎨 Firma Bazlı Dinamik Branding:**
+- ✅ **`company_themes` tablosu:** 11 hazır SaaS tasarım (Okyanus Mavisi, Altın Sarısı, Zümrüt Orman, Sarı Siyah vb.)
+- ✅ **`companies` branding alanları:** `app_name` (varsayılan: NGSSAI) + `theme_id` FK
+- ✅ **Tasarım sekmesi:** Parametreler ekranında tema kartlı grid kataloğu
+- ✅ **Firma CSS Tasarımı dropdown:** Firma tanımında tema seçimi + önizleme butonu
+- ✅ **Branding Engine:** Login ve ana ekranda CSS değişkenleri, logo, app_name otomatik uygulama
+- ✅ **URL bazlı eşleşme:** `GET /api/companies/by-url` — subdomain'e göre branding
+
+**🔧 Düzeltmeler:**
+- ✅ **Favicon:** Eski "V" API favicon → inline SVG "N" ikonu
+- ✅ **Sidebar/Topbar ikon:** "H" → "N" (NGSSAI) güncellendi
+- ✅ **CSS lint uyarıları:** `background-clip: text` ve `appearance: none` standart property eklendi
+- ✅ **Console hataları:** `config.js` çift yükleme kaldırıldı
+- ✅ **CORS trailing slash:** 6 API çağrısında trailing slash düzeltmesi
+
+**📁 Yeni Dosyalar:**
+- `app/api/routes/themes.py` — Tema API (3 endpoint)
+- `frontend/assets/js/branding_engine.js` — Dinamik branding motoru
+- `frontend/assets/js/modules/theme_catalog_module.js` — Tema kataloğu modülü
+- `frontend/assets/css/modules/theme_catalog.css` — Tema kartları stilleri
+- `tests/test_themes_branding.py` — 33 unit test
+
+**📁 Değişen Dosyalar:**
+- `app/api/main.py` — themes router kaydı
+- `app/api/routes/companies.py` — app_name, theme_id CRUD
+- `app/core/schema.py` — company_themes tablo + ALTER companies + 11 tema data
+- `frontend/home.html` — Branding engine entegrasyon, favicon, N ikonu
+- `frontend/login.html` — CSS lint düzeltmeleri
+- `frontend/partials/modals.html` — Uygulama Adı + Tema seçimi alanları
+- `frontend/partials/section_parameters.html` — Tasarım sekmesi
+- `frontend/assets/js/modules/company_module.js` — Tema yükleme/kaydetme/önizleme
+- `frontend/assets/js/modules/param_tabs.js` — Tasarım tab kaydı
+
+**🧪 Test:** 33 yeni + 658 regresyon = **658/658 PASSED** ✅
+
+---
+
 ### 🆕 v2.58.0 (2026-03-24) - Hybrid Router Pipeline Faz 2
 
 **🤖 LLM Text-to-SQL:**

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NGSSAI — AIOps Platform</title>
-<link rel="icon" type="image/png" id="faviconLink" href="/api/assets/favicon" />
+<link rel="icon" type="image/svg+xml" id="faviconLink" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%237C3AED'/><path d='M8 24V8h2.5L22 21V8h2.5v16H22L10.5 11v13Z' fill='white'/></svg>" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Geist:wght@300;400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/vendor/fontawesome/all.min.css" />
@@ -316,7 +316,7 @@ body::before{
 .message-avatar.user{display:none!important}
 .message-sender-name{
   font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:500;
-  background:var(--grad-acc);-webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  background:var(--grad-acc);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
   letter-spacing:.08em;
 }
 .message-header-row .message-time{
@@ -507,7 +507,7 @@ body::before{
 .inp-ico{position:absolute;left:11px;top:50%;transform:translateY(-50%);width:14px;height:14px;stroke:var(--text-3);fill:none;pointer-events:none;transition:stroke .15s}
 .inp-wrap:focus-within .inp-ico{stroke:var(--accent)}
 .inp-wrap .inp{padding-left:34px}
-select.inp{-webkit-appearance:none;cursor:pointer}
+select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
 
 .toggle-wrap{display:flex;align-items:center;gap:10px}
 .toggle{width:36px;height:20px;border-radius:10px;background:var(--border-md);cursor:pointer;position:relative;transition:background .2s;flex-shrink:0;border:1px solid var(--border-md)}
@@ -613,7 +613,7 @@ select.inp{-webkit-appearance:none;cursor:pointer}
 <aside class="n-sidebar" id="sidebar">
   <div class="sb-logo">
     <div class="sb-logo-icon">
-      <svg viewBox="0 0 24 24"><path d="M4 4 L4 20 L10 12 L16 20 L16 4 L14 4 L14 16 L10 10 L6 16 L6 4 Z"/></svg>
+      <svg viewBox="0 0 24 24"><path d="M5 20V4h2l10 12.5V4h2v16h-2L7 7.5V20Z"/></svg>
     </div>
     <span class="sb-logo-name">NGSSAI</span>
   </div>
@@ -680,7 +680,7 @@ select.inp{-webkit-appearance:none;cursor:pointer}
   <div class="topbar" id="topBar">
     <div class="tb-agent">
       <div class="tb-agent-avatar">
-        <svg viewBox="0 0 24 24"><path d="M4 4 L4 20 L10 12 L16 20 L16 4 L14 4 L14 16 L10 10 L6 16 L6 4 Z"/></svg>
+        <svg viewBox="0 0 24 24"><path d="M5 20V4h2l10 12.5V4h2v16h-2L7 7.5V20Z"/></svg>
       </div>
       <div class="tb-agent-info">
         <div class="tb-agent-name">NGSSAI Asistan</div>
@@ -790,17 +790,23 @@ select.inp{-webkit-appearance:none;cursor:pointer}
 <input type="file" id="dialogFileInput" accept="image/*" class="hidden" multiple title="Gorsel secin" />
 <div id="modals-slot"></div>
 
-<script src="assets/js/partial_loader.js?v=2.56.2"></script>
-<script defer src="dist/bundle.min.js?v=2.56.2"></script>
+<!-- config.js bundle'da dahil, standalone yükleme kaldırıldı (v2.59.0 fix) -->
+<script src="assets/js/branding_engine.js?v=2.59.0"></script>
 <script>
-// Favicon: Development ortamında backend URL'ini kullan (port 5500 → 8002)
+// v2.59.0: Login'den gelen branding verilerini home ekranına uygula
 (function() {
-  var isDev = window.location.port === '5500';
-  if (isDev) {
-    var fav = document.getElementById('faviconLink');
-    if (fav) fav.href = 'http://localhost:8002/api/assets/favicon';
-  }
+    if (!window.BrandingEngine) return;
+    var bd = BrandingEngine.loadBranding();
+    if (bd) {
+        BrandingEngine.applyAll(bd);
+        BrandingEngine.watchThemeChanges();
+    }
 })();
+</script>
+<script src="assets/js/partial_loader.js?v=2.59.0"></script>
+<script defer src="dist/bundle.min.js?v=2.59.0"></script>
+<script>
+// v2.59.0: Favicon artık inline SVG kullanıyor, dev override gereksiz
 document.getElementById('themeToggleBtn').addEventListener('click', function() {
   var html = document.documentElement;
   var isLight = html.getAttribute('data-theme') === 'light';

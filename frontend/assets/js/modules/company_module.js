@@ -1,6 +1,7 @@
 /* ----------------------------------
    VYRA - Company Module
-   Firma yönetimi CRUD modülü (v2.53.0)
+   Firma yönetimi CRUD modülü (v2.59.0)
+   app_name, theme_id branding desteği
 ---------------------------------- */
 
 /**
@@ -14,6 +15,7 @@ window.CompanyModule = (function () {
     let companies = [];
     let editingId = null;
     let addressCache = { provinces: null, districts: {}, neighborhoods: {} };
+    let themesList = []; // v2.59.0: Tema listesi cache
 
     // --- Token helper ---
     function getToken() {
@@ -31,7 +33,7 @@ window.CompanyModule = (function () {
 
     async function fetchCompanies() {
         try {
-            const res = await fetch(API_BASE + '/api/companies', {
+            const res = await fetch(API_BASE + '/api/companies/', {
                 headers: authHeaders()
             });
             if (!res.ok) throw new Error('Firma listesi alınamadı');
@@ -46,7 +48,7 @@ window.CompanyModule = (function () {
     async function saveCompany(data) {
         const url = editingId
             ? API_BASE + '/api/companies/' + editingId
-            : API_BASE + '/api/companies';
+            : API_BASE + '/api/companies/';
         const method = editingId ? 'PUT' : 'POST';
 
         const res = await fetch(url, {
@@ -88,6 +90,81 @@ window.CompanyModule = (function () {
             throw new Error(err.detail || 'Logo yükleme hatası');
         }
         return await res.json();
+    }
+
+    // --- Tema API (v2.59.0) ---
+
+    async function fetchThemes() {
+        try {
+            const res = await fetch(API_BASE + '/api/themes/', {
+                headers: authHeaders()
+            });
+            if (!res.ok) return [];
+            themesList = await res.json();
+            return themesList;
+        } catch (err) {
+            console.warn('[CompanyModule] Tema listesi alınamadı:', err);
+            return [];
+        }
+    }
+
+    function populateThemeSelect(selectedId) {
+        const select = document.getElementById('companyThemeId');
+        if (!select) return;
+        select.innerHTML = '<option value="">Varsayılan (Okyanus Mavisi)</option>';
+        themesList.forEach(t => {
+            const opt = document.createElement('option');
+            opt.value = t.id;
+            opt.textContent = t.name + ' — ' + (t.description || '');
+            if (selectedId && t.id === selectedId) opt.selected = true;
+            select.appendChild(opt);
+        });
+    }
+
+    // --- Tema Önizleme (v2.59.0) ---
+
+    function previewTheme() {
+        var select = document.getElementById('companyThemeId');
+        if (!select || !select.value) {
+            if (typeof showToast === 'function') showToast('Lütfen önce bir tema seçin', 'warning');
+            return;
+        }
+        var theme = themesList.find(function(t) { return t.id === parseInt(select.value, 10); });
+        if (!theme) return;
+
+        // Renk noktalarını hazırla
+        var colors = theme.preview_colors || [];
+        if (typeof colors === 'string') { try { colors = JSON.parse(colors); } catch(e) { colors = []; } }
+        var gradBar = colors.length >= 2
+            ? 'linear-gradient(135deg, ' + colors[0] + ' 0%, ' + colors[1] + ' 100%)'
+            : (colors[0] || '#666');
+        var colorDots = colors.map(function(c) {
+            return '<span style="display:inline-block;width:18px;height:18px;border-radius:50%;background:' + c + ';border:2px solid rgba(255,255,255,0.2);"></span>';
+        }).join(' ');
+
+        // CSS değişkenlerini göster
+        var cssVars = theme.css_variables || {};
+        var darkVars = cssVars.dark || {};
+        var varList = Object.keys(darkVars).slice(0, 6).map(function(k) {
+            return '<div style="display:flex;align-items:center;gap:8px;margin:2px 0;">' +
+                '<span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:' + darkVars[k] + ';"></span>' +
+                '<code style="font-size:11px;color:#ccc;">' + k + '</code>' +
+                '</div>';
+        }).join('');
+
+        VyraModal.info({
+            title: '🎨 ' + (theme.name || 'Tema Önizleme'),
+            message: '<div style="text-align:center;">' +
+                '<div style="height:60px;border-radius:10px;margin-bottom:16px;background:' + gradBar + ';"></div>' +
+                '<p style="color:#aaa;margin-bottom:12px;">' + (theme.description || '') + '</p>' +
+                '<div style="margin-bottom:12px;">' + colorDots + '</div>' +
+                '<div style="text-align:left;background:rgba(0,0,0,0.2);border-radius:8px;padding:10px 14px;">' +
+                '<p style="color:#888;font-size:11px;margin-bottom:6px;">CSS Değişkenleri (dark):</p>' +
+                varList +
+                '</div>' +
+                '</div>',
+            confirmText: 'Tamam'
+        });
     }
 
     // --- Türkiye Adres API ---
@@ -342,11 +419,17 @@ window.CompanyModule = (function () {
         // İl listesini yükle
         await loadProvinces();
 
+        // Tema listesini yükle (v2.59.0)
+        if (themesList.length === 0) await fetchThemes();
+        populateThemeSelect(null);
+
         if (companyId) {
             // Düzenleme — mevcut verileri doldur
             const company = companies.find(c => c.id === companyId);
             if (company) {
                 setField('companyName', company.name);
+                setField('companyAppName', company.app_name); // v2.59.0
+                populateThemeSelect(company.theme_id); // v2.59.0
                 if (taxTypeSelect) taxTypeSelect.value = company.tax_type || 'vd';
                 setField('companyTaxNumber', company.tax_number);
                 setField('companyAddressText', company.address_text);
@@ -393,8 +476,12 @@ window.CompanyModule = (function () {
     // --- Save Handler ---
 
     async function handleSave() {
+        // v2.59.0: app_name ve theme_id eklendi
+        const themeVal = (document.getElementById('companyThemeId') || {}).value;
         const data = {
             name: (document.getElementById('companyName') || {}).value || '',
+            app_name: (document.getElementById('companyAppName') || {}).value || null,
+            theme_id: themeVal ? parseInt(themeVal, 10) : null,
             tax_type: (document.getElementById('companyTaxType') || {}).value || 'vd',
             tax_number: (document.getElementById('companyTaxNumber') || {}).value || '',
             address_il: (document.getElementById('companyAddressIl') || {}).value || null,
@@ -523,6 +610,10 @@ window.CompanyModule = (function () {
         // Kaydet
         const btnSave = document.getElementById('btnSaveCompany');
         if (btnSave) btnSave.addEventListener('click', handleSave);
+
+        // Tema önizleme butonu (v2.59.0)
+        var btnPreview = document.getElementById('btnThemePreview');
+        if (btnPreview) btnPreview.addEventListener('click', previewTheme);
 
         // Logo dosya seçimi preview
         const logoInput = document.getElementById('companyLogoFile');

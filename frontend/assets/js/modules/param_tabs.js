@@ -29,6 +29,7 @@ window.ParamTabsModule = (function () {
                     orgPermissions: document.getElementById("tabOrgPermissions"),
                     widgetKeys: document.getElementById("tabWidgetKeys"),
                     dataSources: document.getElementById("tabDataSources"),
+                    themeCatalog: document.getElementById("tabThemeCatalog"),
                 },
                 content: {
                     companies: document.getElementById("contentCompanies"),
@@ -40,6 +41,7 @@ window.ParamTabsModule = (function () {
                     orgPermissions: document.getElementById("contentOrgPermissions"),
                     widgetKeys: document.getElementById("contentWidgetKeys"),
                     dataSources: document.getElementById("contentDataSources"),
+                    themeCatalog: document.getElementById("contentThemeCatalog"),
                 }
             };
         }
@@ -132,6 +134,14 @@ window.ParamTabsModule = (function () {
                     window.DataSourcesModule.load(cid);
                 }
                 break;
+
+            case "themeCatalog":
+                if (el.tabs.themeCatalog) el.tabs.themeCatalog.classList.add("active");
+                if (el.content.themeCatalog) el.content.themeCatalog.classList.remove("hidden");
+                if (window.ThemeCatalogModule) {
+                    window.ThemeCatalogModule.load();
+                }
+                break;
         }
     }
 
@@ -175,6 +185,10 @@ window.ParamTabsModule = (function () {
             el.tabs.dataSources.addEventListener("click", () => activateTab("dataSources"));
         }
 
+        if (el.tabs.themeCatalog) {
+            el.tabs.themeCatalog.addEventListener("click", () => activateTab("themeCatalog"));
+        }
+
         // Yeni Kaynak Ekle butonu
         const btnNew = document.getElementById('btnNewDataSource');
         if (btnNew) {
@@ -203,7 +217,7 @@ window.ParamTabsModule = (function () {
 
         try {
             const token = localStorage.getItem('access_token') || '';
-            const res = await fetch(API_BASE + '/api/companies', {
+            const res = await fetch(API_BASE + '/api/companies/', {
                 headers: { 'Authorization': 'Bearer ' + token }
             });
             if (!res.ok) return;
@@ -282,7 +296,7 @@ async function populateCompanySelect(selectEl, selectedId) {
     const API_BASE = window.API_BASE_URL || '';
     try {
         const token = localStorage.getItem('access_token') || '';
-        const res = await fetch(API_BASE + '/api/companies', {
+        const res = await fetch(API_BASE + '/api/companies/', {
             headers: { 'Authorization': 'Bearer ' + token }
         });
         if (!res.ok) return;

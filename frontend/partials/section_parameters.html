@@ -52,6 +52,10 @@
             <i class="fa-solid fa-plug-circle-plus"></i>
             Kaynaklar
         </button>
+        <button id="tabThemeCatalog" class="sub-tab admin-only">
+            <i class="fa-solid fa-palette"></i>
+            Tasarım
+        </button>
     </div>
 
     <!-- Global Firma Seçici (v2.54.0) -->
@@ -868,6 +872,24 @@
                 <h3>Henüz veri kaynağı tanımlanmadı</h3>
                 <p>Yeni bir veri kaynağı ekleyerek RAG sistemine veri akışı sağlayın.</p>
             </div>
+        </div>
+    </div>
+
+    <!-- Tasarım Kataloğu İçeriği (v2.59.0) -->
+    <div id="contentThemeCatalog" class="param-content hidden admin-only">
+        <div class="card">
+            <div class="sec-head">
+                <div class="sec-title">
+                    <i class="fa-solid fa-palette" style="color:var(--gold)"></i>
+                    Hazır Tema Kataloğu
+                </div>
+            </div>
+            <div style="padding:12px 18px">
+                <p class="form-hint" style="margin-bottom:0">
+                    Firmalar için kullanılabilecek hazır CSS tema tasarımları. Firma tanım ekranından seçim yapabilirsiniz.
+                </p>
+            </div>
+            <div id="themeCatalogGrid" class="theme-catalog-grid" style="padding:0 18px 18px"></div>
         </div>
     </div>
 

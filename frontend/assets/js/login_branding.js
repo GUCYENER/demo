@@ -1,11 +1,12 @@
 /**
  * VYRA Login Branding Module
  * ===========================
- * Login ekranında firma logosu ve adını gösterir.
- * URL'den firma eşleşmesi yapılır, read-only modda gösterilir.
+ * Login ekranında firma logosu, adını, CSS temasını ve içeriklerini gösterir.
+ * URL'den firma eşleşmesi yapılır, BrandingEngine ile tema uygulanır.
  * 
  * Kullanım: login.html'de <script src="assets/js/login_branding.js"> ile yüklenir.
  * initLoginBranding() DOMContentLoaded'da otomatik çağrılır.
+ * v2.59.0 — Tema ve app_name desteği
  */
 (function() {
     'use strict';
@@ -70,6 +71,26 @@
 
             // Bloğu göster
             container.classList.add('visible');
+
+            // v2.59.0: BrandingEngine ile tema ve app_name uygula
+            if (window.BrandingEngine) {
+                var brandData = {
+                    app_name: company.app_name,
+                    logo_url: company.logo_url,
+                    theme: company.theme,
+                    company_id: company.id,
+                    company_name: company.name
+                };
+
+                // Tema CSS uygula
+                BrandingEngine.applyAll(brandData);
+
+                // Tema değişikliğini dinle (dark/light toggle)
+                BrandingEngine.watchThemeChanges();
+
+                // Login sonrası home ekranı için kaydet
+                BrandingEngine.saveBranding(brandData);
+            }
 
         } catch (err) {
             console.warn('[LoginBranding] Firma eşleşme hatası:', err.message);

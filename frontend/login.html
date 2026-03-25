@@ -173,7 +173,7 @@ body::before {
   font-size: 36px; font-weight: 700;
   letter-spacing: 0.06em;
   background: var(--grad-acc);
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
   line-height: 1;
 }
 .ngssai-version {
@@ -193,7 +193,7 @@ body::before {
 .brand-h1 em {
   font-style: normal;
   background: var(--grad-acc);
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
 }
 .brand-sub { font-size: 14px; color: var(--text-2); line-height: 1.7; max-width: 360px; }
 .feature-stack {
@@ -237,7 +237,7 @@ body::before {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 20px; font-weight: 400; line-height: 1;
   background: var(--grad-acc);
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
 }
 .stat-lbl { font-size: 11px; color: var(--text-3); margin-top: 4px; letter-spacing: 0.02em; }
 .vdivider { width: 1px; flex-shrink: 0; background: var(--border); position: relative; }
@@ -727,8 +727,9 @@ body::before {
 
 </div>
 
-<script src="assets/js/config.js?v=2.53.0"></script>
-<script src="assets/js/login_branding.js?v=2.53.0"></script>
+<script src="assets/js/config.js?v=2.59.0"></script>
+<script src="assets/js/branding_engine.js?v=2.59.0"></script>
+<script src="assets/js/login_branding.js?v=2.59.0"></script>
 <script>
 (function() {
   "use strict";

@@ -40,6 +40,7 @@ const CSS_FILES = [
     'assets/css/modules/org_permissions.css',
     'assets/css/modules/data_sources.css',
     'assets/css/modules/ds_learning.css',
+    'assets/css/modules/theme_catalog.css',
 ];
 
 const JS_FILES = [
@@ -105,6 +106,8 @@ const JS_FILES = [
     'assets/js/modules/company_module.js',
     'assets/js/modules/data_sources_module.js',
     'assets/js/modules/ds_learning_module.js',
+    'assets/js/modules/theme_catalog_module.js',
+    'assets/js/branding_engine.js',
 ];
 
 // ===================================================

@@ -433,7 +433,7 @@ class OrganizationManager {
         if (!select) return;
 
         try {
-            const data = await makeAuthRequest('/api/companies');
+            const data = await makeAuthRequest('/api/companies/');
             select.innerHTML = '<option value="">Tüm Firmalar</option>';
             (data || []).forEach(c => {
                 const opt = document.createElement('option');

@@ -511,7 +511,7 @@ CREATE INDEX IF NOT EXISTS idx_system_settings_key ON system_settings(setting_ke
 
 -- Varsayılan ayarlar
 INSERT INTO system_settings (setting_key, setting_value, description) VALUES
-    ('app_version', '2.58.0', 'Uygulama versiyonu'),
+    ('app_version', '2.59.0', 'Uygulama versiyonu'),
     ('cl_interval_minutes', '30', 'Sürekli öğrenme aralığı (dakika)'),
     ('cl_is_active', 'true', 'Sürekli öğrenme aktiflik durumu'),
     ('maturity_enhance_threshold', '80', 'Maturity iyileştirme eşik değeri (0-100)')
@@ -903,4 +903,438 @@ CREATE INDEX IF NOT EXISTS idx_sql_audit_log_company ON sql_audit_log(company_id
 CREATE INDEX IF NOT EXISTS idx_sql_audit_log_status ON sql_audit_log(status);
 CREATE INDEX IF NOT EXISTS idx_sql_audit_log_created ON sql_audit_log(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sql_audit_log_source ON sql_audit_log(source_id);
+
+-- =====================================================
+-- Company Themes (v2.59.0) - Multi-Tenant Branding
+-- =====================================================
+
+-- Firma bazlı CSS tema tanımları
+CREATE TABLE IF NOT EXISTS company_themes (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    code VARCHAR(50) NOT NULL UNIQUE,
+    description VARCHAR(255),
+    css_variables JSONB NOT NULL DEFAULT '{}',
+    preview_colors JSONB NOT NULL DEFAULT '[]',
+    login_headline TEXT,
+    login_subtitle TEXT,
+    features_json JSONB,
+    sort_order INTEGER DEFAULT 0,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_company_themes_code ON company_themes(code);
+CREATE INDEX IF NOT EXISTS idx_company_themes_active ON company_themes(is_active);
+CREATE INDEX IF NOT EXISTS idx_company_themes_sort ON company_themes(sort_order);
+
+-- Companies tablosuna branding alanları ekle
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS app_name VARCHAR(200) DEFAULT 'NGSSAI';
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS theme_id INTEGER REFERENCES company_themes(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_companies_theme ON companies(theme_id);
+
+-- =====================================================
+-- 10 Hazır SaaS Tema (Default Data)
+-- =====================================================
+
+INSERT INTO company_themes (name, code, description, css_variables, preview_colors, login_headline, login_subtitle, features_json, sort_order) VALUES
+(
+    'Okyanus Mavisi', 'ocean_blue', 'Profesyonel mavi-mor gradient, kurumsal görünüm',
+    '{
+        "dark": {
+            "--gold": "#4D99FF", "--gold-2": "#7C3AED",
+            "--gold-dim": "rgba(77,153,255,0.12)", "--gold-glow": "rgba(77,153,255,0.18)",
+            "--gold-subtle": "rgba(77,153,255,0.07)",
+            "--border-accent": "rgba(77,153,255,0.30)",
+            "--text-gold": "#7DB8FF",
+            "--grad-logo": "linear-gradient(135deg, #4D99FF 0%, #7C3AED 100%)",
+            "--grad-btn": "linear-gradient(135deg, #4D99FF 0%, #7C3AED 100%)",
+            "--grad-acc": "linear-gradient(135deg, #4D99FF, #7C3AED)",
+            "--shadow-btn": "0 4px 20px rgba(77,153,255,0.25), 0 0 0 1px rgba(77,153,255,0.12)",
+            "--shadow-input": "0 0 0 2px rgba(77,153,255,0.35), 0 0 16px rgba(77,153,255,0.08)",
+            "--orb-a": "rgba(77,153,255,0.12)", "--orb-b": "rgba(124,58,237,0.08)"
+        },
+        "light": {
+            "--gold": "#2563EB", "--gold-2": "#7C3AED",
+            "--gold-dim": "rgba(37,99,235,0.08)", "--gold-glow": "rgba(37,99,235,0.12)",
+            "--gold-subtle": "rgba(37,99,235,0.05)",
+            "--border-accent": "rgba(37,99,235,0.25)",
+            "--text-gold": "#1D4ED8",
+            "--grad-logo": "linear-gradient(135deg, #2563EB 0%, #7C3AED 100%)",
+            "--grad-btn": "linear-gradient(135deg, #2563EB 0%, #7C3AED 100%)",
+            "--grad-acc": "linear-gradient(135deg, #2563EB, #7C3AED)",
+            "--shadow-btn": "0 4px 20px rgba(37,99,235,0.20), 0 0 0 1px rgba(37,99,235,0.10)",
+            "--shadow-input": "0 0 0 2px rgba(37,99,235,0.28), 0 0 12px rgba(37,99,235,0.06)",
+            "--orb-a": "rgba(37,99,235,0.06)", "--orb-b": "rgba(124,58,237,0.05)"
+        }
+    }',
+    '["#4D99FF", "#7C3AED"]',
+    'Yapay zeka ile,<br><strong>kurumsal bilgi yönetimi</strong>',
+    'Dokümanlardan anında yanıt üretme, akıllı diyalog yönetimi ve RAG tabanlı bilgi tabanı platformu.',
+    '[{"title":"Akıllı Diyalog Yönetimi","desc":"Çoklu LLM desteği · Bağlam duyarlı yanıtlar","icon":"accent"},{"title":"RAG Bilgi Tabanı","desc":"PDF · DOCX · TXT doküman yükleme ve anlık sorgulama","icon":"blue"},{"title":"Organizasyon ve Yetkilendirme","desc":"Rol tabanlı erişim · Çoklu organizasyon desteği","icon":"green"}]',
+    1
+),
+(
+    'Altın Sarısı', 'golden_amber', 'Sıcak altın-turuncu tonlar, dikkat çekici ve enerjik',
+    '{
+        "dark": {
+            "--gold": "#F59E0B", "--gold-2": "#EF4444",
+            "--gold-dim": "rgba(245,158,11,0.12)", "--gold-glow": "rgba(245,158,11,0.18)",
+            "--gold-subtle": "rgba(245,158,11,0.07)",
+            "--border-accent": "rgba(245,158,11,0.30)",
+            "--text-gold": "#FCD34D",
+            "--grad-logo": "linear-gradient(135deg, #F59E0B 0%, #EF4444 100%)",
+            "--grad-btn": "linear-gradient(135deg, #F59E0B 0%, #EF4444 100%)",
+            "--grad-acc": "linear-gradient(135deg, #F59E0B, #EF4444)",
+            "--shadow-btn": "0 4px 20px rgba(245,158,11,0.25), 0 0 0 1px rgba(245,158,11,0.12)",
+            "--shadow-input": "0 0 0 2px rgba(245,158,11,0.35), 0 0 16px rgba(245,158,11,0.08)",
+            "--orb-a": "rgba(245,158,11,0.12)", "--orb-b": "rgba(239,68,68,0.08)"
+        },
+        "light": {
+            "--gold": "#D97706", "--gold-2": "#DC2626",
+            "--gold-dim": "rgba(217,119,6,0.08)", "--gold-glow": "rgba(217,119,6,0.12)",
+            "--gold-subtle": "rgba(217,119,6,0.05)",
+            "--border-accent": "rgba(217,119,6,0.25)",
+            "--text-gold": "#B45309",
+            "--grad-logo": "linear-gradient(135deg, #D97706 0%, #DC2626 100%)",
+            "--grad-btn": "linear-gradient(135deg, #D97706 0%, #DC2626 100%)",
+            "--grad-acc": "linear-gradient(135deg, #D97706, #DC2626)",
+            "--shadow-btn": "0 4px 20px rgba(217,119,6,0.20), 0 0 0 1px rgba(217,119,6,0.10)",
+            "--shadow-input": "0 0 0 2px rgba(217,119,6,0.28), 0 0 12px rgba(217,119,6,0.06)",
+            "--orb-a": "rgba(217,119,6,0.06)", "--orb-b": "rgba(220,38,38,0.05)"
+        }
+    }',
+    '["#F59E0B", "#EF4444"]',
+    'Dijital dönüşümle,<br><strong>verimlilik artışı</strong>',
+    'Kurumsal bilgi yönetim süreçlerinizi yapay zeka ile hızlandırın ve optimize edin.',
+    '[{"title":"Hızlı Çözüm Üretimi","desc":"Saniyeler içinde doğru yanıtlar · Akıllı arama","icon":"accent"},{"title":"Doküman Analizi","desc":"Otomatik içerik çıkarma · Anlık sorgulama","icon":"blue"},{"title":"Güvenli Erişim","desc":"Kurumsal yetkilendirme · LDAP entegrasyonu","icon":"green"}]',
+    2
+),
+(
+    'Zümrüt Orman', 'emerald_forest', 'Doğal yeşil tonlar, güven veren kurumsal',
+    '{
+        "dark": {
+            "--gold": "#10B981", "--gold-2": "#059669",
+            "--gold-dim": "rgba(16,185,129,0.12)", "--gold-glow": "rgba(16,185,129,0.18)",
+            "--gold-subtle": "rgba(16,185,129,0.07)",
+            "--border-accent": "rgba(16,185,129,0.30)",
+            "--text-gold": "#6EE7B7",
+            "--grad-logo": "linear-gradient(135deg, #10B981 0%, #059669 100%)",
+            "--grad-btn": "linear-gradient(135deg, #10B981 0%, #059669 100%)",
+            "--grad-acc": "linear-gradient(135deg, #10B981, #059669)",
+            "--shadow-btn": "0 4px 20px rgba(16,185,129,0.25), 0 0 0 1px rgba(16,185,129,0.12)",
+            "--shadow-input": "0 0 0 2px rgba(16,185,129,0.35), 0 0 16px rgba(16,185,129,0.08)",
+            "--orb-a": "rgba(16,185,129,0.12)", "--orb-b": "rgba(5,150,105,0.08)"
+        },
+        "light": {
+            "--gold": "#059669", "--gold-2": "#047857",
+            "--gold-dim": "rgba(5,150,105,0.08)", "--gold-glow": "rgba(5,150,105,0.12)",
+            "--gold-subtle": "rgba(5,150,105,0.05)",
+            "--border-accent": "rgba(5,150,105,0.25)",
+            "--text-gold": "#047857",
+            "--grad-logo": "linear-gradient(135deg, #059669 0%, #047857 100%)",
+            "--grad-btn": "linear-gradient(135deg, #059669 0%, #047857 100%)",
+            "--grad-acc": "linear-gradient(135deg, #059669, #047857)",
+            "--shadow-btn": "0 4px 20px rgba(5,150,105,0.20), 0 0 0 1px rgba(5,150,105,0.10)",
+            "--shadow-input": "0 0 0 2px rgba(5,150,105,0.28), 0 0 12px rgba(5,150,105,0.06)",
+            "--orb-a": "rgba(5,150,105,0.06)", "--orb-b": "rgba(4,120,87,0.05)"
+        }
+    }',
+    '["#10B981", "#059669"]',
+    'Sürdürülebilir teknoloji,<br><strong>akıllı çözümler</strong>',
+    'Yeşil teknoloji yaklaşımıyla kurumsal bilgi yönetimini geleceğe taşıyın.',
+    '[{"title":"Çevik Destek Sistemi","desc":"7/24 erişim · Anlık yanıt mekanizması","icon":"accent"},{"title":"Kapsamlı Doküman Yönetimi","desc":"Çoklu format desteği · Otomatik sınıflandırma","icon":"blue"},{"title":"Ekip İşbirliği","desc":"Paylaşımlı bilgi tabanı · Rol bazlı erişim","icon":"green"}]',
+    3
+),
+(
+    'Gün Batımı', 'sunset_coral', 'Sıcak kırmızı-pembe gradient, yaratıcı ve modern',
+    '{
+        "dark": {
+            "--gold": "#F43F5E", "--gold-2": "#EC4899",
+            "--gold-dim": "rgba(244,63,94,0.12)", "--gold-glow": "rgba(244,63,94,0.18)",
+            "--gold-subtle": "rgba(244,63,94,0.07)",
+            "--border-accent": "rgba(244,63,94,0.30)",
+            "--text-gold": "#FDA4AF",
+            "--grad-logo": "linear-gradient(135deg, #F43F5E 0%, #EC4899 100%)",
+            "--grad-btn": "linear-gradient(135deg, #F43F5E 0%, #EC4899 100%)",
+            "--grad-acc": "linear-gradient(135deg, #F43F5E, #EC4899)",
+            "--shadow-btn": "0 4px 20px rgba(244,63,94,0.25), 0 0 0 1px rgba(244,63,94,0.12)",
+            "--shadow-input": "0 0 0 2px rgba(244,63,94,0.35), 0 0 16px rgba(244,63,94,0.08)",
+            "--orb-a": "rgba(244,63,94,0.12)", "--orb-b": "rgba(236,72,153,0.08)"
+        },
+        "light": {
+            "--gold": "#E11D48", "--gold-2": "#DB2777",
+            "--gold-dim": "rgba(225,29,72,0.08)", "--gold-glow": "rgba(225,29,72,0.12)",
+            "--gold-subtle": "rgba(225,29,72,0.05)",
+            "--border-accent": "rgba(225,29,72,0.25)",
+            "--text-gold": "#BE123C",
+            "--grad-logo": "linear-gradient(135deg, #E11D48 0%, #DB2777 100%)",
+            "--grad-btn": "linear-gradient(135deg, #E11D48 0%, #DB2777 100%)",
+            "--grad-acc": "linear-gradient(135deg, #E11D48, #DB2777)",
+            "--shadow-btn": "0 4px 20px rgba(225,29,72,0.20), 0 0 0 1px rgba(225,29,72,0.10)",
+            "--shadow-input": "0 0 0 2px rgba(225,29,72,0.28), 0 0 12px rgba(225,29,72,0.06)",
+            "--orb-a": "rgba(225,29,72,0.06)", "--orb-b": "rgba(219,39,119,0.05)"
+        }
+    }',
+    '["#F43F5E", "#EC4899"]',
+    'Yenilikçi yaklaşımla,<br><strong>destek deneyimi</strong>',
+    'Modern yapay zeka teknolojileriyle müşteri destek süreçlerinizi dönüştürün.',
+    '[{"title":"Dinamik Yanıt Motoru","desc":"Bağlam duyarlı AI · Kişiselleştirilmiş öneriler","icon":"accent"},{"title":"Zengin Bilgi Havuzu","desc":"API entegrasyonu · Çapraz referans arama","icon":"blue"},{"title":"Detaylı Analitik","desc":"Performans metrikleri · Trend analizi","icon":"green"}]',
+    4
+),
+(
+    'Buzul Beyazı', 'arctic_ice', 'Soğuk cyan-mavi tonlar, temiz ve profesyonel',
+    '{
+        "dark": {
+            "--gold": "#06B6D4", "--gold-2": "#3B82F6",
+            "--gold-dim": "rgba(6,182,212,0.12)", "--gold-glow": "rgba(6,182,212,0.18)",
+            "--gold-subtle": "rgba(6,182,212,0.07)",
+            "--border-accent": "rgba(6,182,212,0.30)",
+            "--text-gold": "#67E8F9",
+            "--grad-logo": "linear-gradient(135deg, #06B6D4 0%, #3B82F6 100%)",
+            "--grad-btn": "linear-gradient(135deg, #06B6D4 0%, #3B82F6 100%)",
+            "--grad-acc": "linear-gradient(135deg, #06B6D4, #3B82F6)",
+            "--shadow-btn": "0 4px 20px rgba(6,182,212,0.25), 0 0 0 1px rgba(6,182,212,0.12)",
+            "--shadow-input": "0 0 0 2px rgba(6,182,212,0.35), 0 0 16px rgba(6,182,212,0.08)",
+            "--orb-a": "rgba(6,182,212,0.12)", "--orb-b": "rgba(59,130,246,0.08)"
+        },
+        "light": {
+            "--gold": "#0891B2", "--gold-2": "#2563EB",
+            "--gold-dim": "rgba(8,145,178,0.08)", "--gold-glow": "rgba(8,145,178,0.12)",
+            "--gold-subtle": "rgba(8,145,178,0.05)",
+            "--border-accent": "rgba(8,145,178,0.25)",
+            "--text-gold": "#0E7490",
+            "--grad-logo": "linear-gradient(135deg, #0891B2 0%, #2563EB 100%)",
+            "--grad-btn": "linear-gradient(135deg, #0891B2 0%, #2563EB 100%)",
+            "--grad-acc": "linear-gradient(135deg, #0891B2, #2563EB)",
+            "--shadow-btn": "0 4px 20px rgba(8,145,178,0.20), 0 0 0 1px rgba(8,145,178,0.10)",
+            "--shadow-input": "0 0 0 2px rgba(8,145,178,0.28), 0 0 12px rgba(8,145,178,0.06)",
+            "--orb-a": "rgba(8,145,178,0.06)", "--orb-b": "rgba(37,99,235,0.05)"
+        }
+    }',
+    '["#06B6D4", "#3B82F6"]',
+    'Berrak ve hızlı,<br><strong>bilgi erişimi</strong>',
+    'Kristal netliğinde yanıtlarla kurumsal bilgi akışınızı optimize edin.',
+    '[{"title":"Ultra Hızlı Arama","desc":"Milisaniye düzeyinde sonuçlar · Akıllı sıralama","icon":"accent"},{"title":"Çok Katmanlı Güvenlik","desc":"Şifreli iletişim · Rol bazlı erişim kontrolü","icon":"blue"},{"title":"Esnek Entegrasyon","desc":"RESTful API · Webhook desteği","icon":"green"}]',
+    5
+),
+(
+    'Volkanik Kırmızı', 'volcanic_red', 'Güçlü kırmızı tonlar, dikkat çekici ve cesur',
+    '{
+        "dark": {
+            "--gold": "#EF4444", "--gold-2": "#B91C1C",
+            "--gold-dim": "rgba(239,68,68,0.12)", "--gold-glow": "rgba(239,68,68,0.18)",
+            "--gold-subtle": "rgba(239,68,68,0.07)",
+            "--border-accent": "rgba(239,68,68,0.30)",
+            "--text-gold": "#FCA5A5",
+            "--grad-logo": "linear-gradient(135deg, #EF4444 0%, #B91C1C 100%)",
+            "--grad-btn": "linear-gradient(135deg, #EF4444 0%, #B91C1C 100%)",
+            "--grad-acc": "linear-gradient(135deg, #EF4444, #B91C1C)",
+            "--shadow-btn": "0 4px 20px rgba(239,68,68,0.25), 0 0 0 1px rgba(239,68,68,0.12)",
+            "--shadow-input": "0 0 0 2px rgba(239,68,68,0.35), 0 0 16px rgba(239,68,68,0.08)",
+            "--orb-a": "rgba(239,68,68,0.12)", "--orb-b": "rgba(185,28,28,0.08)"
+        },
+        "light": {
+            "--gold": "#DC2626", "--gold-2": "#991B1B",
+            "--gold-dim": "rgba(220,38,38,0.08)", "--gold-glow": "rgba(220,38,38,0.12)",
+            "--gold-subtle": "rgba(220,38,38,0.05)",
+            "--border-accent": "rgba(220,38,38,0.25)",
+            "--text-gold": "#B91C1C",
+            "--grad-logo": "linear-gradient(135deg, #DC2626 0%, #991B1B 100%)",
+            "--grad-btn": "linear-gradient(135deg, #DC2626 0%, #991B1B 100%)",
+            "--grad-acc": "linear-gradient(135deg, #DC2626, #991B1B)",
+            "--shadow-btn": "0 4px 20px rgba(220,38,38,0.20), 0 0 0 1px rgba(220,38,38,0.10)",
+            "--shadow-input": "0 0 0 2px rgba(220,38,38,0.28), 0 0 12px rgba(220,38,38,0.06)",
+            "--orb-a": "rgba(220,38,38,0.06)", "--orb-b": "rgba(153,27,27,0.05)"
+        }
+    }',
+    '["#EF4444", "#B91C1C"]',
+    'Güçlü teknoloji,<br><strong>kesintisiz destek</strong>',
+    'Kritik iş süreçleriniz için güvenilir ve hızlı yapay zeka destekli çözümler.',
+    '[{"title":"Kritik Destek Yönetimi","desc":"Öncelikli yanıt · Eskalasyon otomasyonu","icon":"accent"},{"title":"Kapsamlı İzleme","desc":"Gerçek zamanlı dashboard · Alarm sistemi","icon":"blue"},{"title":"Yüksek Erişilebilirlik","desc":"7/24 hizmet · Çoklu kanal desteği","icon":"green"}]',
+    6
+),
+(
+    'Kraliyet Moru', 'royal_purple', 'Zarif mor tonlar, premium ve sofistike',
+    '{
+        "dark": {
+            "--gold": "#8B5CF6", "--gold-2": "#6D28D9",
+            "--gold-dim": "rgba(139,92,246,0.12)", "--gold-glow": "rgba(139,92,246,0.18)",
+            "--gold-subtle": "rgba(139,92,246,0.07)",
+            "--border-accent": "rgba(139,92,246,0.30)",
+            "--text-gold": "#C4B5FD",
+            "--grad-logo": "linear-gradient(135deg, #8B5CF6 0%, #6D28D9 100%)",
+            "--grad-btn": "linear-gradient(135deg, #8B5CF6 0%, #6D28D9 100%)",
+            "--grad-acc": "linear-gradient(135deg, #8B5CF6, #6D28D9)",
+            "--shadow-btn": "0 4px 20px rgba(139,92,246,0.25), 0 0 0 1px rgba(139,92,246,0.12)",
+            "--shadow-input": "0 0 0 2px rgba(139,92,246,0.35), 0 0 16px rgba(139,92,246,0.08)",
+            "--orb-a": "rgba(139,92,246,0.12)", "--orb-b": "rgba(109,40,217,0.08)"
+        },
+        "light": {
+            "--gold": "#7C3AED", "--gold-2": "#5B21B6",
+            "--gold-dim": "rgba(124,58,237,0.08)", "--gold-glow": "rgba(124,58,237,0.12)",
+            "--gold-subtle": "rgba(124,58,237,0.05)",
+            "--border-accent": "rgba(124,58,237,0.25)",
+            "--text-gold": "#6D28D9",
+            "--grad-logo": "linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%)",
+            "--grad-btn": "linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%)",
+            "--grad-acc": "linear-gradient(135deg, #7C3AED, #5B21B6)",
+            "--shadow-btn": "0 4px 20px rgba(124,58,237,0.20), 0 0 0 1px rgba(124,58,237,0.10)",
+            "--shadow-input": "0 0 0 2px rgba(124,58,237,0.28), 0 0 12px rgba(124,58,237,0.06)",
+            "--orb-a": "rgba(124,58,237,0.06)", "--orb-b": "rgba(91,33,182,0.05)"
+        }
+    }',
+    '["#8B5CF6", "#6D28D9"]',
+    'Premium deneyim,<br><strong>üstün performans</strong>',
+    'Kurumsal sınıf yapay zeka ile bilgi yönetiminde premium çözümler.',
+    '[{"title":"Gelişmiş AI Motoru","desc":"GPT-4 seviye doğruluk · Çoklu dil desteği","icon":"accent"},{"title":"Akıllı Öğrenme","desc":"Sürekli gelişen model · Feedback döngüsü","icon":"blue"},{"title":"Premium Destek","desc":"Öncelikli müdahale · Özel danışmanlık","icon":"green"}]',
+    7
+),
+(
+    'Gece Mavisi', 'midnight_teal', 'Sakin teal tonları, güvenilir ve modern',
+    '{
+        "dark": {
+            "--gold": "#14B8A6", "--gold-2": "#0D9488",
+            "--gold-dim": "rgba(20,184,166,0.12)", "--gold-glow": "rgba(20,184,166,0.18)",
+            "--gold-subtle": "rgba(20,184,166,0.07)",
+            "--border-accent": "rgba(20,184,166,0.30)",
+            "--text-gold": "#5EEAD4",
+            "--grad-logo": "linear-gradient(135deg, #14B8A6 0%, #0D9488 100%)",
+            "--grad-btn": "linear-gradient(135deg, #14B8A6 0%, #0D9488 100%)",
+            "--grad-acc": "linear-gradient(135deg, #14B8A6, #0D9488)",
+            "--shadow-btn": "0 4px 20px rgba(20,184,166,0.25), 0 0 0 1px rgba(20,184,166,0.12)",
+            "--shadow-input": "0 0 0 2px rgba(20,184,166,0.35), 0 0 16px rgba(20,184,166,0.08)",
+            "--orb-a": "rgba(20,184,166,0.12)", "--orb-b": "rgba(13,148,136,0.08)"
+        },
+        "light": {
+            "--gold": "#0D9488", "--gold-2": "#0F766E",
+            "--gold-dim": "rgba(13,148,136,0.08)", "--gold-glow": "rgba(13,148,136,0.12)",
+            "--gold-subtle": "rgba(13,148,136,0.05)",
+            "--border-accent": "rgba(13,148,136,0.25)",
+            "--text-gold": "#0F766E",
+            "--grad-logo": "linear-gradient(135deg, #0D9488 0%, #0F766E 100%)",
+            "--grad-btn": "linear-gradient(135deg, #0D9488 0%, #0F766E 100%)",
+            "--grad-acc": "linear-gradient(135deg, #0D9488, #0F766E)",
+            "--shadow-btn": "0 4px 20px rgba(13,148,136,0.20), 0 0 0 1px rgba(13,148,136,0.10)",
+            "--shadow-input": "0 0 0 2px rgba(13,148,136,0.28), 0 0 12px rgba(13,148,136,0.06)",
+            "--orb-a": "rgba(13,148,136,0.06)", "--orb-b": "rgba(15,118,110,0.05)"
+        }
+    }',
+    '["#14B8A6", "#0D9488"]',
+    'Güvenilir teknoloji,<br><strong>akıllı asistan</strong>',
+    'Sakin ve güvenilir yapay zeka desteğiyle kurumsal süreçlerinizi kolaylaştırın.',
+    '[{"title":"Proaktif Destek","desc":"Otomatik uyarı · Önleyici bakım önerileri","icon":"accent"},{"title":"Entegre Bilgi Yönetimi","desc":"Merkezi doküman havuzu · Versiyon kontrolü","icon":"blue"},{"title":"Kolay Yönetim","desc":"Sezgisel arayüz · Hızlı kurulum","icon":"green"}]',
+    8
+),
+(
+    'Karbon Çeliği', 'carbon_steel', 'Minimal gri tonlar, endüstriyel ve sade',
+    '{
+        "dark": {
+            "--gold": "#9CA3AF", "--gold-2": "#6B7280",
+            "--gold-dim": "rgba(156,163,175,0.12)", "--gold-glow": "rgba(156,163,175,0.18)",
+            "--gold-subtle": "rgba(156,163,175,0.07)",
+            "--border-accent": "rgba(156,163,175,0.30)",
+            "--text-gold": "#D1D5DB",
+            "--grad-logo": "linear-gradient(135deg, #9CA3AF 0%, #6B7280 100%)",
+            "--grad-btn": "linear-gradient(135deg, #9CA3AF 0%, #6B7280 100%)",
+            "--grad-acc": "linear-gradient(135deg, #9CA3AF, #6B7280)",
+            "--shadow-btn": "0 4px 20px rgba(156,163,175,0.25), 0 0 0 1px rgba(156,163,175,0.12)",
+            "--shadow-input": "0 0 0 2px rgba(156,163,175,0.35), 0 0 16px rgba(156,163,175,0.08)",
+            "--orb-a": "rgba(156,163,175,0.12)", "--orb-b": "rgba(107,114,128,0.08)"
+        },
+        "light": {
+            "--gold": "#6B7280", "--gold-2": "#4B5563",
+            "--gold-dim": "rgba(107,114,128,0.08)", "--gold-glow": "rgba(107,114,128,0.12)",
+            "--gold-subtle": "rgba(107,114,128,0.05)",
+            "--border-accent": "rgba(107,114,128,0.25)",
+            "--text-gold": "#4B5563",
+            "--grad-logo": "linear-gradient(135deg, #6B7280 0%, #4B5563 100%)",
+            "--grad-btn": "linear-gradient(135deg, #6B7280 0%, #4B5563 100%)",
+            "--grad-acc": "linear-gradient(135deg, #6B7280, #4B5563)",
+            "--shadow-btn": "0 4px 20px rgba(107,114,128,0.20), 0 0 0 1px rgba(107,114,128,0.10)",
+            "--shadow-input": "0 0 0 2px rgba(107,114,128,0.28), 0 0 12px rgba(107,114,128,0.06)",
+            "--orb-a": "rgba(107,114,128,0.06)", "--orb-b": "rgba(75,85,99,0.05)"
+        }
+    }',
+    '["#9CA3AF", "#6B7280"]',
+    'Endüstriyel güç,<br><strong>minimalist tasarım</strong>',
+    'Sade ve işlevsel arayüzle kurumsal bilgi yönetiminde verimlilik odaklı çözümler.',
+    '[{"title":"Verimli İş Akışı","desc":"Otomatik yönlendirme · İş kuralları motoru","icon":"accent"},{"title":"Endüstriyel Kalite","desc":"Yüksek uptime · Ölçeklenebilir mimari","icon":"blue"},{"title":"Standart Uyumluluk","desc":"ISO sertifikalı · KVKK uyumlu","icon":"green"}]',
+    9
+),
+(
+    'Neon Elektrik', 'neon_electric', 'Canlı mor-pembe gradient, enerjik ve genç',
+    '{
+        "dark": {
+            "--gold": "#A855F7", "--gold-2": "#EC4899",
+            "--gold-dim": "rgba(168,85,247,0.12)", "--gold-glow": "rgba(168,85,247,0.18)",
+            "--gold-subtle": "rgba(168,85,247,0.07)",
+            "--border-accent": "rgba(168,85,247,0.30)",
+            "--text-gold": "#D8B4FE",
+            "--grad-logo": "linear-gradient(135deg, #A855F7 0%, #EC4899 100%)",
+            "--grad-btn": "linear-gradient(135deg, #A855F7 0%, #EC4899 100%)",
+            "--grad-acc": "linear-gradient(135deg, #A855F7, #EC4899)",
+            "--shadow-btn": "0 4px 20px rgba(168,85,247,0.25), 0 0 0 1px rgba(168,85,247,0.12)",
+            "--shadow-input": "0 0 0 2px rgba(168,85,247,0.35), 0 0 16px rgba(168,85,247,0.08)",
+            "--orb-a": "rgba(168,85,247,0.12)", "--orb-b": "rgba(236,72,153,0.08)"
+        },
+        "light": {
+            "--gold": "#9333EA", "--gold-2": "#DB2777",
+            "--gold-dim": "rgba(147,51,234,0.08)", "--gold-glow": "rgba(147,51,234,0.12)",
+            "--gold-subtle": "rgba(147,51,234,0.05)",
+            "--border-accent": "rgba(147,51,234,0.25)",
+            "--text-gold": "#7E22CE",
+            "--grad-logo": "linear-gradient(135deg, #9333EA 0%, #DB2777 100%)",
+            "--grad-btn": "linear-gradient(135deg, #9333EA 0%, #DB2777 100%)",
+            "--grad-acc": "linear-gradient(135deg, #9333EA, #DB2777)",
+            "--shadow-btn": "0 4px 20px rgba(147,51,234,0.20), 0 0 0 1px rgba(147,51,234,0.10)",
+            "--shadow-input": "0 0 0 2px rgba(147,51,234,0.28), 0 0 12px rgba(147,51,234,0.06)",
+            "--orb-a": "rgba(147,51,234,0.06)", "--orb-b": "rgba(219,39,119,0.05)"
+        }
+    }',
+    '["#A855F7", "#EC4899"]',
+    'Geleceğin teknolojisi,<br><strong>bugünün çözümü</strong>',
+    'En son yapay zeka teknolojileriyle donatılmış next-gen bilgi yönetim platformu.',
+    '[{"title":"Next-Gen AI","desc":"Son nesil dil modelleri · Çok modlu analiz","icon":"accent"},{"title":"Anında İçgörü","desc":"Gerçek zamanlı veri analizi · Trend tespiti","icon":"blue"},{"title":"Sınırsız Ölçekleme","desc":"Bulut yerel mimari · Mikro servisler","icon":"green"}]',
+    10
+),
+(
+    'Sarı Siyah', 'yellow_black', 'VYRA klasik sarı-siyah, güçlü kontrast ve dikkat çekici',
+    '{
+        "dark": {
+            "--gold": "#EAB308", "--gold-2": "#CA8A04",
+            "--gold-dim": "rgba(234,179,8,0.12)", "--gold-glow": "rgba(234,179,8,0.18)",
+            "--gold-subtle": "rgba(234,179,8,0.07)",
+            "--border-accent": "rgba(234,179,8,0.30)",
+            "--text-gold": "#FDE047",
+            "--grad-logo": "linear-gradient(135deg, #EAB308 0%, #CA8A04 100%)",
+            "--grad-btn": "linear-gradient(135deg, #EAB308 0%, #CA8A04 100%)",
+            "--grad-acc": "linear-gradient(135deg, #EAB308, #CA8A04)",
+            "--shadow-btn": "0 4px 20px rgba(234,179,8,0.25), 0 0 0 1px rgba(234,179,8,0.12)",
+            "--shadow-input": "0 0 0 2px rgba(234,179,8,0.35), 0 0 16px rgba(234,179,8,0.08)",
+            "--orb-a": "rgba(234,179,8,0.12)", "--orb-b": "rgba(202,138,4,0.08)"
+        },
+        "light": {
+            "--gold": "#CA8A04", "--gold-2": "#A16207",
+            "--gold-dim": "rgba(202,138,4,0.08)", "--gold-glow": "rgba(202,138,4,0.12)",
+            "--gold-subtle": "rgba(202,138,4,0.05)",
+            "--border-accent": "rgba(202,138,4,0.25)",
+            "--text-gold": "#A16207",
+            "--grad-logo": "linear-gradient(135deg, #CA8A04 0%, #A16207 100%)",
+            "--grad-btn": "linear-gradient(135deg, #CA8A04 0%, #A16207 100%)",
+            "--grad-acc": "linear-gradient(135deg, #CA8A04, #A16207)",
+            "--shadow-btn": "0 4px 20px rgba(202,138,4,0.20), 0 0 0 1px rgba(202,138,4,0.10)",
+            "--shadow-input": "0 0 0 2px rgba(202,138,4,0.28), 0 0 12px rgba(202,138,4,0.06)",
+            "--orb-a": "rgba(202,138,4,0.06)", "--orb-b": "rgba(161,98,7,0.05)"
+        }
+    }',
+    '["#EAB308", "#CA8A04"]',
+    'Güçlü ve kararlı,<br><strong>kurumsal destek platformu</strong>',
+    'Sarı-siyah kontrastıyla dikkat çeken, yüksek performanslı kurumsal bilgi yönetim sistemi.',
+    '[{"title":"Kurumsal Çözüm Merkezi","desc":"Tek noktadan destek · Hızlı erişim","icon":"accent"},{"title":"Güçlü Bilgi Tabanı","desc":"Yapılandırılmış dokümanlar · Akıllı arama","icon":"blue"},{"title":"Merkezi Yönetim","desc":"Firma bazlı izolasyon · Tam kontrol","icon":"green"}]',
+    11
+)
+ON CONFLICT (code) DO NOTHING;
+
 """

@@ -2,7 +2,7 @@
 VYRA L1 Support API - Companies Routes
 ========================================
 Multi-tenant firma yönetimi CRUD endpoint'leri.
-v2.53.0
+v2.59.0 — app_name, theme_id branding desteği
 """
 
 import logging
@@ -24,6 +24,8 @@ router = APIRouter(prefix="/api/companies", tags=["companies"])
 
 class CompanyCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=255)
+    app_name: Optional[str] = Field(None, max_length=200)
+    theme_id: Optional[int] = None
     tax_type: str = Field("vd", pattern=r'^(vd|tckn)$')
     tax_number: str = Field(..., min_length=1, max_length=11)
     address_il: Optional[str] = Field(None, max_length=100)
@@ -39,6 +41,8 @@ class CompanyCreate(BaseModel):
 
 class CompanyUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=255)
+    app_name: Optional[str] = Field(None, max_length=200)
+    theme_id: Optional[int] = None
     tax_type: Optional[str] = Field(None, pattern=r'^(vd|tckn)$')
     tax_number: Optional[str] = Field(None, min_length=1, max_length=11)
     address_il: Optional[str] = Field(None, max_length=100)
@@ -74,11 +78,15 @@ def get_company_by_url(url: str = Query(..., description="Eşleştirilecek URL")
         cur = conn.cursor()
         # DB'deki website'lardan da host:port çıkarıp eşleştir
         cur.execute("""
-            SELECT id, name, website, (logo_data IS NOT NULL) as has_logo
-            FROM companies
-            WHERE website IS NOT NULL 
-              AND website != ''
-              AND is_active = TRUE
+            SELECT c.id, c.name, c.app_name, c.website, c.theme_id,
+                   (c.logo_data IS NOT NULL) as has_logo,
+                   ct.code as theme_code, ct.css_variables as theme_css,
+                   ct.login_headline, ct.login_subtitle, ct.features_json
+            FROM companies c
+            LEFT JOIN company_themes ct ON ct.id = c.theme_id AND ct.is_active = TRUE
+            WHERE c.website IS NOT NULL 
+              AND c.website != ''
+              AND c.is_active = TRUE
         """)
         rows = cur.fetchall()
 
@@ -86,13 +94,24 @@ def get_company_by_url(url: str = Query(..., description="Eşleştirilecek URL")
     for row in rows:
         db_match = re.match(r'https?://([^/]+)', row["website"] or "")
         if db_match and db_match.group(1).lower() == request_host:
+            theme_data = None
+            if row["theme_code"]:
+                theme_data = {
+                    "code": row["theme_code"],
+                    "css_variables": row["theme_css"],
+                    "login_headline": row["login_headline"],
+                    "login_subtitle": row["login_subtitle"],
+                    "features_json": row["features_json"]
+                }
             return {
                 "found": True,
                 "company": {
                     "id": row["id"],
                     "name": row["name"],
+                    "app_name": row["app_name"] or "NGSSAI",
                     "has_logo": row["has_logo"],
-                    "logo_url": f"/api/companies/{row['id']}/logo" if row["has_logo"] else None
+                    "logo_url": f"/api/companies/{row['id']}/logo" if row["has_logo"] else None,
+                    "theme": theme_data
                 }
             }
 
@@ -112,7 +131,7 @@ def get_companies(current_user: Dict[str, Any] = Depends(get_current_user)):
 
         if is_admin:
             cur.execute("""
-                SELECT id, name, tax_type, tax_number,
+                SELECT id, name, app_name, theme_id, tax_type, tax_number,
                        address_il, address_ilce, address_mahalle, address_text,
                        phone, email, website, contact_name, contact_surname,
                        is_active, created_at, updated_at,
@@ -125,7 +144,7 @@ def get_companies(current_user: Dict[str, Any] = Depends(get_current_user)):
             if not company_id:
                 return []
             cur.execute("""
-                SELECT id, name, tax_type, tax_number,
+                SELECT id, name, app_name, theme_id, tax_type, tax_number,
                        address_il, address_ilce, address_mahalle, address_text,
                        phone, email, website, contact_name, contact_surname,
                        is_active, created_at, updated_at,
@@ -150,7 +169,7 @@ def get_company(company_id: int, current_user: Dict[str, Any] = Depends(get_curr
     with get_db_context() as conn:
         cur = conn.cursor()
         cur.execute("""
-            SELECT id, name, tax_type, tax_number,
+            SELECT id, name, app_name, theme_id, tax_type, tax_number,
                    address_il, address_ilce, address_mahalle, address_text,
                    phone, email, website, contact_name, contact_surname,
                    is_active, created_at, updated_at,
@@ -187,17 +206,18 @@ def create_company(
 
         cur.execute("""
             INSERT INTO companies (
-                name, tax_type, tax_number,
+                name, app_name, theme_id, tax_type, tax_number,
                 address_il, address_ilce, address_mahalle, address_text,
                 phone, email, website, contact_name, contact_surname,
                 created_by
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id, name, tax_type, tax_number,
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, name, app_name, theme_id, tax_type, tax_number,
                       address_il, address_ilce, address_mahalle, address_text,
                       phone, email, website, contact_name, contact_surname,
                       is_active, created_at, updated_at
         """, (
-            company.name, company.tax_type, company.tax_number,
+            company.name, company.app_name or 'NGSSAI', company.theme_id,
+            company.tax_type, company.tax_number,
             company.address_il, company.address_ilce,
             company.address_mahalle, company.address_text,
             company.phone, company.email, company.website,
@@ -257,7 +277,7 @@ def update_company(
         conn.commit()
 
         cur.execute("""
-            SELECT id, name, tax_type, tax_number,
+            SELECT id, name, app_name, theme_id, tax_type, tax_number,
                    address_il, address_ilce, address_mahalle, address_text,
                    phone, email, website, contact_name, contact_surname,
                    is_active, created_at, updated_at,
