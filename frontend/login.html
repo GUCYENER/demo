@@ -242,12 +242,7 @@ body::before {
   -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
 }
 .stat-lbl { font-size: 11px; color: var(--text-3); margin-top: 4px; letter-spacing: 0.02em; }
-.vdivider { width: 1px; flex-shrink: 0; background: var(--border); position: relative; }
-.vdivider::before {
-  content: '';
-  position: absolute; top: 20%; bottom: 20%; left: 0; width: 1px;
-  background: linear-gradient(180deg, transparent, var(--border-accent), transparent);
-}
+/* Form Panel — SOL taraf */
 .form-panel {
   width: 460px; min-width: 420px;
   display: flex; flex-direction: column;
@@ -256,14 +251,23 @@ body::before {
   background: var(--bg-panel);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
-  border-left: 1px solid var(--border);
   position: relative; overflow-y: auto;
+}
+.form-panel-left {
+  border-right: 1px solid var(--border);
+  border-left: none;
 }
 .form-panel::before {
   content: '';
   position: absolute; top: 0; left: 0; right: 0; bottom: 0;
   background: var(--grad-surface);
   pointer-events: none;
+}
+.vdivider { width: 1px; flex-shrink: 0; background: var(--border); position: relative; }
+.vdivider::before {
+  content: '';
+  position: absolute; top: 20%; bottom: 20%; left: 0; width: 1px;
+  background: linear-gradient(180deg, transparent, var(--border-accent), transparent);
 }
 .form-card {
   width: 100%; max-width: 360px;
@@ -406,11 +410,64 @@ body::before {
 @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
 .tab-content { display: none; }
 .tab-content.active { display: block; }
-@media (max-width: 820px) {
-  .brand-panel, .vdivider { display: none; }
-  .form-panel { width: 100%; min-width: 0; border-left: none; }
+/* Brand Panel — SAĞ taraf */
+.brand-panel {
+  flex: 1; position: relative;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 60px 72px; overflow: hidden;
 }
-/* Company Branding Block */
+.brand-panel::after {
+  content: '';
+  position: absolute; inset: 0;
+  background-image:
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size: 52px 52px;
+  mask-image: radial-gradient(ellipse 85% 85% at 55% 50%, black 30%, transparent 70%);
+  pointer-events: none;
+}
+.brand-content-right {
+  position: relative; z-index: 2;
+  display: flex; flex-direction: column;
+  align-items: center; gap: 32px;
+  max-width: 520px; width: 100%;
+  text-align: center;
+}
+.vyra-logo-frame {
+  width: 320px; max-width: 90%;
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.08),
+              0 20px 60px rgba(0,0,0,0.50),
+              0 0 80px rgba(77,153,255,0.08);
+  animation: logoFloat 6s ease-in-out infinite alternate;
+}
+@keyframes logoFloat {
+  from { transform: translateY(0); }
+  to   { transform: translateY(-8px); }
+}
+.vyra-hero-logo {
+  display: block; width: 100%; height: auto;
+}
+.vyra-hero-title {
+  font-size: 28px; font-weight: 700;
+  line-height: 1.3; letter-spacing: -0.01em;
+  background: var(--grad-acc);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: slideUp 0.7s cubic-bezier(0.22,1,0.36,1) 0.2s both;
+}
+.vyra-hero-sub {
+  font-size: 14px; color: var(--text-2);
+  line-height: 1.7; max-width: 380px;
+  animation: slideUp 0.7s cubic-bezier(0.22,1,0.36,1) 0.3s both;
+}
+@media (max-width: 960px) {
+  .brand-panel-right { display: none; }
+  .vdivider { display: none; }
+  .form-panel { width: 100%; min-width: 0; border-right: none; }
+}
 .company-branding {
   width: 100%; max-width: 360px;
   display: none;
@@ -484,89 +541,8 @@ body::before {
     <svg id="theme-ico" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
   </button>
 
-  <div class="brand-panel">
-    <div class="brand-content">
-
-      <div class="ngssai-logo-block">
-        <div class="ngssai-icon">
-          <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M6 10 L15 30 L20 18 L25 30 L34 10" stroke="rgba(26,12,0,0.5)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M6 10 L15 30 L20 18 L25 30 L34 10" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-            <circle cx="31" cy="12" r="5" fill="rgba(255,255,255,0.25)"/>
-            <path d="M28.5 12 L30.2 13.8 L33.5 10.5" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </div>
-        <div class="ngssai-wordmark">
-          <span class="ngssai-name">NGSSAI</span>
-          <span class="ngssai-version" id="brandVersion">v1.0 · AIOps Platform</span>
-        </div>
-      </div>
-
-      <div class="brand-headline">
-        <div class="brand-h1">
-          <em>Yapay zeka ile</em>,<br>
-          <strong>kurumsal bilgi yönetimi</strong>
-        </div>
-        <div class="brand-sub">
-          Dokümanlardan anında yanıt üretme, akıllı diyalog yönetimi ve RAG tabanlı bilgi tabanı platformu.
-        </div>
-      </div>
-
-      <div class="feature-stack">
-        <div class="feat">
-          <div class="feat-ic accent">
-            <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          </div>
-          <div class="feat-body">
-            <div class="feat-title">Akıllı Diyalog Yönetimi</div>
-            <div class="feat-desc">Çoklu LLM desteği · Bağlam duyarlı yanıtlar</div>
-          </div>
-        </div>
-        <div class="feat">
-          <div class="feat-ic blue">
-            <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-          </div>
-          <div class="feat-body">
-            <div class="feat-title">RAG Bilgi Tabanı</div>
-            <div class="feat-desc">PDF · DOCX · TXT doküman yükleme ve anlık sorgulama</div>
-          </div>
-        </div>
-        <div class="feat">
-          <div class="feat-ic green">
-            <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-          </div>
-          <div class="feat-body">
-            <div class="feat-title">Organizasyon ve Yetkilendirme</div>
-            <div class="feat-desc">Rol tabanlı erişim · Çoklu organizasyon desteği</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="stats-row">
-        <div class="stat-pill">
-          <span class="stat-val">&lt;2sn</span>
-          <span class="stat-lbl">Yanıt Süresi</span>
-        </div>
-        <div class="stat-pill">
-          <span class="stat-val">RAG</span>
-          <span class="stat-lbl">Bilgi Tabanı</span>
-        </div>
-        <div class="stat-pill">
-          <span class="stat-val">Çoklu</span>
-          <span class="stat-lbl">LLM Desteği</span>
-        </div>
-        <div class="stat-pill">
-          <span class="stat-val">7/24</span>
-          <span class="stat-lbl">Erişim</span>
-        </div>
-      </div>
-
-    </div>
-  </div>
-
-  <div class="vdivider"></div>
-
-  <div class="form-panel">
+  <!-- SOL: Form Paneli -->
+  <div class="form-panel form-panel-left">
 
     <!-- Firma Branding Bloğu (URL eşleşmesine göre gizli/görünür) -->
     <div class="company-branding" id="companyBrandingBlock">
@@ -721,7 +697,34 @@ body::before {
 
       <div class="version-badge">
         <div class="vb-dot"></div>
-        <span id="versionBadge">NGSSAI Platform</span>
+        <span id="versionBadge">VYRA Platform</span>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- AYIRICI -->
+  <div class="vdivider"></div>
+
+  <!-- SAĞ: VYRA Logo + Slogan Paneli -->
+  <div class="brand-panel brand-panel-right">
+    <div class="brand-content-right">
+
+      <div class="vyra-logo-frame">
+        <img src="assets/images/vyra_logo_new.png" alt="VYRA Logo" class="vyra-hero-logo" />
+      </div>
+
+      <h1 class="vyra-hero-title">
+        VYRA Dijital Gölgeniz<br>Her Zaman Yanınızda
+      </h1>
+
+      <p class="vyra-hero-sub">
+        Hemen Vyra'lamak için lütfen giriş yapın.
+      </p>
+
+      <div class="version-badge" id="brandVersion" style="margin-top:24px">
+        <div class="vb-dot"></div>
+        <span>VYRA AIOps Platform</span>
       </div>
 
     </div>
@@ -729,9 +732,9 @@ body::before {
 
 </div>
 
-<script src="assets/js/config.js?v=2.59.0"></script>
-<script src="assets/js/branding_engine.js?v=2.59.0"></script>
-<script src="assets/js/login_branding.js?v=2.59.0"></script>
+<script src="assets/js/config.js?v=2.60.1"></script>
+<script src="assets/js/branding_engine.js?v=2.60.1"></script>
+<script src="assets/js/login_branding.js?v=2.60.1"></script>
 <script>
 (function() {
   "use strict";
@@ -969,6 +972,8 @@ body::before {
               domainSelect.appendChild(option);
             });
             if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+            // Varsayılan olarak Lokal Kullanıcı (Admin) seçili kalsın
+            domainSelect.value = '';
           }
         })
         .catch(function() {
