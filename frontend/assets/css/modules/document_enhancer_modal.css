@@ -189,7 +189,7 @@
 }
 
 .enhancer-summary-card-value.catboost {
-    color: #f59e0b;
+    color: var(--gold-2, #f59e0b);
 }
 
 .enhancer-summary-card-value.enhanced {
@@ -286,7 +286,7 @@
 
 .enhancer-change-badge.table-fixed {
     background: rgba(245, 158, 11, 0.15);
-    color: #f59e0b;
+    color: var(--gold-2, #f59e0b);
 }
 
 .enhancer-change-badge.encoding-fixed {
@@ -309,7 +309,7 @@
     font-weight: 500;
     padding: 3px 8px;
     border-radius: 6px;
-    color: #f59e0b;
+    color: var(--gold-2, #f59e0b);
     background: rgba(245, 158, 11, 0.1);
 }
 

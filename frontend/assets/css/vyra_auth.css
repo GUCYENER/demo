@@ -56,7 +56,7 @@ body {
 }
 
 .tab input[type="radio"] {
-  accent-color: #facc15;
+  accent-color: var(--gold, #facc15);
   /* sarı (logo ile uyumlu) */
 }
 

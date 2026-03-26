@@ -92,9 +92,10 @@ window.CompanyModule = (function () {
         return await res.json();
     }
 
-    // --- Tema API (v2.60.0) ---
+    // --- Tema API (v2.60.0 → v2.60.1 UX fix) ---
 
     let assignedThemeIds = new Set();
+    let selectedDefaultThemeId = null;  // v2.60.1: Kullanıcının seçtiği varsayılan tema
 
     async function fetchThemesFull() {
         try {
@@ -124,13 +125,21 @@ window.CompanyModule = (function () {
         }
     }
 
-    function renderThemeCard(theme, isAssigned, isDefault) {
+    function renderThemeCard(theme, isAssigned, isDefault, mode) {
         var colors = theme.preview_colors || [];
         if (typeof colors === 'string') {
             try { colors = JSON.parse(colors); } catch(e) { colors = ['#666','#999']; }
         }
         var c1 = colors[0] || '#666';
         var c2 = colors[1] || '#999';
+        // mode: 'pool' = havuz kartı, 'assigned' = atanmış kart
+        var extraBtns = '';
+        if (mode === 'assigned') {
+            extraBtns = '<div class="design-card-actions">' +
+                '<button type="button" class="design-card-default-btn' + (isDefault ? ' active' : '') + '" data-default-theme="' + theme.id + '" title="Varsayılan Yap">★</button>' +
+                '<button type="button" class="design-card-remove-btn" data-remove-theme="' + theme.id + '" title="Kaldır">✕</button>' +
+            '</div>';
+        }
         return '<div class="design-theme-card ' + (isAssigned ? 'selected' : '') + '" data-theme-id="' + theme.id + '">' +
             '<div class="dt-check">✓</div>' +
             '<div class="dt-swatch">' +
@@ -138,8 +147,98 @@ window.CompanyModule = (function () {
                 '<div class="dt-swatch-half" style="background:' + c2 + '"></div>' +
             '</div>' +
             '<div class="dt-name">' + escapeHtml(theme.name) + '</div>' +
-            (isDefault ? '<div class="dt-check" style="display:flex;background:#22c55e;top:auto;bottom:4px;right:4px;font-size:8px">★</div>' : '') +
+            (isDefault ? '<div class="dt-check dt-check-default">★</div>' : '') +
+            extraBtns +
         '</div>';
+    }
+
+    /**
+     * Atanmış temalar grid'ini güncel Set'e göre yeniden render eder (v2.60.1)
+     */
+    function updateAssignedGrid() {
+        var assignedGrid = document.getElementById('companyAssignedThemes');
+        if (!assignedGrid) return;
+
+        if (assignedThemeIds.size === 0) {
+            assignedGrid.innerHTML = '<p class="design-empty-hint">Henüz tema atanmadı. Aşağıdan tema seçin.</p>';
+            selectedDefaultThemeId = null;
+        } else {
+            // Default tema kontrolü: eğer mevcut default kaldırıldıysa ilkini default yap
+            if (!selectedDefaultThemeId || !assignedThemeIds.has(selectedDefaultThemeId)) {
+                selectedDefaultThemeId = Array.from(assignedThemeIds)[0];
+            }
+            var html = '';
+            assignedThemeIds.forEach(function(tid) {
+                var t = themesList.find(function(th) { return th.id === tid; });
+                if (t) html += renderThemeCard(t, true, tid === selectedDefaultThemeId, 'assigned');
+            });
+            assignedGrid.innerHTML = html;
+
+            // Kaldır butonu
+            assignedGrid.querySelectorAll('[data-remove-theme]').forEach(function(btn) {
+                btn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    var tid = parseInt(this.getAttribute('data-remove-theme'), 10);
+                    var theme = themesList.find(function(th) { return th.id === tid; });
+                    assignedThemeIds.delete(tid);
+                    updateAssignedGrid();
+                    updatePoolGrid();
+                    syncHiddenInput();
+                    if (window.VyraToast && theme) VyraToast.info(theme.name + ' kaldırıldı');
+                });
+            });
+
+            // Varsayılan yap butonu
+            assignedGrid.querySelectorAll('[data-default-theme]').forEach(function(btn) {
+                btn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    var tid = parseInt(this.getAttribute('data-default-theme'), 10);
+                    selectedDefaultThemeId = tid;
+                    var theme = themesList.find(function(th) { return th.id === tid; });
+                    updateAssignedGrid();
+                    syncHiddenInput();
+                    if (window.VyraToast && theme) VyraToast.success(theme.name + ' varsayılan yapıldı');
+                });
+            });
+        }
+    }
+
+    /**
+     * Havuz grid'ini güncel Set'e göre yeniden render eder (v2.60.1)
+     */
+    function updatePoolGrid() {
+        var poolGrid = document.getElementById('companyThemePool');
+        if (!poolGrid) return;
+
+        poolGrid.innerHTML = themesList.map(function(t) {
+            return renderThemeCard(t, assignedThemeIds.has(t.id), t.id === selectedDefaultThemeId, 'pool');
+        }).join('');
+
+        // Kart tıklama — toggle selection
+        poolGrid.querySelectorAll('.design-theme-card').forEach(function(card) {
+            card.addEventListener('click', function() {
+                var tid = parseInt(this.getAttribute('data-theme-id'), 10);
+                var theme = themesList.find(function(th) { return th.id === tid; });
+                if (assignedThemeIds.has(tid)) {
+                    assignedThemeIds.delete(tid);
+                    if (window.VyraToast && theme) VyraToast.info(theme.name + ' kaldırıldı');
+                } else {
+                    assignedThemeIds.add(tid);
+                    if (window.VyraToast && theme) VyraToast.info(theme.name + ' eklendi');
+                }
+                updateAssignedGrid();
+                updatePoolGrid();
+                syncHiddenInput();
+            });
+        });
+    }
+
+    /**
+     * Hidden input'u güncel default tema ile senkronize eder
+     */
+    function syncHiddenInput() {
+        var hiddenInput = document.getElementById('companyThemeId');
+        if (hiddenInput) hiddenInput.value = selectedDefaultThemeId || '';
     }
 
     async function renderDesignTab(companyId) {
@@ -149,59 +248,28 @@ window.CompanyModule = (function () {
         // Firmaya atanmış temaları yükle
         var assigned = companyId ? await fetchAssignedThemes(companyId) : [];
         assignedThemeIds = new Set(assigned.map(function(a) { return a.id; }));
-        var defaultThemeId = null;
-        assigned.forEach(function(a) { if (a.is_default) defaultThemeId = a.id; });
+        selectedDefaultThemeId = null;
+        assigned.forEach(function(a) { if (a.is_default) selectedDefaultThemeId = a.id; });
 
-        // Atanmış temalar grid
-        var assignedGrid = document.getElementById('companyAssignedThemes');
-        if (assignedGrid) {
-            if (assigned.length === 0) {
-                assignedGrid.innerHTML = '<p style="color:#6b7280;font-size:12px;grid-column:1/-1">Henüz tema atanmadı. Aşağıdan tema seçin.</p>';
-            } else {
-                assignedGrid.innerHTML = assigned.map(function(t) {
-                    return renderThemeCard(t, true, t.is_default);
-                }).join('');
-            }
-        }
+        // Atanmış temalar grid (v2.60.1: updateAssignedGrid kullan)
+        updateAssignedGrid();
 
-        // Tema havuzu grid (tümü)
-        var poolGrid = document.getElementById('companyThemePool');
-        if (poolGrid) {
-            poolGrid.innerHTML = themesList.map(function(t) {
-                return renderThemeCard(t, assignedThemeIds.has(t.id), t.id === defaultThemeId);
-            }).join('');
-
-            // Kart tıklama — toggle selection
-            poolGrid.querySelectorAll('.design-theme-card').forEach(function(card) {
-                card.addEventListener('click', function() {
-                    var tid = parseInt(this.getAttribute('data-theme-id'), 10);
-                    if (assignedThemeIds.has(tid)) {
-                        assignedThemeIds.delete(tid);
-                        this.classList.remove('selected');
-                    } else {
-                        assignedThemeIds.add(tid);
-                        this.classList.add('selected');
-                    }
-                    // Hidden input güncelle (ilk seçili tema default)
-                    var ids = Array.from(assignedThemeIds);
-                    var hiddenInput = document.getElementById('companyThemeId');
-                    if (hiddenInput) hiddenInput.value = ids[0] || '';
-                });
-            });
-        }
+        // Tema havuzu grid (v2.60.1: updatePoolGrid kullan)
+        updatePoolGrid();
 
         // Color picker önizleme
         var c1Input = document.getElementById('newThemeColor1');
         var c2Input = document.getElementById('newThemeColor2');
         if (c1Input && c2Input) {
-            function updatePreview() {
+            var updatePreview = function() {
                 var h1 = document.getElementById('newThemePreviewHalf1');
                 var h2 = document.getElementById('newThemePreviewHalf2');
                 if (h1) h1.style.background = c1Input.value;
                 if (h2) h2.style.background = c2Input.value;
-            }
+            };
             c1Input.addEventListener('input', updatePreview);
             c2Input.addEventListener('input', updatePreview);
+            updatePreview(); // v2.60.1: Başlangıç renklerini hemen uygula
         }
 
         // Öner butonu
@@ -576,9 +644,15 @@ window.CompanyModule = (function () {
                     }
                 }
 
-                // Logo preview
+                // Logo preview (v2.60.1: onerror fallback)
                 if (company.has_logo && preview) {
-                    preview.innerHTML = '<img src="' + API_BASE + '/api/companies/' + company.id + '/logo" alt="Logo" class="company-logo-preview-img">';
+                    var logoImg = document.createElement('img');
+                    logoImg.src = API_BASE + '/api/companies/' + company.id + '/logo';
+                    logoImg.alt = 'Logo';
+                    logoImg.className = 'company-logo-preview-img';
+                    logoImg.onerror = function() { preview.innerHTML = '<div class="company-logo-placeholder"><i class="fa-solid fa-building"></i></div>'; };
+                    preview.innerHTML = '';
+                    preview.appendChild(logoImg);
                 }
             }
         }
@@ -639,11 +713,11 @@ window.CompanyModule = (function () {
 
             // v2.60.0: Tema atamaları kaydet
             var savedCompanyId = result.id || editingId;
-            if (savedCompanyId && assignedThemeIds.size > 0) {
+            if (savedCompanyId) {
                 var themeIds = Array.from(assignedThemeIds);
-                var defaultId = data.theme_id || themeIds[0];
+                var defaultId = selectedDefaultThemeId || (themeIds.length > 0 ? themeIds[0] : null);
                 try {
-                    await fetch(API_BASE + '/api/themes/assign', {
+                    var assignRes = await fetch(API_BASE + '/api/themes/assign', {
                         method: 'POST',
                         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -652,9 +726,12 @@ window.CompanyModule = (function () {
                             default_theme_id: defaultId
                         })
                     });
+                    if (!assignRes.ok) {
+                        throw new Error('HTTP ' + assignRes.status);
+                    }
 
                     // v2.60.0: Tema değişikliğini anlık yansıt
-                    if (window.BrandingEngine) {
+                    if (window.BrandingEngine && defaultId) {
                         var selectedTheme = themesList.find(function(t) { return t.id === defaultId; });
                         if (selectedTheme) {
                             var bd = BrandingEngine.loadBranding() || {};
@@ -664,9 +741,9 @@ window.CompanyModule = (function () {
                                 id: selectedTheme.id,
                                 code: selectedTheme.code,
                                 css_variables: selectedTheme.css_variables,
-                                login_headline: selectedTheme.login_headline || bd.theme?.login_headline,
-                                login_subtitle: selectedTheme.login_subtitle || bd.theme?.login_subtitle,
-                                features_json: selectedTheme.features_json || bd.theme?.features_json
+                                login_headline: selectedTheme.login_headline || (bd.theme ? bd.theme.login_headline : null),
+                                login_subtitle: selectedTheme.login_subtitle || (bd.theme ? bd.theme.login_subtitle : null),
+                                features_json: selectedTheme.features_json || (bd.theme ? bd.theme.features_json : null)
                             };
                             BrandingEngine.saveBranding(bd);
                             BrandingEngine.applyAll(bd);
@@ -674,6 +751,7 @@ window.CompanyModule = (function () {
                     }
                 } catch (err) {
                     console.warn('[CompanyModule] Tema atama hatası:', err);
+                    if (window.VyraToast) VyraToast.warning('Temalar atanamadı, lütfen tekrar deneyin');
                 }
             }
 

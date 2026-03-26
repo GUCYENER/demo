@@ -201,7 +201,7 @@
 
 .notification-icon.warning {
     background: rgba(245, 158, 11, 0.15);
-    color: #f59e0b;
+    color: var(--gold-2, #f59e0b);
 }
 
 .notification-icon.info {

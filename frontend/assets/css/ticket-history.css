@@ -1320,13 +1320,13 @@
 
 .solution-success-banner .banner-right i {
     font-size: 14px;
-    color: #fbbf24;
+    color: var(--gold, #fbbf24);
 }
 
 .solution-success-banner .banner-right span {
     font-size: 13px;
     font-weight: 600;
-    color: #fbbf24;
+    color: var(--gold, #fbbf24);
 }
 
 /* Solution Header */

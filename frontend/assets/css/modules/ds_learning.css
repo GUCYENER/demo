@@ -401,7 +401,7 @@
 }
 
 .ds-result-warning {
-    color: #f59e0b;
+    color: var(--gold-2, #f59e0b);
     font-size: 13px;
     padding: 8px 12px;
     background: rgba(245, 158, 11, 0.08);
@@ -615,7 +615,7 @@
 
 .ds-obj-type-badge.view {
     background: rgba(245, 158, 11, 0.12);
-    color: #fbbf24;
+    color: var(--gold, #fbbf24);
 }
 
 /* Nullable badges */
@@ -627,7 +627,7 @@
 
 .ds-notnull {
     font-size: 10px;
-    color: #f59e0b;
+    color: var(--gold-2, #f59e0b);
     font-weight: 600;
 }
 
@@ -663,7 +663,7 @@
 
 .ds-job-type-badge.learning {
     background: rgba(245, 158, 11, 0.12);
-    color: #fbbf24;
+    color: var(--gold, #fbbf24);
 }
 
 /* Error hint */
@@ -1085,8 +1085,8 @@
 }
 
 .ds-lr-type-badge.aggregate_query {
-    background: rgba(251, 191, 36, 0.15);
-    color: #fbbf24;
+    background: var(--gold-dim, rgba(251, 191, 36, 0.15));
+    color: var(--gold, #fbbf24);
 }
 
 .ds-lr-table-name {

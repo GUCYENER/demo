@@ -6,6 +6,32 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v2.60.1 (2026-03-26) - Hardcoded Renk Temizliği (Full Branding Compliance)
+
+**🎨 CSS Değişken Migrasyonu:**
+- ✅ **14 CSS + 1 HTML dosyasında ~90 satır** hardcoded sarı/amber renk (`#fbbf24`, `#f59e0b`, `rgba(251,191,36,...)`) `var()` wrapper'larına dönüştürüldü
+- ✅ **Etkilenen modüller:** home, dialog-chat, authorization, modal, toast, notification, ticket-history, ldap_settings, org_permissions, rag_upload, ds_learning, maturity_score_modal, document_enhancer_modal, vyra_auth, section_parameters
+- ✅ **BrandingEngine uyumu:** Tüm UI bileşenleri artık dinamik tema renklerine %100 uyumlu
+
+**📁 Değişen Dosyalar:**
+- `frontend/assets/css/home.css` — 25 satır var() migrasyonu
+- `frontend/assets/css/dialog-chat.css` — 6 satır var() migrasyonu
+- `frontend/assets/css/authorization.css` — 3 satır var() migrasyonu
+- `frontend/assets/css/modules/ldap_settings.css` — 14 satır var() migrasyonu
+- `frontend/assets/css/modules/org_permissions.css` — 13 satır var() migrasyonu
+- `frontend/assets/css/rag_upload.css` — 7 satır var() migrasyonu
+- `frontend/assets/css/modules/ds_learning.css` — 6 satır var() migrasyonu
+- `frontend/assets/css/modules/maturity_score_modal.css` — 5 satır var() migrasyonu
+- `frontend/assets/css/modules/document_enhancer_modal.css` — 3 satır var() migrasyonu
+- `frontend/assets/css/modal.css` — 3 satır var() migrasyonu
+- `frontend/assets/css/toast.css` — 2 satır var() migrasyonu
+- `frontend/assets/css/ticket-history.css` — 2 satır var() migrasyonu
+- `frontend/assets/css/notification.css` — 1 satır var() migrasyonu
+- `frontend/assets/css/vyra_auth.css` — 1 satır var() migrasyonu
+- `frontend/partials/section_parameters.html` — 1 inline style var() migrasyonu
+
+---
+
 ### 🆕 v2.60.0 (2026-03-25) - Özel Tema Oluşturucu & Kullanıcı Tema Seçici
 
 **🎨 Özel Tema Oluşturucu (Admin):**

@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "NGSSAI"
     debug: bool = True
-    APP_VERSION: str = "2.60.0"  # Özel Tema Oluşturucu, Kullanıcı Tema Seçici, Firma Tema Atama
+    APP_VERSION: str = "2.60.1"  # Hardcoded renk temizliği — tüm CSS/HTML var() wrapper
 
     # Frontend & API prefix
     api_prefix: str = "/api"

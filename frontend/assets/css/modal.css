@@ -65,8 +65,8 @@
 
 /* Icon Types */
 .vyra-modal-icon.warning {
-    background: linear-gradient(135deg, rgba(251, 191, 36, 0.2) 0%, rgba(245, 158, 11, 0.1) 100%);
-    color: #fbbf24;
+    background: linear-gradient(135deg, var(--gold-dim, rgba(251, 191, 36, 0.2)) 0%, rgba(245, 158, 11, 0.1) 100%);
+    color: var(--gold, #fbbf24);
 }
 
 .vyra-modal-icon.danger {
@@ -175,9 +175,9 @@
 }
 
 .vyra-modal-btn.warning {
-    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
-    color: #1f2937;
-    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+    background: linear-gradient(135deg, var(--gold-2, #f59e0b) 0%, #d97706 100%);
+    color: var(--primary-on, #1f2937);
+    box-shadow: var(--shadow-primary, 0 4px 12px rgba(245, 158, 11, 0.3));
 }
 
 .vyra-modal-btn.warning:hover {

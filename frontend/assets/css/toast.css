@@ -44,11 +44,11 @@
 }
 
 .toast-warning {
-    border-left: 4px solid #f59e0b;
+    border-left: 4px solid var(--gold-2, #f59e0b);
 }
 
 .toast-warning i {
-    color: #f59e0b;
+    color: var(--gold-2, #f59e0b);
 }
 
 .toast-info {

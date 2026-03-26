@@ -729,7 +729,7 @@
 }
 
 .vyra-enhance-btn {
-    background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
+    background: linear-gradient(135deg, var(--gold-2, #f59e0b) 0%, #ef4444 100%);
     border: none;
     color: white;
     padding: 10px 20px;
@@ -747,11 +747,11 @@
 .vyra-enhance-btn:hover {
     transform: translateY(-2px);
     box-shadow: 0 6px 20px rgba(245, 158, 11, 0.5);
-    background: linear-gradient(135deg, #fbbf24 0%, #f87171 100%);
+    background: linear-gradient(135deg, var(--gold, #fbbf24) 0%, #f87171 100%);
 }
 
 .vyra-enhance-loading {
-    color: #f59e0b;
+    color: var(--gold-2, #f59e0b);
     font-size: 13px;
     font-weight: 500;
     display: flex;
@@ -2379,9 +2379,9 @@
 }
 
 .dt-score-mid {
-    color: #fbbf24;
-    background: rgba(251, 191, 36, 0.1);
-    border: 1px solid rgba(251, 191, 36, 0.22);
+    color: var(--gold, #fbbf24);
+    background: var(--gold-dim, rgba(251, 191, 36, 0.1));
+    border: 1px solid var(--gold-glow, rgba(251, 191, 36, 0.22));
 }
 
 .dt-score-low {
@@ -2454,8 +2454,8 @@
     align-items: flex-start;
     gap: 10px;
     padding: 12px 16px;
-    background: rgba(251, 191, 36, 0.06);
-    border: 1px solid rgba(251, 191, 36, 0.15);
+    background: var(--gold-dim, rgba(251, 191, 36, 0.06));
+    border: 1px solid var(--gold-glow, rgba(251, 191, 36, 0.15));
     border-radius: 10px;
     margin: 10px 0 6px;
     font-size: 12.5px;
@@ -2469,7 +2469,7 @@
 }
 
 .dt-other-icon i {
-    color: #fbbf24;
+    color: var(--gold, #fbbf24);
     font-size: 14px;
 }
 
@@ -2589,12 +2589,12 @@
     border-radius: 8px;
     margin-top: 12px;
     font-size: 12px;
-    color: #fbbf24;
+    color: var(--gold, #fbbf24);
     font-style: italic;
 }
 
 .dt-warning i {
-    color: #f59e0b;
+    color: var(--gold-2, #f59e0b);
     flex-shrink: 0;
     font-size: 13px;
 }

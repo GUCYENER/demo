@@ -20,7 +20,7 @@
 }
 
 .ldap-settings-table thead th {
-    background: linear-gradient(135deg, rgba(251, 191, 36, 0.06) 0%, rgba(251, 191, 36, 0.02) 100%);
+    background: linear-gradient(135deg, var(--gold-dim, rgba(251, 191, 36, 0.06)) 0%, rgba(251, 191, 36, 0.02) 100%);
     color: var(--text-secondary);
     font-weight: 600;
     padding: 14px 16px;
@@ -48,7 +48,7 @@
 }
 
 .ldap-settings-table tbody tr:hover td {
-    background: rgba(251, 191, 36, 0.04);
+    background: var(--gold-dim, rgba(251, 191, 36, 0.04));
 }
 
 .ldap-settings-table .text-mono {
@@ -69,13 +69,13 @@
     display: inline-flex;
     align-items: center;
     padding: 4px 12px;
-    background: linear-gradient(135deg, rgba(251, 191, 36, 0.15) 0%, rgba(251, 191, 36, 0.08) 100%);
+    background: linear-gradient(135deg, var(--gold-dim, rgba(251, 191, 36, 0.15)) 0%, rgba(251, 191, 36, 0.08) 100%);
     color: var(--primary);
     border-radius: 8px;
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.5px;
-    border: 1px solid rgba(251, 191, 36, 0.2);
+    border: 1px solid var(--gold-glow, rgba(251, 191, 36, 0.2));
 }
 
 /* ---- Tag Badge ---- */
@@ -117,9 +117,9 @@
 .btn-icon:hover {
     border-color: var(--primary);
     color: var(--primary);
-    background: rgba(251, 191, 36, 0.1);
+    background: var(--gold-dim, rgba(251, 191, 36, 0.1));
     transform: translateY(-1px);
-    box-shadow: 0 2px 8px rgba(251, 191, 36, 0.15);
+    box-shadow: 0 2px 8px var(--gold-glow, rgba(251, 191, 36, 0.15));
 }
 
 .btn-icon.btn-test:hover {
@@ -224,7 +224,7 @@
 #ldapSettingModal .modal-content {
     max-width: 720px;
     border-radius: 16px;
-    border: 1px solid rgba(251, 191, 36, 0.12);
+    border: 1px solid var(--gold-glow, rgba(251, 191, 36, 0.12));
     background: var(--bg-surface, #1a1a2e);
     box-shadow:
         0 24px 80px rgba(0, 0, 0, 0.5),
@@ -234,8 +234,8 @@
 
 /* Modal Header */
 #ldapSettingModal .modal-header {
-    background: linear-gradient(135deg, rgba(251, 191, 36, 0.08) 0%, rgba(139, 92, 246, 0.05) 100%);
-    border-bottom: 1px solid rgba(251, 191, 36, 0.12);
+    background: linear-gradient(135deg, var(--gold-dim, rgba(251, 191, 36, 0.08)) 0%, rgba(139, 92, 246, 0.05) 100%);
+    border-bottom: 1px solid var(--gold-glow, rgba(251, 191, 36, 0.12));
     padding: 20px 28px;
 }
 
@@ -290,7 +290,7 @@
     letter-spacing: 1px;
     margin: 24px 0 12px 0;
     padding-bottom: 8px;
-    border-bottom: 1px solid rgba(251, 191, 36, 0.1);
+    border-bottom: 1px solid var(--gold-glow, rgba(251, 191, 36, 0.1));
     display: flex;
     align-items: center;
     gap: 8px;
@@ -351,8 +351,8 @@
 #ldapSettingModal .form-group input:focus,
 #ldapSettingModal .form-group select:focus {
     border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.12);
-    background: rgba(251, 191, 36, 0.03);
+    box-shadow: var(--primary-focus-shadow, 0 0 0 3px rgba(251, 191, 36, 0.12));
+    background: var(--gold-dim, rgba(251, 191, 36, 0.03));
 }
 
 #ldapSettingModal .form-group input::placeholder {
@@ -430,8 +430,8 @@
     padding: 10px 24px;
     border-radius: 10px;
     border: none;
-    background: linear-gradient(135deg, var(--primary) 0%, #f59e0b 100%);
-    color: #000;
+    background: linear-gradient(135deg, var(--primary) 0%, var(--gold-2, #f59e0b) 100%);
+    color: var(--primary-on, #000);
     font-size: 13px;
     font-weight: 700;
     cursor: pointer;
@@ -443,7 +443,7 @@
 
 #ldapSettingModal .btn-primary-action:hover {
     transform: translateY(-1px);
-    box-shadow: 0 4px 16px rgba(251, 191, 36, 0.3);
+    box-shadow: var(--shadow-primary, 0 4px 16px rgba(251, 191, 36, 0.3));
 }
 
 /* ---- Scrollbar Styling ---- */
@@ -456,7 +456,7 @@
 }
 
 #ldapSettingModal .modal-body::-webkit-scrollbar-thumb {
-    background: rgba(251, 191, 36, 0.2);
+    background: var(--gold-dim, rgba(251, 191, 36, 0.2));
     border-radius: 10px;
 }
 

@@ -189,7 +189,7 @@
 
 .maturity-score-label.average {
     background: rgba(245, 158, 11, 0.15);
-    color: #f59e0b;
+    color: var(--gold-2, #f59e0b);
 }
 
 .maturity-score-label.poor {
@@ -308,7 +308,7 @@
 
 .maturity-rule-icon.warning {
     background: rgba(245, 158, 11, 0.15);
-    color: #f59e0b;
+    color: var(--gold-2, #f59e0b);
 }
 
 .maturity-rule-icon.fail {
@@ -454,7 +454,7 @@
 
 .maturity-btn-violations {
     background: rgba(245, 158, 11, 0.12);
-    color: #f59e0b;
+    color: var(--gold-2, #f59e0b);
     border: 1px solid rgba(245, 158, 11, 0.2);
 }
 
@@ -486,7 +486,7 @@
 
 .maturity-badge.score-average {
     background: rgba(245, 158, 11, 0.12);
-    color: #f59e0b;
+    color: var(--gold-2, #f59e0b);
 }
 
 .maturity-badge.score-poor {
@@ -524,7 +524,7 @@
 }
 
 .maturity-violations-table .v-status-warning {
-    color: #f59e0b;
+    color: var(--gold-2, #f59e0b);
 }
 
 .maturity-violations-table .v-name {
