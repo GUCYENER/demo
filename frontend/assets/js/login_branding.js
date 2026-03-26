@@ -92,6 +92,28 @@
                 BrandingEngine.saveBranding(brandData);
             }
 
+            // Layout swap: firma modu aktif et (brand sol, form sağ)
+            var pageEl = document.querySelector('.page');
+            if (pageEl) pageEl.classList.add('company-mode');
+
+            // Sol brand paneldeki firma bilgilerini güncelle
+            var panelName = document.getElementById('companyPanelName');
+            var panelVersion = document.getElementById('companyPanelVersion');
+            if (panelName && company.app_name) panelName.textContent = company.app_name;
+            if (panelVersion) panelVersion.textContent = 'AIOps Platform';
+
+            // Sol panele firma logosu yükle
+            if (company.has_logo && company.logo_url) {
+                var panelLogo = document.getElementById('companyPanelLogo');
+                var panelFallback = document.getElementById('companyPanelFallback');
+                var logoImg2 = new Image();
+                logoImg2.onload = function() {
+                    if (panelLogo) { panelLogo.src = API_BASE + company.logo_url; panelLogo.style.display = 'block'; }
+                    if (panelFallback) panelFallback.style.display = 'none';
+                };
+                logoImg2.src = API_BASE + company.logo_url;
+            }
+
         } catch (err) {
             console.warn('[LoginBranding] Firma eşleşme hatası:', err.message);
             hideBlock(container);

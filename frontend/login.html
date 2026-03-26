@@ -464,10 +464,117 @@ body::before {
   animation: slideUp 0.7s cubic-bezier(0.22,1,0.36,1) 0.3s both;
 }
 @media (max-width: 960px) {
-  .brand-panel-right { display: none; }
+  .brand-panel-right, .brand-panel-company { display: none !important; }
   .vdivider { display: none; }
-  .form-panel { width: 100%; min-width: 0; border-right: none; }
+  .form-panel { width: 100%; min-width: 0; border-right: none; border-left: none; }
 }
+/* ===== Firma modu: brand sol, form sağ ===== */
+.brand-panel-company { display: none; order: 1; }
+.form-panel-left { order: 2; }
+.brand-panel-right { order: 4; }
+.page .vdivider { order: 3; }
+.page.company-mode .brand-panel-company { display: flex; order: 1; }
+.page.company-mode .form-panel-left {
+  order: 3; border-right: none;
+  border-left: 1px solid var(--border);
+}
+.page.company-mode .vdivider { order: 2; }
+.page.company-mode .brand-panel-right { display: none; }
+.page.company-mode .company-branding { display: none !important; }
+/* Eski brand panel iç stiller */
+.brand-content {
+  position: relative; z-index: 2;
+  display: flex; flex-direction: column;
+  align-items: flex-start; gap: 44px;
+  max-width: 460px; width: 100%;
+}
+.ngssai-logo-block {
+  display: flex; align-items: center; gap: 18px;
+  animation: slideUp 0.7s cubic-bezier(0.22,1,0.36,1) both;
+}
+.ngssai-icon {
+  width: 60px; height: 60px; border-radius: 16px;
+  background: var(--grad-logo);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.10), 0 0 40px var(--gold-glow), 0 8px 28px rgba(0,0,0,0.4);
+  position: relative;
+}
+.ngssai-icon svg { width: 32px; height: 32px; }
+.login-company-logo-img { width: 40px; height: 40px; border-radius: 8px; object-fit: contain; }
+.ngssai-wordmark { display: flex; flex-direction: column; line-height: 1; }
+.ngssai-name {
+  font-family: 'Geist', sans-serif;
+  font-size: 36px; font-weight: 700;
+  letter-spacing: 0.06em;
+  background: var(--grad-acc);
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  line-height: 1;
+}
+.ngssai-version {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px; letter-spacing: 0.14em;
+  color: var(--text-3); text-transform: uppercase; margin-top: 6px;
+}
+.brand-headline {
+  display: flex; flex-direction: column; gap: 10px;
+  animation: slideUp 0.7s cubic-bezier(0.22,1,0.36,1) 0.08s both;
+}
+.brand-h1 {
+  font-size: 30px; font-weight: 300; line-height: 1.25;
+  letter-spacing: -0.02em; color: var(--text-1);
+}
+.brand-h1 strong { font-weight: 600; }
+.brand-h1 em {
+  font-style: normal;
+  background: var(--grad-acc);
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+.brand-sub { font-size: 14px; color: var(--text-2); line-height: 1.7; max-width: 360px; }
+.feature-stack {
+  display: flex; flex-direction: column; gap: 10px; width: 100%;
+  animation: slideUp 0.7s cubic-bezier(0.22,1,0.36,1) 0.16s both;
+}
+.feat {
+  display: flex; align-items: center; gap: 14px;
+  padding: 13px 16px; border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  backdrop-filter: blur(12px);
+  transition: border-color 0.18s, transform 0.18s;
+}
+.feat:hover { border-color: var(--border-accent); transform: translateX(3px); }
+.feat-ic {
+  width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.feat-ic svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.5; }
+.feat-ic.accent { background: var(--gold-dim);  color: var(--gold); }
+.feat-ic.blue   { background: var(--blue-dim);  color: var(--blue); }
+.feat-ic.green  { background: var(--green-dim); color: var(--green); }
+.feat-body { flex: 1; }
+.feat-title { font-size: 13.5px; font-weight: 500; color: var(--text-1); }
+.feat-desc  { font-size: 12px; color: var(--text-2); margin-top: 1px; }
+.stats-row {
+  display: flex; gap: 12px; flex-wrap: wrap;
+  animation: slideUp 0.7s cubic-bezier(0.22,1,0.36,1) 0.24s both;
+}
+.stat-pill {
+  display: flex; flex-direction: column;
+  padding: 11px 18px; border-radius: 11px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  backdrop-filter: blur(10px); min-width: 86px;
+  transition: border-color 0.18s;
+}
+.stat-pill:hover { border-color: var(--border-accent); }
+.stat-val {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 20px; font-weight: 400; line-height: 1;
+  background: var(--grad-acc);
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+.stat-lbl { font-size: 11px; color: var(--text-3); margin-top: 4px; letter-spacing: 0.02em; }
 .company-branding {
   width: 100%; max-width: 360px;
   display: none;
@@ -540,6 +647,86 @@ body::before {
   <button class="theme-toggle" onclick="toggleTheme()" aria-label="Tema degistir">
     <svg id="theme-ico" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
   </button>
+
+  <!-- SOL: Firma modu brand paneli (firma URL eşleşmesinde görünür) -->
+  <div class="brand-panel brand-panel-company" id="companyBrandPanel">
+    <div class="brand-content">
+
+      <div class="ngssai-logo-block">
+        <div class="ngssai-icon" id="companyPanelLogoWrap">
+          <img id="companyPanelLogo" class="login-company-logo-img" alt="" style="display:none" />
+          <svg id="companyPanelFallback" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M6 10 L15 30 L20 18 L25 30 L34 10" stroke="rgba(26,12,0,0.5)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M6 10 L15 30 L20 18 L25 30 L34 10" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div class="ngssai-wordmark">
+          <span class="ngssai-name" id="companyPanelName">VYRA</span>
+          <span class="ngssai-version" id="companyPanelVersion">AIOps Platform</span>
+        </div>
+      </div>
+
+      <div class="brand-headline">
+        <div class="brand-h1">
+          <em>Yapay zeka ile</em>,<br>
+          <strong>akıllı destek deneyimi</strong>
+        </div>
+        <div class="brand-sub">
+          Dokümanlardan anlık yanıt, bağlam duyarlı diyalog yönetimi ve RAG bilgi tabanı platformu.
+        </div>
+      </div>
+
+      <div class="feature-stack">
+        <div class="feat">
+          <div class="feat-ic accent">
+            <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </div>
+          <div class="feat-body">
+            <div class="feat-title">Akıllı Diyalog Yönetimi</div>
+            <div class="feat-desc">Çoklu LLM desteği · Bağlam duyarlı yanıtlar</div>
+          </div>
+        </div>
+        <div class="feat">
+          <div class="feat-ic blue">
+            <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          </div>
+          <div class="feat-body">
+            <div class="feat-title">RAG Bilgi Tabanı</div>
+            <div class="feat-desc">PDF · DOCX · TXT doküman yükleme ve anlık sorgulama</div>
+          </div>
+        </div>
+        <div class="feat">
+          <div class="feat-ic green">
+            <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <div class="feat-body">
+            <div class="feat-title">Organizasyon ve Yetkilendirme</div>
+            <div class="feat-desc">Rol tabanlı erişim · Çoklu organizasyon desteği</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stats-row">
+        <div class="stat-pill">
+          <span class="stat-val">&lt;2sn</span>
+          <span class="stat-lbl">Yanıt Süresi</span>
+        </div>
+        <div class="stat-pill">
+          <span class="stat-val">RAG</span>
+          <span class="stat-lbl">Bilgi Tabanı</span>
+        </div>
+        <div class="stat-pill">
+          <span class="stat-val">Çoklu</span>
+          <span class="stat-lbl">LLM Desteği</span>
+        </div>
+        <div class="stat-pill">
+          <span class="stat-val">7/24</span>
+          <span class="stat-lbl">Erişim</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
 
   <!-- SOL: Form Paneli -->
   <div class="form-panel form-panel-left">
