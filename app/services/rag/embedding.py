@@ -99,9 +99,15 @@ class EmbeddingManager:
         
         # ⚡ HuggingFace OFFLINE mode (Portable: proje içi cache)
         from app.core.config import BASE_DIR
+        
+        # 🔧 v2.60.2: Önce models/hf_model dizinini kontrol et (portable deployment)
+        local_model_dir = str(BASE_DIR / 'models' / 'hf_model')
         hf_cache_dir = str(BASE_DIR / 'models' / 'hf_cache')
+        
+        # HF_HOME ayarla — hf_model veya hf_cache hangisi varsa
         if os.path.exists(hf_cache_dir):
             os.environ['HF_HOME'] = hf_cache_dir
+        
         os.environ['HF_HUB_OFFLINE'] = '1'
         os.environ['TRANSFORMERS_OFFLINE'] = '1'
         os.environ['HF_HUB_DISABLE_SSL_VERIFY'] = '1'
@@ -109,15 +115,31 @@ class EmbeddingManager:
         os.environ['CURL_CA_BUNDLE'] = ''
         os.environ['ACCELERATE_TORCH_DEVICE'] = 'cpu'
         
+        # 🔧 v2.60.2: models/hf_model dizini varsa doğrudan yol olarak kullan
+        has_local_model = os.path.exists(local_model_dir) and os.path.isfile(
+            os.path.join(local_model_dir, 'config.json')
+        )
+        
         try:
             from sentence_transformers import SentenceTransformer
-            model_name = getattr(settings, 'EMBEDDING_MODEL', 'paraphrase-multilingual-MiniLM-L12-v2')
             
-            self._embedding_model = SentenceTransformer(
-                model_name, 
-                local_files_only=True,
-                device='cpu'
-            )
+            if has_local_model:
+                # Doğrudan yerel dizin yolunu kullan (HF hub'a gitmez)
+                log_system_event("DEBUG", f"Yerel model dizini bulundu: {local_model_dir}", "rag")
+                self._embedding_model = SentenceTransformer(
+                    local_model_dir,
+                    local_files_only=True,
+                    device='cpu'
+                )
+            else:
+                # HF cache veya model ismiyle dene
+                model_name = getattr(settings, 'EMBEDDING_MODEL', 'paraphrase-multilingual-MiniLM-L12-v2')
+                self._embedding_model = SentenceTransformer(
+                    model_name, 
+                    local_files_only=True,
+                    device='cpu'
+                )
+            
             self._backend = "pytorch"
             load_time = time.time() - t0
             log_system_event("INFO", f"⚠️ PyTorch embedding model yüklendi (offline, {load_time:.2f}s)", "rag")
@@ -129,7 +151,7 @@ class EmbeddingManager:
                 model_name = getattr(settings, 'EMBEDDING_MODEL', 'paraphrase-multilingual-MiniLM-L12-v2')
                 self._embedding_model = SentenceTransformer(model_name, device='cpu')
                 self._backend = "pytorch"
-                log_system_event("INFO", f"PyTorch embedding model yüklendi (online)", "rag")
+                log_system_event("INFO", "PyTorch embedding model yüklendi (online)", "rag")
             except ImportError:
                 log_error("sentence-transformers yüklü değil", "rag")
                 raise ImportError("sentence-transformers yüklü değil. 'pip install sentence-transformers' çalıştırın.")
@@ -164,9 +186,9 @@ class EmbeddingManager:
             "attention_mask": attention_mask
         }
         
-        # Token type ids varsa ekle (BERT modelleri için)
-        if encoding.type_ids:
-            input_dict["token_type_ids"] = np.array([encoding.type_ids], dtype=np.int64)
+        # Token type ids — BERT modeli zorunlu kılıyor (HF resmi ONNX modeli)
+        token_type_ids = encoding.type_ids if encoding.type_ids else [0] * len(encoding.ids)
+        input_dict["token_type_ids"] = np.array([token_type_ids], dtype=np.int64)
         
         # Inference
         outputs = self._onnx_session.run(None, input_dict)

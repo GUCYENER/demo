@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "NGSSAI"
     debug: bool = True
-    APP_VERSION: str = "2.60.1"  # Hardcoded renk temizliği — tüm CSS/HTML var() wrapper
+    APP_VERSION: str = "2.60.2"  # Production deployment: ONNX, Redis auth, multi-instance Uvicorn
 
     # Frontend & API prefix
     api_prefix: str = "/api"
@@ -139,7 +139,7 @@ class Settings(BaseSettings):
     FUZZY_CACHE_SIZE: int = 500  # Max cached fuzzy match sayısı
     LLM_BYPASS_THRESHOLD: float = 0.70  # RAG skoru bu değerin üzerindeyse LLM atlanır
     PGVECTOR_INDEX: bool = True  # pgvector index kullanımı etkin mi
-    REDIS_URL: str = "redis://localhost:6379/1"  # 🆕 v2.50.0: Deep Think cache persistence
+    REDIS_URL: str = "redis://localhost:6380/1"  # 🔧 v2.60.2: Port 6380 (6379 çakışma önleme)
     
     # 🆕 v2.57.0: Hybrid Router & Safe SQL Executor
     SQL_EXEC_TIMEOUT: int = 5       # SQL sorgu timeout (saniye)

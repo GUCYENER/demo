@@ -56,3 +56,10 @@ temp/
 # Migrations cache
 migrations/__pycache__/
 migrations/versions/__pycache__/
+
+# ML Models (büyük binary dosyalar)
+models/
+ml_models/
+*.onnx
+*.cbm
+*.safetensors

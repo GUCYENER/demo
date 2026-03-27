@@ -38,14 +38,25 @@ def _get_file_logger() -> logging.Logger:
     logger.setLevel(logging.DEBUG)
     
     # Dosya handler: günlük rotation, 7 gün saklama
+    # Windows multi-worker safe: PermissionError'da rotation atlanır
     file_handler = TimedRotatingFileHandler(
         filename=str(log_dir / "vyra.log"),
         when="midnight",
         interval=1,
         backupCount=7,
-        encoding="utf-8"
+        encoding="utf-8",
+        delay=True  # Dosyayı hemen açma, ilk yazımda aç (kilit azaltır)
     )
     file_handler.setLevel(logging.DEBUG)
+    
+    # Windows'ta multi-worker rotation fix: PermissionError'da sessizce atla
+    _original_rotate = file_handler.doRollover
+    def _safe_rollover():
+        try:
+            _original_rotate()
+        except PermissionError:
+            pass  # Başka bir worker zaten rotate etti
+    file_handler.doRollover = _safe_rollover
     
     # JSON structured format
     class JSONFormatter(logging.Formatter):

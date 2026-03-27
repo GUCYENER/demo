@@ -12,7 +12,7 @@ if ($ExecutionContext.SessionState.LanguageMode -ne 'NoLanguage') {
 }
 
 $ProjectRoot = $PSScriptRoot
-if (-not $ProjectRoot) { $ProjectRoot = "d:\demo_vyra" }
+if (-not $ProjectRoot) { $ProjectRoot = Split-Path -Parent (Resolve-Path $MyInvocation.MyCommand.Path) }
 
 # Venv Python yolu
 $VenvPython = "$ProjectRoot\python\Scripts\python.exe"

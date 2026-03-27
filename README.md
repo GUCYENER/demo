@@ -4,7 +4,88 @@
 
 VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmented Generation) teknolojisi ile bilgi tabanından semantik arama yaparak kullanıcılara otomatik çözüm önerileri sunar.
 
+## 🏗️ Portable Altyapı (Standalone Dağıtım)
+
+> **ÖNEMLİ:** Bu proje tamamen **portable/standalone** olarak çalışır. Sunucuya ayrıca yazılım kurulumu gerekmez. Tüm bileşenler proje klasörünün içindedir.
+
+### Bileşenler
+
+| Bileşen | Konum | Açıklama |
+|---|---|---|
+| **Python 3.13** | `python/` | Portable Python (venv yapısı). `python/Scripts/python.exe` ana çalıştırıcı. `python/Lib/site-packages/` paketler. |
+| **PostgreSQL** | `pgsql/` | Standalone PostgreSQL kurulumu (port 5005). `pgsql/bin/` binary, `pgsql/data/` veritabanı. |
+| **Redis** | `redis/` | Portable Redis server (port 6380, auth, 128MB LRU). Deep Think cache persistence. |
+| **Nginx** | `nginx/` | Portable Nginx reverse proxy (port 8000). `nginx/conf/conf.d/vyra.conf` config. |
+| **Offline Paketler** | `offline_packages/` | pip bağımlılıkları offline kurulum için. İnternete kapalı sunucularda kullanılır. |
+
+### Başlatma / Durdurma
+
+| Komut | Açıklama |
+|---|---|
+| `canlida_calistir.bat` | Tek tıkla production başlatma (PostgreSQL → Redis → Backend → Nginx) |
+| `canlida_durdur.bat` | Tek tıkla güvenli durdurma |
+| `start.ps1` | PowerShell ile başlatma (geliştirme ortamı, port 5500) |
+| `stop.ps1` | PowerShell ile durdurma |
+
+### Taşınabilirlik (Portability)
+
+- Proje klasörü herhangi bir disk/dizine kopyalanabilir (`D:\VYRA`, `E:\VYRA`, `C:\projeler\vyra` vb.)
+- `canlida_calistir.bat` ilk çalışmada **otomatik yol düzeltme** yapar:
+  - `pyvenv.cfg` → Python home yolunu mevcut konuma günceller
+  - `vyra.conf` → Nginx frontend root yolunu günceller
+- Tüm script'ler `%~dp0` (bat) veya `$PSScriptRoot` (ps1) ile dinamik proje kökü kullanır
+
+### Canlıya Taşıma (Yeni Sunucu Kurulumu)
+
+1. Proje klasörünü hedef sunucuya kopyalayın
+2. `python/Lib/` altında stdlib dosyaları yoksa (sadece `site-packages` varsa):
+   ```powershell
+   # Kaynak makinede çalıştırın (Python 3.13 kurulu olan makine):
+   robocopy "C:\...\Python313\Lib" "PROJE\python\Lib" /E /XD site-packages __pycache__ test tests tkinter turtledemo idlelib ensurepip lib2to3
+   robocopy "C:\...\Python313" "PROJE\python\Scripts" python3.dll python313.dll /NFL /NDL
+   ```
+3. `.env` dosyasını düzenleyin (JWT_SECRET, DB bilgileri vb.)
+4. `canlida_calistir.bat` çift tıklayın — tüm servisler otomatik başlar
+
 ## 🚀 Versiyon Geçmişi
+
+### 🆕 v2.60.2 (2026-03-27) - Production Deployment Optimizasyonu
+
+**⚡ ONNX Embedding Optimizasyonu:**
+- ✅ **ONNX Runtime:** sentence-transformers PyTorch yerine ONNX model kullanımı (~200s → ~4s yükleme)
+- ✅ **HuggingFace resmi ONNX:** `model.onnx` + `tokenizer.json` — offline kullanım
+- ✅ **token_type_ids:** BERT modeli zorunlu kılıyor, dinamik ekleme
+
+**🔐 Redis Güvenlik & Port:**
+- ✅ **Port 6380:** Mevcut Redis çakışmasını önlemek için özel port
+- ✅ **requirepass:** Redis şifreli erişim (`redis.windows.conf` + `.env`)
+- ✅ **Bat entegrasyonu:** `canlida_calistir.bat` ve `canlida_durdur.bat` şifreli Redis CLI
+
+**🖥️ Multi-Instance Uvicorn (Windows):**
+- ✅ **4 ayrı instance:** Windows multiprocessing socket hatası (`WinError 10022`) çözümü
+- ✅ **Port aralığı:** 8002-8005, Nginx upstream load-balance
+- ✅ **Port müsaitlik kontrolü:** Başlatma öncesi `netstat` ile çakışma tespiti
+
+**🌐 Nginx İyileştirmeleri:**
+- ✅ **Dinamik frontend root:** `vyra.conf`'taki path her çalıştırmada `%PROJECT_ROOT%` ile otomatik güncellenir
+- ✅ **BOM koruması:** PowerShell UTF8NoBOM ile dosya yazma
+- ✅ **$http_host:** Proxy redirect port kaybı düzeltildi (CORS hatası çözümü)
+- ✅ **Config testi:** `nginx -t` ile başlatma öncesi syntax doğrulama
+
+**🛑 Durdurma Scripti (canlida_durdur.bat):**
+- ✅ **Tam yeniden yazım:** Redis port 6380 + auth, Python PID bazlı kill (sadece VYRA), PostgreSQL fast→immediate fallback
+- ✅ **Process temizliği:** Tüm servislerde orphan process tespiti ve zorla durdurma
+
+**📁 Değişen Dosyalar:**
+- `app/services/rag/embedding.py` — ONNX yükleme ve token_type_ids
+- `app/core/config.py` — REDIS_URL port 6380, v2.60.2
+- `.env` — Redis şifreli URL
+- `redis/redis.windows.conf` — requirepass + port 6380
+- `canlida_calistir.bat` — Multi-instance Uvicorn, dinamik Nginx root, port kontrolü
+- `canlida_durdur.bat` — Tam yeniden yazım
+- `nginx/conf/conf.d/vyra.conf` — 4 upstream, $http_host, dinamik root
+
+---
 
 ### 🆕 v2.60.1 (2026-03-26) - Hardcoded Renk Temizliği (Full Branding Compliance)
 
