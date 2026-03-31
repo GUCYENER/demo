@@ -1,0 +1,350 @@
+/**
+ * VYRA — DS Enrichment Admin Panel (v3.0.0)
+ * Modern SaaS tablo etiketleme ve onay arayüzü
+ */
+
+/* ============================================
+   Overlay & Modal
+   ============================================ */
+.ds-enrich-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(6px);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+.ds-enrich-overlay.active {
+    opacity: 1;
+}
+
+.ds-enrich-modal {
+    width: 94vw;
+    max-width: 960px;
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-secondary, #1e1e2e);
+    border: 1px solid var(--border-color, rgba(255,255,255,0.08));
+    border-radius: 16px;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.4);
+    overflow: hidden;
+    transform: translateY(20px) scale(0.97);
+    transition: transform 0.3s ease;
+}
+.ds-enrich-overlay.active .ds-enrich-modal {
+    transform: translateY(0) scale(1);
+}
+
+/* ============================================
+   Header
+   ============================================ */
+.ds-enrich-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.08));
+    background: var(--bg-tertiary, #252535);
+}
+.ds-enrich-title {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-primary, #e0e0e0);
+}
+.ds-enrich-title i {
+    font-size: 1.25rem;
+    color: var(--accent-primary, #6c63ff);
+}
+.ds-enrich-close {
+    background: none;
+    border: none;
+    color: var(--text-secondary, #999);
+    font-size: 1.1rem;
+    cursor: pointer;
+    padding: 0.35rem 0.5rem;
+    border-radius: 8px;
+    transition: all 0.2s ease;
+}
+.ds-enrich-close:hover {
+    background: rgba(255,255,255,0.08);
+    color: var(--text-primary);
+}
+
+/* ============================================
+   Stats Bar
+   ============================================ */
+.ds-enrich-stats {
+    display: flex;
+    gap: 1rem;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.06));
+    flex-wrap: wrap;
+}
+.ds-enrich-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0.5rem 1rem;
+    background: var(--bg-primary, #161625);
+    border-radius: 10px;
+    min-width: 80px;
+}
+.ds-enrich-stat-num {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--accent-primary, #6c63ff);
+    line-height: 1.2;
+}
+.ds-enrich-stat-label {
+    font-size: 0.7rem;
+    color: var(--text-muted, #777);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-top: 0.15rem;
+}
+.ds-enrich-stat.warning .ds-enrich-stat-num {
+    color: #f59e0b;
+}
+.ds-enrich-stat.success .ds-enrich-stat-num {
+    color: #10b981;
+}
+
+/* ============================================
+   Body & Table
+   ============================================ */
+.ds-enrich-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.25rem 1.5rem;
+}
+.ds-enrich-table-wrap {
+    overflow-x: auto;
+    border-radius: 10px;
+    border: 1px solid var(--border-color, rgba(255,255,255,0.06));
+}
+.ds-enrich-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+.ds-enrich-table thead th {
+    padding: 0.75rem 1rem;
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-secondary, #aaa);
+    background: var(--bg-tertiary, #252535);
+    border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.08));
+    white-space: nowrap;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.ds-enrich-table tbody tr {
+    transition: background 0.2s ease;
+}
+.ds-enrich-table tbody tr:hover {
+    background: rgba(108, 99, 255, 0.04);
+}
+.ds-enrich-table tbody td {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.04));
+    color: var(--text-primary, #ddd);
+    vertical-align: middle;
+}
+
+/* ============================================
+   Score Badge
+   ============================================ */
+.ds-score-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+.ds-score-badge.high {
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+}
+.ds-score-badge.medium {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+}
+.ds-score-badge.low {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+}
+
+/* ============================================
+   Category Badge
+   ============================================ */
+.ds-cat-badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 6px;
+    font-size: 0.7rem;
+    font-weight: 500;
+    background: rgba(108, 99, 255, 0.12);
+    color: var(--accent-primary, #6c63ff);
+    text-transform: capitalize;
+}
+.ds-cat-badge.finance { background: rgba(16,185,129,0.12); color: #10b981; }
+.ds-cat-badge.hr { background: rgba(99,102,241,0.12); color: #6366f1; }
+.ds-cat-badge.crm { background: rgba(236,72,153,0.12); color: #ec4899; }
+.ds-cat-badge.auth { background: rgba(245,158,11,0.12); color: #f59e0b; }
+.ds-cat-badge.system { background: rgba(107,114,128,0.12); color: #6b7280; }
+.ds-cat-badge.log { background: rgba(156,163,175,0.12); color: #9ca3af; }
+.ds-cat-badge.config { background: rgba(59,130,246,0.12); color: #3b82f6; }
+
+/* ============================================
+   Action Buttons
+   ============================================ */
+.ds-enrich-actions {
+    display: flex;
+    gap: 0.4rem;
+}
+.ds-enrich-btn {
+    padding: 0.35rem 0.65rem;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    transition: all 0.2s ease;
+    font-weight: 500;
+}
+.ds-enrich-btn.approve {
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.2);
+}
+.ds-enrich-btn.approve:hover {
+    background: rgba(16, 185, 129, 0.3);
+}
+.ds-enrich-btn.edit {
+    background: rgba(59, 130, 246, 0.15);
+    color: #3b82f6;
+    border: 1px solid rgba(59, 130, 246, 0.2);
+}
+.ds-enrich-btn.edit:hover {
+    background: rgba(59, 130, 246, 0.3);
+}
+.ds-enrich-btn.columns {
+    background: rgba(108, 99, 255, 0.12);
+    color: var(--accent-primary, #6c63ff);
+    border: 1px solid rgba(108, 99, 255, 0.15);
+}
+.ds-enrich-btn.columns:hover {
+    background: rgba(108, 99, 255, 0.25);
+}
+
+/* ============================================
+   Edit Inline Form
+   ============================================ */
+.ds-enrich-edit-row {
+    background: var(--bg-primary, #161625);
+}
+.ds-enrich-edit-row td {
+    padding: 0.75rem 1rem !important;
+}
+.ds-enrich-edit-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+.ds-enrich-edit-form label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-secondary, #aaa);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+.ds-enrich-edit-form input,
+.ds-enrich-edit-form textarea {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-secondary, #1e1e2e);
+    border: 1px solid var(--border-color, rgba(255,255,255,0.1));
+    border-radius: 8px;
+    color: var(--text-primary, #ddd);
+    font-size: 0.85rem;
+    outline: none;
+    transition: border-color 0.2s;
+}
+.ds-enrich-edit-form input:focus,
+.ds-enrich-edit-form textarea:focus {
+    border-color: var(--accent-primary, #6c63ff);
+}
+.ds-enrich-edit-form textarea {
+    resize: vertical;
+    min-height: 60px;
+}
+.ds-enrich-edit-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.25rem;
+}
+.ds-enrich-edit-actions button {
+    padding: 0.4rem 1rem;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    font-weight: 500;
+}
+.ds-enrich-edit-actions .save-btn {
+    background: var(--accent-primary, #6c63ff);
+    color: white;
+}
+.ds-enrich-edit-actions .save-btn:hover {
+    opacity: 0.85;
+}
+.ds-enrich-edit-actions .cancel-btn {
+    background: rgba(255,255,255,0.06);
+    color: var(--text-secondary, #aaa);
+}
+
+/* ============================================
+   Empty State
+   ============================================ */
+.ds-enrich-empty {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--text-muted, #777);
+}
+.ds-enrich-empty i {
+    font-size: 2.5rem;
+    margin-bottom: 0.75rem;
+    color: var(--accent-primary, #6c63ff);
+    opacity: 0.4;
+}
+.ds-enrich-empty h4 {
+    margin: 0.5rem 0 0.25rem;
+    color: var(--text-secondary, #aaa);
+}
+
+/* ============================================
+   Loading
+   ============================================ */
+.ds-enrich-loading {
+    text-align: center;
+    padding: 2rem;
+    color: var(--text-muted, #777);
+}
+.ds-enrich-loading i {
+    font-size: 1.5rem;
+    margin-bottom: 0.5rem;
+    color: var(--accent-primary, #6c63ff);
+}

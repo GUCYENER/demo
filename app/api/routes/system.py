@@ -37,6 +37,7 @@ async def reset_system(
     - Prompt Şablonları (prompt_templates)
     - Sistem görselleri (system_assets)
     - Organizasyonlar (organization_groups)
+    - Veri Kaynağı Tanımları (data_sources)
     
     SİLİNEN VERİLER:
     - Ticket'lar ve mesajları (tickets, ticket_steps, ticket_messages)
@@ -48,6 +49,8 @@ async def reset_system(
     - Dinamik topic'ler (document_topics)
     - ML modelleri ve eğitim (ml_models, ml_training_jobs, ml_training_samples, ml_training_schedules)
     - Öğrenilmiş cevaplar (learned_answers)
+    - DS Öğrenme Verileri (ds_learning_results, ds_db_samples, ds_db_objects, ds_db_relationships, ds_discovery_jobs, ds_learning_schedules)
+    - SQL Audit Logları (sql_audit_log)
     - Sistem logları (system_logs)
     - Admin olmayan kullanıcılar
     """
@@ -188,6 +191,44 @@ async def reset_system(
         deleted_counts["ml_models"] = cur.fetchone()["cnt"]
         cur.execute("DELETE FROM ml_models")
         
+        # 📊 DS Öğrenme Verilerini sil (FK sırasına dikkat: önce bağımlı tablolar)
+        # NOT: data_sources tablosu KORUNUR - sadece öğrenme verileri temizlenir
+        
+        # DS Öğrenme Sonuçları (QA çiftleri + embedding)
+        cur.execute("SELECT COUNT(*) as cnt FROM ds_learning_results")
+        deleted_counts["ds_learning_results"] = cur.fetchone()["cnt"]
+        cur.execute("DELETE FROM ds_learning_results")
+        
+        # DS Örnek Veriler (FK: ds_db_objects)
+        cur.execute("SELECT COUNT(*) as cnt FROM ds_db_samples")
+        deleted_counts["ds_db_samples"] = cur.fetchone()["cnt"]
+        cur.execute("DELETE FROM ds_db_samples")
+        
+        # DS FK İlişkileri
+        cur.execute("SELECT COUNT(*) as cnt FROM ds_db_relationships")
+        deleted_counts["ds_db_relationships"] = cur.fetchone()["cnt"]
+        cur.execute("DELETE FROM ds_db_relationships")
+        
+        # DS Keşfedilen Objeler
+        cur.execute("SELECT COUNT(*) as cnt FROM ds_db_objects")
+        deleted_counts["ds_db_objects"] = cur.fetchone()["cnt"]
+        cur.execute("DELETE FROM ds_db_objects")
+        
+        # DS Keşif Job'ları
+        cur.execute("SELECT COUNT(*) as cnt FROM ds_discovery_jobs")
+        deleted_counts["ds_discovery_jobs"] = cur.fetchone()["cnt"]
+        cur.execute("DELETE FROM ds_discovery_jobs")
+        
+        # DS Öğrenme Zamanlamaları
+        cur.execute("SELECT COUNT(*) as cnt FROM ds_learning_schedules")
+        deleted_counts["ds_learning_schedules"] = cur.fetchone()["cnt"]
+        cur.execute("DELETE FROM ds_learning_schedules")
+        
+        # SQL Audit Logları (v2.58.0)
+        cur.execute("SELECT COUNT(*) as cnt FROM sql_audit_log")
+        deleted_counts["sql_audit_log"] = cur.fetchone()["cnt"]
+        cur.execute("DELETE FROM sql_audit_log")
+        
         # 1️⃣2️⃣ Sistem loglarını sil
         cur.execute("SELECT COUNT(*) as cnt FROM system_logs")
         deleted_counts["system_logs"] = cur.fetchone()["cnt"]
@@ -292,11 +333,29 @@ async def get_system_info(
         cur.execute("SELECT COUNT(*) as cnt FROM system_logs")
         info["system_logs"] = cur.fetchone()["cnt"]
         
+        # DS Öğrenme verileri (silinecek)
+        cur.execute("SELECT COUNT(*) as cnt FROM ds_learning_results")
+        info["ds_learning_results"] = cur.fetchone()["cnt"]
+        
+        cur.execute("SELECT COUNT(*) as cnt FROM ds_db_objects")
+        info["ds_db_objects"] = cur.fetchone()["cnt"]
+        
+        cur.execute("SELECT COUNT(*) as cnt FROM ds_discovery_jobs")
+        info["ds_discovery_jobs"] = cur.fetchone()["cnt"]
+        
+        cur.execute("SELECT COUNT(*) as cnt FROM sql_audit_log")
+        info["sql_audit_log"] = cur.fetchone()["cnt"]
+        
+        # Korunan: Veri kaynağı tanımları
+        cur.execute("SELECT COUNT(*) as cnt FROM data_sources")
+        info["data_sources"] = cur.fetchone()["cnt"]
+        
         return {
             "protected": {
                 "admin_users": info["admin_users"],
                 "llm_configs": info["llm_configs"],
-                "prompt_templates": info["prompt_templates"]
+                "prompt_templates": info["prompt_templates"],
+                "data_sources": info["data_sources"]
             },
             "to_delete": {
                 "non_admin_users": info["non_admin_users"],
@@ -311,6 +370,10 @@ async def get_system_info(
                 "ml_training_jobs": info["ml_training_jobs"],
                 "ml_training_samples": info["ml_training_samples"],
                 "learned_answers": info["learned_answers"],
+                "ds_learning_results": info["ds_learning_results"],
+                "ds_db_objects": info["ds_db_objects"],
+                "ds_discovery_jobs": info["ds_discovery_jobs"],
+                "sql_audit_log": info["sql_audit_log"],
                 "system_logs": info["system_logs"]
             }
         }

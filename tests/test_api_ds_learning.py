@@ -248,37 +248,35 @@ class TestLearningHistoryEndpoint:
 
 
 # =============================================================================
-# TEST: POST /generate-qa
+# TEST: GET /enrichment-stats (v3.0 — QA generate-qa endpoint kaldırıldı)
 # =============================================================================
 
-class TestGenerateQaEndpoint:
-    """POST /{source_id}/generate-qa endpoint testleri."""
+class TestEnrichmentStatsEndpoint:
+    """GET /{source_id}/enrichment-stats endpoint testleri."""
 
-    def test_returns_success_response(self, ds_learning_client, ds_auth_headers):
-        """QA üretimi başarıyla başlatılmalı."""
-        mock_source_row = MagicMock()
-        mock_source_row.__getitem__ = lambda self, key: {"id": 2, "company_id": 1, "name": "Test DB"}[key]
-        mock_source_row.keys = lambda: ["id", "company_id", "name"]
-
+    def test_returns_200_with_enrichment_stats(self, ds_learning_client, ds_auth_headers):
+        """Enrichment istatistikleri 200 ile dönmeli."""
+        mock_stats = {
+            "total": 45, "approved": 30, "pending_review": 10,
+            "auto_approved": 5, "avg_score": 0.78, "last_enriched": None
+        }
         with patch('app.api.routes.data_sources_api.get_db_context') as mock_ctx:
             mock_conn = MagicMock()
-            mock_cursor = MagicMock()
-            mock_conn.cursor.return_value = mock_cursor
-            mock_cursor.fetchone.return_value = mock_source_row
             mock_ctx.return_value.__enter__ = lambda s: mock_conn
             mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
-            with patch('app.services.ds_learning_service.create_job', return_value=1):
-                with patch('app.api.routes.data_sources_api.threading'):
-                    response = ds_learning_client.post(
-                        "/api/data-sources/2/generate-qa",
-                        headers=ds_auth_headers
-                    )
+            with patch('app.services.ds_enrichment_service.get_enrichment_stats',
+                       return_value=mock_stats):
+                response = ds_learning_client.get(
+                    "/api/data-sources/2/enrichment-stats",
+                    headers=ds_auth_headers
+                )
 
         assert response.status_code == 200
+        assert response.json()["total"] == 45
 
     def test_unauthorized_returns_401(self, ds_learning_client):
         """Auth olmadan 401 dönmeli."""
-        response = ds_learning_client.post("/api/data-sources/2/generate-qa")
+        response = ds_learning_client.get("/api/data-sources/2/enrichment-stats")
         assert response.status_code in [401, 403]
 
 
@@ -427,11 +425,11 @@ class TestRouteRegistration:
         paths = response.json().get("paths", {})
         assert "/api/data-sources/{source_id}/learning-history" in paths
 
-    def test_generate_qa_route_exists(self, ds_learning_client):
-        """generate-qa route OpenAPI'de kayıtlı olmalı."""
+    def test_enrichment_stats_route_exists(self, ds_learning_client):
+        """enrichment-stats route OpenAPI'de kayıtlı olmalı."""
         response = ds_learning_client.get("/openapi.json")
         paths = response.json().get("paths", {})
-        assert "/api/data-sources/{source_id}/generate-qa" in paths
+        assert "/api/data-sources/{source_id}/enrichment-stats" in paths
 
     def test_schedule_route_exists(self, ds_learning_client):
         """schedule route OpenAPI'de kayıtlı olmalı."""

@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "NGSSAI"
     debug: bool = True
-    APP_VERSION: str = "2.60.2"  # Production deployment: ONNX, Redis auth, multi-instance Uvicorn
+    APP_VERSION: str = "3.1.0"  # Enrichment-Aware Routing + Hallucination Guard
 
     # Frontend & API prefix
     api_prefix: str = "/api"

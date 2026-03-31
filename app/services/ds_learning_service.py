@@ -109,13 +109,34 @@ def discover_technology(source: dict, vyra_conn) -> dict:
         if db_dialect == "postgresql":
             cur.execute("SELECT version()")
             result["db_version"] = cur.fetchone()[0]
+            logger.info("[DSLearning] PG version: %s", result["db_version"][:80])
 
-            cur.execute("""
-                SELECT schema_name FROM information_schema.schemata
-                WHERE schema_name NOT IN ('pg_catalog','information_schema','pg_toast')
-                ORDER BY schema_name
-            """)
-            result["schemas"] = [r[0] for r in cur.fetchall()]
+            # pg_catalog üzerinden schema listesi
+            try:
+                cur.execute("""
+                    SELECT nspname FROM pg_catalog.pg_namespace
+                    WHERE nspname NOT IN ('pg_catalog','information_schema','pg_toast')
+                      AND nspname NOT LIKE 'pg_temp%%'
+                      AND nspname NOT LIKE 'pg_toast_temp%%'
+                    ORDER BY nspname
+                """)
+                result["schemas"] = [r[0] for r in cur.fetchall()]
+                logger.info("[DSLearning] pg_namespace şema sayısı: %d, şemalar: %s",
+                            len(result["schemas"]), result["schemas"][:10])
+            except Exception as schema_err:
+                logger.error("[DSLearning] Schema sorgusu hatası: %s — %s",
+                             type(schema_err).__name__, str(schema_err)[:200])
+                # Fallback: information_schema dene
+                try:
+                    cur.execute("""
+                        SELECT schema_name FROM information_schema.schemata
+                        WHERE schema_name NOT IN ('pg_catalog','information_schema','pg_toast')
+                        ORDER BY schema_name
+                    """)
+                    result["schemas"] = [r[0] for r in cur.fetchall()]
+                    logger.info("[DSLearning] Fallback schemata sonucu: %d", len(result["schemas"]))
+                except Exception:
+                    result["schemas"] = []
 
             cur.execute("SHOW server_encoding")
             result["character_set"] = cur.fetchone()[0]
@@ -152,8 +173,9 @@ def discover_technology(source: dict, vyra_conn) -> dict:
             db_conn.close()
         except Exception:
             pass
-        logger.error(f"[DSLearning] Technology discovery error: {e}")
-        return {"success": False, "error": str(e)}
+        logger.error("[DSLearning] Teknoloji keşfi sırasında hata oluştu")
+        logger.debug("[DSLearning] Technology discovery detay: %s", type(e).__name__)
+        return {"success": False, "error": f"Veritabanı bağlantısı veya sorgulama hatası: {type(e).__name__}"}
 
 
 # =====================================================
@@ -240,36 +262,93 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                     "columns_json": columns
                 })
 
-            # FK İlişkileri
-            cur.execute("""
-                SELECT
-                    tc.table_schema AS from_schema,
-                    tc.table_name AS from_table,
-                    kcu.column_name AS from_column,
-                    ccu.table_schema AS to_schema,
-                    ccu.table_name AS to_table,
-                    ccu.column_name AS to_column,
-                    tc.constraint_name
-                FROM information_schema.table_constraints tc
-                JOIN information_schema.key_column_usage kcu
-                    ON tc.constraint_name = kcu.constraint_name
-                    AND tc.table_schema = kcu.table_schema
-                JOIN information_schema.constraint_column_usage ccu
-                    ON ccu.constraint_name = tc.constraint_name
-                    AND ccu.table_schema = tc.table_schema
-                WHERE tc.constraint_type = 'FOREIGN KEY'
-                    AND tc.table_schema NOT IN ('pg_catalog','information_schema')
-            """)
-            for row in cur.fetchall():
-                relationships.append({
-                    "from_schema": row[0],
-                    "from_table": row[1],
-                    "from_column": row[2],
-                    "to_schema": row[3],
-                    "to_table": row[4],
-                    "to_column": row[5],
-                    "constraint_name": row[6]
-                })
+            # FK İlişkileri — pg_catalog üzerinden
+            # information_schema.constraint_column_usage sadece constraint sahibine veri döndürür
+            try:
+                # Önce FK constraint sayısını kontrol et
+                cur.execute("SELECT COUNT(*) FROM pg_catalog.pg_constraint WHERE contype = 'f'")
+                fk_total = cur.fetchone()[0]
+                logger.info("[DSLearning] pg_constraint FK sayısı: %d", fk_total)
+
+                if fk_total > 0:
+                    cur.execute("""
+                        SELECT
+                            ns_from.nspname     AS from_schema,
+                            cl_from.relname     AS from_table,
+                            att_from.attname    AS from_column,
+                            ns_to.nspname       AS to_schema,
+                            cl_to.relname       AS to_table,
+                            att_to.attname      AS to_column,
+                            con.conname         AS constraint_name
+                        FROM pg_catalog.pg_constraint con
+                        JOIN pg_catalog.pg_class cl_from     ON con.conrelid  = cl_from.oid
+                        JOIN pg_catalog.pg_namespace ns_from ON cl_from.relnamespace = ns_from.oid
+                        JOIN pg_catalog.pg_class cl_to       ON con.confrelid = cl_to.oid
+                        JOIN pg_catalog.pg_namespace ns_to   ON cl_to.relnamespace = ns_to.oid
+                        JOIN pg_catalog.pg_attribute att_from
+                            ON att_from.attrelid = con.conrelid
+                            AND att_from.attnum = ANY(con.conkey)
+                        JOIN pg_catalog.pg_attribute att_to
+                            ON att_to.attrelid = con.confrelid
+                            AND att_to.attnum = ANY(con.confkey)
+                        WHERE con.contype = 'f'
+                          AND array_length(con.conkey, 1) = 1
+                          AND ns_from.nspname NOT IN ('pg_catalog','information_schema')
+                        ORDER BY ns_from.nspname, cl_from.relname, con.conname
+                    """)
+                    for row in cur.fetchall():
+                        relationships.append({
+                            "from_schema": row[0],
+                            "from_table": row[1],
+                            "from_column": row[2],
+                            "to_schema": row[3],
+                            "to_table": row[4],
+                            "to_column": row[5],
+                            "constraint_name": row[6]
+                        })
+
+                    # Composite FK'lar (multi-column) — ayrı sorgu
+                    cur.execute("""
+                        SELECT
+                            ns_from.nspname,
+                            cl_from.relname,
+                            att_from.attname,
+                            ns_to.nspname,
+                            cl_to.relname,
+                            att_to.attname,
+                            con.conname
+                        FROM pg_catalog.pg_constraint con
+                        JOIN pg_catalog.pg_class cl_from     ON con.conrelid  = cl_from.oid
+                        JOIN pg_catalog.pg_namespace ns_from ON cl_from.relnamespace = ns_from.oid
+                        JOIN pg_catalog.pg_class cl_to       ON con.confrelid = cl_to.oid
+                        JOIN pg_catalog.pg_namespace ns_to   ON cl_to.relnamespace = ns_to.oid
+                        CROSS JOIN generate_subscripts(con.conkey, 1) AS idx
+                        JOIN pg_catalog.pg_attribute att_from
+                            ON att_from.attrelid = con.conrelid
+                            AND att_from.attnum = con.conkey[idx]
+                        JOIN pg_catalog.pg_attribute att_to
+                            ON att_to.attrelid = con.confrelid
+                            AND att_to.attnum = con.confkey[idx]
+                        WHERE con.contype = 'f'
+                          AND array_length(con.conkey, 1) > 1
+                          AND ns_from.nspname NOT IN ('pg_catalog','information_schema')
+                        ORDER BY ns_from.nspname, cl_from.relname, con.conname
+                    """)
+                    for row in cur.fetchall():
+                        relationships.append({
+                            "from_schema": row[0],
+                            "from_table": row[1],
+                            "from_column": row[2],
+                            "to_schema": row[3],
+                            "to_table": row[4],
+                            "to_column": row[5],
+                            "constraint_name": row[6]
+                        })
+
+                logger.info("[DSLearning] Bulunan FK ilişki sayısı: %d", len(relationships))
+            except Exception as fk_err:
+                logger.error("[DSLearning] FK ilişki sorgusu başarısız: %s — %s", type(fk_err).__name__, str(fk_err)[:300])
+                # FK hatası obje tespitini engellemez, devam et
 
         elif db_dialect == "mssql":
             cur.execute("""
@@ -312,6 +391,35 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                     "column_count": len(columns),
                     "row_count_estimate": 0,
                     "columns_json": columns
+                })
+
+            # MSSQL FK İlişkileri
+            cur.execute("""
+                SELECT
+                    SCHEMA_NAME(fk.schema_id) AS from_schema,
+                    OBJECT_NAME(fk.parent_object_id) AS from_table,
+                    COL_NAME(fkc.parent_object_id, fkc.parent_column_id) AS from_column,
+                    SCHEMA_NAME(pk_tab.schema_id) AS to_schema,
+                    OBJECT_NAME(fk.referenced_object_id) AS to_table,
+                    COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) AS to_column,
+                    fk.name AS constraint_name
+                FROM sys.foreign_keys fk
+                JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
+                JOIN sys.tables pk_tab ON fk.referenced_object_id = pk_tab.object_id
+                ORDER BY from_schema, from_table, constraint_name
+            """)
+            for row in cur.fetchall():
+                fs = row["from_schema"] if isinstance(row, dict) else row[0]
+                ft = row["from_table"] if isinstance(row, dict) else row[1]
+                fc = row["from_column"] if isinstance(row, dict) else row[2]
+                ts = row["to_schema"] if isinstance(row, dict) else row[3]
+                tt = row["to_table"] if isinstance(row, dict) else row[4]
+                tc = row["to_column"] if isinstance(row, dict) else row[5]
+                cn = row["constraint_name"] if isinstance(row, dict) else row[6]
+                relationships.append({
+                    "from_schema": fs, "from_table": ft, "from_column": fc,
+                    "to_schema": ts, "to_table": tt, "to_column": tc,
+                    "constraint_name": cn
                 })
 
         elif db_dialect == "mysql":
@@ -359,6 +467,35 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                     "columns_json": columns
                 })
 
+            # MySQL FK İlişkileri
+            cur.execute("""
+                SELECT
+                    TABLE_SCHEMA AS from_schema,
+                    TABLE_NAME AS from_table,
+                    COLUMN_NAME AS from_column,
+                    REFERENCED_TABLE_SCHEMA AS to_schema,
+                    REFERENCED_TABLE_NAME AS to_table,
+                    REFERENCED_COLUMN_NAME AS to_column,
+                    CONSTRAINT_NAME AS constraint_name
+                FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+                WHERE TABLE_SCHEMA = %s
+                  AND REFERENCED_TABLE_NAME IS NOT NULL
+                ORDER BY TABLE_NAME, CONSTRAINT_NAME
+            """, (db_name,))
+            for row in cur.fetchall():
+                fs = row.get("from_schema", "") if isinstance(row, dict) else row[0]
+                ft = row.get("from_table", "") if isinstance(row, dict) else row[1]
+                fc = row.get("from_column", "") if isinstance(row, dict) else row[2]
+                ts = row.get("to_schema", "") if isinstance(row, dict) else row[3]
+                tt = row.get("to_table", "") if isinstance(row, dict) else row[4]
+                tc = row.get("to_column", "") if isinstance(row, dict) else row[5]
+                cn = row.get("constraint_name", "") if isinstance(row, dict) else row[6]
+                relationships.append({
+                    "from_schema": fs, "from_table": ft, "from_column": fc,
+                    "to_schema": ts, "to_table": tt, "to_column": tc,
+                    "constraint_name": cn
+                })
+
         elapsed = int((time.time() - start) * 1000)
         db_conn.close()
 
@@ -393,6 +530,21 @@ def detect_objects(source: dict, vyra_conn) -> dict:
 
         vyra_conn.commit()
 
+        # Snapshot oluştur ve diff hesapla (v3.0)
+        snapshot_result = {}
+        try:
+            from app.services import ds_diff_service
+            snapshot_result = ds_diff_service.create_snapshot(vyra_conn, source_id, objects, relationships)
+            if snapshot_result.get("has_changes") or snapshot_result.get("is_first_run"):
+                logger.info("[DSLearning] Schema snapshot oluşturuldu: id=%s, diff=%s",
+                            snapshot_result.get("snapshot_id"),
+                            snapshot_result.get("diff", {}).get("summary", ""))
+            else:
+                logger.info("[DSLearning] Şemada değişiklik yok, snapshot atlandı")
+        except Exception as snap_err:
+            logger.error("[DSLearning] Snapshot oluşturma hatası: %s — %s",
+                         type(snap_err).__name__, str(snap_err)[:200])
+
         return {
             "success": True,
             "data": {
@@ -400,7 +552,13 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                 "view_count": sum(1 for o in objects if o["object_type"] == "view"),
                 "relationship_count": len(relationships),
                 "total_columns": sum(o["column_count"] for o in objects),
-                "elapsed_ms": elapsed
+                "elapsed_ms": elapsed,
+                "snapshot": {
+                    "id": snapshot_result.get("snapshot_id"),
+                    "is_first_run": snapshot_result.get("is_first_run", True),
+                    "has_changes": snapshot_result.get("has_changes", True),
+                    "diff_summary": snapshot_result.get("diff", {}).get("summary", "")
+                }
             }
         }
 
@@ -409,8 +567,9 @@ def detect_objects(source: dict, vyra_conn) -> dict:
             db_conn.close()
         except Exception:
             pass
-        logger.error(f"[DSLearning] Object detection error: {e}")
-        return {"success": False, "error": str(e)}
+        logger.error("[DSLearning] Obje tespiti sırasında hata oluştu")
+        logger.debug("[DSLearning] Object detection detay: %s", type(e).__name__)
+        return {"success": False, "error": f"Obje tespiti sırasında hata: {type(e).__name__}"}
 
 
 # =====================================================
@@ -523,8 +682,9 @@ def collect_samples(source: dict, vyra_conn, max_rows: int = 10) -> dict:
             db_conn.close()
         except Exception:
             pass
-        logger.error(f"[DSLearning] Sample collection error: {e}")
-        return {"success": False, "error": str(e)}
+        logger.error("[DSLearning] Örnek veri toplama sırasında hata oluştu")
+        logger.debug("[DSLearning] Sample collection detay: %s", type(e).__name__)
+        return {"success": False, "error": f"Veri toplama sırasında hata: {type(e).__name__}"}
 
 
 def _serialize_value(val):
@@ -786,14 +946,20 @@ def generate_synthetic_qa(source_id: int, vyra_conn) -> dict:
     """
     start = time.time()
     cur = vyra_conn.cursor()
+    logger.info("[DSLearning] QA üretimi başlatıldı: source_id=%s", source_id)
+
+    # company_id'yi al (ds_learning_results için NOT NULL)
+    cur.execute("SELECT company_id FROM data_sources WHERE id = %s", (source_id,))
+    source_row = cur.fetchone()
+    company_id = source_row["company_id"] if source_row else 1
 
     # Embedding manager'ı al
     try:
         from app.services.rag.embedding import EmbeddingManager
         emb_mgr = EmbeddingManager()
-    except Exception as e:
-        logger.error(f"[DSLearning] EmbeddingManager yüklenemedi: {e}")
-        return {"success": False, "error": f"Embedding modeli yüklenemedi: {e}"}
+    except Exception:
+        logger.error("[DSLearning] EmbeddingManager yüklenemedi")
+        return {"success": False, "error": "Embedding modeli yüklenemedi"}
 
     # Keşfedilmiş objeleri al
     cur.execute("""
@@ -830,7 +996,7 @@ def generate_synthetic_qa(source_id: int, vyra_conn) -> dict:
         WHERE source_id = %s
     """, (source_id,))
     existing_hashes = {row["q_hash"] for row in cur.fetchall()}
-    logger.info(f"[DSLearning] Mevcut {len(existing_hashes)} unique QA hash bulundu")
+    logger.info("[DSLearning] Mevcut %d unique QA hash bulundu", len(existing_hashes))
 
     # Mevcut job_id al (create_job ile oluşturulmuş olabilir)
     cur.execute("""
@@ -1034,10 +1200,11 @@ def generate_synthetic_qa(source_id: int, vyra_conn) -> dict:
 
             cur.execute("""
                 INSERT INTO ds_learning_results
-                    (source_id, job_id, content_type, content_text, embedding, metadata, score)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    (source_id, company_id, job_id, content_type, content_text, embedding, metadata, score)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 source_id,
+                company_id,
                 current_job_id,
                 pair["content_type"],
                 pair["content_text"],
@@ -1054,7 +1221,7 @@ def generate_synthetic_qa(source_id: int, vyra_conn) -> dict:
         vyra_conn.commit()
 
     elapsed = int((time.time() - start) * 1000)
-    logger.info(f"[DSLearning] Sentetik QA üretimi: {qa_count} yeni, {skipped_count} atlandı (dedup), {elapsed}ms")
+    logger.info("[DSLearning] Sentetik QA üretimi: %d yeni, %d atlandı (dedup), %dms", qa_count, skipped_count, elapsed)
 
     return {
         "success": True,
@@ -1161,8 +1328,8 @@ def search_db_knowledge(query: str, company_id: int = None, min_score: float = 0
         results.sort(key=lambda x: x["score"], reverse=True)
         return results[:max_results]
 
-    except Exception as e:
-        logger.error(f"[DSLearning] DB knowledge search error: {e}")
+    except Exception:
+        logger.error("[DSLearning] DB knowledge search sırasında hata oluştu")
         return []
 
 
@@ -1172,11 +1339,12 @@ def search_db_knowledge(query: str, company_id: int = None, min_score: float = 0
 
 def run_full_learning(source: dict, vyra_conn, user_id: int = None) -> dict:
     """
-    4 adımlı tam öğrenme pipeline'ı:
+    5 adımlı tam öğrenme pipeline'ı (v3.0):
     1. Teknoloji Keşfi
-    2. Obje Tespiti
+    2. Obje Tespiti (+ schema snapshot)
     3. Örnek Veri Toplama
-    4. Sentetik QA Üretimi
+    4. LLM Enrichment (tablo/sütun anlamlandırma)
+    5. Sentetik QA Üretimi
     """
     source_id = source["id"]
     company_id = source.get("company_id", 1)
@@ -1186,30 +1354,109 @@ def run_full_learning(source: dict, vyra_conn, user_id: int = None) -> dict:
     job_id = create_job(vyra_conn, source_id, company_id, "full_learning", user_id)
 
     try:
-        # Adım 1
-        logger.info(f"[DSLearning] Full pipeline step 1/4: Technology for source {source_id}")
+        # Adım 1: Teknoloji Keşfi
+        logger.info("[DSLearning] Full pipeline step 1/5: Technology for source %s", source_id)
         r1 = discover_technology(source, vyra_conn)
         results["steps"].append({"step": "technology", "success": r1.get("success"), "data": r1.get("data")})
         if not r1.get("success"):
             raise Exception(f"Technology discovery failed: {r1.get('error')}")
 
-        # Adım 2
-        logger.info(f"[DSLearning] Full pipeline step 2/4: Objects for source {source_id}")
+        # Adım 2: Obje Tespiti (+ snapshot diff)
+        logger.info("[DSLearning] Full pipeline step 2/5: Objects for source %s", source_id)
         r2 = detect_objects(source, vyra_conn)
         results["steps"].append({"step": "objects", "success": r2.get("success"), "data": r2.get("data")})
         if not r2.get("success"):
             raise Exception(f"Object detection failed: {r2.get('error')}")
 
-        # Adım 3
-        logger.info(f"[DSLearning] Full pipeline step 3/4: Samples for source {source_id}")
+        # Adım 3: Örnek Veri Toplama
+        logger.info("[DSLearning] Full pipeline step 3/5: Samples for source %s", source_id)
         r3 = collect_samples(source, vyra_conn)
         results["steps"].append({"step": "samples", "success": r3.get("success"), "data": r3.get("data")})
         if not r3.get("success"):
             raise Exception(f"Sample collection failed: {r3.get('error')}")
 
-        # Adım 4
-        logger.info(f"[DSLearning] Full pipeline step 4/4: Synthetic QA for source {source_id}")
-        r4 = generate_synthetic_qa(source_id, vyra_conn)
+        # Adım 4: LLM Enrichment (v3.0)
+        logger.info("[DSLearning] Full pipeline step 4/5: LLM Enrichment for source %s", source_id)
+        try:
+            from app.services import ds_enrichment_service
+
+            # Objeleri al
+            cur = vyra_conn.cursor()
+            cur.execute("""
+                SELECT id, schema_name, object_name, object_type,
+                       column_count, row_count_estimate, columns_json
+                FROM ds_db_objects WHERE source_id = %s
+            """, (source_id,))
+            objects = [dict(row) if hasattr(row, 'keys') else row for row in cur.fetchall()]
+
+            # Sample'ları indexle (object_id bazlı)
+            cur.execute("""
+                SELECT object_id, sample_data
+                FROM ds_db_samples WHERE source_id = %s
+            """, (source_id,))
+            samples_map = {}
+            for row in cur.fetchall():
+                obj_id = row["object_id"] if isinstance(row, dict) else row[0]
+                s_data = row["sample_data"] if isinstance(row, dict) else row[1]
+                if isinstance(s_data, str):
+                    try:
+                        s_data = json.loads(s_data)
+                    except Exception:
+                        s_data = []
+                samples_map[obj_id] = s_data if isinstance(s_data, list) else []
+
+            # İlişkileri al
+            cur.execute("""
+                SELECT from_schema, from_table, from_column,
+                       to_schema, to_table, to_column, constraint_name
+                FROM ds_db_relationships WHERE source_id = %s
+            """, (source_id,))
+            relationships = [dict(row) if hasattr(row, 'keys') else row for row in cur.fetchall()]
+
+            # Enrichment çalıştır
+            enrichment_result = ds_enrichment_service.enrich_tables_batch(
+                vyra_conn, source_id, company_id,
+                objects, samples_map, relationships
+            )
+            results["steps"].append({
+                "step": "enrichment",
+                "success": True,
+                "data": {
+                    "total": enrichment_result.get("total", 0),
+                    "enriched": enrichment_result.get("enriched", 0),
+                    "skipped": enrichment_result.get("skipped", 0),
+                    "admin_required": enrichment_result.get("admin_required", 0),
+                    "errors": enrichment_result.get("errors", 0),
+                    "elapsed_ms": enrichment_result.get("elapsed_ms", 0)
+                }
+            })
+
+        except Exception as enrich_err:
+            logger.error("[DSLearning] Enrichment hatası: %s — %s",
+                         type(enrich_err).__name__, str(enrich_err)[:200])
+            results["steps"].append({
+                "step": "enrichment",
+                "success": False,
+                "data": {"error": str(enrich_err)[:200]}
+            })
+            # Enrichment başarısız olsa bile QA üretimine devam et
+
+        # Adım 5: Sentetik QA Üretimi (v3.0 — enrichment-aware)
+        logger.info("[DSLearning] Full pipeline step 5/5: Synthetic QA for source %s", source_id)
+        try:
+            # Enrichment başarılıysa yeni generator'ı kullan
+            enrichment_step = next(
+                (s for s in results["steps"] if s.get("step") == "enrichment"), None
+            )
+            if enrichment_step and enrichment_step.get("success"):
+                from app.services import ds_qa_generator
+                r4 = ds_qa_generator.generate_enriched_qa(source_id, vyra_conn)
+            else:
+                # Fallback: eski template-based QA
+                r4 = generate_synthetic_qa(source_id, vyra_conn)
+        except Exception as qa_err:
+            logger.warning("[DSLearning] Enriched QA hatası, fallback kullanılıyor: %s", str(qa_err)[:100])
+            r4 = generate_synthetic_qa(source_id, vyra_conn)
         results["steps"].append({"step": "qa_generation", "success": r4.get("success"), "data": r4.get("data")})
 
         total_ms = sum(
@@ -1225,11 +1472,11 @@ def run_full_learning(source: dict, vyra_conn, user_id: int = None) -> dict:
 
         return results
 
-    except Exception as e:
-        logger.error(f"[DSLearning] Full pipeline error: {e}")
+    except Exception:
+        logger.error("[DSLearning] Full pipeline sırasında hata oluştu")
         results["success"] = False
-        results["error"] = str(e)
-        complete_job(vyra_conn, job_id, {"success": False, "error": str(e)})
+        results["error"] = "Pipeline çalıştırma sırasında hata oluştu"
+        complete_job(vyra_conn, job_id, {"success": False, "error": "Pipeline hatası"})
         return results
 
 
@@ -1297,34 +1544,47 @@ def get_schedule(vyra_conn, source_id: int) -> dict:
 def upsert_schedule(vyra_conn, source_id: int, schedule_type: str,
                     interval_hours: int = None, is_active: bool = True) -> dict:
     """Schedule oluşturur veya günceller."""
-    cur = vyra_conn.cursor()
+    try:
+        cur = vyra_conn.cursor()
 
-    # company_id'yi data_sources'tan al
-    cur.execute("SELECT company_id FROM data_sources WHERE id = %s", (source_id,))
-    source = cur.fetchone()
-    company_id = source["company_id"] if source else None
+        # company_id'yi data_sources'tan al
+        cur.execute("SELECT company_id FROM data_sources WHERE id = %s", (source_id,))
+        source = cur.fetchone()
+        if not source:
+            logger.error("[DSLearning] Schedule kaydedilirken kaynak bulunamadı: source_id=%s", source_id)
+            return {"success": False, "message": "Kaynak bulunamadı"}
+        company_id = source["company_id"]
 
-    # next_run_at hesapla
-    next_run = None
-    if is_active and schedule_type != "manual_only":
-        from datetime import timedelta
-        hours = interval_hours or (24 if schedule_type == "daily" else 12)
-        next_run = datetime.now(timezone.utc) + timedelta(hours=hours)
+        # next_run_at hesapla
+        next_run = None
+        if is_active and schedule_type != "manual_only":
+            from datetime import timedelta
+            hours = interval_hours or (24 if schedule_type == "daily" else 12)
+            next_run = datetime.now(timezone.utc) + timedelta(hours=hours)
 
-    # ON CONFLICT upsert (unique constraint: source_id)
-    cur.execute("""
-        INSERT INTO ds_learning_schedules
-            (source_id, company_id, schedule_type, interval_value, is_active, next_run_at)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        ON CONFLICT (source_id) DO UPDATE SET
-            schedule_type = EXCLUDED.schedule_type,
-            interval_value = EXCLUDED.interval_value,
-            is_active = EXCLUDED.is_active,
-            next_run_at = EXCLUDED.next_run_at,
-            updated_at = NOW()
-    """, (source_id, company_id, schedule_type, interval_hours, is_active, next_run))
+        # ON CONFLICT upsert (unique constraint: source_id)
+        cur.execute("""
+            INSERT INTO ds_learning_schedules
+                (source_id, company_id, schedule_type, interval_value, is_active, next_run_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (source_id) DO UPDATE SET
+                schedule_type = EXCLUDED.schedule_type,
+                interval_value = EXCLUDED.interval_value,
+                is_active = EXCLUDED.is_active,
+                next_run_at = EXCLUDED.next_run_at,
+                updated_at = NOW()
+        """, (source_id, company_id, schedule_type, interval_hours, is_active, next_run))
 
-    vyra_conn.commit()
-    return {"success": True, "message": "Zamanlama kaydedildi", "schedule_type": schedule_type, "is_active": is_active}
+        vyra_conn.commit()
+        logger.info("[DSLearning] Schedule kaydedildi: source_id=%s, type=%s, active=%s", source_id, schedule_type, is_active)
+        return {"success": True, "message": "Zamanlama kaydedildi", "schedule_type": schedule_type, "is_active": is_active}
+
+    except Exception:
+        logger.error("[DSLearning] Schedule kaydetme sırasında hata oluştu")
+        try:
+            vyra_conn.rollback()
+        except Exception:
+            pass
+        return {"success": False, "message": "Zamanlama kaydedilemedi"}
 
 

@@ -12,7 +12,12 @@ Pipeline:
        ↓              ↓
   Birleşik Yanıt
 
-Version: 2.57.0
+v3.1.0: Enrichment-Aware Routing
+  - get_schema_context() → ds_table_enrichments LEFT JOIN
+  - match_template_query() → Türkçe iş adı eşleştirme
+  - format_schema_for_llm() → Türkçe açıklamalar LLM context'e dahil
+
+Version: 3.1.0
 """
 
 from __future__ import annotations
@@ -145,13 +150,20 @@ def get_schema_context(source_id: int) -> Dict[str, Any]:
         source_name = source_row["name"]
         dialect = source_row["db_type"]
 
-        # Tablolar ve sütunlar
+        # 🆕 v3.1.0: Tablolar + Enrichment bilgileri (LEFT JOIN)
         cur.execute("""
-            SELECT schema_name, object_name, object_type, column_count,
-                   row_count_estimate, columns_json
-            FROM ds_db_objects
-            WHERE source_id = %s AND object_type = 'table'
-            ORDER BY object_name
+            SELECT o.schema_name, o.object_name, o.object_type, o.column_count,
+                   o.row_count_estimate, o.columns_json,
+                   e.business_name_tr, e.admin_label_tr,
+                   e.category, e.description_tr
+            FROM ds_db_objects o
+            LEFT JOIN ds_table_enrichments e
+                ON e.source_id = o.source_id
+                AND e.table_name = o.object_name
+                AND COALESCE(e.schema_name, '') = COALESCE(o.schema_name, '')
+                AND e.is_active = TRUE
+            WHERE o.source_id = %s AND o.object_type = 'table'
+            ORDER BY o.object_name
         """, (source_id,))
 
         tables = []
@@ -174,6 +186,11 @@ def get_schema_context(source_id: int) -> Dict[str, Any]:
                 "columns": columns_json,
                 "column_count": row["column_count"],
                 "row_estimate": row["row_count_estimate"],
+                # 🆕 v3.1.0: Enrichment bilgileri
+                "business_name_tr": row.get("business_name_tr", "") or "",
+                "admin_label_tr": row.get("admin_label_tr", "") or "",
+                "category": row.get("category", "") or "",
+                "description_tr": row.get("description_tr", "") or "",
             })
 
         # İlişkiler
@@ -241,7 +258,16 @@ def format_schema_for_llm(schema_context: Dict[str, Any]) -> str:
             ):
                 date_cols.append(c["name"])
 
-        parts.append(f"📋 {t.get('schema', '')}.{t['name']} (~{t.get('row_estimate', 0)} satır)")
+        # 🆕 v3.1.0: Enrichment bilgilerini LLM context'e dahil et
+        bname = t.get("admin_label_tr") or t.get("business_name_tr") or ""
+        desc = t.get("description_tr", "")
+        label = f"📋 {t.get('schema', '')}.{t['name']}"
+        if bname:
+            label += f" [{bname}]"
+        label += f" (~{t.get('row_estimate', 0)} satır)"
+        parts.append(label)
+        if desc:
+            parts.append(f"   Açıklama: {desc}")
         if pk_cols:
             parts.append(f"   PK: {', '.join(pk_cols)}")
         parts.append(f"   Sütunlar: {', '.join(col_names[:20])}")
@@ -293,18 +319,35 @@ def match_template_query(
     if not tables:
         return None
 
-    # Hangi tablo hakkında sorulduğunu bul
+    # 🆕 v3.1.0: Hangi tablo hakkında sorulduğunu bul (enrichment alias'ları dahil)
     matched_table = None
+    # Türkçe ek kalıpları
+    tr_suffixes = (
+        "lar", "ler", "da", "de", "dan", "den", "ki", "daki", "deki",
+        "nın", "nin", "nun", "nün", "ın", "in", "un", "ün",
+        "ları", "leri", "ları", "ya", "ye", "na", "ne"
+    )
     for t in tables:
-        table_name = t["name"].lower()
-        # Tablo adı sorguda geçiyor mu?
-        if table_name in query_lower:
-            matched_table = t
-            break
-        # Türkçe çoğul/ek kontrolü (basit)
-        for suffix in ("lar", "ler", "da", "de", "dan", "den", "ki", "daki", "deki"):
-            if f"{table_name}{suffix}" in query_lower or f"{table_name}'{suffix}" in query_lower:
+        # Aday isimler: teknik ad + Türkçe iş adı + admin etiketi
+        aliases = [t["name"].lower()]
+        if t.get("business_name_tr"):
+            aliases.append(t["business_name_tr"].lower())
+        if t.get("admin_label_tr"):
+            aliases.append(t["admin_label_tr"].lower())
+
+        for alias in aliases:
+            if not alias:
+                continue
+            # Doğrudan eşleşme
+            if alias in query_lower:
                 matched_table = t
+                break
+            # Türkçe çoğul/ek kontrolü
+            for suffix in tr_suffixes:
+                if f"{alias}{suffix}" in query_lower or f"{alias}'{suffix}" in query_lower:
+                    matched_table = t
+                    break
+            if matched_table:
                 break
         if matched_table:
             break

@@ -185,6 +185,14 @@ window.DataSourcesModule = (function () {
                 }
             });
         });
+        // Tablo Etiketleme butonu
+        grid.querySelectorAll('.ds-btn-enrich').forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (window.DSEnrichmentModule) {
+                    DSEnrichmentModule.openPanel(parseInt(btn.dataset.id));
+                }
+            });
+        });
     }
 
     function renderCard(source) {
@@ -269,6 +277,9 @@ window.DataSourcesModule = (function () {
                         </button>
                         <button class="ds-card-history-btn ds-btn-history" data-id="${source.id}" data-name="${_escapeHtml(source.name)}" title="Öğrenme Geçmişi">
                             <i class="fa-solid fa-brain"></i>
+                        </button>
+                        <button class="ds-card-enrich-btn ds-btn-enrich" data-id="${source.id}" data-name="${_escapeHtml(source.name)}" title="Tablo Etiketleme">
+                            <i class="fa-solid fa-tags"></i>
                         </button>` : ''}
                         <button class="ds-btn-edit" data-id="${source.id}" title="Düzenle">
                             <i class="fa-solid fa-pen"></i>

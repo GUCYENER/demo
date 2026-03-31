@@ -3,13 +3,14 @@ VYRA L1 Support API - Deep Think Service
 =========================================
 RAG sonuçlarını LLM ile akıllıca sentezleyerek profesyonel yanıtlar üretir.
 
-v2.28.0: Initial implementation
+v3.1.0: Sorgu zamanı halüsinasyon doğrulaması eklendi
 
 Özellikler:
 - Intent Detection: Soru tipi analizi (liste, tekil, adım adım)
 - Expanded Retrieval: Intent'e göre dinamik n_results
 - LLM Synthesis: Tüm sonuçları profesyonel formatta birleştirme
 - Citation: Kaynak dosya ve chunk referansları
+- 🛡️ Hallucination Guard: Sentez cevaplarının kaynak sadakati doğrulaması
 """
 
 from __future__ import annotations
@@ -701,6 +702,115 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
             return db_part
 
     # ========================================
+    # 🛡️ v3.1.0: Sorgu Zamanı Halüsinasyon Doğrulaması
+    # ========================================
+
+    # Sorgu zamanı eşikleri (eğitim zamanından biraz daha toleranslı)
+    _QUERY_GROUNDING_THRESHOLD = 0.20
+    _QUERY_FAITHFULNESS_THRESHOLD = 0.35
+    _QUERY_MAX_LENGTH_RATIO = 10.0
+
+    def _validate_synthesis(
+        self,
+        synthesized: str,
+        rag_results: List[Dict],
+        query: str,
+        intent: 'IntentResult'
+    ) -> str:
+        """
+        🛡️ v3.1.0: LLM sentez cevabını kaynak metne karşı doğrular.
+
+        3 katmanlı kontrol:
+        1. Uzunluk oranı (cevap/kaynak)
+        2. Anahtar kelime temellendirme (grounding)
+        3. Semantik sadakat (faithfulness)
+
+        Başarısız olursa fallback cevap döner.
+
+        Args:
+            synthesized: LLM sentez cevabı
+            rag_results: RAG kaynak sonuçları
+            query: Kullanıcı sorusu
+            intent: Intent analiz sonucu
+
+        Returns:
+            Doğrulanmış cevap veya fallback cevap
+        """
+        if not synthesized or not rag_results:
+            return synthesized
+
+        try:
+            from app.services.learned_qa_service import get_learned_qa_service
+            qa_service = get_learned_qa_service()
+
+            # RAG kaynak metinlerini birleştir (doğrulama için)
+            source_texts = " ".join(
+                r.get("content", "")[:400] for r in rag_results[:3]
+            )
+
+            # Kısa kaynak metin ise doğrulama atla (false positive riski)
+            source_len = len(source_texts.strip())
+            if source_len < 500:
+                log_system_event(
+                    "DEBUG",
+                    f"Hallucination check SKIPPED: source_len={source_len} < 500",
+                    "deep_think"
+                )
+                return synthesized
+
+            # 3 katmanlı doğrulama (özel eşiklerle)
+            # Geçici olarak service eşiklerini override ediyoruz
+            orig_faith = qa_service.FAITHFULNESS_THRESHOLD
+            orig_ground = qa_service.GROUNDING_THRESHOLD
+            orig_length = qa_service.MAX_LENGTH_RATIO
+
+            qa_service.FAITHFULNESS_THRESHOLD = self._QUERY_FAITHFULNESS_THRESHOLD
+            qa_service.GROUNDING_THRESHOLD = self._QUERY_GROUNDING_THRESHOLD
+            qa_service.MAX_LENGTH_RATIO = self._QUERY_MAX_LENGTH_RATIO
+
+            try:
+                validation = qa_service._validate_answer(
+                    answer=synthesized,
+                    source_text=source_texts,
+                    question=query
+                )
+            finally:
+                # Eşikleri geri yükle
+                qa_service.FAITHFULNESS_THRESHOLD = orig_faith
+                qa_service.GROUNDING_THRESHOLD = orig_ground
+                qa_service.MAX_LENGTH_RATIO = orig_length
+
+            if not validation["passed"]:
+                log_warning(
+                    f"Deep Think HALLUCINATION blocked: "
+                    f"reason={validation['reason']}, "
+                    f"faithfulness={validation.get('faithfulness', 0):.2f}, "
+                    f"grounding={validation.get('grounding', 0):.1%}, "
+                    f"length_ratio={validation.get('length_ratio', 0):.1f}x | "
+                    f"query='{query[:50]}'",
+                    "deep_think"
+                )
+                # Fallback: RAG chunk'ını doğrudan göster
+                return self._fallback_response(rag_results, intent)
+
+            log_system_event(
+                "DEBUG",
+                f"Hallucination check PASSED: "
+                f"grounding={validation.get('grounding', 0):.1%}, "
+                f"faithfulness={validation.get('faithfulness', 0):.2f}",
+                "deep_think"
+            )
+            return synthesized
+
+        except Exception as e:
+            log_system_event(
+                "DEBUG",
+                f"Hallucination check error (fail-open): {e}",
+                "deep_think"
+            )
+            return synthesized  # Fail-open: hata durumunda cevabı engelleme
+
+    # ========================================
     # 4. Main Pipeline
     # ========================================
     
@@ -942,10 +1052,14 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
                 synthesized = best_content
             else:
                 synthesized = self.synthesize_response(query, rag_results, intent)
+                # 🛡️ v3.1.0: Halüsinasyon doğrulaması
+                synthesized = self._validate_synthesis(synthesized, rag_results, query, intent)
         elif category_index is not None:
             synthesized = self._next_category_response(rag_results, intent, category_index)
         else:
             synthesized = self.synthesize_response(query, rag_results, intent)
+            # 🛡️ v3.1.0: Halüsinasyon doğrulaması
+            synthesized = self._validate_synthesis(synthesized, rag_results, query, intent)
         
         # Kaynak dosyaları topla
         # 🔧 v2.33.2: Sonuç yokken boş sources döndür (sahte kaynak gösterimini önle)
@@ -1403,7 +1517,7 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             fallback = self._fallback_response(rag_results, intent)
             yield {"type": "done", "data": {
                 "content": fallback,
-                "error": str(e)
+                "error": "Yanıt üretilirken bir hata oluştu."
             }}
             return
         

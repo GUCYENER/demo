@@ -848,7 +848,7 @@ CREATE INDEX IF NOT EXISTS idx_ds_db_samples_source ON ds_db_samples(source_id);
 -- Kaynak Bazlı Öğrenme Zamanlaması
 CREATE TABLE IF NOT EXISTS ds_learning_schedules (
     id SERIAL PRIMARY KEY,
-    source_id INTEGER NOT NULL REFERENCES data_sources(id) ON DELETE CASCADE,
+    source_id INTEGER NOT NULL REFERENCES data_sources(id) ON DELETE CASCADE UNIQUE,
     company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     schedule_type VARCHAR(50) NOT NULL,    -- 'interval_hours', 'daily', 'manual_only'
     interval_value INTEGER DEFAULT 24,
@@ -871,8 +871,23 @@ CREATE TABLE IF NOT EXISTS ds_learning_results (
     content_text TEXT NOT NULL,
     embedding FLOAT[],
     metadata JSONB,
+    score FLOAT DEFAULT 0.0,
     created_at TIMESTAMP DEFAULT NOW()
 );
+
+-- Migration: Mevcut tabloya eksik sütunları ekle
+ALTER TABLE ds_learning_results ADD COLUMN IF NOT EXISTS score FLOAT DEFAULT 0.0;
+
+-- Migration: ds_learning_schedules UNIQUE constraint (ON CONFLICT için)
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'ds_learning_schedules_source_id_key'
+    ) THEN
+        ALTER TABLE ds_learning_schedules ADD CONSTRAINT ds_learning_schedules_source_id_key UNIQUE (source_id);
+    END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_ds_learn_results_source ON ds_learning_results(source_id);
 CREATE INDEX IF NOT EXISTS idx_ds_learn_results_company ON ds_learning_results(company_id);
 CREATE INDEX IF NOT EXISTS idx_ds_learn_results_type ON ds_learning_results(content_type);

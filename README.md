@@ -2989,7 +2989,7 @@ netstat -an | findstr "5005"
 
 **Geliştirici:** Yasın Fazlıoğlu  
 **E-posta:** yasin.fazlioglu@consultant.turkcell.com.tr  
-**Versiyon:** 2.14.1 (Smart Excel Processor + Response Time)
+**Versiyon:** 3.1.0 (Enrichment-Aware Routing + Hallucination Guard)
 
 ---
 

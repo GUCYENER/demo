@@ -167,6 +167,7 @@ window.SystemManagerModule = (function () {
                     <span><i class="fa-solid fa-user-shield mr-2"></i>${data.protected.admin_users} admin</span>
                     <span class="ml-4"><i class="fa-solid fa-brain mr-2"></i>${data.protected.llm_configs} LLM</span>
                     <span class="ml-4"><i class="fa-solid fa-wand-magic-sparkles mr-2"></i>${data.protected.prompt_templates} prompt</span>
+                    <span class="ml-4"><i class="fa-solid fa-database mr-2"></i>${data.protected.data_sources || 0} kaynak</span>
                 `;
             }
 
@@ -177,7 +178,10 @@ window.SystemManagerModule = (function () {
                     (d.user_feedback || 0) + (d.document_topics || 0) +
                     (d.ml_training_samples || 0) + (d.ml_training_jobs || 0) +
                     (d.ml_training_schedules || 0) + (d.ml_models || 0) +
-                    (d.learned_answers || 0) + (d.system_logs || 0);
+                    (d.learned_answers || 0) +
+                    (d.ds_learning_results || 0) + (d.ds_db_objects || 0) +
+                    (d.ds_discovery_jobs || 0) + (d.sql_audit_log || 0) +
+                    (d.system_logs || 0);
                 deletableStats.innerHTML = `
                     <span><i class="fa-solid fa-users mr-2"></i>${d.non_admin_users || 0} kullanıcı</span>
                     <span class="ml-4"><i class="fa-solid fa-ticket mr-2"></i>${d.tickets || 0} ticket</span>
@@ -186,6 +190,9 @@ window.SystemManagerModule = (function () {
                     <span class="ml-4"><i class="fa-solid fa-puzzle-piece mr-2"></i>${d.rag_chunks || 0} chunk</span>
                     <span class="ml-4"><i class="fa-solid fa-robot mr-2"></i>${d.ml_models || 0} model</span>
                     <span class="ml-4"><i class="fa-solid fa-graduation-cap mr-2"></i>${d.learned_answers || 0} cevap</span>
+                    <span class="ml-4"><i class="fa-solid fa-magnifying-glass-chart mr-2"></i>${d.ds_learning_results || 0} QA</span>
+                    <span class="ml-4"><i class="fa-solid fa-table mr-2"></i>${d.ds_db_objects || 0} keşif</span>
+                    <span class="ml-4"><i class="fa-solid fa-clipboard-list mr-2"></i>${d.sql_audit_log || 0} audit</span>
                     <div class="mt-2 text-yellow-400"><strong>Toplam ${total.toLocaleString('tr-TR')} kayıt silinecek</strong></div>
                 `;
             }
@@ -199,7 +206,7 @@ window.SystemManagerModule = (function () {
     function performSystemReset() {
         window.VyraModal.danger({
             title: "Dikkat! Bu İşlem Geri Alınamaz",
-            message: "Tüm ticket'lar, dialog'lar, RAG dosyaları, ML eğitim verileri, öğrenilmiş cevaplar ve sistem logları silinecek. Sadece admin kullanıcılar, LLM ve Prompt ayarları korunacak.",
+            message: "Tüm ticket'lar, dialog'lar, RAG dosyaları, ML eğitim verileri, öğrenilmiş cevaplar, DS öğrenme verileri, SQL audit logları ve sistem logları silinecek. Kaynak tanımları, admin kullanıcılar, LLM ve Prompt ayarları korunacak.",
             confirmText: "Sistemi Sıfırla",
             cancelText: "İptal",
             onConfirm: async () => {

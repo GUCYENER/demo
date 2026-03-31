@@ -514,34 +514,42 @@ def discover_technology(
     """Adım 1: Veritabanı teknoloji keşfi (versiyon, şemalar)."""
     is_admin = current_user.get("is_admin", False) or current_user.get("role") == "admin"
 
-    with get_db_context() as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM data_sources WHERE id = %s", (source_id,))
-        source = cur.fetchone()
+    try:
+        with get_db_context() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM data_sources WHERE id = %s", (source_id,))
+            source = cur.fetchone()
 
-        if not source:
-            raise HTTPException(status_code=404, detail="Veri kaynağı bulunamadı.")
-        source = dict(source)
+            if not source:
+                raise HTTPException(status_code=404, detail="Veri kaynağı bulunamadı.")
+            source = dict(source)
 
-        if not is_admin and current_user.get("company_id") != source.get("company_id"):
-            raise HTTPException(status_code=403, detail="Bu kaynağa erişim yetkiniz yok.")
+            if not is_admin and current_user.get("company_id") != source.get("company_id"):
+                raise HTTPException(status_code=403, detail="Bu kaynağa erişim yetkiniz yok.")
 
-        if source.get("source_type") != "database":
-            raise HTTPException(status_code=400, detail="Bu kaynak tipi keşif desteklemiyor.")
+            if source.get("source_type") != "database":
+                raise HTTPException(status_code=400, detail="Bu kaynak tipi keşif desteklemiyor.")
 
-        # Job oluştur
-        job_id = ds_learning_service.create_job(conn, source_id, source["company_id"], "technology", current_user.get("id"))
+            # Job oluştur
+            job_id = ds_learning_service.create_job(conn, source_id, source["company_id"], "technology", current_user.get("id"))
 
-        # Keşfi çalıştır
-        result = ds_learning_service.discover_technology(source, conn)
+            # Keşfi çalıştır
+            result = ds_learning_service.discover_technology(source, conn)
 
-        # Job'ı güncelle
-        ds_learning_service.complete_job(conn, job_id, result)
+            # Job'ı güncelle
+            ds_learning_service.complete_job(conn, job_id, result)
 
-        if result.get("success"):
-            return {"success": True, "job_id": job_id, **result["data"]}
-        else:
-            return {"success": False, "job_id": job_id, "message": result.get("error", "Keşif başarısız")}
+            if result.get("success"):
+                return {"success": True, "job_id": job_id, **result["data"]}
+            else:
+                return {"success": False, "job_id": job_id, "message": result.get("error", "Keşif başarısız")}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("[DataSources] Teknoloji keşfi sırasında hata oluştu")
+        logger.debug("[DataSources] discover_technology detay: %s", type(e).__name__)
+        return {"success": False, "message": f"Teknoloji keşfi sırasında hata: {type(e).__name__}"}
 
 
 @router.post("/{source_id}/detect-objects")
@@ -552,29 +560,37 @@ def detect_objects(
     """Adım 2: DB objeleri (tablo, view, sütun) ve FK ilişkilerini tespit et."""
     is_admin = current_user.get("is_admin", False) or current_user.get("role") == "admin"
 
-    with get_db_context() as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM data_sources WHERE id = %s", (source_id,))
-        source = cur.fetchone()
+    try:
+        with get_db_context() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM data_sources WHERE id = %s", (source_id,))
+            source = cur.fetchone()
 
-        if not source:
-            raise HTTPException(status_code=404, detail="Veri kaynağı bulunamadı.")
-        source = dict(source)
+            if not source:
+                raise HTTPException(status_code=404, detail="Veri kaynağı bulunamadı.")
+            source = dict(source)
 
-        if not is_admin and current_user.get("company_id") != source.get("company_id"):
-            raise HTTPException(status_code=403, detail="Bu kaynağa erişim yetkiniz yok.")
+            if not is_admin and current_user.get("company_id") != source.get("company_id"):
+                raise HTTPException(status_code=403, detail="Bu kaynağa erişim yetkiniz yok.")
 
-        if source.get("source_type") != "database":
-            raise HTTPException(status_code=400, detail="Bu kaynak tipi keşif desteklemiyor.")
+            if source.get("source_type") != "database":
+                raise HTTPException(status_code=400, detail="Bu kaynak tipi keşif desteklemiyor.")
 
-        job_id = ds_learning_service.create_job(conn, source_id, source["company_id"], "objects", current_user.get("id"))
-        result = ds_learning_service.detect_objects(source, conn)
-        ds_learning_service.complete_job(conn, job_id, result)
+            job_id = ds_learning_service.create_job(conn, source_id, source["company_id"], "objects", current_user.get("id"))
+            result = ds_learning_service.detect_objects(source, conn)
+            ds_learning_service.complete_job(conn, job_id, result)
 
-        if result.get("success"):
-            return {"success": True, "job_id": job_id, **result["data"]}
-        else:
-            return {"success": False, "job_id": job_id, "message": result.get("error", "Obje tespiti başarısız")}
+            if result.get("success"):
+                return {"success": True, "job_id": job_id, **result["data"]}
+            else:
+                return {"success": False, "job_id": job_id, "message": result.get("error", "Obje tespiti başarısız")}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("[DataSources] Obje tespiti sırasında hata oluştu")
+        logger.debug("[DataSources] detect_objects detay: %s", type(e).__name__)
+        return {"success": False, "message": f"Obje tespiti sırasında hata: {type(e).__name__}"}
 
 
 @router.post("/{source_id}/collect-samples")
@@ -585,29 +601,37 @@ def collect_samples(
     """Adım 3: Tablolardan örnek veri topla."""
     is_admin = current_user.get("is_admin", False) or current_user.get("role") == "admin"
 
-    with get_db_context() as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM data_sources WHERE id = %s", (source_id,))
-        source = cur.fetchone()
+    try:
+        with get_db_context() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM data_sources WHERE id = %s", (source_id,))
+            source = cur.fetchone()
 
-        if not source:
-            raise HTTPException(status_code=404, detail="Veri kaynağı bulunamadı.")
-        source = dict(source)
+            if not source:
+                raise HTTPException(status_code=404, detail="Veri kaynağı bulunamadı.")
+            source = dict(source)
 
-        if not is_admin and current_user.get("company_id") != source.get("company_id"):
-            raise HTTPException(status_code=403, detail="Bu kaynağa erişim yetkiniz yok.")
+            if not is_admin and current_user.get("company_id") != source.get("company_id"):
+                raise HTTPException(status_code=403, detail="Bu kaynağa erişim yetkiniz yok.")
 
-        if source.get("source_type") != "database":
-            raise HTTPException(status_code=400, detail="Bu kaynak tipi keşif desteklemiyor.")
+            if source.get("source_type") != "database":
+                raise HTTPException(status_code=400, detail="Bu kaynak tipi keşif desteklemiyor.")
 
-        job_id = ds_learning_service.create_job(conn, source_id, source["company_id"], "samples", current_user.get("id"))
-        result = ds_learning_service.collect_samples(source, conn)
-        ds_learning_service.complete_job(conn, job_id, result)
+            job_id = ds_learning_service.create_job(conn, source_id, source["company_id"], "samples", current_user.get("id"))
+            result = ds_learning_service.collect_samples(source, conn)
+            ds_learning_service.complete_job(conn, job_id, result)
 
-        if result.get("success"):
-            return {"success": True, "job_id": job_id, **result["data"]}
-        else:
-            return {"success": False, "job_id": job_id, "message": result.get("error", "Örnek toplama başarısız")}
+            if result.get("success"):
+                return {"success": True, "job_id": job_id, **result["data"]}
+            else:
+                return {"success": False, "job_id": job_id, "message": result.get("error", "Örnek toplama başarısız")}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("[DataSources] Örnek veri toplama sırasında hata oluştu")
+        logger.debug("[DataSources] collect_samples detay: %s", type(e).__name__)
+        return {"success": False, "message": f"Veri toplama sırasında hata: {type(e).__name__}"}
 
 
 @router.get("/{source_id}/discovery-status")
@@ -616,8 +640,13 @@ def get_discovery_status(
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """Keşif adımlarının güncel durumunu döner."""
-    with get_db_context() as conn:
-        return ds_learning_service.get_discovery_status(conn, source_id)
+    try:
+        with get_db_context() as conn:
+            return ds_learning_service.get_discovery_status(conn, source_id)
+    except Exception as e:
+        logger.error("[DataSources] Keşif durumu sorgulanırken hata oluştu")
+        logger.debug("[DataSources] discovery-status detay: %s", type(e).__name__)
+        return {"technology": {"status": "not_started"}, "objects": {"status": "not_started"}, "samples": {"status": "not_started"}, "total_objects": 0, "total_relationships": 0, "total_samples": 0}
 
 
 @router.get("/{source_id}/discovery-details")
@@ -626,8 +655,13 @@ def get_discovery_details(
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """Keşfedilmiş objelerin detaylı listesini döner."""
-    with get_db_context() as conn:
-        return ds_learning_service.get_discovery_details(conn, source_id)
+    try:
+        with get_db_context() as conn:
+            return ds_learning_service.get_discovery_details(conn, source_id)
+    except Exception as e:
+        logger.error("[DataSources] Keşif detayları yüklenirken hata oluştu")
+        logger.debug("[DataSources] discovery-details detay: %s", type(e).__name__)
+        return {"objects": [], "relationships": []}
 
 
 @router.post("/{source_id}/learning-schedule")
@@ -647,8 +681,8 @@ def save_learning_schedule(
                 conn, source_id, schedule_type, interval_value, is_active
             )
             return result
-    except Exception as e:
-        logging.getLogger(__name__).error(f"Schedule kaydetme hatası: {e}")
+    except Exception:
+        logger.error("[DataSources] Schedule kaydetme sırasında hata oluştu")
         raise HTTPException(status_code=500, detail="Zamanlama kaydedilemedi")
 
 
@@ -659,9 +693,14 @@ def get_learning_history(
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """Keşif ve öğrenme iş geçmişini döner."""
-    with get_db_context() as conn:
-        history = ds_learning_service.get_learning_history(conn, source_id)
-        return {"history": history}
+    try:
+        with get_db_context() as conn:
+            history = ds_learning_service.get_learning_history(conn, source_id)
+            return {"history": history}
+    except Exception as e:
+        logger.error("[DataSources] Öğrenme geçmişi yüklenirken hata oluştu")
+        logger.debug("[DataSources] learning-history detay: %s", type(e).__name__)
+        return {"history": []}
 
 
 @router.get("/{source_id}/learning-results")
@@ -673,9 +712,14 @@ def api_get_learning_results(
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """ML pipeline'ın ürettiği öğrenme sonuçlarını (QA çiftleri) döner."""
-    with get_db_context() as conn:
-        data = ds_learning_service.get_learning_results(conn, source_id, content_type, job_id, limit)
-        return data
+    try:
+        with get_db_context() as conn:
+            data = ds_learning_service.get_learning_results(conn, source_id, content_type, job_id, limit)
+            return data
+    except Exception as e:
+        logger.error("[Öğrenme sonuçları yüklenirken hata oluştu")
+        logger.debug("[DataSources] learning-results detay: %s", type(e).__name__)
+        return {"results": [], "type_counts": {}, "total": 0}
 
 
 @router.get("/{source_id}/job-result-stats")
@@ -684,60 +728,20 @@ def api_get_job_result_stats(
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """Her job_id bazlı sonuç istatistiklerini döner."""
-    with get_db_context() as conn:
-        stats = ds_learning_service.get_job_result_stats(conn, source_id)
-        return {"stats": stats}
+    try:
+        with get_db_context() as conn:
+            stats = ds_learning_service.get_job_result_stats(conn, source_id)
+            return {"stats": stats}
+    except Exception as e:
+        logger.error("[DataSources] İş sonuç istatistikleri yüklenirken hata oluştu")
+        logger.debug("[DataSources] job-result-stats detay: %s", type(e).__name__)
+        return {"stats": []}
 
 
 
-@router.post("/{source_id}/generate-qa")
-def generate_qa(
-    source_id: int,
-    current_user: Dict[str, Any] = Depends(get_current_user)
-):
-    """Keşfedilen DB verilerinden sentetik QA çiftleri üretir ve embedding'ler (background)."""
-    with get_db_context() as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM data_sources WHERE id = %s", (source_id,))
-        source = cur.fetchone()
-        if not source:
-            return {"success": False, "message": "Kaynak bulunamadı"}
-
-        source = dict(source)
-        current_user_id = current_user.get("id")
-
-        # Job oluştur
-        job_id = ds_learning_service.create_job(
-            conn, source_id, source["company_id"], "qa_generation", current_user_id
-        )
-
-    # Background thread ile çalıştır (embedding uzun sürer)
-    def _bg_generate():
-        bg_conn = None
-        try:
-            from app.core.db import get_db_conn
-            bg_conn = get_db_conn()
-            result = ds_learning_service.generate_synthetic_qa(source_id, bg_conn)
-            ds_learning_service.complete_job(bg_conn, job_id, result)
-            logging.getLogger(__name__).info(f"[BG] QA generation completed for source {source_id}")
-        except Exception as e:
-            logging.getLogger(__name__).error(f"[BG] QA generation error: {e}")
-            try:
-                from app.core.db import get_db_conn
-                err_conn = get_db_conn()
-                ds_learning_service.complete_job(err_conn, job_id, {"success": False, "error": str(e)})
-                err_conn.close()
-            except Exception:
-                pass
-        finally:
-            if bg_conn:
-                try:
-                    bg_conn.close()
-                except Exception:
-                    pass
-
-    threading.Thread(target=_bg_generate, daemon=True).start()
-    return {"success": True, "message": "QA üretimi başlatıldı", "job_id": job_id}
+# generate-qa endpoint kaldırıldı (v3.0.0)
+# QA üretimi artık sadece run-full-learning pipeline'ı içinden çağrılır.
+# Bağımsız QA üretim butonu/endpoint'i gereksizdir.
 
 
 @router.post("/{source_id}/run-full-learning")
@@ -746,33 +750,39 @@ def run_full_learning(
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """4 adımlı tam öğrenme pipeline'ı çalıştırır (background)."""
-    with get_db_context() as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM data_sources WHERE id = %s", (source_id,))
-        source = cur.fetchone()
-        if not source:
-            return {"success": False, "message": "Kaynak bulunamadı"}
-        source = dict(source)
-        current_user_id = current_user.get("id")
+    try:
+        with get_db_context() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM data_sources WHERE id = %s", (source_id,))
+            source = cur.fetchone()
+            if not source:
+                return {"success": False, "message": "Kaynak bulunamadı"}
+            source = dict(source)
+            current_user_id = current_user.get("id")
 
-    # Background thread
-    def _bg_full_learning():
-        bg_conn = None
-        try:
-            from app.core.db import get_db_conn
-            bg_conn = get_db_conn()
-            ds_learning_service.run_full_learning(source, bg_conn, current_user_id)
-        except Exception as e:
-            logging.getLogger(__name__).error(f"[BG] Full learning error: {e}")
-        finally:
-            if bg_conn:
-                try:
-                    bg_conn.close()
-                except Exception:
-                    pass
+        # Background thread
+        def _bg_full_learning():
+            bg_conn = None
+            try:
+                from app.core.db import get_db_conn
+                bg_conn = get_db_conn()
+                ds_learning_service.run_full_learning(source, bg_conn, current_user_id)
+            except Exception:
+                logger.error("[BG] Tam öğrenme pipeline sırasında hata oluştu")
+            finally:
+                if bg_conn:
+                    try:
+                        bg_conn.close()
+                    except Exception:
+                        pass
 
-    threading.Thread(target=_bg_full_learning, daemon=True).start()
-    return {"success": True, "message": "Tam öğrenme pipeline başlatıldı"}
+        threading.Thread(target=_bg_full_learning, daemon=True).start()
+        return {"success": True, "message": "Tam öğrenme pipeline başlatıldı"}
+
+    except Exception as e:
+        logger.error("[DataSources] Tam öğrenme pipeline başlatılırken hata oluştu")
+        logger.debug("[DataSources] run-full-learning detay: %s", type(e).__name__)
+        return {"success": False, "message": f"Pipeline başlatılamadı: {type(e).__name__}"}
 
 
 @router.get("/{source_id}/schedule")
@@ -781,7 +791,110 @@ def get_schedule(
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """Kaynağın öğrenme zamanlamasını döner."""
-    with get_db_context() as conn:
-        schedule = ds_learning_service.get_schedule(conn, source_id)
-        return schedule
+    try:
+        with get_db_context() as conn:
+            schedule = ds_learning_service.get_schedule(conn, source_id)
+            return schedule
+    except Exception as e:
+        logger.error("[DataSources] Schedule yüklenirken hata oluştu")
+        logger.debug("[DataSources] schedule detay: %s", type(e).__name__)
+        return {"schedule_type": "manual_only", "is_active": False}
 
+
+# =====================================================
+# Enrichment API (v3.0.0)
+# =====================================================
+
+@router.get("/{source_id}/enrichment-stats")
+def get_enrichment_stats(
+    source_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Kaynak için enrichment istatistiklerini döner."""
+    try:
+        from app.services import ds_enrichment_service
+        with get_db_context() as conn:
+            stats = ds_enrichment_service.get_enrichment_stats(conn, source_id)
+            return {"success": True, **stats}
+    except Exception as e:
+        logger.error("[DataSources] Enrichment stats hatası: %s", type(e).__name__)
+        return {"success": False, "total": 0}
+
+
+@router.get("/{source_id}/enrichment-pending")
+def get_pending_enrichments(
+    source_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Admin onayı bekleyen tablo enrichment'larını döner."""
+    try:
+        from app.services import ds_enrichment_service
+        with get_db_context() as conn:
+            pending = ds_enrichment_service.get_pending_approvals(conn, source_id)
+            return {"success": True, "pending": pending, "count": len(pending)}
+    except Exception as e:
+        logger.error("[DataSources] Pending enrichments hatası: %s", type(e).__name__)
+        return {"success": False, "pending": [], "count": 0}
+
+
+class EnrichmentApproveRequest(BaseModel):
+    admin_label_tr: Optional[str] = None
+    admin_notes: Optional[str] = None
+
+
+@router.post("/{source_id}/enrichment-approve/{enrichment_id}")
+def approve_enrichment(
+    source_id: int,
+    enrichment_id: int,
+    body: EnrichmentApproveRequest = None,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Bir tablo enrichment'ını admin olarak onaylar."""
+    try:
+        from app.services import ds_enrichment_service
+        label = body.admin_label_tr if body else None
+        notes = body.admin_notes if body else None
+        with get_db_context() as conn:
+            success = ds_enrichment_service.approve_enrichment(
+                conn, enrichment_id,
+                current_user.get("id"),
+                label, notes
+            )
+            if success:
+                return {"success": True, "message": "Etiket onaylandı"}
+            return {"success": False, "message": "Onay işlemi başarısız"}
+    except Exception as e:
+        logger.error("[DataSources] Enrichment onay hatası: %s", type(e).__name__)
+        return {"success": False, "message": f"Onay hatası: {type(e).__name__}"}
+
+
+@router.get("/enrichment/{enrichment_id}/columns")
+def get_column_enrichments(
+    enrichment_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Bir tablo enrichment'ına ait sütun zenginleştirmelerini döner."""
+    try:
+        from app.services import ds_enrichment_service
+        with get_db_context() as conn:
+            columns = ds_enrichment_service.get_column_enrichments(conn, enrichment_id)
+            return {"success": True, "columns": columns}
+    except Exception as e:
+        logger.error("[DataSources] Column enrichments hatası: %s", type(e).__name__)
+        return {"success": False, "columns": []}
+
+
+@router.get("/{source_id}/schema-history")
+def get_schema_history(
+    source_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Kaynağın schema snapshot geçmişini döner."""
+    try:
+        from app.services import ds_diff_service
+        with get_db_context() as conn:
+            history = ds_diff_service.get_snapshot_history(conn, source_id)
+            return {"success": True, "history": history}
+    except Exception as e:
+        logger.error("[DataSources] Schema history hatası: %s", type(e).__name__)
+        return {"success": False, "history": []}

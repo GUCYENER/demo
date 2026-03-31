@@ -169,13 +169,18 @@ def init_db() -> None:
     PostgreSQL veritabanını başlatır.
     
     Strateji:
-    1. Alembic migration çalıştır (upgrade head)
-    2. Başarısızlık durumunda fallback: SCHEMA_SQL + insert_default_data
+    1. pg_advisory_lock ile multi-worker koruması (deadlock önleme)
+    2. Alembic migration çalıştır (upgrade head)
+    3. SCHEMA_SQL çalıştır (IF NOT EXISTS — migration'da eksik kalanlar için)
+    4. insert_default_data çalıştır
     
     Raises:
         psycopg2.Error: Veritabanı bağlantı veya şema hatası
     """
     import time
+    
+    # Advisory lock key — tüm worker'lar arasında benzersiz
+    SCHEMA_LOCK_ID = 999888777
     
     max_retries = 30  # 30 x 3 saniye = 90 saniye maksimum bekleme
     retry_delay = 3   # Her deneme arasında 3 saniye
@@ -186,29 +191,44 @@ def init_db() -> None:
         "connection refused",
         "not yet accepting connections",
         "recovery state",
+        "deadlock detected",
     ]
     
     for attempt in range(1, max_retries + 1):
         try:
-            # Önce Alembic migration dene
-            if _run_alembic_migration():
-                # Migration sonrası varsayılan verileri ekle
+            # Advisory lock al — sadece bir worker şema başlatsın
+            lock_conn = get_db_conn()
+            try:
+                lock_cur = lock_conn.cursor()
+                lock_cur.execute("SELECT pg_advisory_lock(%s)", (SCHEMA_LOCK_ID,))
+                lock_conn.commit()
+                print(f"[VYRA] Schema lock alındı (attempt {attempt})")
+                
+                # 1) Alembic migration
+                _run_alembic_migration()
+                
+                # 2) SCHEMA_SQL — IF NOT EXISTS ile migration'da eksik kalanları tamamlar
                 with get_db_context() as conn:
                     cur = conn.cursor()
+                    cur.execute(SCHEMA_SQL)
                     insert_default_data(cur)
-                print("[VYRA] PostgreSQL database initialized via Alembic migration!")
+                
+                print("[VYRA] PostgreSQL database initialized (Alembic + SCHEMA_SQL)!")
                 print(f"[VYRA] Connection: {settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}")
                 return
-            
-            # Alembic başarısızsa fallback: eski yöntem
-            with get_db_context() as conn:
-                cur = conn.cursor()
-                cur.execute(SCHEMA_SQL)
-                insert_default_data(cur)
                 
-            print("[VYRA] PostgreSQL database initialized (fallback: SCHEMA_SQL)!")
-            print(f"[VYRA] Connection: {settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}")
-            return
+            finally:
+                # Advisory lock'u her durumda serbest bırak
+                try:
+                    lock_cur = lock_conn.cursor()
+                    lock_cur.execute("SELECT pg_advisory_unlock(%s)", (SCHEMA_LOCK_ID,))
+                    lock_conn.commit()
+                except Exception:
+                    pass
+                try:
+                    lock_conn.close()
+                except Exception:
+                    pass
             
         except psycopg2.OperationalError as e:
             error_msg = str(e).lower()
@@ -226,6 +246,14 @@ def init_db() -> None:
             print("[VYRA] ERROR: PostgreSQL connection failed!")
             print(f"[VYRA] Details: {e}")
             print(f"[VYRA] Make sure PostgreSQL is running at {settings.DB_HOST}:{settings.DB_PORT}")
+            raise
+        
+        except psycopg2.errors.DeadlockDetected:
+            _reset_pool()
+            if attempt < max_retries:
+                print(f"[VYRA] Deadlock tespit edildi, tekrar denenecek... ({attempt}/{max_retries})")
+                time.sleep(retry_delay)
+                continue
             raise
 
 

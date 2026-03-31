@@ -43,7 +43,24 @@ window.DSLearningModule = (function () {
         if (body) options.body = JSON.stringify(body);
 
         const response = await fetch(`${API_BASE}/api/data-sources${endpoint}`, options);
-        return response.json();
+
+        // Response body'yi text olarak oku, sonra JSON parse dene
+        const text = await response.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (_parseErr) {
+            // Backend düzgün JSON dönmedi — anlamlı hata objesi üret
+            console.error('[DSLearning] JSON parse hatası:', text.substring(0, 200));
+            return { success: false, message: `Sunucu hatası (HTTP ${response.status})` };
+        }
+
+        // HTTP hata durumunda success: false dön
+        if (!response.ok && data.success === undefined) {
+            return { success: false, message: data.detail || data.message || `HTTP ${response.status}` };
+        }
+
+        return data;
     }
 
     // ============================================
@@ -382,12 +399,12 @@ window.DSLearningModule = (function () {
                     <i class="fa-solid fa-trophy"></i>
                 </div>
                 <h3>Keşif Tamamlandı!</h3>
-                <p>Tüm adımlar başarıyla tamamlandı. Şimdi QA üretimi ile öğrenme başlatabilirsiniz.</p>
+                <p>Tüm adımlar başarıyla tamamlandı. Tabloları etiketleyebilir, detayları görüntüleyebilir veya zamanlama ayarlayabilirsiniz.</p>
                 <div class="ds-wizard-final-actions">
-                    <button class="ds-wizard-btn success" id="dsGenerateQaBtn">
-                        <i class="fa-solid fa-brain"></i> QA Üret & Öğren
+                    <button class="ds-wizard-btn primary" id="dsEnrichBtn">
+                        <i class="fa-solid fa-tags"></i> Tablo Etiketle
                     </button>
-                    <button class="ds-wizard-btn primary" id="dsViewDetailsBtn">
+                    <button class="ds-wizard-btn secondary" id="dsViewDetailsBtn">
                         <i class="fa-solid fa-table-list"></i> Detayları Görüntüle
                     </button>
                     <button class="ds-wizard-btn secondary" id="dsScheduleBtn">
@@ -400,8 +417,13 @@ window.DSLearningModule = (function () {
             </div>
         `;
 
+        document.getElementById('dsEnrichBtn').addEventListener('click', () => {
+            DSLearningModule.closeWizard();
+            if (window.DSEnrichmentModule) {
+                DSEnrichmentModule.openPanel(_currentSourceId);
+            }
+        });
         document.getElementById('dsViewDetailsBtn').addEventListener('click', () => showDiscoveryDetails(_currentSourceId));
-        document.getElementById('dsGenerateQaBtn').addEventListener('click', () => _runQaGeneration());
         document.getElementById('dsScheduleBtn').addEventListener('click', () => showScheduleModal(_currentSourceId));
     }
 
@@ -597,18 +619,7 @@ window.DSLearningModule = (function () {
 
             // Running job var mı kontrol et — butonları disable/enable
             const hasRunningJob = history.some(j => j.status === 'running');
-            const qaBtn = document.getElementById('dsHistoryGenQa');
             const fullBtn = document.getElementById('dsHistoryRunFull');
-            if (qaBtn) {
-                qaBtn.disabled = hasRunningJob;
-                if (hasRunningJob) {
-                    qaBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Çalışıyor...';
-                    qaBtn.classList.add('ds-btn-disabled');
-                } else {
-                    qaBtn.innerHTML = '<i class="fa-solid fa-brain"></i> QA Üret';
-                    qaBtn.classList.remove('ds-btn-disabled');
-                }
-            }
             if (fullBtn) {
                 fullBtn.disabled = hasRunningJob;
                 if (hasRunningJob) {
@@ -1047,57 +1058,7 @@ window.DSLearningModule = (function () {
     // Init
     // ============================================
 
-    // ============================================
-    // QA Üretimi (Background)
-    // ============================================
-
-    async function _runQaGeneration() {
-        const body = document.getElementById('dsWizardBody');
-        body.innerHTML = `
-            <div class="ds-step-loading">
-                <div class="ds-step-loading-icon">
-                    <i class="fa-solid fa-brain fa-pulse"></i>
-                </div>
-                <h3>QA Üretimi Başlatıldı</h3>
-                <p>Keşfedilen verilerden sentetik soru-cevap çiftleri üretiliyor.<br>
-                   Bu işlem arka planda devam edecek. Geçmiş sekmesinden takip edebilirsiniz.</p>
-                <div class="ds-step-loading-bar">
-                    <div class="ds-step-loading-bar-inner"></div>
-                </div>
-            </div>
-        `;
-
-        try {
-            const result = await apiCall(`/${_currentSourceId}/generate-qa`, 'POST');
-            if (result.success) {
-                toast('success', result.message || 'QA üretimi başlatıldı (arka plan)');
-                body.innerHTML = `
-                    <div class="ds-step-result">
-                        <div class="ds-step-result-header success">
-                            <i class="fa-solid fa-check-circle"></i> QA Üretimi Başlatıldı
-                        </div>
-                        <p>İşlem arka planda devam ediyor. Tamamlandığında geçmişte görünecektir.</p>
-                        <div class="ds-wizard-final-actions">
-                            <button class="ds-wizard-btn primary" id="dsShowHistoryAfterQa">
-                                <i class="fa-solid fa-history"></i> Geçmişi Görüntüle
-                            </button>
-                            <button class="ds-wizard-btn secondary" onclick="DSLearningModule.closeWizard()">
-                                <i class="fa-solid fa-check"></i> Kapat
-                            </button>
-                        </div>
-                    </div>
-                `;
-                document.getElementById('dsShowHistoryAfterQa').addEventListener('click', () => {
-                    closeWizard();
-                    showLearningHistory(_currentSourceId, _currentSourceName);
-                });
-            } else {
-                toast('error', 'QA üretimi başlatılamadı: ' + (result.message || ''));
-            }
-        } catch (err) {
-            toast('error', 'QA üretimi hatası: ' + err.message);
-        }
-    }
+    // QA Üretimi kaldırıldı — Tam Pipeline (run-full-learning) tüm adımları içerir
 
     // ============================================
     // Tam Pipeline çalıştırma
@@ -1263,9 +1224,6 @@ window.DSLearningModule = (function () {
                         <button class="ds-wizard-btn success" id="dsHistoryRunFull">
                             <i class="fa-solid fa-rocket"></i> Tam Pipeline Başlat
                         </button>
-                        <button class="ds-wizard-btn primary" id="dsHistoryGenQa">
-                            <i class="fa-solid fa-brain"></i> QA Üret
-                        </button>
                         <button class="ds-wizard-btn secondary" id="dsHistorySchedule">
                             <i class="fa-solid fa-clock"></i> Zamanlama
                         </button>
@@ -1299,31 +1257,15 @@ window.DSLearningModule = (function () {
             if (e.key === 'Escape') { closeHistory(); document.removeEventListener('keydown', escH2); }
         });
 
-        // Aksiyon butonları — hemen disable et, sonra API çağır
-        const qaBtn = document.getElementById('dsHistoryGenQa');
+        // Aksiyon butonları
         const fullBtn = document.getElementById('dsHistoryRunFull');
 
         fullBtn.addEventListener('click', async () => {
             fullBtn.disabled = true;
             fullBtn.classList.add('ds-btn-disabled');
             fullBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Başlatılıyor...';
-            qaBtn.disabled = true;
-            qaBtn.classList.add('ds-btn-disabled');
             try {
                 await runFullLearning(sourceId, sourceName);
-            } catch (e) { toast('error', e.message); }
-            setTimeout(() => loadHistory(sourceId), 2000);
-        });
-
-        qaBtn.addEventListener('click', async () => {
-            qaBtn.disabled = true;
-            qaBtn.classList.add('ds-btn-disabled');
-            qaBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Üretiliyor...';
-            fullBtn.disabled = true;
-            fullBtn.classList.add('ds-btn-disabled');
-            try {
-                const r = await apiCall(`/${sourceId}/generate-qa`, 'POST');
-                toast(r.success ? 'success' : 'error', r.message || 'İşlem sonucu');
             } catch (e) { toast('error', e.message); }
             setTimeout(() => loadHistory(sourceId), 2000);
         });
