@@ -226,6 +226,23 @@ goto pg_done
 :pg_started
 echo    [OK] PostgreSQL baslatildi (port 5005)
 :pg_done
+
+:: --- DB Bakimi (REINDEX + VACUUM) ---
+echo    [ADIM] Veritabani bakimi yapiliyor (REINDEX + VACUUM)...
+set "PGPASSWORD=postgres"
+"%PG_BIN%\psql.exe" -h localhost -p 5005 -U postgres -d vyra -q -c "REINDEX TABLE ds_table_enrichments;" -c "REINDEX TABLE ds_db_objects;" -c "REINDEX TABLE rag_chunks;" -c "REINDEX TABLE learned_answers;" >nul 2>&1
+if not errorlevel 1 (
+    echo    [OK] REINDEX tamamlandi
+) else (
+    echo    [UYARI] REINDEX sirasinda uyari olustu - devam ediliyor
+)
+"%PG_BIN%\psql.exe" -h localhost -p 5005 -U postgres -d vyra -q -c "VACUUM ANALYZE ds_table_enrichments;" -c "VACUUM ANALYZE ds_db_objects;" -c "VACUUM ANALYZE rag_chunks;" -c "VACUUM ANALYZE learned_answers;" >nul 2>&1
+if not errorlevel 1 (
+    echo    [OK] VACUUM ANALYZE tamamlandi
+) else (
+    echo    [UYARI] VACUUM sirasinda uyari olustu - devam ediliyor
+)
+set "PGPASSWORD="
 echo.
 
 :: =============================================================
