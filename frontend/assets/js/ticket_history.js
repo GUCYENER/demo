@@ -102,7 +102,7 @@ async function loadTicketHistory(forceRefresh = false, page = 1) {
         // Dialog'ları ticket formatına dönüştür
         const dialogItems = (dialogData.items || []).map(d => ({
             id: `dialog-${d.id}`,
-            title: d.title || 'NGSSAI Analiz Süreci',
+            title: d.title || ((window.BrandingEngine ? BrandingEngine.getAppName() : 'VYRA') + ' Analiz Süreci'),
             description: d.first_question || 'Talep bilgisi yok',
             final_solution: d.last_answer || 'Cevap yok',
             created_at: d.created_at,

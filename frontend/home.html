@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NGSSAI — AIOps Platform</title>
-<link rel="icon" type="image/svg+xml" id="faviconLink" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%237C3AED'/><path d='M8 24V8h2.5L22 21V8h2.5v16H22L10.5 11v13Z' fill='white'/></svg>" />
+<title>VYRA — AIOps Platform</title>
+<link rel="icon" type="image/svg+xml" id="faviconLink" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%237C3AED'/><path d='M7 8L16 25L25 8L21.5 8L16 19L10.5 8Z' fill='white'/></svg>" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Geist:wght@300;400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/vendor/fontawesome/all.min.css" />
@@ -615,7 +615,7 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
     <div class="sb-logo-icon">
       <svg viewBox="0 0 24 24"><path d="M5 20V4h2l10 12.5V4h2v16h-2L7 7.5V20Z"/></svg>
     </div>
-    <span class="sb-logo-name">NGSSAI</span>
+    <span class="sb-logo-name">VYRA</span>
   </div>
 
   <div class="sb-user">
@@ -671,7 +671,7 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
       <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
       Oturumu Kapat
     </button>
-    <div class="sb-version">NGSSAI <span id="appVersion">...</span></div>
+    <div class="sb-version">VYRA <span id="appVersion">...</span></div>
   </div>
 </aside>
 
@@ -683,7 +683,7 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
         <svg viewBox="0 0 24 24"><path d="M5 20V4h2l10 12.5V4h2v16h-2L7 7.5V20Z"/></svg>
       </div>
       <div class="tb-agent-info">
-        <div class="tb-agent-name">NGSSAI Asistan</div>
+        <div class="tb-agent-name">VYRA Asistan</div>
         <div class="tb-agent-status" id="wsConnectionStatus">
           <div class="status-dot"></div>
           <span class="status-text">Çevrimiçi</span>
@@ -741,7 +741,7 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
             <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
           </div>
           <div class="mc-body">
-            <div class="mc-title">NGSSAI ile Sohbet Et</div>
+            <div class="mc-title" id="mcChatTitle">VYRA ile Sohbet Et</div>
             <div class="mc-desc">Yapay zeka asistanıyla serbest konuşun</div>
           </div>
         </div>
@@ -782,7 +782,7 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
     <div class="s-sep"></div>
     <div class="s-item"><div class="s-dot" id="statusWsDot"></div> <span id="statusWs">Bağlantı Aktif</span></div>
     <div class="s-spacer"></div>
-    <div class="s-item"><span id="statusVersion">NGSSAI Platform</span></div>
+    <div class="s-item"><span id="statusVersion">VYRA Platform</span></div>
   </div>
 
 </main>
@@ -791,8 +791,8 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
 <div id="modals-slot"></div>
 
 <!-- config.js bundle'da dahil, standalone yükleme kaldırıldı (v2.59.0 fix) -->
-<script src="assets/js/partial_loader.js?v=2.60.0"></script>
-<script src="assets/js/branding_engine.js?v=2.60.0"></script>
+<script src="assets/js/partial_loader.js?v=3.1.2"></script>
+<script src="assets/js/branding_engine.js?v=3.1.2"></script>
 <script>
 // v2.59.1: Partial loader senkron, bu yüzden hemen çalışır
 (function() {
@@ -804,7 +804,7 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
     }
 })();
 </script>
-<script defer src="dist/bundle.min.js?v=2.60.1"></script>
+<script defer src="dist/bundle.min.js?v=3.1.2"></script>
 <script>
 // v2.59.0: Favicon artık inline SVG kullanıyor, dev override gereksiz
 document.getElementById('themeToggleBtn').addEventListener('click', function(e) {

@@ -1736,6 +1736,14 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 ---
 
 
+### v3.1.1 (2026-04-01) - Branding Parameterization — Full Bundle Cleanup 🏷️
+
+**🔄 Parametrik Branding:**
+- ✅ `websocket_client.js`: Bildirim metinleri `BrandingEngine.getAppName()` ile dinamik hale getirildi
+- ✅ `ticket_history.js`: Default dialog başlığı (`NGSSAI Analiz Süreci`) parametrik yapıya kavuşturuldu
+- ✅ `bundle.min.js`: Tüm kaynak dosyalar güncellendikten sonra `node build.mjs` ile yeniden build edildi (93 → 78 NGSSAI; kalan referanslar console.log prefix'leri ve BrandingEngine replace mekanizması)
+- ✅ Cache busting `v3.1.1 → v3.1.2` ile tarayıcı cache bypass garantisi sağlandı
+
 ### v2.19.5 (2026-01-28) - Excel Processor Best Practices 📊
 
 **🔄 API Tutarlılığı:**

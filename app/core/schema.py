@@ -944,8 +944,12 @@ CREATE INDEX IF NOT EXISTS idx_company_themes_active ON company_themes(is_active
 CREATE INDEX IF NOT EXISTS idx_company_themes_sort ON company_themes(sort_order);
 
 -- Companies tablosuna branding alanları ekle
-ALTER TABLE companies ADD COLUMN IF NOT EXISTS app_name VARCHAR(200) DEFAULT 'NGSSAI';
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS app_name VARCHAR(200) DEFAULT 'VYRA';
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS theme_id INTEGER REFERENCES company_themes(id) ON DELETE SET NULL;
+
+-- v3.1.1: Mevcut NGSSAI app_name'leri VYRA'ya güncelle
+UPDATE companies SET app_name = 'VYRA' WHERE app_name = 'NGSSAI';
+ALTER TABLE companies ALTER COLUMN app_name SET DEFAULT 'VYRA';
 
 CREATE INDEX IF NOT EXISTS idx_companies_theme ON companies(theme_id);
 

@@ -356,7 +356,7 @@
         if (typeof NgssNotification !== 'undefined') {
             const msgPreview = message?.content?.substring(0, 80) || 'Yeni yanıt hazır';
             // v2.24.6: dialogId parametresi eklendi
-            NgssNotification.add('success', '🤖 NGSSAI Yanıtladı', msgPreview, dialogId);
+            NgssNotification.add('success', '🤖 ' + (window.BrandingEngine ? BrandingEngine.getAppName() : 'VYRA') + ' Yanıtladı', msgPreview, dialogId);
         }
 
         // Browser notification göster (kullanıcı başka sekmede/browserdayse)
@@ -389,7 +389,7 @@
             return;
         }
 
-        const title = '🤖 NGSSAI Yanıtladı';
+        const title = '🤖 ' + (window.BrandingEngine ? BrandingEngine.getAppName() : 'VYRA') + ' Yanıtladı';
         const body = message?.content?.substring(0, 100) || 'Yeni yanıt hazır';
 
         const notification = new Notification(title, {

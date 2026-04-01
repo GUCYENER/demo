@@ -351,13 +351,14 @@ window.DialogTicketModule = (function () {
         if (!icon || !label || !btn) return;
 
         if (chatMode === 'rag') {
-            // RAG modundayız, buton NGSSAI sohbete geçişi gösterir
+            // RAG modundayız, buton sohbete geçişi gösterir
+            var _name = window.BrandingEngine?.getAppName?.() || 'VYRA';
             icon.className = 'fa-solid fa-comments';
-            label.textContent = 'NGSSAI ile Sohbet et';
-            btn.title = 'NGSSAI ile sohbet moduna geç';
+            label.textContent = _name + ' ile Sohbet et';
+            btn.title = _name + ' ile sohbet moduna geç';
             btn.classList.remove('rag-active');
         } else {
-            // NGSSAI sohbet modundayız, buton RAG'a geçişi gösterir
+            // Sohbet modundayız, buton RAG'a geçişi gösterir
             icon.className = 'fa-solid fa-database';
             label.textContent = 'Bilgi Tabanında Ara';
             btn.title = 'Bilgi tabanında arama moduna geç';

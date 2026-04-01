@@ -617,13 +617,13 @@
         var titleEl = document.querySelector('title');
         if (titleEl) {
             var currentTitle = titleEl.textContent;
-            titleEl.textContent = currentTitle.replace(/NGSSAI/g, appName);
+            titleEl.textContent = currentTitle.replace(/NGSSAI|VYRA/g, appName);
         }
 
         // Version badge (login)
         var vBadge = document.getElementById('versionBadge');
         if (vBadge) {
-            vBadge.textContent = vBadge.textContent.replace(/NGSSAI/g, appName);
+            vBadge.textContent = vBadge.textContent.replace(/NGSSAI|VYRA/g, appName);
         }
 
         // Sidebar logo name (home)
@@ -637,23 +637,40 @@
         // Status bar version (home)
         var statusVer = document.getElementById('statusVersion');
         if (statusVer) {
-            statusVer.textContent = statusVer.textContent.replace(/NGSSAI/g, appName);
+            statusVer.textContent = statusVer.textContent.replace(/NGSSAI|VYRA/g, appName);
         }
 
         // Sidebar version (home)
         var sbVer = document.querySelector('.sb-version');
         if (sbVer) {
-            sbVer.innerHTML = sbVer.innerHTML.replace(/NGSSAI/g, appName);
+            sbVer.innerHTML = sbVer.innerHTML.replace(/NGSSAI|VYRA/g, appName);
         }
 
-        // Dialog section header
+        // Dialog section header (partial — section_dialog.html)
         var dialogHeader = document.querySelector('#sectionDialog .tb-agent-name');
         if (dialogHeader) dialogHeader.textContent = appName + ' Asistan';
 
-        // Chat mode card
+        // Dialog header title (partial — section_dialog.html)
+        var dialogHeaderTitle = document.querySelector('.dialog-header-title');
+        if (dialogHeaderTitle) dialogHeaderTitle.textContent = appName + ' Asistan';
+
+        // Chat mode card — "VYRA ile Sohbet Et" → "DAHİ ile Sohbet Et"
         var chatModeTitle = document.querySelector('#modeChat .mc-title');
         if (chatModeTitle) {
-            chatModeTitle.textContent = chatModeTitle.textContent.replace(/NGSSAI/g, appName);
+            chatModeTitle.textContent = chatModeTitle.textContent.replace(/NGSSAI|VYRA/g, appName);
+        }
+
+        // Chat mode toggle label (partial — section_dialog.html)
+        var chatModeLabel = document.getElementById('chatModeLabel');
+        if (chatModeLabel) {
+            chatModeLabel.textContent = chatModeLabel.textContent.replace(/NGSSAI|VYRA/g, appName);
+        }
+
+        // Chat mode toggle button title attribute
+        var chatModeBtn = document.getElementById('chatModeToggleBtn');
+        if (chatModeBtn) {
+            var btnTitle = chatModeBtn.getAttribute('title') || '';
+            chatModeBtn.setAttribute('title', btnTitle.replace(/NGSSAI|VYRA/g, appName));
         }
     }
 
@@ -911,6 +928,31 @@
         observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     }
 
+    /**
+     * Firma uygulama adını döndürür.
+     * Tüm JS modülleri bu fonksiyonu kullanarak firma adına erişmelidir.
+     * @returns {string} Firma adı (örn: "DAHİ", "VYRA")
+     */
+    function getAppName() {
+        var bd = loadBranding();
+        if (bd) {
+            var name = bd.app_name;
+            if (!name || name === 'NGSSAI') {
+                name = bd.company_name || name;
+            }
+            if (name) return name;
+        }
+        return 'VYRA';
+    }
+
+    /**
+     * Firma uygulama adının baş harfini döndürür (avatar ikonları için).
+     * @returns {string} Tek harf (örn: "D", "V")
+     */
+    function getAppInitial() {
+        return getAppName().charAt(0).toUpperCase();
+    }
+
     // Public API
     window.BrandingEngine = {
         applyThemeCSS: applyThemeCSS,
@@ -925,6 +967,8 @@
         loadBranding: loadBranding,
         clearBranding: clearBranding,
         applyAll: applyAll,
-        watchThemeChanges: watchThemeChanges
+        watchThemeChanges: watchThemeChanges,
+        getAppName: getAppName,
+        getAppInitial: getAppInitial
     };
 })();

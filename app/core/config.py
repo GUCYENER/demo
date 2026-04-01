@@ -24,9 +24,9 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     #  Genel API ayarları
     # -------------------------------------------------
-    app_name: str = "NGSSAI"
+    app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.1.0"  # Enrichment-Aware Routing + Hallucination Guard
+    APP_VERSION: str = "3.1.1"  # Branding Parameterization — Full bundle cleanup
 
     # Frontend & API prefix
     api_prefix: str = "/api"

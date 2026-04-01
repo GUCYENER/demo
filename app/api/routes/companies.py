@@ -108,7 +108,7 @@ def get_company_by_url(url: str = Query(..., description="Eşleştirilecek URL")
                 "company": {
                     "id": row["id"],
                     "name": row["name"],
-                    "app_name": row["app_name"] or "NGSSAI",
+                    "app_name": row["app_name"] or "VYRA",
                     "has_logo": row["has_logo"],
                     "logo_url": f"/api/companies/{row['id']}/logo" if row["has_logo"] else None,
                     "theme": theme_data
@@ -216,7 +216,7 @@ def create_company(
                       phone, email, website, contact_name, contact_surname,
                       is_active, created_at, updated_at
         """, (
-            company.name, company.app_name or 'NGSSAI', company.theme_id,
+            company.name, company.app_name or 'VYRA', company.theme_id,
             company.tax_type, company.tax_number,
             company.address_il, company.address_ilce,
             company.address_mahalle, company.address_text,

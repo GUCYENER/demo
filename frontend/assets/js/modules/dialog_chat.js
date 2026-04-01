@@ -38,6 +38,10 @@ window.DialogChatModule = (function () {
 
     const API_BASE = (window.API_BASE_URL || 'http://localhost:8002') + '/api';
 
+    // v3.1.1: Parametrik firma adı — BrandingEngine'den oku
+    function _appName() { return window.BrandingEngine?.getAppName?.() || 'VYRA'; }
+    function _appInitial() { return window.BrandingEngine?.getAppInitial?.() || 'V'; }
+
     // =============================================================================
     // INITIALIZATION
     // =============================================================================
@@ -347,7 +351,7 @@ window.DialogChatModule = (function () {
                 currentDialogId = dialog.id;
                 clearMessages();
                 resetNewDialogButtonHighlight(); // Animasyonu kaldır
-                addSystemMessage('🎉 NGSSAI\'ye yeni soru sorabilirsiniz. Size nasıl yardımcı olabilirim?');
+                addSystemMessage('🎉 ' + _appName() + '\'ye yeni soru sorabilirsiniz. Size nasıl yardımcı olabilirim?');
 
                 // Çağrı Aç butonunu pasifleştir (yeni dialog boş)
                 setTicketButtonEnabled(false);
@@ -642,7 +646,7 @@ window.DialogChatModule = (function () {
 
                 // 🔔 Notification
                 const previewText = finalContent.substring(0, 100) || 'Yanıt hazır';
-                showNotification('🤖 NGSSAI Yanıtladı', previewText);
+                showNotification('🤖 ' + _appName() + ' Yanıtladı', previewText);
             } else {
                 addSystemMessage('❌ Yanıt alınamadı.');
             }
@@ -683,8 +687,8 @@ window.DialogChatModule = (function () {
         row.className = 'message-row assistant streaming-row';
         row.innerHTML = `
             <div class="message-header-row">
-                <div class="message-avatar vyra">N</div>
-                <span class="message-sender-name">NGSSAI</span>
+                <div class="message-avatar vyra">${_appInitial()}</div>
+                <span class="message-sender-name">${_appName()}</span>
             </div>
             <div class="message-bubble assistant streaming-bubble">
                 <div class="streaming-status"></div>
@@ -1476,7 +1480,7 @@ window.DialogChatModule = (function () {
                     data-query="${escapeHtml(originalQuery)}"
                     onclick="DialogChatModule.handleEnhance(this)"
                     title="LLM ile cevabı iyileştir">
-                    <i class="fa-solid fa-wand-magic-sparkles"></i> NGSSAI önerisi al
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> ${_appName()} önerisi al
                 </button>
             </div>
         ` : '';
@@ -1497,7 +1501,7 @@ window.DialogChatModule = (function () {
         const corpixChatBtn = noRelevantResult ? `
             <div class="vyra-corpix-container">
                 <button class="vyra-corpix-btn" onclick="DialogChatModule.switchToCorpixMode()">
-                    <i class="fa-solid fa-comments"></i> NGSSAI ile Sohbet Et
+                    <i class="fa-solid fa-comments"></i> ${_appName()} ile Sohbet Et
                 </button>
             </div>
         ` : '';
@@ -1506,8 +1510,8 @@ window.DialogChatModule = (function () {
         const html = `
             <div class="message-row assistant" data-message-id="${messageId}">
                 <div class="message-header-row">
-                    <div class="message-avatar vyra">N</div>
-                    <span class="message-sender-name">NGSSAI</span>
+                    <div class="message-avatar vyra">${_appInitial()}</div>
+                    <span class="message-sender-name">${_appName()}</span>
                     <span class="message-time">${time}</span>
                 </div>
                 <div class="message-bubble assistant">
@@ -1574,8 +1578,8 @@ window.DialogChatModule = (function () {
         const html = `
             <div class="message-row assistant">
                 <div class="message-header-row">
-                    <div class="message-avatar vyra">N</div>
-                    <span class="message-sender-name">NGSSAI</span>
+                    <div class="message-avatar vyra">${_appInitial()}</div>
+                    <span class="message-sender-name">${_appName()}</span>
                 </div>
                 <div class="message-bubble assistant">
                     <div class="message-content">${content}</div>
@@ -1602,8 +1606,8 @@ window.DialogChatModule = (function () {
         const html = `
             <div class="message-row assistant typing-row">
                 <div class="message-header-row">
-                    <div class="message-avatar vyra">N</div>
-                    <span class="message-sender-name">NGSSAI</span>
+                    <div class="message-avatar vyra">${_appInitial()}</div>
+                    <span class="message-sender-name">${_appName()}</span>
                 </div>
                 <div class="typing-indicator">
                     <div class="typing-dot"></div>
@@ -1815,7 +1819,7 @@ window.DialogChatModule = (function () {
 
         // Browser notification (kullanıcı başka sekmede veya menüdeyse)
         if (document.hidden || !isDialogSectionVisible()) {
-            showToast('info', '🤖 NGSSAI yanıtladı! Dialog sekmesine bakın.');
+            showToast('info', '🤖 ' + _appName() + ' yanıtladı! Dialog sekmesine bakın.');
         }
     }
 
@@ -1916,7 +1920,7 @@ window.DialogChatModule = (function () {
         // Button → spinner
         container.innerHTML = `
             <div class="vyra-enhance-loading">
-                <i class="fa-solid fa-spinner fa-spin"></i> NGSSAI düşünüyor...
+                <i class="fa-solid fa-spinner fa-spin"></i> ${_appName()} düşünüyor...
             </div>
         `;
 
@@ -1950,7 +1954,7 @@ window.DialogChatModule = (function () {
                 // Butonu kaldır
                 container.innerHTML = `
                     <div class="vyra-enhance-success">
-                        <i class="fa-solid fa-check"></i> NGSSAI önerisi uygulandı 
+                        <i class="fa-solid fa-check"></i> ${_appName()} önerisi uygulandı 
                         <span class="enhance-time">(${(data.elapsed_ms / 1000).toFixed(1)}s)</span>
                     </div>
                 `;
@@ -2020,8 +2024,8 @@ window.DialogChatModule = (function () {
             const mch = document.getElementById('modeChat');
             if (mkb) mkb.classList.remove('selected');
             if (mch) mch.classList.add('selected');
-            showToast('info', '💬 NGSSAI sohbet modu aktif');
-            addSystemMessage('💬 NGSSAI ile sohbet moduna geçildi.');
+            showToast('info', '💬 ' + _appName() + ' sohbet modu aktif');
+            addSystemMessage('💬 ' + _appName() + ' ile sohbet moduna geçildi.');
         },
         switchToRagMode: () => {
             chatMode = 'rag';

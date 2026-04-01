@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NGSSAI — Giriş</title>
-<link rel="icon" type="image/svg+xml" id="faviconLink" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%237C3AED'/><path d='M8 24V8h2.5L22 21V8h2.5v16H22L10.5 11v13Z' fill='white'/></svg>" />
+<title>VYRA — Giriş</title>
+<link rel="icon" type="image/svg+xml" id="faviconLink" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%237C3AED'/><path d='M7 8L16 25L25 8L21.5 8L16 19L10.5 8Z' fill='white'/></svg>" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Geist:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -1107,7 +1107,7 @@ body::before {
       .then(function(r) { return r.json(); })
       .then(function(data) {
         if (data.version) {
-          document.getElementById('versionBadge').textContent = 'NGSSAI Platform v' + data.version;
+          document.getElementById('versionBadge').textContent = 'VYRA Platform v' + data.version;
           document.getElementById('brandVersion').textContent = 'v' + data.version + ' · AIOps Platform';
         }
       })
