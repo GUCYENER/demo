@@ -794,18 +794,38 @@ HAM CEVAP:
             length_ratio = answer_len / source_len
             result["length_ratio"] = length_ratio
             
-            if length_ratio > self.MAX_LENGTH_RATIO:
+            # v3.1.2: Dinamik eşik — kısa kaynak metinlerde (komut referansları,
+            # tablo hücreleri, kısa açıklamalar) LLM doğal olarak daha uzun cevap üretir.
+            # Sabit 8x eşiği bu tür içeriklerde tüm cevapları engelliyor.
+            if source_len < 200:
+                effective_ratio = 30.0   # Çok kısa kaynak (komut satırları)
+            elif source_len < 500:
+                effective_ratio = 15.0   # Orta kaynak (kısa paragraflar)
+            else:
+                effective_ratio = self.MAX_LENGTH_RATIO  # Uzun kaynak (8.0x)
+            
+            if length_ratio > effective_ratio:
                 result["passed"] = False
-                result["reason"] = f"length_ratio_exceeded ({length_ratio:.1f}x > {self.MAX_LENGTH_RATIO}x)"
+                result["reason"] = f"length_ratio_exceeded ({length_ratio:.1f}x > {effective_ratio:.0f}x)"
                 return result
         
         # === Katman 2: Anahtar Kelime Temellendirme ===
         grounding_score = self._check_keyword_grounding(answer, source_text)
         result["grounding"] = grounding_score
         
-        if grounding_score < self.GROUNDING_THRESHOLD:
+        # v3.1.2: Kısa kaynaklarda anahtar kelime havuzu küçük,
+        # LLM zorunlu olarak kaynak dışı teknik terimler kullanır.
+        # Faithfulness (semantik benzerlik) zaten anlam korumasını garantiler.
+        if source_len < 200:
+            effective_grounding = 0.05   # Çok kısa kaynak
+        elif source_len < 500:
+            effective_grounding = 0.15   # Orta kaynak
+        else:
+            effective_grounding = self.GROUNDING_THRESHOLD  # Uzun kaynak (0.30)
+        
+        if grounding_score < effective_grounding:
             result["passed"] = False
-            result["reason"] = f"low_grounding ({grounding_score:.1%} < {self.GROUNDING_THRESHOLD:.0%})"
+            result["reason"] = f"low_grounding ({grounding_score:.1%} < {effective_grounding:.0%})"
             return result
         
         # === Katman 1: Semantik Sadakat (en pahalı — son kontrol) ===

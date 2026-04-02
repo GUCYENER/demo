@@ -70,11 +70,15 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 **🛡️ quality_drop Cooldown:**
 - ✅ **Sonsuz döngü engeli:** Son eğitimden beri yeni feedback yoksa quality_drop tetiklenmiyor
 
+**📐 Dinamik Halüsinasyon Eşikleri:**
+- ✅ **Length Ratio:** Kaynak <200 char → 30x, 200-500 → 15x, >500 → 8x (kısa komut referansları için)
+- ✅ **Grounding:** Kaynak <200 char → %5, 200-500 → %15, >500 → %30 (kısa chunk'larda az kelime örtüşmesi doğal)
+
 **📁 Değişen Dosyalar:**
 - `scripts/train_model.py` — `--job-id` param + Learned Q&A (Adım 11)
 - `app/services/ml_training/job_runner.py` — `--job-id` iletimi + DB timeout
 - `app/services/ml_training/scheduling.py` — quality_drop cooldown
-- `app/services/learned_qa_service.py` — max_answers limitsiz + overflow protection
+- `app/services/learned_qa_service.py` — max_answers limitsiz + overflow protection + dinamik eşikler
 - `app/services/ml_training/continuous_learning.py` — max_answers kaldırıldı
 
 ---
