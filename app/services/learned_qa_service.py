@@ -316,13 +316,13 @@ class LearnedQAService:
         
         return min(score, 100.0)
     
-    def bulk_generate(self, training_data: list, max_answers: int = 50) -> int:
+    def bulk_generate(self, training_data: list, max_answers: int = None) -> int:
         """
-        CL eğitim verilerinden LLM ile cevap üretip kaydet.
+        CL/Scheduled eğitim verilerinden LLM ile cevap üretip kaydet.
         
         Args:
             training_data: Sentetik eğitim verileri (query, chunk_text, intent, source_file, ...)
-            max_answers: Maksimum üretilecek cevap sayısı
+            max_answers: Maksimum üretilecek cevap sayısı (None = barajı aşan tümü)
             
         Returns:
             Üretilen cevap sayısı
@@ -337,9 +337,12 @@ class LearnedQAService:
             log_system_event("INFO", "Learned QA: cevap üretilecek aday yok", "learned_qa")
             return 0
         
-        # En yüksek skorlulardan max_answers kadar seç
+        # Skoruna göre sırala (en yüksek önce)
         candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
-        candidates = candidates[:max_answers]
+        
+        # Limit varsa kırp
+        if max_answers is not None:
+            candidates = candidates[:max_answers]
         
         # v2.52.0: Duplicate skip kaldırıldı — UPSERT add() içinde yönetilir.
         # Daha kaliteli cevap üretildiyse eski cevap güncellenir.
@@ -494,12 +497,13 @@ class LearnedQAService:
         """
         format_instruction = self._get_qa_format_instruction(intent)
         
-        # Tam chunk context (2000 char — bilgi kaybı yok)
-        chunk_content = chunk_text[:2000]
+        # Giriş güvenliği: uzun soru/chunk taşma riski
+        question_safe = question[:500]  # Max 500 char (~125 token)
+        chunk_content = chunk_text[:2000]  # Max 2000 char (~500 token)
         
         prompt = f"""Aşağıdaki kaynak içeriğe dayanarak soruyu profesyonel ve kapsamlı şekilde cevapla.
 
-📝 SORU: {question}
+📝 SORU: {question_safe}
 📄 KAYNAK DOSYA: {source_file}
 
 📖 KAYNAK İÇERİK:
@@ -531,6 +535,15 @@ class LearnedQAService:
                 full_response += token
             
             if full_response and len(full_response) >= 30:
+                # Maksimum cevap uzunluğu: 3000 char (~750 token)
+                # Daha uzun cevaplar anlam bozukluğuna/tekrar döngüsüne işaret eder
+                if len(full_response) > 3000:
+                    # Son cümle sonunda kes (temiz sonlanma)
+                    truncated = full_response[:3000]
+                    last_period = truncated.rfind('.')
+                    if last_period > 2000:
+                        truncated = truncated[:last_period + 1]
+                    return truncated.strip()
                 return full_response.strip()
         except Exception as e:
             log_warning(f"Learned QA streaming fallback: {e}", "learned_qa")
@@ -665,13 +678,17 @@ class LearnedQAService:
             İyileştirilmiş cevap veya None (başarısız ise)
         """
         try:
+            # Refinement giriş güvenliği
+            question_safe = question[:500]
+            answer_safe = raw_answer[:3000]  # Çok uzun cevapları kırp
+            
             refinement_prompt = f"""Aşağıdaki teknik destek cevabını iyileştir ve zenginleştir.
 
-SORU: {question}
+SORU: {question_safe}
 SORU TİPİ: {intent}
 
 HAM CEVAP:
-{raw_answer}
+{answer_safe}
 
 İYİLEŞTİRME KURALLARI:
 1. Adım adım yapı ekle veya mevcut yapıyı güçlendir

@@ -110,6 +110,7 @@ const JS_FILES = [
     'assets/js/modules/ds_learning_module.js',
     'assets/js/modules/ds_enrichment_module.js',
     'assets/js/modules/theme_catalog_module.js',
+    'assets/js/modules/theme_preview_modal.js',
     'assets/js/modules/theme_picker_popup.js',
     'assets/js/branding_engine.js',
 ];

@@ -115,10 +115,11 @@ window.ThemePickerPopup = (function () {
 
             grid.innerHTML = '';
             themes.forEach(function(t) {
-                var colors = t.preview_colors;
+                var colors = t.preview_colors || [];
                 if (typeof colors === 'string') {
-                    try { colors = JSON.parse(colors); } catch(e) { colors = ['#666','#999']; }
+                    try { colors = JSON.parse(colors); } catch(e) { colors = []; }
                 }
+                if (!Array.isArray(colors)) colors = [];
                 var c1 = colors[0] || '#666';
                 var c2 = colors[1] || '#999';
 
@@ -155,22 +156,33 @@ window.ThemePickerPopup = (function () {
 
         var bd = BrandingEngine.loadBranding() || {};
 
-        // Tema verilerini güncelle
+        // Sadece tema CSS verilerini güncelle (login içeriği dokunma)
         bd.theme = {
             id: themeData.id,
             code: themeData.code,
+            name: themeData.name,
             css_variables: themeData.css_variables,
-            login_headline: themeData.login_headline || bd.theme?.login_headline,
-            login_subtitle: themeData.login_subtitle || bd.theme?.login_subtitle,
-            features_json: themeData.features_json || bd.theme?.features_json
+            login_headline: themeData.login_headline || (bd.theme ? bd.theme.login_headline : null),
+            login_subtitle: themeData.login_subtitle || (bd.theme ? bd.theme.login_subtitle : null),
+            features_json: themeData.features_json || (bd.theme ? bd.theme.features_json : null)
         };
 
-        // Kaydet ve uygula
+        // Kaydet
         BrandingEngine.saveBranding(bd);
-        BrandingEngine.applyAll(bd);
 
-        if (window.VyraToast) {
-            VyraToast.success(themeData.name + ' teması uygulandı');
+        // Sadece CSS temayı uygula (login content/logo/features dokunma)
+        if (bd.theme && bd.theme.css_variables) {
+            var cssVars = bd.theme.css_variables;
+            if (typeof cssVars === 'string') {
+                try { cssVars = JSON.parse(cssVars); } catch(e) { cssVars = null; }
+            }
+            if (cssVars) {
+                BrandingEngine.applyThemeForCurrentMode(cssVars);
+            }
+        }
+
+        if (window.showToast) {
+            showToast(themeData.name + ' teması uygulandı', 'success');
         }
     }
 

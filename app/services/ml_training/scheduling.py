@@ -157,25 +157,38 @@ class MLSchedulingMixin:
             log_error(f"Schedule save hatası: {e}", "ml_training")
             return {"success": False, "error": str(e)}
     
-    def check_scheduled_trigger(self) -> bool:
+    def check_scheduled_trigger(self) -> str | None:
         """
         Hibrit schedule tetikleme koşulunu kontrol et.
-        Aktif olan HERHANGİ BİR koşul sağlanırsa True döner.
+        Aktif olan HERHANGİ BİR koşul sağlanırsa tetikleyen koşulu string olarak döner.
+        Hiçbir koşul sağlanmazsa None döner.
         
         Desteklenen trigger_type'lar:
         - feedback_count: Belirli sayıda feedback sonrası tetikle
         - interval_days: Belirli gün sayısı sonra tetikle
         - quality_drop: Feedback kalitesi düşerse tetikle
+        
+        Returns:
+            str | None: Tetikleme nedeni (ör: "feedback_count:500") veya None
         """
         schedules = self.get_all_schedules()
         active_schedules = [s for s in schedules if s.get("is_active")]
         
         if not active_schedules:
-            return False
+            return None
+        
+        # cl_interval ve job_timeout tiplerine bakmayız — bunlar farklı amaçlı
+        training_schedules = [
+            s for s in active_schedules 
+            if s.get("trigger_type") in ("feedback_count", "interval_days", "quality_drop")
+        ]
+        
+        if not training_schedules:
+            return None
         
         stats = self.get_training_stats()
         
-        for schedule in active_schedules:
+        for schedule in training_schedules:
             trigger_type = schedule.get("trigger_type")
             trigger_value = schedule.get("trigger_value")
             
@@ -191,7 +204,7 @@ class MLSchedulingMixin:
                             f"Scheduled training tetiklendi (feedback_count): {feedback_since_last} >= {threshold}",
                             "ml_training"
                         )
-                        return True
+                        return f"feedback_count:{trigger_value}"
                         
                 elif trigger_type == "interval_days":
                     # Son eğitimden bu yana geçen gün sayısını kontrol et
@@ -210,29 +223,38 @@ class MLSchedulingMixin:
                                 f"Scheduled training tetiklendi (interval_days): {days_passed} gün >= {threshold_days} gün",
                                 "ml_training"
                             )
-                            return True
-                    else:
-                        # Hiç eğitim yoksa ve yeterli veri varsa tetikle
-                        if stats.get("training_ready"):
-                            return True
-                            
+                            return f"interval_days:{trigger_value}"
+                    # NOT: Hiç eğitim yoksa sürekli öğrenme zaten hallediyor,
+                    # burada gereksiz tetikleme yapılmamalı.
+                        
                 elif trigger_type == "quality_drop":
                     # Son N feedback'in kalitesini kontrol et
                     quality_threshold = float(trigger_value)
                     recent_quality = self._calculate_recent_quality()
                     
                     if recent_quality is not None and recent_quality < quality_threshold:
-                        log_system_event(
-                            "INFO",
-                            f"Scheduled training tetiklendi (quality_drop): {recent_quality:.2f} < {quality_threshold}",
-                            "ml_training"
-                        )
-                        return True
+                        # Cooldown: Son eğitimden beri yeni feedback gelmemişse tekrar tetikleme
+                        # (Aynı feedbacklerle sonsuz eğitim döngüsünü önler)
+                        feedback_since_last = stats.get("feedback_since_last_training", 0)
+                        if feedback_since_last == 0 and stats.get("last_training"):
+                            log_system_event(
+                                "DEBUG",
+                                f"quality_drop koşulu sağlandı ({recent_quality:.2f} < {quality_threshold}) "
+                                f"ama son eğitimden beri yeni feedback yok, atlanıyor",
+                                "ml_training"
+                            )
+                        else:
+                            log_system_event(
+                                "INFO",
+                                f"Scheduled training tetiklendi (quality_drop): {recent_quality:.2f} < {quality_threshold}",
+                                "ml_training"
+                            )
+                            return f"quality_drop:{trigger_value}"
                         
             except Exception as e:
                 log_error(f"Schedule trigger kontrol hatası ({trigger_type}): {e}", "ml_training")
         
-        return False
+        return None
     
     def _calculate_recent_quality(self, sample_size: int = 100) -> Optional[float]:
         """

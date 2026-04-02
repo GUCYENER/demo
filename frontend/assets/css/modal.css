@@ -85,8 +85,8 @@
 }
 
 .vyra-modal-icon.question {
-    background: linear-gradient(135deg, rgba(139, 92, 246, 0.2) 0%, rgba(124, 58, 237, 0.1) 100%);
-    color: #8b5cf6;
+    background: linear-gradient(135deg, var(--gold-dim, rgba(139, 92, 246, 0.2)) 0%, rgba(124, 58, 237, 0.1) 100%);
+    color: var(--gold, #8b5cf6);
 }
 
 .vyra-modal-icon.network {
@@ -155,13 +155,13 @@
 }
 
 .vyra-modal-btn.confirm {
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-    color: white;
-    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    background: var(--grad-acc, linear-gradient(135deg, #10b981 0%, #059669 100%));
+    color: var(--primary-on, white);
+    box-shadow: 0 4px 12px var(--gold-glow, rgba(16, 185, 129, 0.3));
 }
 
 .vyra-modal-btn.confirm:hover {
-    box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
+    box-shadow: 0 6px 20px var(--gold-glow, rgba(16, 185, 129, 0.4));
 }
 
 .vyra-modal-btn.danger {
@@ -418,8 +418,23 @@
     transform: translateY(-1px);
 }
 
-/* Responsive */
+/* Responsive — Tablet */
+@media (max-width: 880px) {
+    .vyra-modal:has(.job-detail-modal) {
+        max-width: 94%;
+    }
+
+    .vyra-modal:has(.samples-viewer) {
+        max-width: 96%;
+    }
+}
+
+/* Responsive — Mobil */
 @media (max-width: 540px) {
+    .modal-overlay {
+        padding: 10px;
+    }
+
     .modal-box {
         max-width: 95%;
         border-radius: 16px;
@@ -429,8 +444,13 @@
         padding: 16px 18px;
     }
 
+    .modal-box .modal-header h3 {
+        font-size: 15px;
+    }
+
     .modal-box .modal-body {
         padding: 18px;
+        overflow-x: auto;
     }
 
     .modal-box .modal-footer {
@@ -440,6 +460,51 @@
 
     .modal-box .modal-footer .btn {
         width: 100%;
+    }
+
+    /* VyraModal */
+    .vyra-modal {
+        max-width: 92%;
+        margin: 10px;
+        border-radius: 16px;
+    }
+
+    .vyra-modal-header {
+        padding: 18px 18px 12px;
+    }
+
+    .vyra-modal-icon {
+        width: 44px;
+        height: 44px;
+        border-radius: 12px;
+        font-size: 20px;
+    }
+
+    .vyra-modal-title {
+        font-size: 16px;
+    }
+
+    .vyra-modal-body {
+        padding: 0 18px 18px;
+    }
+
+    .vyra-modal-message {
+        font-size: 14px;
+    }
+
+    .vyra-modal-footer {
+        flex-direction: column;
+        padding: 12px 18px 22px;
+    }
+
+    .vyra-modal-btn {
+        width: 100%;
+    }
+
+    /* Geniş modallar mobil */
+    .vyra-modal:has(.job-detail-modal),
+    .vyra-modal:has(.samples-viewer) {
+        max-width: 96%;
     }
 }
 

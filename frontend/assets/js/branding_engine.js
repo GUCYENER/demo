@@ -110,6 +110,12 @@
             '  --orb-1: ' + accentDim + ' !important;',
             '  --orb-2: ' + accentDim + ' !important;',
             '  --shadow-input: ' + (modeVars['--shadow-input'] || '0 0 0 1px ' + accent + ', 0 0 18px ' + accentDim) + ' !important;',
+            /* login.html CSS değişkenleri */
+            '  --grad-btn: ' + gradBtn + ' !important;',
+            '  --shadow-btn: 0 4px 20px ' + hexToRgba(accent, 0.25) + ', 0 0 0 1px ' + hexToRgba(accent, 0.12) + ' !important;',
+            '  --gold-subtle: ' + hexToRgba(accent, 0.07) + ' !important;',
+            '  --text-gold: ' + accent + ' !important;',
+            '  --grad-surface: linear-gradient(160deg, ' + hexToRgba(accent, 0.04) + ' 0%, transparent 55%) !important;',
             '}',
             /* ==============================================
                HOME.CSS - Sidebar, Tab, Button, İnput
@@ -122,9 +128,16 @@
             // Topbar
             '.tb-btn-primary { background: ' + gradBtn + ' !important; }',
             '.tb-agent-avatar { background: ' + gradBtn + ' !important; }',
-            // Tab active/hover
-            '.modern-tab:hover, .tab-button:hover, .tab:hover { border-color: ' + accent + ' !important; }',
-            '.modern-tab.active, .tab-button.active, .tab.active { background: ' + gradBtn + ' !important; border-color: ' + accent + ' !important; box-shadow: 0 4px 16px ' + accentGlow + ' !important; }',
+            // Tab active/hover — HOME tabs (modern-tab, tab-button: gradient background)
+            '.modern-tab:hover, .tab-button:hover { border-color: ' + accent + ' !important; }',
+            '.modern-tab.active, .tab-button.active { background: ' + gradBtn + ' !important; border-color: ' + accent + ' !important; box-shadow: 0 4px 16px ' + accentGlow + ' !important; }',
+            // Tab active/hover — LOGIN tabs (.tab-row .tab: sadece renk, background yok)
+            '.tab-row .tab:hover { color: ' + accent + ' !important; }',
+            '.tab-row .tab.active { color: ' + accent + ' !important; background: transparent !important; }',
+            '.tab-row .tab.active::after { background: ' + accent + ' !important; }',
+            // Tab active/hover — HOME .tab (background gradient — .tab-row dışındaki tab'lar)
+            ':not(.tab-row) > .tab:hover { border-color: ' + accent + ' !important; }',
+            ':not(.tab-row) > .tab.active { background: ' + gradBtn + ' !important; border-color: ' + accent + ' !important; box-shadow: 0 4px 16px ' + accentGlow + ' !important; }',
             // Avatar
             '.avatar-initials { background: ' + gradBtn + ' !important; border-color: ' + accent + ' !important; box-shadow: 0 4px 16px ' + accentGlow + ' !important; }',
             '.profile-avatar-wrapper img { border-color: ' + accent + ' !important; }',
@@ -158,10 +171,18 @@
             '.rag-action-btn:hover { background: ' + accentDim + ' !important; }',
             '.source-badge { background: ' + accentDim + ' !important; color: ' + accent + ' !important; }',
             /* ==============================================
-               MODAL.CSS - Modal butonları
+               MODAL.CSS - Modal butonları + VyraModal
                ============================================== */
             '.modal-btn-primary, .vyra-modal-ok { background: ' + gradBtn + ' !important; color: #fff !important; }',
             '.modal-btn-primary:hover, .vyra-modal-ok:hover { box-shadow: 0 4px 16px ' + accentGlow + ' !important; }',
+            // VyraModal — confirm butonu, question ikonu, warning butonu
+            '.vyra-modal-btn.confirm { background: ' + gradBtn + ' !important; color: ' + primaryOn + ' !important; box-shadow: 0 4px 12px ' + accentGlow + ' !important; }',
+            '.vyra-modal-btn.confirm:hover { box-shadow: 0 6px 20px ' + accentGlow + ' !important; }',
+            '.vyra-modal-btn.warning { background: ' + gradBtn + ' !important; color: ' + primaryOn + ' !important; box-shadow: 0 4px 12px ' + accentGlow + ' !important; }',
+            '.vyra-modal-btn.warning:hover { box-shadow: 0 6px 20px ' + accentGlow + ' !important; }',
+            '.vyra-modal-icon.question { background: linear-gradient(135deg, ' + accentDim + ' 0%, rgba(0,0,0,0.05) 100%) !important; color: ' + accent + ' !important; }',
+            '.vyra-modal-icon.warning { background: linear-gradient(135deg, ' + accentDim + ' 0%, rgba(0,0,0,0.05) 100%) !important; color: ' + accent + ' !important; }',
+            '.vyra-modal-icon.info { background: linear-gradient(135deg, ' + accentDim + ' 0%, rgba(0,0,0,0.05) 100%) !important; color: ' + accent + ' !important; }',
             /* ==============================================
                AUTHORIZATION.CSS - Yetkilendirme
                ============================================== */

@@ -267,7 +267,7 @@ class ContinuousLearningService:
                 try:
                     from app.services.learned_qa_service import get_learned_qa_service
                     qa_service = get_learned_qa_service()
-                    qa_count = qa_service.bulk_generate(training_data, max_answers=50)
+                    qa_count = qa_service.bulk_generate(training_data)
                     if qa_count > 0:
                         log_system_event(
                             "INFO",

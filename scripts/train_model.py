@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python
+#!/usr/bin/env python
 """
 VYRA L1 Support API - CatBoost Model Training Script
 =====================================================
@@ -425,6 +425,8 @@ def main():
                         help='Sadece veri kontrolu yap, egitme')
     parser.add_argument('--no-llm', action='store_true',
                         help='LLM kullanma, sadece template sorular')
+    parser.add_argument('--job-id', type=int, default=None,
+                        help='Mevcut job ID (job_runner tarafından çağrıldığında yeni job oluşturmaz)')
     
     args = parser.parse_args()
     
@@ -464,29 +466,35 @@ def main():
         print(f"\n[OK] Dry run tamamlandi. {features.shape[0]} örnek, {features.shape[1]} feature hazır.")
         sys.exit(0)
     
-    # ─── 5. Job kaydı oluştur ───
-    job_id = None
-    try:
-        with get_db_context() as conn:
-            with conn.cursor() as cur:
-                job_name = f"manual_{start_time.strftime('%Y%m%d_%H%M%S')}"
-                cur.execute("""
-                    INSERT INTO ml_training_jobs 
-                    (job_name, job_type, status, trigger_condition, start_time)
-                    VALUES (%s, 'manual', 'running', 'manual', %s)
-                    RETURNING id
-                """, (job_name, start_time))
-                job_id = cur.fetchone()["id"]
-                conn.commit()
-        print(f"[INFO] Job #{job_id} oluşturuldu")
-    except Exception as e:
-        print(f"[UYARI] Job kaydi olusturulamadi: {e}")
+    # ─── 5. Job kaydı: dışarıdan geldiyse kullan, yoksa oluştur ───
+    job_id = args.job_id  # job_runner'dan geldiyse mevcut ID
+    _standalone = job_id is None  # Standalone mı çalışıyor?
+    
+    if job_id:
+        print(f"[INFO] Harici Job #{job_id} kullanılıyor (job_runner üzerinden)")
+    else:
+        # Standalone çalışma — kendi job kaydımızı oluştur
+        try:
+            with get_db_context() as conn:
+                with conn.cursor() as cur:
+                    job_name = f"manual_{start_time.strftime('%Y%m%d_%H%M%S')}"
+                    cur.execute("""
+                        INSERT INTO ml_training_jobs 
+                        (job_name, job_type, status, trigger_condition, start_time)
+                        VALUES (%s, 'manual', 'running', 'manual', %s)
+                        RETURNING id
+                    """, (job_name, start_time))
+                    job_id = cur.fetchone()["id"]
+                    conn.commit()
+            print(f"[INFO] Job #{job_id} oluşturuldu (standalone)")
+        except Exception as e:
+            print(f"[UYARI] Job kaydi olusturulamadi: {e}")
     
     # ─── 6. Model eğit ───
     model, metrics = train_model(features, labels)
     
     if model is None:
-        if job_id:
+        if job_id and _standalone:
             _update_job(job_id, "failed", start_time, error="Model eğitilemedi")
         print("[HATA] Model egitilelemedi.")
         sys.exit(1)
@@ -497,10 +505,10 @@ def main():
     # ─── 8. Eğitim örneklerini kaydet ───
     save_training_samples(job_id, training_data)
     
-    # ─── 9. Job kaydını güncelle ───
+    # ─── 9. Job kaydını güncelle (sadece standalone modda) ───
     end_time = datetime.now()
     duration = int((end_time - start_time).total_seconds())
-    if job_id:
+    if job_id and _standalone:
         _update_job(job_id, "completed", start_time, 
                     end_time=end_time, duration=duration, 
                     samples=metrics.get("total_samples", 0))
@@ -513,6 +521,18 @@ def main():
             print(f"[OK] {refined} topic keyword güncellendi")
     except Exception as e:
         print(f"[UYARI] Topic refinement hatası: {e}")
+    
+    # ─── 11. Learned Q&A — eğitim verilerinden LLM cevapları üret ───
+    try:
+        from app.services.learned_qa_service import get_learned_qa_service
+        qa_service = get_learned_qa_service()
+        qa_count = qa_service.bulk_generate(training_data)
+        if qa_count > 0:
+            print(f"[OK] {qa_count} learned Q&A cevabı üretildi")
+        else:
+            print("[INFO] Learned Q&A: Üretilecek aday bulunamadı veya tümü zaten mevcut")
+    except Exception as e:
+        print(f"[UYARI] Learned Q&A üretim hatası: {e}")
     
     print("\n" + "=" * 60)
     print("  Eğitim tamamlandı!")

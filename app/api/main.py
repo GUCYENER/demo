@@ -111,9 +111,10 @@ def _run_schedule_checker():
                 continue
             
             # 3) Schedule koşullarını kontrol et
-            if service.check_scheduled_trigger():
-                log_system_event("INFO", "[Scheduler] Otomatik egitim tetiklendi", "scheduler")
-                service.start_training(user_id=1, trigger="scheduled")
+            trigger_reason = service.check_scheduled_trigger()
+            if trigger_reason:
+                log_system_event("INFO", f"[Scheduler] Otomatik egitim tetiklendi: {trigger_reason}", "scheduler")
+                service.start_training(user_id=1, trigger=trigger_reason)
                 
         except Exception as e:
             log_error(f"[Scheduler] Kontrol hatasi: {e}", "scheduler")

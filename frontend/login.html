@@ -162,13 +162,14 @@ body::before {
   box-shadow: 0 0 0 1px rgba(255,255,255,0.10), 0 0 40px var(--gold-glow), 0 8px 28px rgba(0,0,0,0.4);
   animation: iconGlow 5s ease-in-out infinite;
   position: relative;
+  overflow: hidden;
 }
 @keyframes iconGlow {
   0%,100% { box-shadow: 0 0 0 1px rgba(255,255,255,0.10), 0 0 40px var(--gold-glow), 0 8px 28px rgba(0,0,0,0.4); }
   50%     { box-shadow: 0 0 0 1px rgba(255,255,255,0.15), 0 0 60px rgba(77,153,255,0.30), 0 8px 28px rgba(0,0,0,0.4); }
 }
 .ngssai-icon svg { width: 32px; height: 32px; }
-.login-company-logo-img { width: 40px; height: 40px; border-radius: 8px; object-fit: contain; }
+.login-company-logo-img { width: 100%; height: 100%; border-radius: 0; object-fit: contain; display: block; padding: 4px; }
 .ngssai-wordmark { display: flex; flex-direction: column; line-height: 1; }
 .ngssai-name {
   font-family: 'Geist', sans-serif;
@@ -499,9 +500,10 @@ body::before {
   flex-shrink: 0;
   box-shadow: 0 0 0 1px rgba(255,255,255,0.10), 0 0 40px var(--gold-glow), 0 8px 28px rgba(0,0,0,0.4);
   position: relative;
+  overflow: hidden;
 }
 .ngssai-icon svg { width: 32px; height: 32px; }
-.login-company-logo-img { width: 40px; height: 40px; border-radius: 8px; object-fit: contain; }
+.login-company-logo-img { width: 100%; height: 100%; border-radius: 0; object-fit: contain; display: block; padding: 4px; }
 .ngssai-wordmark { display: flex; flex-direction: column; line-height: 1; }
 .ngssai-name {
   font-family: 'Geist', sans-serif;
@@ -1123,6 +1125,9 @@ body::before {
   }
 
   function checkExistingAuth() {
+    // Önizleme modunda (iframe) redirect yapma
+    if (new URLSearchParams(window.location.search).get('preview') === '1') return;
+
     var token = localStorage.getItem('access_token');
     if (token) {
       fetch(API_BASE + '/api/auth/me', {

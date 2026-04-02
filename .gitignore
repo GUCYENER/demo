@@ -50,8 +50,9 @@ Gecici_Dosyalar_Sil/
 tmp/
 temp/
 
-# Byte-compiled
+# Byte-compiled / Cache
 *.pyc
+.pytest_cache/
 
 # Migrations cache
 migrations/__pycache__/
@@ -60,6 +61,7 @@ migrations/versions/__pycache__/
 # ML Models (büyük binary dosyalar)
 models/
 ml_models/
+catboost_info/
 *.onnx
 *.cbm
 *.safetensors

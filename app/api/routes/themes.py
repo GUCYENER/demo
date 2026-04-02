@@ -150,20 +150,50 @@ def generate_color_suggestions(base_color: str) -> List[dict]:
 
 
 @router.get("/")
-def get_themes():
+def get_themes(company_id: Optional[int] = None, include_custom: bool = False):
     """
     Aktif tema listesi. Auth gerektirmez (login ekranında kullanılır).
     CSS variables hariç özet bilgi döner.
+
+    Query params:
+        company_id: Firma ID — verilirse o firmaya ait özel temalar da eklenir.
+        include_custom: True ise tüm özel temalar da döner.
     """
     with get_db_context() as conn:
         cur = conn.cursor()
-        cur.execute("""
-            SELECT id, name, code, description, preview_colors,
-                   login_headline, login_subtitle, features_json, sort_order
-            FROM company_themes
-            WHERE is_active = TRUE AND (is_custom = FALSE OR is_custom IS NULL)
-            ORDER BY sort_order
-        """)
+
+        if company_id:
+            # Hazır temalar + bu firmaya ait özel temalar
+            cur.execute("""
+                SELECT id, name, code, description, preview_colors,
+                       login_headline, login_subtitle, features_json, sort_order,
+                       is_custom, company_id
+                FROM company_themes
+                WHERE is_active = TRUE
+                  AND ((is_custom = FALSE OR is_custom IS NULL)
+                       OR (is_custom = TRUE AND company_id = %s))
+                ORDER BY is_custom NULLS FIRST, sort_order
+            """, (company_id,))
+        elif include_custom:
+            # Tüm temalar (hazır + özel)
+            cur.execute("""
+                SELECT id, name, code, description, preview_colors,
+                       login_headline, login_subtitle, features_json, sort_order,
+                       is_custom, company_id
+                FROM company_themes
+                WHERE is_active = TRUE
+                ORDER BY is_custom NULLS FIRST, sort_order
+            """)
+        else:
+            # Sadece hazır temalar (eski davranış — login ekranı uyumu)
+            cur.execute("""
+                SELECT id, name, code, description, preview_colors,
+                       login_headline, login_subtitle, features_json, sort_order
+                FROM company_themes
+                WHERE is_active = TRUE AND (is_custom = FALSE OR is_custom IS NULL)
+                ORDER BY sort_order
+            """)
+
         rows = cur.fetchall()
 
     return [dict(row) for row in rows]

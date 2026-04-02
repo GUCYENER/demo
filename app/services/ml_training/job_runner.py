@@ -68,7 +68,7 @@ class MLJobRunnerMixin:
             with get_db_context() as conn:
                 with conn.cursor() as cur:
                     job_name = f"training_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                    job_type = "scheduled" if ":" in trigger else "manual"
+                    job_type = "manual" if trigger == "manual" else "scheduled"
                     
                     cur.execute("""
                         INSERT INTO ml_training_jobs 
@@ -87,6 +87,7 @@ class MLJobRunnerMixin:
     def _run_training(self, job_id: int):
         """Eğitim scriptini çalıştır (thread içinde)"""
         start_time = datetime.now()
+        timeout_min = self.get_job_timeout_setting() or 60  # Varsayılan 60 dk
         
         try:
             # Job durumunu güncelle
@@ -95,11 +96,14 @@ class MLJobRunnerMixin:
             # train_model.py scriptini çalıştır
             script_path = PROJECT_ROOT / "scripts" / "train_model.py"
             
+            # Timeout: dakika → saniye (0 = sınırsız)
+            timeout_sec = timeout_min * 60 if timeout_min > 0 else None
+            
             result = subprocess.run(
-                [sys.executable, str(script_path), "--min-samples", "30"],
+                [sys.executable, str(script_path), "--min-samples", "30", "--job-id", str(job_id)],
                 capture_output=True,
                 text=True,
-                timeout=600  # 10 dakika timeout
+                timeout=timeout_sec
             )
             
             end_time = datetime.now()
@@ -139,8 +143,9 @@ class MLJobRunnerMixin:
                 log_error(f"Model eğitimi başarısız. Job ID: {job_id}, Hata: {error_msg}", "ml_training")
                 
         except subprocess.TimeoutExpired:
-            self._update_job_status(job_id, "failed", error="Eğitim zaman aşımına uğradı (10 dk)")
-            log_error(f"Model eğitimi timeout. Job ID: {job_id}", "ml_training")
+            timeout_msg = f"Eğitim zaman aşımına uğradı ({timeout_min} dk)"
+            self._update_job_status(job_id, "failed", error=timeout_msg)
+            log_error(f"Model eğitimi timeout. Job ID: {job_id}, Limit: {timeout_min}dk", "ml_training")
             
         except Exception as e:
             self._update_job_status(job_id, "failed", error=str(e))

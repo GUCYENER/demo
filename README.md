@@ -49,6 +49,36 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.1.2 (2026-04-02) - ML Training Stabilization & Learned Q&A All-Training
+
+**🧠 Learned Q&A — Tüm Eğitim Tiplerine Entegrasyon:**
+- ✅ **`train_model.py` Adım 11:** Scheduled/Manual eğitimlerden sonra da `bulk_generate()` çağrılıyor
+- ✅ **Limit kaldırıldı:** `max_answers=50` limiti kaldırıldı — barajı aşan (relevance=1, score≥0.70) TÜM sorular işleniyor
+- ✅ **Overflow protection:** Soru max 500 char, cevap max 3000 char, chunk max 2000 char sınırı
+- ✅ **Temiz kesim:** Cevap uzunsa son cümle noktasında kırpılıyor (cümle ortasında kalmaz)
+- ✅ **Refinement koruması:** `_refine_answer()` giriş verileri de sınırlandırıldı
+
+**🔧 Çift Job Kaydı Sorunu:**
+- ✅ **`--job-id` parametresi:** `job_runner` → `train_model.py` mevcut job ID iletimi
+- ✅ **Standalone/External mod:** Dışarıdan job ID gelince yeni kayıt oluşturmaz
+
+**⏱️ Timeout Dinamik Okuma:**
+- ✅ **Hardcoded 600s kaldırıldı:** `get_job_timeout_setting()` ile DB'den dakika cinsinden okuma
+- ✅ **Scope güvenliği:** `timeout_min` try bloğu dışında tanımlı (UnboundLocalError riski yok)
+- ✅ **Dinamik hata mesajı:** Timeout mesajında gerçek limit değeri gösteriliyor
+
+**🛡️ quality_drop Cooldown:**
+- ✅ **Sonsuz döngü engeli:** Son eğitimden beri yeni feedback yoksa quality_drop tetiklenmiyor
+
+**📁 Değişen Dosyalar:**
+- `scripts/train_model.py` — `--job-id` param + Learned Q&A (Adım 11)
+- `app/services/ml_training/job_runner.py` — `--job-id` iletimi + DB timeout
+- `app/services/ml_training/scheduling.py` — quality_drop cooldown
+- `app/services/learned_qa_service.py` — max_answers limitsiz + overflow protection
+- `app/services/ml_training/continuous_learning.py` — max_answers kaldırıldı
+
+---
+
 ### 🆕 v2.60.2 (2026-03-27) - Production Deployment Optimizasyonu
 
 **⚡ ONNX Embedding Optimizasyonu:**

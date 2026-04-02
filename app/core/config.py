@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.1.1"  # Branding Parameterization — Full bundle cleanup
+    APP_VERSION: str = "3.1.2"  # ML Training: Learned Q&A all-training + overflow protection
 
     # Frontend & API prefix
     api_prefix: str = "/api"
