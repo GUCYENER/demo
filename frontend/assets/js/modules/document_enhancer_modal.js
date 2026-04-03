@@ -342,15 +342,12 @@ const DocumentEnhancerModal = (function () {
             <div class="enhancer-section-card ${isNoChange ? 'no-change' : ''} ${isError ? 'llm-error' : ''} ${isIntegrityFail ? 'integrity-failed' : ''}" data-section-index="${section.section_index}">
                 <div class="enhancer-section-header">
                     <div class="enhancer-section-header-left">
-                        ${!isSkipped ? `
-                            <label class="enhancer-toggle-switch" title="Bu değişikliği onayla / reddet">
-                                <input type="checkbox" class="enhancer-section-checkbox" 
-                                       data-index="${section.section_index}" checked />
-                                <span class="enhancer-toggle-slider"></span>
-                            </label>
-                        ` : `
-                            <i class="fas ${isIntegrityFail ? 'fa-shield-alt enhancer-icon-integrity' : isError ? 'fa-exclamation-circle enhancer-icon-error' : 'fa-check-circle enhancer-icon-unchanged'}"></i>
-                        `}
+                        <label class="enhancer-toggle-switch" title="${isSkipped ? 'Orijinal içerikle yükle' : 'Bu değişikliği onayla / reddet'}">
+                            <input type="checkbox" class="enhancer-section-checkbox" 
+                                   data-index="${section.section_index}" ${!isSkipped ? 'checked' : ''} />
+                            <span class="enhancer-toggle-slider"></span>
+                        </label>
+                        ${isSkipped ? `<i class="fas ${isIntegrityFail ? 'fa-shield-alt enhancer-icon-integrity' : isError ? 'fa-exclamation-circle enhancer-icon-error' : 'fa-check-circle enhancer-icon-unchanged'}"></i>` : ''}
                         <span class="enhancer-section-heading">${_escapeHtml(section.heading || 'Başlıksız Bölüm')}</span>
                     </div>
                     <div class="enhancer-section-header-right">
