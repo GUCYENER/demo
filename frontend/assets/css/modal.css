@@ -216,6 +216,31 @@
     max-width: 1100px;
 }
 
+/* v3.3.1: Geniş modaller viewport yüksekliğine sığsın — Kapat butonu her zaman görünsün */
+.vyra-modal:has(.samples-viewer),
+.vyra-modal:has(.job-detail-modal),
+.vyra-modal:has(.learned-answer-preview) {
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.vyra-modal:has(.samples-viewer) .vyra-modal-body,
+.vyra-modal:has(.job-detail-modal) .vyra-modal-body,
+.vyra-modal:has(.learned-answer-preview) .vyra-modal-body {
+    overflow-y: auto;
+    overflow-x: hidden;
+    flex: 1;
+    min-height: 0;
+}
+
+.vyra-modal:has(.samples-viewer) .vyra-modal-footer,
+.vyra-modal:has(.job-detail-modal) .vyra-modal-footer,
+.vyra-modal:has(.learned-answer-preview) .vyra-modal-footer {
+    flex-shrink: 0;
+    border-top: 1px solid rgba(75, 85, 99, 0.3);
+}
+
 /* Responsive */
 @media (max-width: 480px) {
     .vyra-modal {

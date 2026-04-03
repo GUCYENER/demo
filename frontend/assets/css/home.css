@@ -3734,8 +3734,7 @@ textarea.drag-over {
 }
 
 .samples-table-wrapper {
-    max-height: 500px;
-    overflow-y: auto;
+    /* v3.3.1: max-height kaldırıldı — parent .vyra-modal-body scroll yönetir */
     overflow-x: auto;
     border-radius: 8px;
     border: 1px solid rgba(75, 85, 99, 0.3);
