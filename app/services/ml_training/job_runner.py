@@ -113,7 +113,7 @@ class MLJobRunnerMixin:
                 # Başarılı
                 # Model ID'yi bul
                 model_id = self._get_latest_model_id()
-                samples = self._extract_samples_from_output(result.stdout)
+                samples = self._extract_samples_from_output(result.stdout, job_id=job_id)
                 
                 self._update_job_status(
                     job_id, "completed",
@@ -219,8 +219,27 @@ class MLJobRunnerMixin:
             log_error(f"Son model ID alma hatası: {e}", "ml_training")
             return None
     
-    def _extract_samples_from_output(self, output: str) -> int:
-        """Script çıktısından sample sayısını çıkar"""
+    def _extract_samples_from_output(self, output: str, job_id: int = None) -> int:
+        """
+        Script çıktısından veya DB'den sample sayısını çıkar.
+        v3.3.1: Önce DB'den gerçek sayıyı oku (güvenilir), sonra stdout parse (fallback).
+        """
+        # 1. DB'den gerçek sayıyı kontrol et (en güvenilir)
+        if job_id:
+            try:
+                with get_db_context() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT COUNT(*) as cnt FROM ml_training_samples WHERE job_id = %s",
+                            (job_id,)
+                        )
+                        row = cur.fetchone()
+                        if row and row['cnt'] > 0:
+                            return row['cnt']
+            except Exception as e:
+                log_system_event("DEBUG", f"DB sample count hatası: {e}", "ml_training")
+        
+        # 2. Stdout parse fallback
         try:
             # "Veri boyutu: (1234, 12)" formatından çıkar
             import re
@@ -229,7 +248,6 @@ class MLJobRunnerMixin:
                 return int(match.group(1))
         except Exception as e:
             log_error(f"Sample sayısı çıkarma hatası: {e}", "ml_training")
-            pass
         return 0
     
     def _get_required_feedback_count(self) -> int:
