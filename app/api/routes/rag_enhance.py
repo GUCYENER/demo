@@ -409,27 +409,26 @@ async def upload_enhanced_to_rag(
                 cur.execute("DELETE FROM uploaded_files WHERE file_name = %s", (del_name,))
             
             # Dosyayı PostgreSQL'e kaydet (maturity_score ve status dahil)
-            # v3.3.0 [B1]: Maturity skoru — format dönüşümü varsa orijinal skoru koru
-            # (XLSX→DOCX dönüşümünde DOCX kuralları uygulamak yanıltıcı sonuç verir)
-            orig_file_ext = data.get("file_type", "")
-            if not orig_file_ext.startswith("."):
-                orig_file_ext = f".{orig_file_ext.lower()}" if orig_file_ext else ""
+            # v3.3.0 [B1]: Maturity skoru — iyileştirilmiş metin üzerinden hesapla
+            m_score = data.get("maturity_score")  # Fallback: orijinal skor
             
-            format_converted = orig_file_ext.lower() not in (upload_ext.lower(), "")
-            
-            if format_converted:
-                # Format dönüşümü yapılmış (örn: XLSX→DOCX) — orijinal skorü koru
-                m_score = data.get("maturity_score")
-                log_system_event(
-                    "INFO",
-                    f"Format dönüşümü yapıldı ({orig_file_ext}→{upload_ext}), "
-                    f"orijinal maturity skoru korunuyor: {m_score}",
-                    "rag_enhance"
-                )
-            else:
-                # Aynı format — iyileştirilmiş dosyanın maturity'sini yeniden hesapla
-                try:
-                    from app.services.maturity_analyzer import analyze_file
+            try:
+                from app.services.maturity_analyzer import analyze_file
+                
+                if orig_file_type in ("XLSX", "XLS", "PPTX", "PPT"):
+                    # XLSX/PPTX: Orijinal binary değişmedi, maturity'yi
+                    # iyileştirilmiş section text'leri üzerinden ölçmek gerekiyor.
+                    # combined_text henüz oluşturulmadı, burada erken hesaplama yapamayız.
+                    # Chunk'lar oluşturulduktan sonra hesaplanacak (aşağıda).
+                    m_score = data.get("maturity_score")  # Geçici olarak orijinal
+                    log_system_event(
+                        "INFO",
+                        f"Orijinal format korunuyor ({orig_file_type}), "
+                        f"maturity skoru chunk'lar sonrası güncellenecek",
+                        "rag_enhance"
+                    )
+                else:
+                    # DOCX/PDF/TXT: Enhanced dosyanın kendisi üzerinden maturity hesapla
                     enhanced_file_obj = _io.BytesIO(file_content_bytes)
                     enhanced_maturity = analyze_file(enhanced_file_obj, upload_name)
                     m_score = enhanced_maturity.get("total_score")
@@ -439,9 +438,9 @@ async def upload_enhanced_to_rag(
                         f"(orijinal: {data.get('maturity_score')})",
                         "rag_enhance"
                     )
-                except Exception as mat_err:
-                    log_warning(f"İyileştirilmiş olgunluk hesaplanamadı: {mat_err}", "rag_enhance")
-                    m_score = data.get("maturity_score")
+            except Exception as mat_err:
+                log_warning(f"İyileştirilmiş olgunluk hesaplanamadı: {mat_err}", "rag_enhance")
+                m_score = data.get("maturity_score")
             
             cur.execute(
                 """
@@ -498,6 +497,28 @@ async def upload_enhanced_to_rag(
                     f"Enhanced text'lerden processor pipeline ile {len(chunks)} chunk oluşturuldu ({orig_file_type})",
                     "rag_enhance"
                 )
+                
+                # XLSX/PPTX: Maturity'yi iyileştirilmiş metin üzerinden yeniden hesapla
+                try:
+                    from app.services.maturity_analyzer import analyze_file as _analyze
+                    enhanced_text_obj = _io.BytesIO(combined_text.strip().encode("utf-8"))
+                    enhanced_mat = _analyze(enhanced_text_obj, upload_name.replace(upload_ext, '.txt'))
+                    new_m_score = enhanced_mat.get("total_score")
+                    if new_m_score is not None:
+                        m_score = new_m_score
+                        # uploaded_files'ta maturity_score'u güncelle
+                        cur.execute(
+                            "UPDATE uploaded_files SET maturity_score = %s WHERE id = %s",
+                            (m_score, file_id)
+                        )
+                        log_system_event(
+                            "INFO",
+                            f"XLSX/PPTX maturity yeniden hesaplandı: {m_score} "
+                            f"(orijinal: {data.get('maturity_score')})",
+                            "rag_enhance"
+                        )
+                except Exception as mat_err2:
+                    log_warning(f"XLSX/PPTX maturity yeniden hesaplanamadı: {mat_err2}", "rag_enhance")
             else:
                 # DOCX/PDF/TXT: processor ile parse et
                 processor = get_processor_for_extension(upload_ext)
@@ -582,6 +603,30 @@ async def upload_enhanced_to_rag(
                 "rag_enhance",
                 user_id=current_user["id"]
             )
+            
+            # v3.3.0: enhancement_history tablosunu güncelle (maturity_score_after + uploaded_to_rag)
+            try:
+                conn2 = get_db_conn()
+                cur2 = conn2.cursor()
+                cur2.execute(
+                    """
+                    UPDATE enhancement_history 
+                    SET maturity_score_after = %s, uploaded_to_rag = TRUE
+                    WHERE session_id = %s
+                    """,
+                    (m_score, session_id)
+                )
+                conn2.commit()
+                cur2.close()
+                conn2.close()
+                log_system_event(
+                    "INFO",
+                    f"Enhancement history güncellendi: session={session_id}, "
+                    f"score_after={m_score}, uploaded=true",
+                    "rag_enhance"
+                )
+            except Exception as hist_err:
+                log_warning(f"Enhancement history güncellenemedi: {hist_err}", "rag_enhance")
             
         except HTTPException:
             conn.rollback()

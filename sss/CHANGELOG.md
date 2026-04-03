@@ -36,6 +36,8 @@ Format: [Semantic Versioning](https://semver.org/)
 - **Dict Key Hatası (rag_upload.py):** `maturity_map` key'i `file_name` → `file_id` düzeltildi
 - **SQL Eksik Sütun (rag_enhance.py):** `enhancement_history` INSERT'te `user_id` sütunu eksikti
 - **Schema Senkron (schema.py):** `enhancement_history` tablosu ve `uploaded_files` migration sütunları eklendi
+- **XLSX Maturity (rag_enhance.py):** Maturity skoru orijinal binary yerine iyileştirilmiş metin üzerinden hesaplanıyor
+- **Enhancement History UPDATE (rag_enhance.py):** Upload sonrası `maturity_score_after` ve `uploaded_to_rag` güncellenmiyordu — UPDATE eklendi
 
 ---
 
