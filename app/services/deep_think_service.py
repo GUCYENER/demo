@@ -861,12 +861,13 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
         
         return False
     
-    def _enrich_learned_qa(self, qa_match: dict) -> dict:
+    def _enrich_learned_qa(self, qa_match: dict, user_id: int = None) -> dict:
         """
         🆕 v3.3.2: Learned QA cevabını kaynak ve görsel bilgisiyle zenginleştirir.
         
         1. source_file varsa → cevap metnine "_Kaynak: [dosya]_" satırı ekler
         2. source_file üzerinden document_images tablosundan görselleri çeker
+        3. 🔒 user_id ile org bazlı filtreleme — multi-tenant izolasyon
         
         Returns:
             {"answer": str, "image_ids": list, "heading_images": dict}
@@ -881,19 +882,42 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
             if source_file not in answer:
                 answer += f"\n\n_Kaynak: [{source_file}]_"
             
-            # 2. Kaynak dosyanın görsellerini DB'den çek
+            # 2. Kaynak dosyanın görsellerini DB'den çek (org filtreli)
             try:
                 from app.core.db import get_db_context
                 with get_db_context() as conn:
                     with conn.cursor() as cur:
-                        cur.execute("""
-                            SELECT di.id, di.context_heading
-                            FROM document_images di
-                            JOIN uploaded_files uf ON uf.id = di.file_id
-                            WHERE uf.original_filename = %s
-                            ORDER BY di.context_chunk_index ASC
-                            LIMIT 8
-                        """, (source_file,))
+                        if user_id:
+                            # 🔒 Kullanıcının org'larına ait dosyalardan görselleri çek
+                            cur.execute("""
+                                SELECT di.id, di.context_heading
+                                FROM document_images di
+                                JOIN uploaded_files uf ON uf.id = di.file_id
+                                WHERE uf.file_name = %s
+                                AND (
+                                    EXISTS (
+                                        SELECT 1 FROM document_organizations doc_org
+                                        JOIN user_organizations uo ON uo.org_id = doc_org.org_id
+                                        WHERE doc_org.file_id = uf.id
+                                        AND uo.user_id = %s
+                                    )
+                                    OR NOT EXISTS (
+                                        SELECT 1 FROM document_organizations doc_org2
+                                        WHERE doc_org2.file_id = uf.id
+                                    )
+                                )
+                                ORDER BY di.context_chunk_index ASC
+                                LIMIT 8
+                            """, (source_file, user_id))
+                        else:
+                            cur.execute("""
+                                SELECT di.id, di.context_heading
+                                FROM document_images di
+                                JOIN uploaded_files uf ON uf.id = di.file_id
+                                WHERE uf.file_name = %s
+                                ORDER BY di.context_chunk_index ASC
+                                LIMIT 8
+                            """, (source_file,))
                         rows = cur.fetchall()
                 
                 if rows:
@@ -909,7 +933,7 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
                     
                     log_system_event(
                         "DEBUG",
-                        f"Learned QA görseller: {source_file} → {len(image_ids)} görsel",
+                        f"Learned QA görseller: {source_file} → {len(image_ids)} görsel (user={user_id})",
                         "deep_think"
                     )
             except Exception as e:
@@ -994,7 +1018,7 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
                         "deep_think"
                     )
                     # v3.3.2: Kaynak ve görsel zenginleştirmesi
-                    enriched = self._enrich_learned_qa(qa_match)
+                    enriched = self._enrich_learned_qa(qa_match, user_id)
                     result = DeepThinkResult(
                         synthesized_response=enriched["answer"],
                         sources=[qa_match.get("source_file", "")] if qa_match.get("source_file") else [],
@@ -1279,7 +1303,7 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
                     "deep_think"
                 )
                 # v3.3.2: Kaynak ve görsel zenginleştirmesi
-                enriched = self._enrich_learned_qa(qa_match)
+                enriched = self._enrich_learned_qa(qa_match, user_id)
                 enriched_answer = enriched["answer"]
                 enriched_images = enriched["image_ids"]
                 enriched_heading = enriched["heading_images"]
