@@ -470,6 +470,13 @@
             : `Bilgi tabanına eklendi: ${fileList} (${totalChunks} chunk)`;
         const notifType = hasWarning ? 'warning' : 'success';
 
+        // 0️⃣ v3.3.1: Processing polling'i durdur — WS'ten bildirim geldiği için
+        if (window.RAGUpload && RAGUpload._processingPollTimer) {
+            clearInterval(RAGUpload._processingPollTimer);
+            RAGUpload._processingPollTimer = null;
+            console.log('[NGSSAI-WS] Processing polling durduruldu (WS bildirimi geldi)');
+        }
+
         // 1️⃣ NgssNotification ile in-app bildirim (tıklanınca Bilgi Tabanı sekmesine gider)
         if (typeof NgssNotification !== 'undefined') {
             NgssNotification.add(notifType, title, body, null, 'rag');

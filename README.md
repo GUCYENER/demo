@@ -49,6 +49,34 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.3.1 (2026-04-03) - Anlık Eğitim Revizyonu + Dosya Yükleme Bildirim İyileştirmesi
+
+**⚡ Anlık Eğitim (Model Sekmesi):**
+- ✅ **Kriterden bağımsız:** "Yeterli Veri Yok" butonu kaldırıldı — feedback sayısı ne olursa olsun eğitim başlatılabilir
+- ✅ **Çift katman çakışma kontrolü:** Local state + sunucu `/status` sorgusu — otomatik eğitim çalışıyorsa uyarı verir
+- ✅ **Notification:** Eğitim tamamlandığında `NgssNotification.success()` ile bildirime yazılır
+- ✅ **Dinamik hint:** "En az 50 feedback gerekli" → "Sistemdeki feedback: N" (bilgi amaçlı)
+- ✅ **CSS class migration:** Inline style → `.ml-train-desc`, `.ml-train-actions`, `.ml-train-hint` class'ları
+
+**📄 Dosya Yükleme Bildirim İyileştirmesi:**
+- ✅ **Processing polling:** Upload sonrası 5sn aralıkla dosya durumu kontrol eden REST fallback polling eklendi
+- ✅ **WS-bağımsız bildirim:** WebSocket çalışmasa bile dosya işleme tamamlandığında `NgssNotification.add('success', ...)` bildirime yazılır
+- ✅ **Duplicate koruması:** WS `rag_upload_complete` gelince polling otomatik durur — çift bildirim önlenir
+- ✅ **Auto-scroll:** Upload sonrası dosya listesine (`#rag-files-list`) smooth scroll eklendi
+- ✅ **İlk bildirim:** "📄 Dosya İşleniyor" → "📄 Dosya Yüklendi" olarak düzeltildi
+
+**📁 Değişen Dosyalar:**
+- `app/core/config.py` — `APP_VERSION: 3.3.1`
+- `app/core/schema.py` — `app_version: 3.3.1`
+- `app/services/ml_training_service.py` — `training_ready = True` (kriterden bağımsız)
+- `frontend/assets/js/modules/ml_training.js` — Buton/hint/polling/notification revizyonu
+- `frontend/assets/js/rag_upload.js` — `_startProcessingPoll()`, auto-scroll, bildirim iyileştirmesi
+- `frontend/assets/js/websocket_client.js` — WS handler'da polling durdurucu
+- `frontend/assets/css/home.css` — `.ml-train-desc`, `.ml-train-actions`, `.ml-train-hint`
+- `frontend/partials/section_parameters.html` — İnline style → CSS class'lar
+
+---
+
 ### 🆕 v3.3.0 (2026-04-03) - RAG Pipeline Optimization: WebSocket Progress, Paralel Processing, Dosya Versiyonlama
 
 **🔴 P0 — Enhancement Pipeline İyileştirmeleri:**

@@ -312,13 +312,13 @@ const RAGUpload = {
             // v2.39.0: Dosya kaydedildi, processing arkaplanda devam ediyor
             this.updateProgress(100, 'Dosya kaydedildi, işleniyor...');
 
-            // Kısa bildirim — detaylı bildirim WebSocket'ten gelecek
+            // Kısa bildirim — detaylı bildirim WebSocket'ten veya polling'den gelecek
             const fileList = fileNames.length <= 3
                 ? fileNames.join(', ')
                 : `${fileNames.slice(0, 2).join(', ')} ve ${fileNames.length - 2} dosya daha`;
 
             if (window.NgssNotification) {
-                NgssNotification.info('📄 Dosya İşleniyor', `${fileList} — işlem arkaplanda devam ediyor...`);
+                NgssNotification.info('📄 Dosya Yüklendi', `${fileList} — işlem arkaplanda devam ediyor...`);
             } else {
                 this.showToast(`${result.uploaded_count} dosya kaydedildi, işleniyor...`, 'info');
             }
@@ -328,6 +328,15 @@ const RAGUpload = {
             this.filesCurrentPage = 1;
             await this.loadFiles();
             await this.loadStats();
+
+            // Dosya listesine scroll — kullanıcı yeni dosyayı görsün
+            const fileListEl = document.getElementById('rag-files-list');
+            if (fileListEl) {
+                fileListEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+
+            // v3.3.1: Processing polling başlat — WS çalışmasa bile tamamlanma bildirimi gelsin
+            this._startProcessingPoll(fileNames);
 
             // Hedef Org Grupları'nı sıfırla
             this.selectedOrgIds = [];
@@ -351,6 +360,73 @@ const RAGUpload = {
             const fileInput = document.getElementById('rag-file-input');
             if (fileInput) fileInput.value = '';
         }
+    },
+
+    /**
+     * v3.3.1: Processing dosyalar için REST polling.
+     * BackGround işlem bittikten sonra dosya listesini yeniler ve bildirim yazar.
+     * WS çalışmasa bile garanti bildirim sağlar.
+     */
+    _processingPollTimer: null,
+    _processingPollCount: 0,
+    _startProcessingPoll(uploadedFileNames) {
+        // Önceki polling varsa durdur
+        if (this._processingPollTimer) {
+            clearInterval(this._processingPollTimer);
+        }
+
+        this._processingPollCount = 0;
+        const maxPolls = 60;  // 5s × 60 = 5 dakika max
+        const self = this;
+
+        this._processingPollTimer = setInterval(async () => {
+            self._processingPollCount++;
+
+            if (self._processingPollCount >= maxPolls) {
+                clearInterval(self._processingPollTimer);
+                self._processingPollTimer = null;
+                console.warn('[RAGUpload] Processing polling timeout — max süre aşıldı');
+                return;
+            }
+
+            try {
+                const token = localStorage.getItem('access_token');
+                const resp = await fetch(`${self.API_BASE}/rag/files?page=1&per_page=10`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (!resp.ok) return;
+
+                const data = await resp.json();
+                const files = data.files || [];
+
+                // Yüklenen dosyalar arasında hâlâ processing olan var mı?
+                const processingFiles = files.filter(f =>
+                    uploadedFileNames.includes(f.file_name) && f.status === 'processing'
+                );
+
+                if (processingFiles.length === 0) {
+                    // İşlem tamamlandı — listeyi yenile + bildirim yaz
+                    clearInterval(self._processingPollTimer);
+                    self._processingPollTimer = null;
+
+                    console.log('[RAGUpload] Processing tamamlandı, liste yenileniyor...');
+                    await self.loadFiles();
+                    await self.loadStats();
+
+                    // Bildirim yaz (WS'ten zaten geldiyse duplicate olmasın)
+                    const completedNames = uploadedFileNames.length <= 3
+                        ? uploadedFileNames.join(', ')
+                        : `${uploadedFileNames.slice(0, 2).join(', ')} ve ${uploadedFileNames.length - 2} dosya daha`;
+
+                    if (window.NgssNotification) {
+                        NgssNotification.add('success', '✅ Dosya İşleme Tamamlandı',
+                            `${completedNames} — bilgi tabanına başarıyla eklendi.`, null, 'rag');
+                    }
+                }
+            } catch (err) {
+                console.warn('[RAGUpload] Processing poll hatası:', err);
+            }
+        }, 5000);  // 5 saniyede bir kontrol
     },
 
     // --- FILE LIST ---

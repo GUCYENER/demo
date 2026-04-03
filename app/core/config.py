@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.3.0"  # RAG Pipeline Optimization: WebSocket progress, paralel processing, dosya versiyonlama, NumPy dedup
+    APP_VERSION: str = "3.3.1"  # Anlık eğitim kriterden bağımsız, arka plan kontrol, notification
 
     # Frontend & API prefix
     api_prefix: str = "/api"
