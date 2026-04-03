@@ -46,6 +46,24 @@ def _cleanup_expired_sessions() -> None:
 ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt', '.txt', '.csv'}
 
 
+def _detect_download_format(file_path: str, session_id: str) -> tuple:
+    """Dosya uzantısına göre indirme adı ve MIME type döndürür."""
+    ext = os.path.splitext(file_path)[1].lower()
+    _mime_map = {
+        ".pdf": ("application/pdf", "pdf"),
+        ".xlsx": ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"),
+        ".xls": ("application/vnd.ms-excel", "xls"),
+        ".pptx": ("application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx"),
+    }
+    if ext in _mime_map:
+        media, fmt = _mime_map[ext]
+        return f"iyilestirilmis_{session_id}.{fmt}", media
+    # Varsayılan: DOCX
+    return (
+        f"iyilestirilmis_{session_id}.docx",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+
 @router.post("/enhance-document")
 async def enhance_document(
     file: UploadFile = File(...),
@@ -224,14 +242,8 @@ async def download_enhanced(
             )
             
             if selective_path and os.path.exists(selective_path):
-                # Dosya formatını belirle (PDF mi DOCX mi?)
-                is_pdf = selective_path.lower().endswith('.pdf')
-                if is_pdf:
-                    download_name = f"iyilestirilmis_{session_id}.pdf"
-                    media = "application/pdf"
-                else:
-                    download_name = f"iyilestirilmis_{session_id}.docx"
-                    media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                # Dosya formatını belirle
+                download_name, media = _detect_download_format(selective_path, session_id)
                 
                 return FileResponse(
                     path=selective_path,
@@ -252,13 +264,7 @@ async def download_enhanced(
         )
     
     try:
-        is_pdf = file_path.lower().endswith('.pdf')
-        if is_pdf:
-            download_name = f"iyilestirilmis_{session_id}.pdf"
-            media = "application/pdf"
-        else:
-            download_name = f"iyilestirilmis_{session_id}.docx"
-            media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        download_name, media = _detect_download_format(file_path, session_id)
         
         return FileResponse(
             path=file_path,
