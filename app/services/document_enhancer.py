@@ -919,7 +919,8 @@ class DocumentEnhancer:
                 except Exception:
                     pass
             
-            # LLM ile iyileştir
+            # LLM ile iyileştir — v3.3.3 [Faz 2]: max 2 retry desteği
+            MAX_ENHANCEMENT_RETRIES = 2
             try:
                 llm_result = self._call_llm_for_enhancement(
                     heading=heading,
@@ -932,7 +933,6 @@ class DocumentEnhancer:
                 enhanced_text = llm_result.get("enhanced_text", content)
                 
                 # ─── Content Integrity Validation ───
-                # Halüsinasyon ve içerik kaybı kontrolü
                 validator = get_integrity_validator()
                 integrity = validator.validate(
                     original=content,
@@ -941,10 +941,56 @@ class DocumentEnhancer:
                     weakness_types=weakness_types
                 )
                 
+                # 🛡️ v3.3.3 [Faz 2]: Retry with Corrective Prompt
+                # Bütünlük başarısızsa → düzeltici prompt ile tekrar dene
+                retry_attempt = 0
+                while not integrity.is_valid and retry_attempt < MAX_ENHANCEMENT_RETRIES:
+                    retry_attempt += 1
+                    log_system_event(
+                        "INFO",
+                        f"Bölüm [{idx}] integrity fail (skor={integrity.score:.3f}), "
+                        f"retry {retry_attempt}/{MAX_ENHANCEMENT_RETRIES}...",
+                        "enhancer"
+                    )
+                    
+                    # Progress callback: retrying durumu
+                    if progress_callback:
+                        try:
+                            progress_callback(
+                                idx + 1, len(sections), heading,
+                                f"retrying_{retry_attempt}"
+                            )
+                        except Exception:
+                            pass
+                    
+                    # Düzeltici prompt ile LLM'i tekrar çağır
+                    corrective_result = self._call_llm_corrective(
+                        heading=heading,
+                        content=content,
+                        failed_enhanced_text=enhanced_text,
+                        integrity_issues=integrity.issues,
+                        lost_entities=integrity.lost_entities,
+                        hallucinated_entities=integrity.hallucinated_entities,
+                        weakness_types=weakness_types,
+                        violations=violations,
+                        file_type=file_type
+                    )
+                    enhanced_text = corrective_result.get("enhanced_text", content)
+                    llm_result = corrective_result  # heading vb. güncellemesi için
+                    
+                    # Yeniden validate et
+                    integrity = validator.validate(
+                        original=content,
+                        enhanced=enhanced_text,
+                        file_type=file_type,
+                        weakness_types=weakness_types
+                    )
+                
                 if not integrity.is_valid:
-                    # Bütünlük doğrulaması BAŞARISIZ → Orijinali koru
+                    # Tüm denemeler başarısız → Orijinali koru
+                    total_attempts = retry_attempt + 1
                     log_warning(
-                        f"Bölüm [{idx}] bütünlük doğrulaması BAŞARISIZ "
+                        f"Bölüm [{idx}] {total_attempts} denemede de bütünlük BAŞARISIZ "
                         f"(skor={integrity.score:.3f}): {'; '.join(integrity.issues[:2])}",
                         "enhancer"
                     )
@@ -955,7 +1001,8 @@ class DocumentEnhancer:
                         enhanced_text=content,  # ORİJİNALİ KORU
                         change_type="integrity_failed",
                         explanation=(
-                            f"İyileştirme reddedildi — {'; '.join(integrity.issues[:2])}. "
+                            f"İyileştirme reddedildi ({total_attempts} deneme) — "
+                            f"{'; '.join(integrity.issues[:2])}. "
                             f"Bütünlük skoru: {integrity.score:.0%}"
                         ),
                         priority=priority,
@@ -963,7 +1010,6 @@ class DocumentEnhancer:
                         integrity_score=integrity.score,
                         integrity_issues=integrity.issues + integrity.warnings
                     ))
-                    # v3.3.0 [C5]: Progress callback — bütünlük başarısız bildirimi
                     if progress_callback:
                         try:
                             progress_callback(idx + 1, len(sections), heading, "error")
@@ -972,19 +1018,29 @@ class DocumentEnhancer:
                     continue
                 
                 # Bütünlük OK — iyileştirmeyi kabul et
+                if retry_attempt > 0:
+                    log_system_event(
+                        "INFO",
+                        f"Bölüm [{idx}] retry {retry_attempt} sonrası integrity BAŞARILI "
+                        f"(skor={integrity.score:.3f})",
+                        "enhancer"
+                    )
+                
                 enhanced_sections.append(EnhancedSection(
                     section_index=idx,
                     heading=llm_result.get("heading", heading),
                     original_text=content,
                     enhanced_text=enhanced_text,
                     change_type=llm_result.get("change_type", "content_restructured"),
-                    explanation=llm_result.get("explanation", "LLM ile iyileştirildi."),
+                    explanation=(
+                        llm_result.get("explanation", "LLM ile iyileştirildi.")
+                        + (f" (retry {retry_attempt} sonrası başarılı)" if retry_attempt > 0 else "")
+                    ),
                     priority=priority,
                     violations=weakness_types,
                     integrity_score=integrity.score,
-                    integrity_issues=integrity.warnings  # Sadece uyarılar (sorunlar yok)
+                    integrity_issues=integrity.warnings  # Sadece uyarılar
                 ))
-                # v3.3.0 [C5]: Progress callback — başarılı iyileştirme bildirimi
                 if progress_callback:
                     try:
                         progress_callback(idx + 1, len(sections), heading, "processing")
@@ -1093,6 +1149,20 @@ class DocumentEnhancer:
         else:
             truncated = content
         
+        # 🛡️ v3.3.3: Anchor Extraction — kritik verileri placeholder ile koru
+        from app.services.content_anchor_service import get_anchor_service
+        anchor_svc = get_anchor_service()
+        anchor_result = anchor_svc.extract_anchors(truncated)
+        anchored_text = anchor_result.sanitized_text
+        anchor_registry = anchor_result.anchor_registry
+        
+        if anchor_result.anchor_count > 0:
+            log_system_event(
+                "INFO",
+                f"Anchor extraction: {anchor_result.anchor_count} kritik veri korundu — {anchor_result.anchor_types}",
+                "enhancer"
+            )
+        
         # Weakness'e göre talimat oluştur
         instructions = self._build_fix_instructions(weakness_types)
         
@@ -1106,6 +1176,25 @@ class DocumentEnhancer:
         if context_overlap:
             context_note = f"\n\n**NOT:** Bu bölümün devamı aşağıdaki gibidir (sadece bağlam için, iyileştirmeye DAHİL ETMEYİN):\n{context_overlap}...\n"
         
+        # 🛡️ v3.3.3 [Faz 3]: Structured Prompt — Fenced Critical Blocks
+        anchor_note = ""
+        if anchor_registry:
+            # Anchor ID'lerini listele — LLM hangi placeholder'ların dokunulmaz olduğunu bilsin
+            anchor_ids_display = "  ".join(anchor_registry.keys())
+            anchor_type_summary = ", ".join(
+                f"{atype}: {count}" for atype, count in anchor_result.anchor_types.items()
+            )
+            anchor_note = (
+                f"\n\n**⛔ DOKUNMA BÖLGESİ — FROZEN DATA ({anchor_result.anchor_count} adet, {anchor_type_summary}):**\n"
+                "---FROZEN_START---\n"
+                f"{anchor_ids_display}\n"
+                "---FROZEN_END---\n\n"
+                "**KURALLAR:**\n"
+                "- Yukarıdaki ‹‹ANC_XXX›› placeholder'lar gerçek verileri (sayı, tarih, URL vb.) temsil eder.\n"
+                "- Bu placeholder'ları AYNEN KORU — SİLME, DEĞİŞTİRME, YERİNİ DEĞİŞTİRME.\n"
+                "- Placeholder'ın etrafındaki bağlam cümlesini değiştirirsen bile placeholder'ı KORU.\n"
+            )
+        
         prompt = f"""Sen bir doküman optimize uzmanısın. Aşağıdaki doküman bölümünü RAG (Retrieval-Augmented Generation) sistemi için optimize et.
 
 **Dosya Tipi:** {file_type}
@@ -1116,10 +1205,10 @@ class DocumentEnhancer:
 {instructions}
 
 **Maturity İhlalleri:**
-{violation_list}
+{violation_list}{anchor_note}
 
 **Orijinal İçerik:**
-{truncated}{context_note}
+{anchored_text}{context_note}
 
 **Yanıt Formatı (JSON):**
 {{
@@ -1148,6 +1237,23 @@ class DocumentEnhancer:
         # JSON parse
         result = self._parse_llm_response(response, heading, content)
         
+        # 🛡️ v3.3.3: Anchor Re-injection + Recovery
+        if anchor_registry:
+            enhanced_text = result.get("enhanced_text", "")
+            # Adım 1: Placeholder'ları orijinal değerlerle değiştir
+            enhanced_text = anchor_svc.reinject_anchors(enhanced_text, anchor_registry)
+            # Adım 2: LLM'in sildiği anchor'ları kurtarıp geri ekle
+            enhanced_text, recovered = anchor_svc.recover_missing(
+                enhanced_text, anchor_registry, truncated
+            )
+            result["enhanced_text"] = enhanced_text
+            
+            if recovered:
+                result["explanation"] = (
+                    result.get("explanation", "") +
+                    f" (⚠ {len(recovered)} kayıp veri otomatik kurtarıldı)"
+                )
+        
         # v3.3.0: Kırpılan içeriği enhanced text'e ekle — yumuşak geçiş
         if remaining_text:
             enhanced_part = result.get("enhanced_text", "")
@@ -1156,6 +1262,154 @@ class DocumentEnhancer:
             result["explanation"] = (result.get("explanation", "") + 
                 f" (İlk {len(truncated)} karakter iyileştirildi, "
                 f"kalan {len(remaining_text)} karakter orijinal olarak korundu)")
+        
+        return result
+    
+    # 🛡️ v3.3.3 [Faz 2]: Düzeltici Prompt ile LLM Retry
+    def _call_llm_corrective(
+        self,
+        heading: str,
+        content: str,
+        failed_enhanced_text: str,
+        integrity_issues: List[str],
+        lost_entities: List[str],
+        hallucinated_entities: List[str],
+        weakness_types: List[str],
+        violations: List[Dict[str, Any]],
+        file_type: str
+    ) -> Dict[str, Any]:
+        """
+        Düzeltici prompt ile LLM'i tekrar çağırır.
+        
+        Önceki iyileştirme integrity doğrulamasını geçemediyse,
+        hataları ve kayıp verileri LLM'e göstererek düzeltme ister.
+        Anchor extraction + re-injection dahildir.
+        
+        Args:
+            heading: Bölüm başlığı
+            content: Orijinal metin (kaynak)
+            failed_enhanced_text: Başarısız iyileştirilmiş metin
+            integrity_issues: Tespit edilen bütünlük sorunları
+            lost_entities: Kaybolan varlıklar listesi
+            hallucinated_entities: Halüsinasyon şüphesi olan varlıklar
+            weakness_types: Bilinen zayıflık tipleri
+            violations: Maturity ihlalleri
+            file_type: Dosya tipi
+            
+        Returns:
+            Dict: LLM sonucu ({heading, enhanced_text, change_type, explanation})
+        """
+        from app.core.llm import call_llm_api
+        from app.services.content_anchor_service import get_anchor_service
+        
+        # Anchor extraction — orijinal metinden (kırpılmış)
+        # v3.3.3 [Code Review Fix]: Uzun içerikler için kırpma uygula
+        max_content_chars = 6000
+        if len(content) > max_content_chars:
+            # Basit kırpma — retry'da karmaşık heading kesimi gereksiz
+            cut_point = content.rfind("\n\n", 0, max_content_chars)
+            if cut_point < max_content_chars // 2:
+                cut_point = content.rfind("\n", 0, max_content_chars)
+            if cut_point < max_content_chars // 2:
+                cut_point = max_content_chars
+            working_content = content[:cut_point]
+        else:
+            working_content = content
+        
+        anchor_svc = get_anchor_service()
+        anchor_result = anchor_svc.extract_anchors(working_content)
+        anchored_text = anchor_result.sanitized_text
+        anchor_registry = anchor_result.anchor_registry
+        
+        # Hata özetini oluştur
+        issues_text = "\n".join(f"- {issue}" for issue in integrity_issues[:5])
+        
+        lost_text = ", ".join(lost_entities[:10]) if lost_entities else "Belirtilmedi"
+        
+        hallucinated_text = ""
+        if hallucinated_entities:
+            hallucinated_text = (
+                f"\n\n**EKLENEN SAHTE VERİLER (BUNLARI KALDIRMALISIN):**\n"
+                f"{', '.join(hallucinated_entities[:5])}"
+            )
+        
+        # Anchor bilgisi
+        anchor_note = ""
+        if anchor_registry:
+            anchor_note = (
+                "\n\n**⛔ KRİTİK VERİ KORUMA:**\n"
+                "Metindeki ‹‹ANC_XXX›› formatındaki placeholder'lar gerçek verileri temsil eder.\n"
+                "Bu placeholder'ları AYNEN KORU, SİLME, DEĞİŞTİRME. Yerlerini değiştirme.\n"
+            )
+        
+        prompt = f"""⚠️ ÖNCEKİ İYİLEŞTİRMENDE CİDDİ HATALAR TESPİT EDİLDİ.
+Lütfen orijinal metni BAZ ALARAK tekrar iyileştir. Bu sefer aşağıdaki hataları YAPMA.
+
+**TESPİT EDİLEN HATALAR:**
+{issues_text}
+
+**KAYIP/DEĞİŞTİRİLEN VERİLER:**
+{lost_text}{hallucinated_text}
+
+**ORİJİNAL İÇERİK (BUNU BAZ AL):**
+{anchored_text}{anchor_note}
+
+**Dosya Tipi:** {file_type}
+**Bölüm Başlığı:** {heading or '(Başlık yok)'}
+
+**KRİTİK KURALLAR (BU SEFER MUTLAKA UYULMALIDIR):**
+1. Orijinal metindeki TÜM sayıları (1.234,56 gibi) AYNEN koru — format değiştirme
+2. TÜM tarihleri, URL'leri, email adreslerini AYNEN koru
+3. ASLA orijinalde olmayan yeni bilgi, sayı veya isim EKLEME
+4. ASLA "Not:", "Açıklama:", "Yorum:" gibi meta-tekstler ekleme
+5. Sadece yapısal iyileştirme yap: başlık, paragraf, format düzenleme
+6. ‹‹ANC_XXX›› placeholder'larını AYNEN BIRAK, silme
+
+**Yanıt Formatı (JSON):**
+{{
+    "heading": "İyileştirilmiş başlık",
+    "enhanced_text": "İyileştirilmiş metin",
+    "change_type": "content_restructured",
+    "explanation": "Yapılan düzeltmelerin açıklaması"
+}}"""
+        
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Sen doküman optimizasyon uzmanısın. ÖNCEKİ denemende bütünlük hataları yapıldı. "
+                    "Bu sefer ÇOK DİKKATLİ ol — orijinal verileri ASLA silme veya değiştirme. "
+                    "Yanıtını SADECE JSON formatında ver."
+                )
+            },
+            {"role": "user", "content": prompt}
+        ]
+        
+        response = call_llm_api(messages)
+        result = self._parse_llm_response(response, heading, content)
+        
+        # Anchor re-injection + recovery
+        if anchor_registry:
+            enhanced_text = result.get("enhanced_text", "")
+            # Adım 1: Placeholder → orijinal değer
+            enhanced_text = anchor_svc.reinject_anchors(enhanced_text, anchor_registry)
+            # Adım 2: Kayıp anchor'ları kurtarıp geri ekle
+            enhanced_text, recovered = anchor_svc.recover_missing(
+                enhanced_text, anchor_registry, working_content
+            )
+            result["enhanced_text"] = enhanced_text
+            
+            if recovered:
+                result["explanation"] = (
+                    result.get("explanation", "") +
+                    f" (⚠ retry: {len(recovered)} kayıp veri otomatik kurtarıldı)"
+                )
+        
+        log_system_event(
+            "DEBUG",
+            f"Corrective LLM çağrısı tamamlandı: heading='{heading[:30]}'",
+            "enhancer"
+        )
         
         return result
     

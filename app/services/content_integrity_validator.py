@@ -8,16 +8,19 @@ Kontroller:
 2. Halüsinasyon: Orijinalde olmayan yeni bilgi eklenmiş mi?
 3. Uzunluk Oranı: Çok fazla kısaltma veya şişirme var mı?
 4. Yapısal Bütünlük: Tablo satır sayısı, anahtar kelime bütünlüğü
+5. Semantik Tutarlılık: Embedding cosine similarity (v3.3.3 Faz 4)
+6. Satır Diff Analizi: difflib ile silme/değiştirme oranı (v3.3.3 Faz 4)
 
 Author: VYRA AI Team
-Version: 1.0.0 (v3.2.1)
+Version: 1.1.0 (v3.3.3)
 """
 
 import re
-from typing import Dict, Any, List, Tuple, Set
+import difflib
+from typing import Dict, Any, List, Tuple
 from dataclasses import dataclass, field
 
-from app.services.logging_service import log_system_event, log_warning
+from app.services.logging_service import log_system_event
 
 
 # ============================================
@@ -114,6 +117,12 @@ class ContentIntegrityValidator:
     MAX_NEW_NUMBER_RATIO = 0.15  # Yeni sayılar orijinalin %15'inden fazla olmamalı
     MAX_NEW_PROPER_RATIO = 0.10  # Yeni özel isimler %10'u geçmemeli
     
+    # v3.3.3 [Faz 4]: Semantik tutarlılık eşiği
+    MIN_SEMANTIC_SIMILARITY = 0.80  # Cosine similarity bu değerin altına düşmemeli
+    
+    # v3.3.3 [Faz 4]: Diff analiz eşiği
+    MAX_DELETE_RATIO = 0.40  # Orijinalin %40'ından fazlası silinmemeli
+    
     # Bütünlük skoru eşiği
     MIN_INTEGRITY_SCORE = 0.70   # Bu skorun altı = RED
     
@@ -201,6 +210,20 @@ class ContentIntegrityValidator:
             )
             scores.append(("table", table_score, 0.20))
             issues.extend(table_issues)
+        
+        # ─── 8. v3.3.3 [Faz 4]: Semantik Tutarlılık (Cosine Similarity) ───
+        sem_score, sem_issues = self._check_semantic_similarity(
+            original, enhanced
+        )
+        scores.append(("semantic", sem_score, 0.15))
+        issues.extend(sem_issues)
+        
+        # ─── 9. v3.3.3 [Faz 4]: Diff Analizi ───
+        diff_score, diff_issues = self._check_diff_analysis(
+            original, enhanced, weakness_types
+        )
+        scores.append(("diff", diff_score, 0.10))
+        warnings.extend(diff_issues)
         
         # ─── Final Skor Hesaplama (ağırlıklı) ───
         total_weight = sum(w for _, _, w in scores)
@@ -480,6 +503,147 @@ class ContentIntegrityValidator:
             return (0.7, issues)
         
         return (1.0, [])
+    
+    # ─────────────────────────────────────────
+    #  v3.3.3 [Faz 4]: Semantik Tutarlılık
+    # ─────────────────────────────────────────
+    
+    def _check_semantic_similarity(
+        self, original: str, enhanced: str
+    ) -> Tuple[float, List[str]]:
+        """
+        Orijinal ve iyileştirilmiş metinlerin embedding cosine similarity'sini hesaplar.
+        
+        Düşük benzerlik semantik sapma anlamına gelir → LLM içeriği çok değiştirmiş.
+        
+        Returns:
+            (skor, sorun listesi)
+        """
+        # Çok kısa metin kontrolü — semantik karşılaştırma anlamsız
+        if len(original.strip()) < 50 or len(enhanced.strip()) < 50:
+            return (1.0, [])
+        
+        try:
+            from app.services.rag_service import get_rag_service
+            rag_service = get_rag_service()
+            
+            # Metin uzunluğunu sınırla (embedding modeli max token ~512)
+            orig_truncated = original[:2000]
+            enh_truncated = enhanced[:2000]
+            
+            # Embedding üret
+            orig_emb = rag_service._get_embedding(orig_truncated)
+            enh_emb = rag_service._get_embedding(enh_truncated)
+            
+            # Cosine similarity hesapla
+            similarity = self._cosine_sim(orig_emb, enh_emb)
+            
+            issues = []
+            if similarity < self.MIN_SEMANTIC_SIMILARITY:
+                issues.append(
+                    f"[KRİTİK] Semantik sapma tespit edildi. "
+                    f"Benzerlik: {similarity:.1%} (eşik: {self.MIN_SEMANTIC_SIMILARITY:.0%}). "
+                    f"İyileştirilmiş metin orijinalden çok farklı."
+                )
+                return (max(0.0, similarity), issues)
+            
+            # Uyarı aralığı: 0.80-0.88 arası
+            if similarity < 0.88:
+                log_system_event(
+                    "DEBUG",
+                    f"Semantik benzerlik düşük ama kabul: {similarity:.3f}",
+                    "integrity"
+                )
+            
+            return (1.0, [])
+        
+        except Exception as e:
+            # Embedding modeli yüklenemezse bu kontrolü atla
+            log_system_event(
+                "WARNING",
+                f"Semantik tutarlılık kontrolü atlandı: {e}",
+                "integrity"
+            )
+            return (1.0, [])  # Hata durumunda cezalandırma
+    
+    # ─────────────────────────────────────────
+    #  v3.3.3 [Faz 4]: Diff Analiz
+    # ─────────────────────────────────────────
+    
+    def _check_diff_analysis(
+        self, original: str, enhanced: str, weakness_types: List[str]
+    ) -> Tuple[float, List[str]]:
+        """
+        difflib ile satır bazlı diff analizi.
+        
+        Silinen satır oranı çok yüksekse → veri kaybı riski.
+        Eklenen satır oranı çok yüksekse → halüsinasyon riski.
+        
+        Returns:
+            (skor, uyarı listesi)
+        """
+        orig_lines = original.strip().splitlines()
+        enh_lines = enhanced.strip().splitlines()
+        
+        if not orig_lines:
+            return (1.0, [])
+        
+        # SequenceMatcher ile diff hesapla
+        matcher = difflib.SequenceMatcher(None, orig_lines, enh_lines)
+        
+        deleted_count = 0
+        inserted_count = 0
+        
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == 'delete':
+                deleted_count += (i2 - i1)
+            elif tag == 'insert':
+                inserted_count += (j2 - j1)
+            elif tag == 'replace':
+                # Replace = silme + ekleme — ama bire bir değiştirme olabilir
+                deleted_count += max(0, (i2 - i1) - (j2 - j1))
+                inserted_count += max(0, (j2 - j1) - (i2 - i1))
+        
+        total_orig = len(orig_lines)
+        delete_ratio = deleted_count / total_orig if total_orig > 0 else 0
+        insert_ratio = inserted_count / total_orig if total_orig > 0 else 0
+        
+        # Weakness'e göre eşik ayarla
+        max_delete = self.MAX_DELETE_RATIO
+        if any(wt in weakness_types for wt in ("redundant_content", "excess_whitespace", "empty_gaps")):
+            max_delete = 0.60  # Gereksiz içerik temizleniyorsa daha fazla silme kabul
+        
+        warnings_list = []
+        
+        if delete_ratio > max_delete:
+            warnings_list.append(
+                f"Yüksek silme oranı: orijinalin {delete_ratio:.0%}'ı silindi "
+                f"({deleted_count}/{total_orig} satır)"
+            )
+        
+        if insert_ratio > 0.50:
+            warnings_list.append(
+                f"Yüksek ekleme oranı: orijinalin {insert_ratio:.0%}'ı kadar yeni satır eklendi "
+                f"({inserted_count} satır)"
+            )
+        
+        # Skor hesapla
+        if delete_ratio > max_delete or insert_ratio > 0.50:
+            score = max(0.3, 1.0 - (delete_ratio * 0.5 + insert_ratio * 0.3))
+            return (score, warnings_list)
+        
+        return (1.0, [])
+    
+    @staticmethod
+    def _cosine_sim(vec1: List[float], vec2: List[float]) -> float:
+        """İki vektör arası cosine similarity hesaplar."""
+        import math
+        dot = sum(a * b for a, b in zip(vec1, vec2))
+        norm1 = math.sqrt(sum(a * a for a in vec1))
+        norm2 = math.sqrt(sum(b * b for b in vec2))
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+        return dot / (norm1 * norm2)
     
     # ─────────────────────────────────────────
     #  Yardımcı Fonksiyonlar

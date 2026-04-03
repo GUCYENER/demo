@@ -49,6 +49,41 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.3.3 (2026-04-04) - Zero-Loss Enhancement Architecture
+
+**🛡️ Faz 1: Content Anchor Service (Extract-Protect-Reinject):**
+- ✅ **`content_anchor_service.py` (YENİ):** 8 regex pattern (para birimi, yüzde, tarih, saat, URL/email, telefon, kod, sayı) ile kritik verileri ‹‹ANC_XXX›› placeholder'larına çevirir
+- ✅ **Sıralı extraction:** Spesifik → genel (URL → tarih → saat → para → yüzde → telefon → kod → sayı) — çakışma yok
+- ✅ **Re-injection:** LLM çıktısındaki placeholder'lar orijinal değerlerle geri doldurulur
+- ✅ **Recovery:** LLM'in sildiği placeholder'lar bağlam bazlı otomatik kurtarılır (before_context eşleşmesi)
+
+**🔄 Faz 2: Corrective Retry Mechanism (max 2 retry):**
+- ✅ **`_call_llm_corrective()`:** Integrity validator başarısız olduğunda düzeltici prompt ile LLM tekrar çağrılır
+- ✅ **Hata özeti:** Issues, kayıp varlıklar ve halüsinasyon şüphesi olan veriler LLM'e iletilir
+- ✅ **Anchor koruması:** Retry'larda da anchor extract + reinject + recovery uygulanır
+- ✅ **Metin kırpma:** Retry'da da 6000 char sınırı uygulanır (token limit koruması)
+
+**📦 Faz 3: Structured Prompt — Fenced Critical Blocks:**
+- ✅ **FROZEN_START / FROZEN_END:** Anchor ID'leri LLM'e yapılandırılmış şekilde sunulur
+- ✅ **Tip özeti:** `url: 1, number: 3, date: 1` formatında anchor tip dağılımı
+
+**📊 Faz 4: Semantik Tutarlılık + Diff Analizi:**
+- ✅ **Cosine Similarity:** RAG embedding modeli ile orijinal/enhanced metin benzerliği (eşik: ≥0.80)
+- ✅ **Diff Analizi:** `difflib.SequenceMatcher` ile satır bazlı silme/ekleme oranı tespiti (eşik: silme ≤%40)
+- ✅ **Dinamik eşik:** `redundant_content` weakness'i varsa silme eşiği %60'a yükseltilir
+- ✅ **Graceful fallback:** Embedding modeli yüklenemezse kontrol atlanır (penalty yok)
+
+**📁 Yeni Dosyalar:**
+- `app/services/content_anchor_service.py` — Extract-Protect-Reinject pattern (337 satır)
+
+**📁 Değişen Dosyalar:**
+- `app/core/config.py` — `APP_VERSION: 3.3.3`
+- `app/core/schema.py` — `app_version: 3.3.3`
+- `app/services/document_enhancer.py` — Retry loop, corrective prompt, fenced blocks, anchor entegrasyonu
+- `app/services/content_integrity_validator.py` — Semantik tutarlılık + diff analizi (2 yeni kontrol)
+
+---
+
 ### 🆕 v3.3.1 (2026-04-03) - Anlık Eğitim Revizyonu + Dosya Yükleme Bildirim İyileştirmesi
 
 **⚡ Anlık Eğitim (Model Sekmesi):**

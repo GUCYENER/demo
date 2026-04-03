@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.3.2"  # CL interval fix, sample count DB, answer stats, responsive modal
+    APP_VERSION: str = "3.3.3"  # Zero-Loss Enhancement: anchor protection, retry, semantic integrity, diff analysis
 
     # Frontend & API prefix
     api_prefix: str = "/api"
