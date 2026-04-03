@@ -55,6 +55,7 @@ async def upload_files(
     - XLSX → excel_processor
     - PPTX → pptx_processor
     - TXT → direkt okuma
+    - CSV → csv_processor
     """
     saved_files: List[FileUploadInfo] = []
     max_size_bytes = settings.MAX_FILE_SIZE_MB * 1024 * 1024

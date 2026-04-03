@@ -204,7 +204,7 @@ const RAGUpload = {
             return;
         }
 
-        const supportedExtensions = ['.pdf', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt', '.txt'];
+        const supportedExtensions = ['.pdf', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt', '.txt', '.csv'];
 
         // Dosya validasyonu
         const invalidFiles = files.filter(file => {

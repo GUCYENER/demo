@@ -535,7 +535,8 @@ window.RAGFileList = {
             'xls': 'fas fa-file-excel',
             'pptx': 'fas fa-file-powerpoint',
             'ppt': 'fas fa-file-powerpoint',
-            'txt': 'fas fa-file-alt'
+            'txt': 'fas fa-file-alt',
+            'csv': 'fas fa-file-csv'
         };
         return icons[fileType] || 'fas fa-file';
     },

@@ -977,6 +977,7 @@ def analyze_file(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
         'pptx': analyze_pptx,
         'ppt': analyze_pptx,
         'txt': analyze_txt,
+        'csv': analyze_txt,
     }
     
     analyzer = analyzers.get(ext)
