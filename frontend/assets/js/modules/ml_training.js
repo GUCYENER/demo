@@ -135,9 +135,8 @@ window.MLTrainingModule = (function () {
             }
 
             // Update training button state
-            const requiredFeedback = data.required_feedback || 50;
             const totalFeedback = data.total_feedback || 0;
-            updateTrainingButtonState(data.training_ready, data.is_training, requiredFeedback, totalFeedback);
+            updateTrainingButtonState(data.is_training, totalFeedback);
             isTraining = data.is_training;
 
             if (isTraining) {
@@ -149,17 +148,17 @@ window.MLTrainingModule = (function () {
         }
     }
 
-    function updateTrainingButtonState(ready, training, requiredFeedback = 50, totalFeedback = 0) {
+    function updateTrainingButtonState(training, totalFeedback = 0) {
         const el = getElements();
         if (!el.btnStartTraining) return;
 
-        // Hint mesajını detaylı güncelle
+        // Hint mesajını bilgi amaçlı güncelle (kriter yok)
         const hintEl = document.querySelector('.ml-train-hint');
         if (hintEl) {
-            if (totalFeedback >= requiredFeedback) {
-                hintEl.innerHTML = `<i class="fa-solid fa-check-circle" style="color: #22c55e;"></i> Sistemdeki Feedback: <strong>${totalFeedback}</strong> ✓ Eğitim için yeterli`;
+            if (totalFeedback > 0) {
+                hintEl.innerHTML = `<i class="fa-solid fa-database" style="color:var(--accent)"></i> Sistemdeki feedback: <strong>${totalFeedback}</strong>`;
             } else {
-                hintEl.innerHTML = `<i class="fa-solid fa-info-circle"></i> Sistemdeki Feedback: <strong>${totalFeedback}</strong> | Manuel eğitim için gerekli: <strong>${requiredFeedback}</strong>`;
+                hintEl.innerHTML = `<i class="fa-solid fa-info-circle"></i> Henüz feedback verisi yok`;
             }
         }
 
@@ -168,11 +167,6 @@ window.MLTrainingModule = (function () {
             el.btnStartTraining.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Eğitim Devam Ediyor...';
             el.btnStartTraining.classList.add('training');
             if (el.trainingProgress) el.trainingProgress.classList.remove('hidden');
-        } else if (!ready) {
-            el.btnStartTraining.disabled = true;
-            el.btnStartTraining.innerHTML = '<i class="fa-solid fa-play"></i> Yeterli Veri Yok';
-            el.btnStartTraining.classList.remove('training');
-            if (el.trainingProgress) el.trainingProgress.classList.add('hidden');
         } else {
             el.btnStartTraining.disabled = false;
             el.btnStartTraining.innerHTML = '<i class="fa-solid fa-play"></i> Modeli Şimdi Eğit';
@@ -188,13 +182,28 @@ window.MLTrainingModule = (function () {
     async function startTraining() {
         const el = getElements();
 
+        // 1. Zaten çalışan eğitim varsa uyarı ver
         if (isTraining) {
-            toast('warning', 'Eğitim zaten devam ediyor');
+            toast('warning', 'Arka planda bir eğitim süreci zaten devam ediyor. Lütfen tamamlanmasını bekleyin.');
             return;
         }
 
+        // 2. Sunucudaki durumu anlık kontrol et (otomatik/CL çalışıyor olabilir)
         try {
-            // Butonu hemen pasif yap
+            const statusCheck = await apiCall('/ml/training/status');
+            if (statusCheck.is_training) {
+                toast('warning', 'Arka planda otomatik bir eğitim süreci çalışıyor. Manuel eğitim başlatılamaz.');
+                isTraining = true;
+                updateTrainingButtonState(true);
+                startTrainingPoll();
+                return;
+            }
+        } catch (checkErr) {
+            console.warn('[MLTraining] Durum kontrol hatası:', checkErr);
+        }
+
+        try {
+            // 3. Butonu hemen pasif yap
             if (el.btnStartTraining) {
                 el.btnStartTraining.disabled = true;
                 el.btnStartTraining.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Başlatılıyor...';
@@ -204,19 +213,17 @@ window.MLTrainingModule = (function () {
 
             if (result.success) {
                 isTraining = true;
-                toast('success', 'Model eğitimi başlatıldı');
-                updateTrainingButtonState(true, true);
+                toast('success', 'Model eğitimi arka planda başlatıldı');
+                updateTrainingButtonState(true);
                 startTrainingPoll();
             } else {
                 toast('error', result.error || 'Eğitim başlatılamadı');
-                // Stats'ı yeniden yükle - buton durumu oradan güncellenecek
                 await loadStats();
             }
 
         } catch (error) {
             console.error('[MLTraining] Start training hatası:', error);
             toast('error', 'Eğitim başlatılırken hata oluştu');
-            // Stats'ı yeniden yükle - buton durumu oradan güncellenecek
             await loadStats();
         }
     }
@@ -233,7 +240,15 @@ window.MLTrainingModule = (function () {
                     isTraining = false;
                     loadStats();
                     loadHistory();
+
+                    // Eğitim tamamlandı — bildirime yaz
                     toast('success', 'Model eğitimi tamamlandı!');
+                    if (window.NgssNotification) {
+                        NgssNotification.success(
+                            'Model Eğitimi Tamamlandı',
+                            'CatBoost modeli başarıyla eğitildi ve aktif edildi.'
+                        );
+                    }
                 } else {
                     // Update status text
                     const el = getElements();
@@ -722,11 +737,11 @@ window.MLTrainingModule = (function () {
     // ============================================
 
     function init() {
-        // Önce butonu pasif başlat
+        // Önce butonu yükleniyor olarak başlat (stats gelince güncellenecek)
         const el = getElements();
         if (el.btnStartTraining) {
             el.btnStartTraining.disabled = true;
-            el.btnStartTraining.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Yükleniyor...';
+            el.btnStartTraining.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Durum kontrol ediliyor...';
         }
 
         setupEventListeners();

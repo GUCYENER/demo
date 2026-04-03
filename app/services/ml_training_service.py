@@ -121,8 +121,8 @@ class MLTrainingService(MLJobRunnerMixin, MLSchedulingMixin):
                             "duration": last_job["duration_seconds"]
                         }
                     
-                    # Eğitim için yeterli veri var mı?
-                    stats["training_ready"] = stats["total_feedback"] >= required_feedback
+                    # Anlık eğitim kriterden bağımsız — her zaman çalışabilir
+                    stats["training_ready"] = True
                     
         except Exception as e:
             import traceback
