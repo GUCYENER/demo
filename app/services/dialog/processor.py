@@ -621,6 +621,22 @@ def process_user_message_stream(
                 data = event["data"]
                 final_content = data.get("content", "")
                 final_metadata = data.get("metadata", {"deep_think": True})
+                
+                # v3.3.2: Görselleri cevap metnine yerleştir (learned QA dahil)
+                _h_images = final_metadata.get("heading_images", {})
+                _i_ids = final_metadata.get("image_ids", [])
+                if _h_images:
+                    final_content = _insert_images_by_heading(final_content, _h_images)
+                    data["content"] = final_content
+                elif _i_ids:
+                    img_tags = " ".join(
+                        f'<img class="rag-inline-image" src="/api/rag/images/{img_id}" '
+                        f'alt="Doküman görseli" data-image-id="{img_id}" />'
+                        for img_id in _i_ids[:8]
+                    )
+                    final_content += f"\n\n📷 **İlgili Görseller:**\n\n{img_tags}\n"
+                    data["content"] = final_content
+                
                 yield event
                 
             else:

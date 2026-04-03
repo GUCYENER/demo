@@ -861,6 +861,67 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
         
         return False
     
+    def _enrich_learned_qa(self, qa_match: dict) -> dict:
+        """
+        🆕 v3.3.2: Learned QA cevabını kaynak ve görsel bilgisiyle zenginleştirir.
+        
+        1. source_file varsa → cevap metnine "_Kaynak: [dosya]_" satırı ekler
+        2. source_file üzerinden document_images tablosundan görselleri çeker
+        
+        Returns:
+            {"answer": str, "image_ids": list, "heading_images": dict}
+        """
+        answer = qa_match.get("answer", "")
+        source_file = qa_match.get("source_file", "")
+        image_ids = []
+        heading_images = {}
+        
+        if source_file:
+            # 1. Kaynak bilgisini cevap metnine ekle
+            if source_file not in answer:
+                answer += f"\n\n_Kaynak: [{source_file}]_"
+            
+            # 2. Kaynak dosyanın görsellerini DB'den çek
+            try:
+                conn = get_db_conn()
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT di.id, di.context_heading
+                    FROM document_images di
+                    JOIN uploaded_files uf ON uf.id = di.file_id
+                    WHERE uf.original_filename = %s
+                    ORDER BY di.context_chunk_index ASC
+                    LIMIT 8
+                """, (source_file,))
+                rows = cur.fetchall()
+                cur.close()
+                conn.close()
+                
+                if rows:
+                    seen = set()
+                    for row in rows:
+                        img_id = row["id"] if isinstance(row, dict) else row[0]
+                        heading = (row["context_heading"] if isinstance(row, dict) else row[1]) or "__no_heading__"
+                        heading = heading.strip() or "__no_heading__"
+                        if img_id not in seen:
+                            seen.add(img_id)
+                            image_ids.append(img_id)
+                            heading_images.setdefault(heading, []).append(img_id)
+                    
+                    log_system_event(
+                        "DEBUG",
+                        f"Learned QA görseller: {source_file} → {len(image_ids)} görsel",
+                        "deep_think"
+                    )
+            except Exception as e:
+                log_warning(f"Learned QA görsel çekme hatası: {e}", "deep_think")
+        
+        return {
+            "answer": answer,
+            "image_ids": image_ids,
+            "heading_images": heading_images
+        }
+    
     def _empty_result(self, query: str) -> DeepThinkResult:
         """Boş sonuç döndürür (anlamsız sorgular için)."""
         return DeepThinkResult(
@@ -933,15 +994,17 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
                         f"Learned QA HIT: score={qa_match['score']:.2f}, {elapsed_ms:.0f}ms",
                         "deep_think"
                     )
+                    # v3.3.2: Kaynak ve görsel zenginleştirmesi
+                    enriched = self._enrich_learned_qa(qa_match)
                     result = DeepThinkResult(
-                        synthesized_response=qa_match["answer"],
+                        synthesized_response=enriched["answer"],
                         sources=[qa_match.get("source_file", "")] if qa_match.get("source_file") else [],
                         intent=self.analyze_intent(query),
                         rag_result_count=1,
                         processing_time_ms=elapsed_ms,
                         best_score=qa_match["score"],
-                        image_ids=[],
-                        heading_images={}
+                        image_ids=enriched["image_ids"],
+                        heading_images=enriched["heading_images"]
                     )
                     # Cache'e de kaydet (sonraki sorguda Tier 0'dan gelsin)
                     if cache_key is not None:
@@ -1216,28 +1279,36 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
                     f"Learned QA HIT (stream): score={qa_match['score']:.2f}, {elapsed_ms:.0f}ms",
                     "deep_think"
                 )
+                # v3.3.2: Kaynak ve görsel zenginleştirmesi
+                enriched = self._enrich_learned_qa(qa_match)
+                enriched_answer = enriched["answer"]
+                enriched_images = enriched["image_ids"]
+                enriched_heading = enriched["heading_images"]
+                
                 # Cache'e kaydet (mevcut cache_key kullan)
                 if cache_key is not None:
                     result = DeepThinkResult(
-                        synthesized_response=qa_match["answer"],
+                        synthesized_response=enriched_answer,
                         sources=[qa_match.get("source_file", "")] if qa_match.get("source_file") else [],
                         intent=self.analyze_intent(query),
                         rag_result_count=1,
                         processing_time_ms=elapsed_ms,
                         best_score=qa_match["score"],
-                        image_ids=[],
-                        heading_images={}
+                        image_ids=enriched_images,
+                        heading_images=enriched_heading
                     )
                     cache_service.deep_think.set(cache_key, result)
                 
                 yield {"type": "done", "data": {
-                    "content": qa_match["answer"],
+                    "content": enriched_answer,
                     "metadata": {
                         "rag_result_count": 1,
                         "best_score": qa_match["score"],
                         "deep_think": True,
                         "learned_qa": True,
-                        "sources": [qa_match.get("source_file", "")] if qa_match.get("source_file") else []
+                        "sources": [qa_match.get("source_file", "")] if qa_match.get("source_file") else [],
+                        "image_ids": enriched_images,
+                        "heading_images": enriched_heading
                     }
                 }}
                 return
