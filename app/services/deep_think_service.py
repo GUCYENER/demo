@@ -883,19 +883,18 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
             
             # 2. Kaynak dosyanın görsellerini DB'den çek
             try:
-                conn = get_db_conn()
-                cur = conn.cursor()
-                cur.execute("""
-                    SELECT di.id, di.context_heading
-                    FROM document_images di
-                    JOIN uploaded_files uf ON uf.id = di.file_id
-                    WHERE uf.original_filename = %s
-                    ORDER BY di.context_chunk_index ASC
-                    LIMIT 8
-                """, (source_file,))
-                rows = cur.fetchall()
-                cur.close()
-                conn.close()
+                from app.core.db import get_db_context
+                with get_db_context() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            SELECT di.id, di.context_heading
+                            FROM document_images di
+                            JOIN uploaded_files uf ON uf.id = di.file_id
+                            WHERE uf.original_filename = %s
+                            ORDER BY di.context_chunk_index ASC
+                            LIMIT 8
+                        """, (source_file,))
+                        rows = cur.fetchall()
                 
                 if rows:
                     seen = set()
