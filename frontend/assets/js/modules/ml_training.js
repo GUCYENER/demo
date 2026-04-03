@@ -216,6 +216,8 @@ window.MLTrainingModule = (function () {
                 toast('success', 'Model eğitimi arka planda başlatıldı');
                 updateTrainingButtonState(true);
                 startTrainingPoll();
+                // v3.3.1: Eğitim başladığında geçmişi hemen yenile — "Çalışıyor" statüsüyle görünsün
+                loadHistory();
             } else {
                 toast('error', result.error || 'Eğitim başlatılamadı');
                 await loadStats();

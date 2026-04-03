@@ -124,6 +124,20 @@ class ContinuousLearningService:
             time.sleep(1)
             wait_seconds -= 1
         
+        # v3.3.1: İlk çalışmada son CL eğitiminden bu yana geçen süreyi kontrol et
+        # Uygulama restart durumunda interval dolmamışsa gereksiz eğitimi önle
+        initial_wait = self._calculate_remaining_wait()
+        if initial_wait > 0:
+            log_system_event(
+                "INFO",
+                f"Continuous learning: Son eğitimden bu yana interval dolmadı, "
+                f"{initial_wait // 60}dk bekleniyor...",
+                "ml_training"
+            )
+            while initial_wait > 0 and self._running:
+                time.sleep(1)
+                initial_wait -= 1
+        
         while self._running:
             try:
                 self._check_and_train()
@@ -135,6 +149,47 @@ class ContinuousLearningService:
             while wait_seconds > 0 and self._running:
                 time.sleep(1)
                 wait_seconds -= 1
+    
+    def _calculate_remaining_wait(self) -> int:
+        """
+        v3.3.1: Son CL eğitiminden bu yana kalan bekleme süresini hesaplar.
+        
+        Returns:
+            Kalan bekleme süresi (saniye). 0 ise hemen eğitim başlamalı.
+        """
+        try:
+            from app.core.db import get_db_context
+            from datetime import datetime
+            
+            with get_db_context() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT start_time FROM ml_training_jobs 
+                        WHERE job_type = 'continuous' AND status = 'completed'
+                        ORDER BY start_time DESC LIMIT 1
+                    """)
+                    row = cur.fetchone()
+                    
+                    if row and row['start_time']:
+                        last_cl_time = row['start_time']
+                        now = datetime.now()
+                        elapsed_seconds = (now - last_cl_time).total_seconds()
+                        interval_seconds = self._interval_minutes * 60
+                        
+                        remaining = interval_seconds - elapsed_seconds
+                        if remaining > 0:
+                            log_system_event(
+                                "DEBUG",
+                                f"Son CL eğitimi: {last_cl_time.strftime('%H:%M')}, "
+                                f"geçen: {elapsed_seconds/60:.0f}dk, "
+                                f"kalan: {remaining/60:.0f}dk",
+                                "ml_training"
+                            )
+                            return int(remaining)
+        except Exception as e:
+            log_system_event("WARNING", f"CL remaining wait hesaplama hatası: {e}", "ml_training")
+        
+        return 0  # Hesaplanamadıysa hemen çalış
     
     def _check_and_train(self):
         """Eğitim gerekli mi kontrol et ve gerekiyorsa eğit."""
