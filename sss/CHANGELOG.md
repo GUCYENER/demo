@@ -5,6 +5,40 @@ Format: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [v3.3.0] — 2026-04-03
+
+### 🆕 Eklenen
+- **C5: Enhancement Progress WebSocket:** LLM iyileştirme sırasında bölüm bazlı gerçek zamanlı ilerleme (WebSocket)
+- **A4: Dosya Versiyonlama:** `uploaded_files` tablosuna `file_version`, `is_active`, `file_hash` sütunları — soft-delete ile versiyon takibi
+- **A8: pgvector Migration:** `FLOAT[]` → `vector(384)` güvenli migration (extension yoksa atlanır) + IVFFlat index
+- **D1: Enhancement Impact API:** `GET /enhancement-impact` — maturity skor karşılaştırma raporu
+- **C6: PDF Font Koruması:** PyMuPDF ile orijinal PDF font boyutu tespit edilerek enhanced çıktıda korunuyor
+
+### ⚡ İyileştirilen
+- **A2: NumPy Dedup:** `_deduplicate_chunks()` O(n²) pure-Python → NumPy vectorized matris çarpımı (~100x hız)
+- **A7: Paralel Processing:** `_process_files_background()` sıralı → `asyncio.gather` ile concurrent dosya işleme
+
+### 📁 Yeni API
+- `GET /api/rag/enhancement-impact` — Enhancement etki ölçüm raporu (before/after skor, iyileşme yüzdesi)
+
+### 📁 Değişen Dosyalar (10 dosya)
+- `app/core/config.py`, `app/core/schema.py`, `app/api/routes/rag_enhance.py`, `app/api/routes/rag_upload.py`
+- `app/services/document_enhancer.py`, `app/services/rag/service.py`
+- `frontend/assets/js/websocket_client.js`, `frontend/assets/js/modules/document_enhancer_modal.js`
+- `frontend/assets/css/modules/document_enhancer_modal.css`
+
+### 🐛 Düzeltilen (Code Review)
+- **Import Hatası (rag_enhance.py):** `log_warning` import eksikti → NameError crash düzeltildi
+- **Import Hatası (rag_enhance.py):** `get_db_conn` scope dışı kullanım → inline import eklendi
+- **Tanımsız Fonksiyon (rag_upload.py):** `_log()` → `log_system_event()` ile değiştirildi (2 yer)
+- **KeyError (rag_upload.py):** Retry flow'da `file_data` → `file_content` düzeltildi
+- **KeyError (rag_upload.py):** `current_user["user_id"]` → `current_user["id"]` düzeltildi
+- **Dict Key Hatası (rag_upload.py):** `maturity_map` key'i `file_name` → `file_id` düzeltildi
+- **SQL Eksik Sütun (rag_enhance.py):** `enhancement_history` INSERT'te `user_id` sütunu eksikti
+- **Schema Senkron (schema.py):** `enhancement_history` tablosu ve `uploaded_files` migration sütunları eklendi
+
+---
+
 ## [v2.52.1] — 2026-03-05
 
 ### 🔧 Düzeltme

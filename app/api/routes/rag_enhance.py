@@ -4,12 +4,13 @@ VYRA L1 Support API - RAG Enhancement Routes
 Doküman iyileştirme (CatBoost + LLM) endpoint'leri.
 
 Author: VYRA AI Team
-Version: 1.1.0 (v3.2.1)
+Version: 1.2.0 (v3.3.0)
 """
 
 import os
 import time
 import asyncio
+import threading
 from typing import Dict, Any
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
@@ -18,7 +19,7 @@ from app.api.routes.auth import get_current_user
 from app.services.document_enhancer import (
     DocumentEnhancer, get_enhanced_file_path, cleanup_enhanced_file
 )
-from app.services.logging_service import log_system_event, log_error
+from app.services.logging_service import log_system_event, log_error, log_warning
 
 
 router = APIRouter()
@@ -46,7 +47,10 @@ ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt',
 
 
 @router.post("/enhance-document")
-async def enhance_document(file: UploadFile = File(...)):
+async def enhance_document(
+    file: UploadFile = File(...),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
     """
     Dokümanı analiz edip CatBoost + LLM ile iyileştirme önerileri oluşturur.
     
@@ -83,12 +87,46 @@ async def enhance_document(file: UploadFile = File(...)):
         loop = asyncio.get_event_loop()
         enhancer = DocumentEnhancer()
         
+        # v3.3.0 [C5]: WebSocket progress callback — thread-safe
+        # run_in_executor içinde senkron çalışır, async WS'e bridge yapar
+        from app.core.websocket_manager import ws_manager
+        _loop = loop
+        _user_id = None
+        try:
+            _user_id = current_user.get("id") if hasattr(current_user, "get") else None
+        except Exception:
+            pass
+        
+        def _progress_callback(current, total, heading, status):
+            """Thread pool'dan WebSocket'e progress gönderir."""
+            if not _user_id:
+                return
+            status_labels = {
+                "processing": f"Bölüm {current}/{total} iyileştiriliyor: {heading[:40]}...",
+                "skipped": f"Bölüm {current}/{total} atlandı (yeterli kalite)",
+                "error": f"Bölüm {current}/{total} LLM hatası",
+            }
+            msg = {
+                "type": "enhancement_progress",
+                "current": current,
+                "total": total,
+                "heading": (heading or "")[:60],
+                "status": status,
+                "percentage": round((current / total) * 100),
+                "message": status_labels.get(status, f"Bölüm {current}/{total}")
+            }
+            try:
+                asyncio.run_coroutine_threadsafe(ws_manager.send_to_user(_user_id, msg), _loop)
+            except Exception:
+                pass
+        
         def _run_pipeline():
             maturity_result = _run_maturity_analysis(file_content, file_name)
             return enhancer.analyze_and_enhance(
                 file_content=file_content,
                 file_name=file_name,
-                maturity_result=maturity_result
+                maturity_result=maturity_result,
+                progress_callback=_progress_callback
             ), maturity_result
         
         result, maturity_result = await loop.run_in_executor(None, _run_pipeline)
@@ -106,6 +144,45 @@ async def enhance_document(file: UploadFile = File(...)):
             "maturity_score": maturity_result.get("total_score"),
             "_created_at": time.time()
         }
+        
+        # v3.3.0 [C2]: Enhancement geçmişini DB'ye kaydet
+        try:
+            from app.core.db import get_db_conn
+            import hashlib
+            import json as _json
+            file_hash = hashlib.md5(file_content[:1024*1024]).hexdigest()
+            sections_summary = []
+            for s in result.sections:
+                sections_summary.append({
+                    "heading": s.heading,
+                    "change_type": s.change_type,
+                    "integrity_score": getattr(s, "integrity_score", None),
+                    "priority": s.priority
+                })
+            
+            conn = get_db_conn()
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    INSERT INTO enhancement_history 
+                    (file_name, file_hash, original_file_type, session_id,
+                     user_id, total_sections, enhanced_sections, maturity_score_before, sections_summary)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        file_name, file_hash, ext, result.session_id,
+                        current_user.get("id"),
+                        result.total_sections, result.enhanced_count,
+                        maturity_result.get("total_score"),
+                        _json.dumps(sections_summary, ensure_ascii=False)
+                    )
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as hist_err:
+            log_system_event("WARNING", f"Enhancement history kayıt hatası: {hist_err}", "rag_enhance")
         
         return JSONResponse(content=enhancer.to_dict(result))
         
@@ -332,22 +409,39 @@ async def upload_enhanced_to_rag(
                 cur.execute("DELETE FROM uploaded_files WHERE file_name = %s", (del_name,))
             
             # Dosyayı PostgreSQL'e kaydet (maturity_score ve status dahil)
-            # v3.2.1: İyileştirilmiş dosyanın olgunluğunu yeniden hesapla
-            # (Orijinal dosyanın skorunu DEĞİL, iyileştirilmişi kullan)
-            try:
-                from app.services.maturity_analyzer import analyze_file
-                enhanced_file_obj = _io.BytesIO(file_content_bytes)
-                enhanced_maturity = analyze_file(enhanced_file_obj, upload_name)
-                m_score = enhanced_maturity.get("total_score")
+            # v3.3.0 [B1]: Maturity skoru — format dönüşümü varsa orijinal skoru koru
+            # (XLSX→DOCX dönüşümünde DOCX kuralları uygulamak yanıltıcı sonuç verir)
+            orig_file_ext = data.get("file_type", "")
+            if not orig_file_ext.startswith("."):
+                orig_file_ext = f".{orig_file_ext.lower()}" if orig_file_ext else ""
+            
+            format_converted = orig_file_ext.lower() not in (upload_ext.lower(), "")
+            
+            if format_converted:
+                # Format dönüşümü yapılmış (örn: XLSX→DOCX) — orijinal skorü koru
+                m_score = data.get("maturity_score")
                 log_system_event(
                     "INFO",
-                    f"İyileştirilmiş dosya olgunluk skoru: {m_score} "
-                    f"(orijinal: {data.get('maturity_score')})",
+                    f"Format dönüşümü yapıldı ({orig_file_ext}→{upload_ext}), "
+                    f"orijinal maturity skoru korunuyor: {m_score}",
                     "rag_enhance"
                 )
-            except Exception as mat_err:
-                log_warning(f"İyileştirilmiş olgunluk hesaplanamadı: {mat_err}", "rag_enhance")
-                m_score = data.get("maturity_score")  # Fallback: orijinal skor
+            else:
+                # Aynı format — iyileştirilmiş dosyanın maturity'sini yeniden hesapla
+                try:
+                    from app.services.maturity_analyzer import analyze_file
+                    enhanced_file_obj = _io.BytesIO(file_content_bytes)
+                    enhanced_maturity = analyze_file(enhanced_file_obj, upload_name)
+                    m_score = enhanced_maturity.get("total_score")
+                    log_system_event(
+                        "INFO",
+                        f"İyileştirilmiş dosya olgunluk skoru: {m_score} "
+                        f"(orijinal: {data.get('maturity_score')})",
+                        "rag_enhance"
+                    )
+                except Exception as mat_err:
+                    log_warning(f"İyileştirilmiş olgunluk hesaplanamadı: {mat_err}", "rag_enhance")
+                    m_score = data.get("maturity_score")
             
             cur.execute(
                 """
@@ -364,60 +458,44 @@ async def upload_enhanced_to_rag(
             )
             file_id = cur.fetchone()["id"]
             
-            # Embedding oluştur — XLSX/PPTX ise enhanced text'lerden
+            # v3.3.0 [D2]: Tüm formatları processor pipeline üzerinden işle
+            # XLSX/PPTX dahil — inline chunking kaldırıldı
+            # Bu sayede dedup, quality score, heading prefix otomatik uygulanır
             if orig_file_type in ("XLSX", "XLS", "PPTX", "PPT"):
-                # Enhanced section text'lerinden chunk oluştur
-                chunks = []
+                # Enhanced section text'lerini birleştirip geçici TXT dosyası olarak processor'a ver
+                combined_text = ""
                 for s in data["sections"]:
                     s_idx = s.section_index
-                    s_heading = s.heading
+                    s_heading = s.heading or f"Bölüm {s_idx + 1}"
                     
-                    # Onaylı section ise enhanced text, değilse orijinal
                     if s_idx in approved_indexes:
-                        text_to_chunk = s.enhanced_text
+                        section_text = s.enhanced_text
                     else:
-                        text_to_chunk = s.original_text
+                        section_text = s.original_text
                     
-                    if not text_to_chunk or not text_to_chunk.strip():
-                        continue
+                    if section_text and section_text.strip():
+                        combined_text += f"\n\n{s_heading}\n{'=' * len(s_heading)}\n{section_text}"
+                
+                if combined_text.strip():
+                    # TXT processor ile chunk oluştur (heading detection + overlap + quality score)
+                    from app.services.document_processors.txt_processor import TXTProcessor
+                    txt_proc = TXTProcessor()
+                    temp_file_obj = _io.BytesIO(combined_text.strip().encode("utf-8"))
+                    processed = txt_proc.process_bytes(temp_file_obj, upload_name)
                     
-                    # Text'i chunk'lara böl (inline splitter)
-                    # Her chunk'ın başına section heading prefix eklenir
-                    # → Embedding search sırasında heading context de vektöre dahil olur
-                    heading_prefix = f"[Bölüm: {s_heading}]\n" if s_heading else ""
-                    _chunk_size = 1000 - len(heading_prefix)  # Heading prefix'i düşerek hesapla
-                    _overlap = 100
-                    _start = 0
-                    ci = 0
-                    while _start < len(text_to_chunk):
-                        _end = min(_start + _chunk_size, len(text_to_chunk))
-                        # Kelime ortasında bölme
-                        if _end < len(text_to_chunk):
-                            _last_space = text_to_chunk.rfind(' ', _start, _end)
-                            if _last_space > _start:
-                                _end = _last_space
-                        
-                        chunk_text = text_to_chunk[_start:_end].strip()
-                        if chunk_text:
-                            # Heading prefix + chunk text
-                            full_chunk = heading_prefix + chunk_text
-                            chunks.append({
-                                "text": full_chunk,
-                                "metadata": {
-                                    "source_file": upload_name,
-                                    "section": s_heading,
-                                    "section_index": s_idx,
-                                    "chunk_index": ci,
-                                    "enhanced": s_idx in approved_indexes
-                                }
-                            })
-                            ci += 1
-                        
-                        _start = _end - _overlap if _end < len(text_to_chunk) else len(text_to_chunk)
+                    chunks = [
+                        {
+                            "text": chunk.text,
+                            "metadata": {"source_file": upload_name, "enhanced": True, **chunk.metadata}
+                        }
+                        for chunk in processed.chunks
+                    ]
+                else:
+                    chunks = []
                 
                 log_system_event(
                     "INFO",
-                    f"Enhanced text'lerden {len(chunks)} chunk oluşturuldu ({orig_file_type})",
+                    f"Enhanced text'lerden processor pipeline ile {len(chunks)} chunk oluşturuldu ({orig_file_type})",
                     "rag_enhance"
                 )
             else:
@@ -584,3 +662,103 @@ def _detect_file_type(file_name: str) -> str:
         '.txt': 'TXT', '.csv': 'TXT'
     }
     return type_map.get(ext, 'TXT')
+
+
+# ─────────────────────────────────────────
+#  v3.3.0 [D1]: Enhancement Etki Ölçüm API
+# ─────────────────────────────────────────
+
+@router.get("/enhancement-impact")
+async def get_enhancement_impact(
+    file_name: str = Query(None, description="Belirli dosya adı filtresi"),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """
+    Enhancement etki ölçüm raporu.
+    maturity_score_before vs maturity_score_after karşılaştırması.
+    
+    Returns:
+        summary: Genel istatistikler (ortalama iyileşme, dosya sayısı)
+        items: Dosya bazlı etki listesi
+    """
+    from app.core.db import get_db_conn
+    
+    try:
+        conn = get_db_conn()
+        cur = conn.cursor()
+        
+        query = """
+            SELECT 
+                file_name, original_file_type, session_id,
+                total_sections, enhanced_sections,
+                maturity_score_before, maturity_score_after,
+                uploaded_to_rag, created_at
+            FROM enhancement_history
+            WHERE user_id = %s
+        """
+        params = [current_user["id"]]
+        
+        if file_name:
+            query += " AND file_name ILIKE %s"
+            params.append(f"%{file_name}%")
+        
+        query += " ORDER BY created_at DESC LIMIT %s"
+        params.append(limit)
+        
+        cur.execute(query, params)
+        rows = cur.fetchall()
+        
+        items = []
+        total_before = 0
+        total_after = 0
+        measured_count = 0
+        
+        for row in rows:
+            score_before = row["maturity_score_before"]
+            score_after = row["maturity_score_after"]
+            improvement = None
+            
+            if score_before is not None and score_after is not None:
+                improvement = round(score_after - score_before, 1)
+                total_before += score_before
+                total_after += score_after
+                measured_count += 1
+            
+            items.append({
+                "file_name": row["file_name"],
+                "file_type": row["original_file_type"],
+                "session_id": row["session_id"],
+                "total_sections": row["total_sections"],
+                "enhanced_sections": row["enhanced_sections"],
+                "score_before": round(score_before, 1) if score_before else None,
+                "score_after": round(score_after, 1) if score_after else None,
+                "improvement": improvement,
+                "improvement_pct": round((improvement / score_before) * 100, 1) if improvement and score_before else None,
+                "uploaded_to_rag": row["uploaded_to_rag"],
+                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+            })
+        
+        avg_before = round(total_before / measured_count, 1) if measured_count > 0 else None
+        avg_after = round(total_after / measured_count, 1) if measured_count > 0 else None
+        avg_improvement = round(avg_after - avg_before, 1) if avg_before and avg_after else None
+        
+        cur.close()
+        conn.close()
+        
+        return JSONResponse(content={
+            "summary": {
+                "total_enhancements": len(items),
+                "measured_count": measured_count,
+                "avg_score_before": avg_before,
+                "avg_score_after": avg_after,
+                "avg_improvement": avg_improvement,
+                "avg_improvement_pct": round((avg_improvement / avg_before) * 100, 1) if avg_improvement and avg_before else None,
+            },
+            "items": items
+        })
+        
+    except Exception as e:
+        from app.core.logging_config import log_error
+        log_error(f"Enhancement impact sorgusu hatası: {e}", "rag_enhance")
+        raise HTTPException(status_code=500, detail="Etki ölçüm verileri alınamadı")

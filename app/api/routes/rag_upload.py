@@ -82,6 +82,13 @@ async def upload_files(
             content = await f.read()
             file_size = len(content)
             
+            # v3.3.0: Boş dosya kontrolü
+            if file_size == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Boş dosya yüklenemez: {f.filename}"
+                )
+            
             if file_size > max_size_bytes:
                 raise HTTPException(
                     status_code=400,
@@ -91,26 +98,77 @@ async def upload_files(
 
             # MIME type
             mime_type = f.content_type or "application/octet-stream"
+            
+            # v3.3.0: MIME type - uzantı uyumluluk kontrolü
+            MIME_EXT_MAP = {
+                '.pdf': ['application/pdf'],
+                '.docx': ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 
+                          'application/octet-stream', 'application/zip'],
+                '.doc': ['application/msword', 'application/octet-stream'],
+                '.xlsx': ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 
+                          'application/octet-stream', 'application/zip'],
+                '.xls': ['application/vnd.ms-excel', 'application/octet-stream'],
+                '.pptx': ['application/vnd.openxmlformats-officedocument.presentationml.presentation', 
+                          'application/octet-stream', 'application/zip'],
+                '.csv': ['text/csv', 'text/plain', 'application/octet-stream'],
+                '.txt': ['text/plain', 'application/octet-stream'],
+            }
+            expected_mimes = MIME_EXT_MAP.get(ext, [])
+            if expected_mimes and mime_type not in expected_mimes:
+                log_system_event("WARNING", 
+                     f"MIME uyumsuzluğu: {f.filename} uzantısı={ext}, mime={mime_type}", 
+                     "rag_upload")
+            
+            # v3.3.0: Dosya bütünlüğü quick-check (magic bytes)
+            MAGIC_BYTES = {
+                '.pdf': b'%PDF',
+                '.docx': b'PK',   # ZIP tabanlı
+                '.xlsx': b'PK',   # ZIP tabanlı
+                '.pptx': b'PK',   # ZIP tabanlı
+                '.xls': b'\xd0\xcf\x11\xe0',  # OLE2
+            }
+            expected_magic = MAGIC_BYTES.get(ext)
+            if expected_magic and not content[:len(expected_magic)].startswith(expected_magic):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Bozuk veya geçersiz dosya: {f.filename}. "
+                           f"Dosya içeriği {ext} formatıyla uyuşmuyor."
+                )
 
-            # Aynı isimli dosya varsa önce chunk'larını sil sonra dosyayı sil
+            # v3.3.0 [A4]: Dosya versiyonlama — silmek yerine soft-delete
+            import hashlib as _hashlib
+            file_hash = _hashlib.md5(content[:1024*1024]).hexdigest()
+            
+            # Mevcut aktif versiyonu bul (varsa)
+            cur.execute(
+                "SELECT MAX(file_version) as max_ver FROM uploaded_files WHERE file_name = %s AND is_active = TRUE",
+                (f.filename,)
+            )
+            ver_row = cur.fetchone()
+            next_version = (ver_row["max_ver"] or 0) + 1 if ver_row and ver_row["max_ver"] else 1
+            
+            # Eski versiyonları deaktive et ve chunk'larını temizle
             cur.execute(
                 """
-                DELETE FROM rag_chunks WHERE file_id IN (
-                    SELECT id FROM uploaded_files WHERE file_name = %s
-                )
+                UPDATE uploaded_files SET is_active = FALSE 
+                WHERE file_name = %s AND is_active = TRUE
+                RETURNING id
                 """,
                 (f.filename,)
             )
-            cur.execute("DELETE FROM uploaded_files WHERE file_name = %s", (f.filename,))
+            old_ids = [r["id"] for r in cur.fetchall()]
+            if old_ids:
+                placeholders = ','.join(['%s'] * len(old_ids))
+                cur.execute(f"DELETE FROM rag_chunks WHERE file_id IN ({placeholders})", old_ids)
 
             # Dosyayı PostgreSQL'e kaydet — status='processing'
             cur.execute(
                 """
-                INSERT INTO uploaded_files (file_name, file_type, file_size_bytes, file_content, mime_type, uploaded_by, status, company_id)
-                VALUES (%s, %s, %s, %s, %s, %s, 'processing', %s)
+                INSERT INTO uploaded_files (file_name, file_type, file_size_bytes, file_content, mime_type, uploaded_by, status, company_id, file_version, is_active, file_hash)
+                VALUES (%s, %s, %s, %s, %s, %s, 'processing', %s, %s, TRUE, %s)
                 RETURNING id
                 """,
-                (f.filename, ext, file_size, content, mime_type, current_user["id"], company_id),
+                (f.filename, ext, file_size, content, mime_type, current_user["id"], company_id, next_version, file_hash),
             )
             file_id = cur.fetchone()["id"]
             
@@ -385,8 +443,12 @@ async def _process_files_background(
     
     try:
         total_files = len(files_to_process)
-        for idx, file_info in enumerate(files_to_process):
-            # v2.43.0: CPU-bound işlemi thread pool'da çalıştır
+        
+        # v3.3.0 [A7]: Paralel dosya processing — asyncio.gather ile concurrent çalıştır
+        # ThreadPoolExecutor max_workers=2 kısıtı paralelliği doğal olarak sınırlar
+        
+        async def _process_one(idx, file_info):
+            """Tek dosya işle ve progress bildir."""
             chunk_count, file_name, success = await loop.run_in_executor(
                 _file_processing_executor,
                 functools.partial(
@@ -396,12 +458,6 @@ async def _process_files_background(
                     maturity_score_map,
                 )
             )
-            
-            if success:
-                total_chunks += chunk_count
-                processed_count += 1
-            else:
-                failed_files.append(file_name)
             
             # 🔔 Dosya bazlı progress bildirimi
             try:
@@ -417,6 +473,26 @@ async def _process_files_background(
                 })
             except Exception:
                 pass  # Progress bildirimi kritik değil
+            
+            return chunk_count, file_name, success
+        
+        # Tüm dosyaları eşzamanlı başlat (thread pool otomatik sıraya alır)
+        results = await asyncio.gather(
+            *[_process_one(idx, fi) for idx, fi in enumerate(files_to_process)],
+            return_exceptions=True
+        )
+        
+        for r in results:
+            if isinstance(r, Exception):
+                log_error(f"Paralel processing exception: {r}", "rag")
+                failed_files.append(str(r)[:80])
+                continue
+            chunk_count, file_name, success = r
+            if success:
+                total_chunks += chunk_count
+                processed_count += 1
+            else:
+                failed_files.append(file_name)
                     
     except Exception as outer_err:
         log_error(
@@ -585,7 +661,7 @@ async def retry_file_processing(
         
         # Dosyanın varlığını ve durumunu kontrol et
         cur.execute(
-            "SELECT id, file_name, file_type, status, company_id, maturity_score FROM rag_files WHERE id = %s",
+            "SELECT id, file_name, file_type, status, company_id, maturity_score FROM uploaded_files WHERE id = %s",
             (file_id,)
         )
         row = cur.fetchone()
@@ -602,7 +678,7 @@ async def retry_file_processing(
             )
         
         # Dosya içeriğini al
-        cur.execute("SELECT file_data FROM rag_files WHERE id = %s", (file_id,))
+        cur.execute("SELECT file_content FROM uploaded_files WHERE id = %s", (file_id,))
         file_data_row = cur.fetchone()
         if not file_data_row or not file_data_row[0]:
             raise HTTPException(status_code=400, detail="Dosya verisi bulunamadı")
@@ -614,31 +690,31 @@ async def retry_file_processing(
         
         # Status'ü 'processing' yap
         cur.execute(
-            "UPDATE rag_files SET status = 'processing', error_message = NULL WHERE id = %s",
+            "UPDATE uploaded_files SET status = 'processing' WHERE id = %s",
             (file_id,)
         )
         conn.commit()
         
-        _log("INFO", f"Retry başlatıldı: {file_name} (id={file_id})", "rag_upload")
+        log_system_event("INFO", f"Retry başlatıldı: {file_name} (id={file_id})", "rag_upload")
         
         # Mevcut maturity_score'u koru
         maturity_map = None
         if maturity_score is not None:
-            maturity_map = {file_name: maturity_score}
+            maturity_map = {db_id: maturity_score}
         
         # Background task olarak yeniden işle
         file_info = {
             "file_id": db_id,
             "file_name": file_name,
             "file_type": file_type,
-            "file_data": file_data,
+            "file_content": file_data,
             "company_id": company_id
         }
         
         asyncio.ensure_future(
             _process_files_background(
                 [file_info],
-                current_user["user_id"],
+                current_user["id"],
                 maturity_score_map=maturity_map
             )
         )

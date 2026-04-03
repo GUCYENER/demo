@@ -49,6 +49,42 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.3.0 (2026-04-03) - RAG Pipeline Optimization: WebSocket Progress, Paralel Processing, Dosya Versiyonlama
+
+**🔴 P0 — Enhancement Pipeline İyileştirmeleri:**
+- ✅ **C5: Enhancement Progress WebSocket:** `rag_enhance.py` + `document_enhancer.py` — LLM iyileştirme sırasında bölüm bazlı gerçek zamanlı ilerleme: "Bölüm 3/10 iyileştiriliyor..." mesajı WebSocket üzerinden frontend'e gönderilir
+- ✅ **C5 Frontend:** `websocket_client.js` — `enhancement_progress` mesaj handler'ı, `vyra:enhancement_progress` event dispatch
+- ✅ **C5 Modal:** `document_enhancer_modal.js` — Animasyonlu progress bar, bölüm detay gösterimi, listener lifecycle yönetimi
+- ✅ **C5 CSS:** `document_enhancer_modal.css` — Progress bar gradient shimmer animasyonu, detay metin stili
+
+**🟡 P1 — Performans Optimizasyonları:**
+- ✅ **A2: NumPy Dedup:** `rag/service.py` — `_deduplicate_chunks()` O(n²) pure-Python cosine similarity → NumPy vectorized matris çarpımı (~100x hız artışı). Import hatası fallback korunuyor
+- ✅ **A7: Paralel Dosya Processing:** `rag_upload.py` — Sıralı `for` loop → `asyncio.gather` ile concurrent dosya işleme. ThreadPoolExecutor(max_workers=2) paralelliği doğal sınırlar
+- ✅ **A4: Dosya Versiyonlama:** `rag_upload.py` + `schema.py` — Hard-delete yerine soft-delete (is_active=false) + version artırma. `file_version`, `is_active`, `file_hash` sütunları eklendi
+
+**🔵 P1 — Altyapı Modernizasyonu:**
+- ✅ **A8: pgvector Migration:** `schema.py` — `FLOAT[]` → `vector(384)` güvenli migration (pgvector yoksa atlanır) + IVFFlat index. 3 tablo: `rag_chunks`, `learned_answers`, `ds_learning_results`
+- ✅ **C6: PDF Font Koruması:** `document_enhancer.py` — PyMuPDF ile orijinal PDF font boyutu tespit edilerek enhanced çıktıda korunuyor. Heading boyutları body'ye oranla dinamik
+- ✅ **D1: Enhancement Etki Ölçümü:** `rag_enhance.py` — `GET /enhancement-impact` endpoint. maturity_score_before/after karşılaştırma + iyileşme yüzdesi raporu
+
+**🟢 P2 — Altyapı:**
+- ✅ **Versiyon:** `config.py` → `APP_VERSION: 3.3.0`, `schema.py` → `system_settings app_version: 3.3.0`
+- ✅ **SSS:** INDEX, CHANGELOG, api_reference, database_schema güncellendi
+
+**📁 Değişen Dosyalar (10+ dosya):**
+- `app/core/config.py` — `APP_VERSION: 3.3.0`
+- `app/core/schema.py` — `app_version: 3.3.0`, dosya versiyonlama sütunları + pgvector migration + index'ler
+- `app/api/routes/rag_enhance.py` — WebSocket progress callback, current_user dependency, enhancement-impact endpoint
+- `app/api/routes/rag_upload.py` — Paralel processing (asyncio.gather), dosya versiyonlama (soft-delete)
+- `app/services/document_enhancer.py` — `progress_callback`, C6 PDF font koruması (PyMuPDF)
+- `app/services/rag/service.py` — NumPy vectorized dedup
+- `frontend/assets/js/websocket_client.js` — `enhancement_progress` handler
+- `frontend/assets/js/modules/document_enhancer_modal.js` — Progress bar + WS listener
+- `frontend/assets/css/modules/document_enhancer_modal.css` — Progress bar CSS
+- `sss/INDEX.md`, `sss/CHANGELOG.md`, `sss/02_architecture/api_reference.md`, `sss/02_architecture/database_schema.md`
+
+---
+
 ### 🆕 v3.2.1 (2026-04-03) - RAG Best Practice: Context Injection, Chunk Overlap & Native Format Enhance
 
 **🔴 P0 — RAG Retrieval Doğruluğu:**

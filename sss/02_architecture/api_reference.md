@@ -2,11 +2,11 @@
 
 | Bilgi | Değer |
 |-------|-------|
-| **Versiyon** | v2.36.1 |
+| **Versiyon** | v3.3.0 |
 | **Base URL** | `http://localhost:8002/api` |
 | **Auth** | Bearer Token (JWT) |
 | **Content-Type** | application/json |
-| **Son Güncelleme** | 2026-02-10 |
+| **Son Güncelleme** | 2026-04-03 |
 | **Durum** | ✅ Güncel |
 
 ---
@@ -265,6 +265,38 @@ Dokümanı LLM ile iyileştirir.
 ### `GET /api/rag/enhance/{file_id}/download`
 İyileştirilmiş dokümanı indirir.
 
+### `GET /api/rag/enhancement-impact` (🆕 v3.3.0)
+Enhancement etki ölçüm raporu.
+
+**Query Parameters:**
+| Parametre | Tip | Zorunlu | Açıklama |
+|-----------|-----|---------|----------|
+| `file_name` | string | ❌ | Dosya adı filtresi (ILIKE) |
+| `limit` | int | ❌ | Sonuç sayısı (varsayılan: 20, max: 100) |
+
+**Response (200):**
+```json
+{
+    "summary": {
+        "total_enhancements": 5,
+        "measured_count": 3,
+        "avg_score_before": 45.2,
+        "avg_score_after": 72.8,
+        "avg_improvement": 27.6,
+        "avg_improvement_pct": 61.1
+    },
+    "items": [
+        {
+            "file_name": "rehber.pdf",
+            "score_before": 42.0,
+            "score_after": 78.5,
+            "improvement": 36.5,
+            "improvement_pct": 86.9
+        }
+    ]
+}
+```
+
 ---
 
 ## 6. Tickets — Destek Talepleri
@@ -332,7 +364,7 @@ Kullanıcı geri bildirimi kaydeder.
 Sistem durumunu döndürür.
 
 ### `GET /api/health/version`
-Platform versiyonunu döndürür: `"2.36.1"`
+Platform versiyonunu döndürür: `"3.3.0"`
 
 ---
 
@@ -349,6 +381,11 @@ Real-time mesajlaşma.
 **Alım:**
 ```json
 {"type": "response", "content": "...", "sources": [...]}
+```
+
+**Enhancement Progress (🆕 v3.3.0):**
+```json
+{"type": "enhancement_progress", "current": 3, "total": 10, "percentage": 30, "status": "processing", "message": "Bölüm 3/10 iyileştiriliyor..."}
 ```
 
 ---

@@ -511,7 +511,7 @@ CREATE INDEX IF NOT EXISTS idx_system_settings_key ON system_settings(setting_ke
 
 -- Varsayılan ayarlar
 INSERT INTO system_settings (setting_key, setting_value, description) VALUES
-    ('app_version', '3.2.1', 'Uygulama versiyonu'),
+    ('app_version', '3.3.0', 'Uygulama versiyonu'),
     ('cl_interval_minutes', '30', 'Sürekli öğrenme aralığı (dakika)'),
     ('cl_is_active', 'true', 'Sürekli öğrenme aktiflik durumu'),
     ('maturity_enhance_threshold', '80', 'Maturity iyileştirme eşik değeri (0-100)')
@@ -1374,5 +1374,129 @@ INSERT INTO company_themes (name, code, description, css_variables, preview_colo
     11
 )
 ON CONFLICT (code) DO NOTHING;
+
+-- =====================================================
+-- v3.3.0: Enhancement Geçmişi
+-- =====================================================
+CREATE TABLE IF NOT EXISTS enhancement_history (
+    id SERIAL PRIMARY KEY,
+    file_name VARCHAR(500) NOT NULL,
+    file_hash VARCHAR(64),                -- MD5 hash (ilk 1MB)
+    original_file_type VARCHAR(20),       -- Orijinal dosya formatı (pdf, xlsx, pptx, ...)
+    user_id INTEGER REFERENCES users(id),
+    session_id VARCHAR(100),              -- Enhancement session ID
+    total_sections INTEGER DEFAULT 0,
+    enhanced_sections INTEGER DEFAULT 0,
+    maturity_score_before REAL,           -- İyileştirme öncesi olgunluk skoru
+    maturity_score_after REAL,            -- İyileştirme sonrası olgunluk skoru (veya NULL)
+    sections_summary JSONB,              -- Her section'ın change_type ve integrity_score bilgisi
+    uploaded_to_rag BOOLEAN DEFAULT FALSE, -- Sonuç bilgi tabanına yüklendi mi?
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    company_id INTEGER REFERENCES companies(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_enhancement_history_file ON enhancement_history(file_name);
+CREATE INDEX IF NOT EXISTS idx_enhancement_history_user ON enhancement_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_enhancement_history_date ON enhancement_history(created_at DESC);
+
+-- =====================================================
+-- v3.3.0 [A4]: Dosya Versiyonlama
+-- =====================================================
+-- Her dosya yeniden yüklendiğinde eski versiyon is_active=false olur,
+-- yeni versiyon file_version+1 ile eklenir.
+ALTER TABLE uploaded_files ADD COLUMN IF NOT EXISTS file_version INTEGER DEFAULT 1;
+ALTER TABLE uploaded_files ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+ALTER TABLE uploaded_files ADD COLUMN IF NOT EXISTS file_hash VARCHAR(64);
+
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_active ON uploaded_files(is_active);
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_hash ON uploaded_files(file_hash);
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_version ON uploaded_files(file_name, file_version DESC);
+
+-- =====================================================
+-- v3.3.0 [A8]: pgvector Migration
+-- =====================================================
+-- pgvector extension varsa FLOAT[] → vector(384) dönüşümü.
+-- Extension yoksa hiçbir şey yapmaz (güvenli migration).
+
+DO $$
+BEGIN
+    -- pgvector extension oluşturmayı dene
+    CREATE EXTENSION IF NOT EXISTS vector;
+    RAISE NOTICE 'pgvector extension aktif';
+    
+    -- rag_chunks.embedding: FLOAT[] → vector(384)
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'rag_chunks' AND column_name = 'embedding' AND data_type = 'ARRAY'
+    ) THEN
+        ALTER TABLE rag_chunks ALTER COLUMN embedding TYPE vector(384) 
+        USING embedding::vector(384);
+        RAISE NOTICE 'rag_chunks.embedding → vector(384) migration tamamlandı';
+    END IF;
+    
+    -- learned_answers.embedding: FLOAT[] → vector(384)
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'learned_answers' AND column_name = 'embedding' AND data_type = 'ARRAY'
+    ) THEN
+        ALTER TABLE learned_answers ALTER COLUMN embedding TYPE vector(384) 
+        USING embedding::vector(384);
+        RAISE NOTICE 'learned_answers.embedding → vector(384) migration tamamlandı';
+    END IF;
+    
+    -- ds_learning_results.embedding: FLOAT[] → vector(384)
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'ds_learning_results' AND column_name = 'embedding' AND data_type = 'ARRAY'
+    ) THEN
+        ALTER TABLE ds_learning_results ALTER COLUMN embedding TYPE vector(384) 
+        USING embedding::vector(384);
+        RAISE NOTICE 'ds_learning_results.embedding → vector(384) migration tamamlandı';
+    END IF;
+    
+    -- IVFFlat index oluştur (büyük veri kümelerinde ~10x hız)
+    -- 1000+ chunk olduğunda faydalı
+    CREATE INDEX IF NOT EXISTS idx_rag_chunks_embedding_ivfflat 
+    ON rag_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+    
+EXCEPTION
+    WHEN OTHERS THEN
+        -- pgvector yoksa veya yetki yoksa sessizce devam et
+        RAISE NOTICE 'pgvector migration atlandı: %', SQLERRM;
+END
+$$;
+
+-- =====================================================
+-- v3.3.0: RAG Pipeline Optimization Migrations
+-- =====================================================
+
+-- uploaded_files: Dosya versiyonlama, soft-delete ve hash desteği
+ALTER TABLE uploaded_files ADD COLUMN IF NOT EXISTS file_version INTEGER DEFAULT 1;
+ALTER TABLE uploaded_files ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+ALTER TABLE uploaded_files ADD COLUMN IF NOT EXISTS file_hash VARCHAR(64);
+
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_active ON uploaded_files(is_active);
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_hash ON uploaded_files(file_hash);
+
+-- Enhancement History tablosu — iyileştirme geçmişi ve etki ölçümü
+CREATE TABLE IF NOT EXISTS enhancement_history (
+    id SERIAL PRIMARY KEY,
+    file_name VARCHAR(500) NOT NULL,
+    file_hash VARCHAR(64),
+    original_file_type VARCHAR(20),
+    session_id VARCHAR(50),
+    user_id INTEGER REFERENCES users(id),
+    total_sections INTEGER DEFAULT 0,
+    enhanced_sections INTEGER DEFAULT 0,
+    maturity_score_before REAL,
+    maturity_score_after REAL,
+    sections_summary JSONB,
+    uploaded_to_rag BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_enhancement_history_file ON enhancement_history(file_name);
+CREATE INDEX IF NOT EXISTS idx_enhancement_history_user ON enhancement_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_enhancement_history_created ON enhancement_history(created_at DESC);
 
 """

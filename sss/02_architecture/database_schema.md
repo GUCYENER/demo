@@ -2,8 +2,8 @@
 
 | Bilgi | Değer |
 |-------|-------|
-| **Versiyon** | v2.36.1 |
-| **Son Güncelleme** | 2026-02-10 |
+| **Versiyon** | v3.3.0 |
+| **Son Güncelleme** | 2026-04-03 |
 | **DBMS** | PostgreSQL 16+ |
 | **Port** | 5432 |
 | **Kaynak** | `app/core/schema.py` |
@@ -116,10 +116,16 @@ CREATE TABLE IF NOT EXISTS uploaded_files (
     mime_type       VARCHAR(100),
     chunk_count     INTEGER DEFAULT 0,
     maturity_score  REAL DEFAULT NULL,
+    status          VARCHAR(20) DEFAULT 'completed',
+    file_version    INTEGER DEFAULT 1,       -- v3.3.0: Dosya versiyon numarası
+    is_active       BOOLEAN DEFAULT TRUE,    -- v3.3.0: Aktif versiyon flagı
+    file_hash       VARCHAR(64),             -- v3.3.0: MD5 hash (ilk 1MB)
     uploaded_by     INTEGER REFERENCES users(id),
     uploaded_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
+
+**v3.3.0 Versiyonlama:** Aynı isimli dosya yeniden yüklenince eski versiyon `is_active=false` yapılır, yeni versiyon `file_version+1` ile oluşturulur.
 
 ---
 
@@ -138,6 +144,8 @@ CREATE TABLE IF NOT EXISTS rag_chunks (
 ```
 
 **Önemli:** `embedding` alanı SentenceTransformer (all-MiniLM-L6-v2) modelinin ürettiği 384 boyutlu float dizisidir.
+
+**v3.3.0 pgvector:** pgvector extension kuruluysa `FLOAT[]` → `vector(384)` otomatik migration yapılır ve IVFFlat index oluşturulur.
 
 ---
 

@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.2.1"  # RAG Best Practice: context injection, chunk overlap, encoding, metadata enrichment
+    APP_VERSION: str = "3.3.0"  # RAG Pipeline Optimization: WebSocket progress, paralel processing, dosya versiyonlama, NumPy dedup
 
     # Frontend & API prefix
     api_prefix: str = "/api"
@@ -119,7 +119,7 @@ class Settings(BaseSettings):
         ".pdf", ".docx", ".doc",
         ".xlsx", ".xls",
         ".pptx", ".ppt",
-        ".txt"
+        ".txt", ".csv"  # v3.3.0: CSV desteği
     ]
     
     # Maksimum dosya boyutu (MB)
@@ -131,6 +131,12 @@ class Settings(BaseSettings):
     # Chunk ayarları
     CHUNK_SIZE: int = 500
     CHUNK_OVERLAP: int = 100
+    
+    # v3.3.0 [A6]: RAG chunk konfigürasyon — .env ile override edilebilir
+    RAG_PDF_CHUNK_SIZE: int = 2000       # PDF section max chunk boyutu
+    RAG_PDF_CHUNK_OVERLAP: int = 100     # PDF chunk overlap
+    RAG_MIN_CHUNK_LENGTH: int = 30       # Minimum chunk karakter uzunluğu
+    RAG_LLM_MAX_CONTENT_CHARS: int = 6000  # Enhancement LLM'e gönderilecek max karakter
     
     # -------------------------------------------------
     #  Cache & Performans Ayarları

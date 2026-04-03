@@ -114,7 +114,8 @@ class DocumentEnhancer:
         self,
         file_content: bytes,
         file_name: str,
-        maturity_result: Dict[str, Any]
+        maturity_result: Dict[str, Any],
+        progress_callback=None
     ) -> EnhancementResult:
         """
         Ana pipeline: Analiz → CatBoost → LLM → DOCX
@@ -152,7 +153,7 @@ class DocumentEnhancer:
             catboost_analysis = self._catboost_prioritize(sections, file_type, violations)
             
             # Adım 3: LLM ile iyileştirme
-            enhanced_sections = self._llm_enhance(sections, violations, file_type, catboost_analysis)
+            enhanced_sections = self._llm_enhance(sections, violations, file_type, catboost_analysis, progress_callback=progress_callback)
             
             # Adım 4: DOCX oluştur (orijinal formatı koruyarak)
             session_id = str(uuid.uuid4())[:8]
@@ -303,33 +304,107 @@ class DocumentEnhancer:
         return sections
     
     def _extract_xlsx_sections(self, file_obj: BinaryIO) -> List[Dict[str, Any]]:
-        """XLSX her sheet'i bir bölüm olarak çıkar — paragraf aralığı da kaydedilir"""
+        """
+        XLSX bölümlerini çıkar — v3.3.0: Veri bloğu bazlı bölümleme.
+        Büyük sheet'ler boş satır gap'lerine göre alt-section'lara ayrılır.
+        Header satırı her alt-section'a prefix olarak eklenir.
+        """
         from openpyxl import load_workbook
         
         file_obj.seek(0)
         wb = load_workbook(file_obj, data_only=True)
         sections = []
+        global_idx = 0
         global_row_counter = 0
         
-        for idx, sheet_name in enumerate(wb.sheetnames):
+        for sheet_name in wb.sheetnames:
             ws = wb[sheet_name]
-            rows = []
+            
+            # Tüm satırları oku
+            all_rows = []
             for row in ws.iter_rows(values_only=True):
                 cells = [str(cell) if cell is not None else "" for cell in row]
-                if any(c.strip() for c in cells):
-                    rows.append(" | ".join(cells))
+                has_data = any(c.strip() for c in cells)
+                all_rows.append((cells, has_data))
             
-            if rows:
+            if not all_rows:
+                continue
+            
+            # Header satırını tespit et (ilk veri satırı, kısa metin, benzersiz değerler)
+            header_text = ""
+            header_row_idx = -1
+            for ri, (cells, has_data) in enumerate(all_rows):
+                if has_data:
+                    non_empty = [c for c in cells if c.strip()]
+                    all_short = all(len(c) < 50 for c in non_empty)
+                    all_unique = len(set(non_empty)) == len(non_empty)
+                    if non_empty and all_short and all_unique and len(non_empty) >= 2:
+                        header_text = " | ".join(non_empty)
+                        header_row_idx = ri
+                    break
+            
+            # Veri satırlarını boş satır gap'lerine göre data bloklarına böl
+            data_blocks = []
+            current_block = []
+            gap_count = 0
+            
+            start_row = header_row_idx + 1 if header_row_idx >= 0 else 0
+            
+            for ri in range(start_row, len(all_rows)):
+                cells, has_data = all_rows[ri]
+                if has_data:
+                    if gap_count >= 2 and current_block:
+                        # 2+ boş satır = yeni data bloğu
+                        data_blocks.append(current_block)
+                        current_block = []
+                    current_block.append(" | ".join(cells))
+                    gap_count = 0
+                else:
+                    gap_count += 1
+            
+            if current_block:
+                data_blocks.append(current_block)
+            
+            # Her data bloğunu section olarak ekle
+            if not data_blocks:
+                continue
+            
+            # Tek blok varsa sheet adıyla section oluştur
+            if len(data_blocks) == 1:
+                block_text = "\n".join(data_blocks[0])
+                if header_text:
+                    block_text = f"[Başlıklar: {header_text}]\n{block_text}"
+                
                 para_start = global_row_counter
-                para_end = global_row_counter + len(rows) - 1
+                para_end = global_row_counter + len(data_blocks[0]) - 1
                 sections.append({
                     "heading": sheet_name,
-                    "content": "\n".join(rows),
-                    "index": idx,
+                    "content": block_text,
+                    "index": global_idx,
                     "para_start": para_start,
                     "para_end": para_end
                 })
-                global_row_counter += len(rows)
+                global_idx += 1
+                global_row_counter += len(data_blocks[0])
+            else:
+                # Birden fazla blok — her bloğu alt-section yap
+                for bi, block in enumerate(data_blocks):
+                    block_text = "\n".join(block)
+                    if header_text:
+                        block_text = f"[Başlıklar: {header_text}]\n{block_text}"
+                    
+                    block_heading = f"{sheet_name} — Bölüm {bi + 1}"
+                    para_start = global_row_counter
+                    para_end = global_row_counter + len(block) - 1
+                    sections.append({
+                        "heading": block_heading,
+                        "content": block_text,
+                        "index": global_idx,
+                        "para_start": para_start,
+                        "para_end": para_end
+                    })
+                    global_idx += 1
+                    global_row_counter += len(block)
         
         return sections
     
@@ -541,60 +616,75 @@ class DocumentEnhancer:
         heading: str,
         violation_names: List[str]
     ) -> float:
-        """CatBoost yoksa basit heuristic ile priority hesapla — tüm dosya türleri."""
-        priority = 0.3  # Baseline
+        """
+        CatBoost yoksa heuristic ile priority hesapla — tüm dosya türleri.
+        v3.3.0 [C3]: Min-max normalizasyon — CatBoost ile tutarlı 0-1 dağılım.
+        """
+        raw_score = 0.0  # Ham skor (normalize edilecek)
         
         word_count = len(content.split())
         
         # Çok kısa içerik → yüksek priority
         if word_count < 20:
-            priority += 0.3
+            raw_score += 3.0
         elif word_count < 50:
-            priority += 0.15
+            raw_score += 1.5
         
         # Heading yoksa veya Generic ise
         if not heading or heading in ("Genel", "Giriş"):
-            priority += 0.2
+            raw_score += 2.0
         
         # Violation eşleştirme — PDF/DOCX/TXT
         if "Başlık Hiyerarşisi" in violation_names or "Word Stilleri" in violation_names:
-            priority += 0.15
+            raw_score += 1.5
         if "Metin Yoğunluğu" in violation_names or "Metin İçeriği" in violation_names:
-            priority += 0.1
+            raw_score += 1.0
         if "Tablo Formatı" in violation_names:
-            priority += 0.1
+            raw_score += 1.0
         if "Türkçe Karakter" in violation_names:
-            priority += 0.1
+            raw_score += 1.0
         if "Gereksiz İçerik" in violation_names or "Gereksiz Boşluklar" in violation_names:
-            priority += 0.1
+            raw_score += 1.0
         
         # v3.2.1: Excel'e özel ihlal boost
         if "İlk Satır Başlık" in violation_names:
-            priority += 0.15
+            raw_score += 1.5
         if "Merge Hücreler" in violation_names:
-            priority += 0.1
+            raw_score += 1.0
         if "Açıklama Satırları" in violation_names:
-            priority += 0.1
+            raw_score += 1.0
         if "Boş Satır/Sütun" in violation_names:
-            priority += 0.1
+            raw_score += 1.0
         if "Formül vs Değer" in violation_names:
-            priority += 0.1
+            raw_score += 1.0
         if "Tutarlı Veri Tipi" in violation_names:
-            priority += 0.05
+            raw_score += 0.5
         if "Gizli Sheet" in violation_names:
-            priority += 0.05
+            raw_score += 0.5
         
         # DOCX özel
         if "Metin Kutusu" in violation_names:
-            priority += 0.15
+            raw_score += 1.5
         if "Liste Formatı" in violation_names:
-            priority += 0.05
+            raw_score += 0.5
         
-        # PPTX özel
+        # PPTX özel (v3.3.0: yeni kurallar)
         if "Slayt Başlıkları" in violation_names:
-            priority += 0.1
+            raw_score += 1.0
+        if "Speaker Notes" in violation_names:
+            raw_score += 0.8
+        if "Görsel/Metin Oranı" in violation_names:
+            raw_score += 0.8
+        if "Slayt Sayısı" in violation_names:
+            raw_score += 0.5
         
-        return min(priority, 1.0)
+        # v3.3.0 [C3]: Min-max normalizasyon
+        # Olası max ham skor ≈ 15 (tüm violation'lar + kısa metin + heading yok)
+        MAX_RAW_SCORE = 15.0
+        normalized = min(raw_score / MAX_RAW_SCORE, 1.0)
+        
+        # Minimum 0.1 floor (tamamen sorunsuz bile olsa bir baseline sağlar)
+        return max(round(normalized, 3), 0.1)
     
     def _detect_weaknesses(
         self,
@@ -675,7 +765,8 @@ class DocumentEnhancer:
         sections: List[Dict[str, Any]],
         violations: List[Dict[str, Any]],
         file_type: str,
-        catboost_analysis: Dict[str, Any]
+        catboost_analysis: Dict[str, Any],
+        progress_callback=None
     ) -> List[EnhancedSection]:
         """LLM ile düşük kaliteli bölümleri iyileştir"""
         
@@ -713,7 +804,20 @@ class DocumentEnhancer:
                     explanation="Bu bölüm yeterli kalitede.",
                     priority=priority
                 ))
+                # v3.3.0 [C5]: Progress callback — "Bölüm X/Y atlandı"
+                if progress_callback:
+                    try:
+                        progress_callback(idx + 1, len(sections), heading, "skipped")
+                    except Exception:
+                        pass
                 continue
+            
+            # v3.3.0 [C5]: Progress callback — "Bölüm X/Y iyileştiriliyor..."
+            if progress_callback:
+                try:
+                    progress_callback(idx + 1, len(sections), heading, "processing")
+                except Exception:
+                    pass
             
             # LLM ile iyileştir
             try:
@@ -759,6 +863,12 @@ class DocumentEnhancer:
                         integrity_score=integrity.score,
                         integrity_issues=integrity.issues + integrity.warnings
                     ))
+                    # v3.3.0 [C5]: Progress callback — bütünlük başarısız bildirimi
+                    if progress_callback:
+                        try:
+                            progress_callback(idx + 1, len(sections), heading, "error")
+                        except Exception:
+                            pass
                     continue
                 
                 # Bütünlük OK — iyileştirmeyi kabul et
@@ -774,6 +884,12 @@ class DocumentEnhancer:
                     integrity_score=integrity.score,
                     integrity_issues=integrity.warnings  # Sadece uyarılar (sorunlar yok)
                 ))
+                # v3.3.0 [C5]: Progress callback — başarılı iyileştirme bildirimi
+                if progress_callback:
+                    try:
+                        progress_callback(idx + 1, len(sections), heading, "processing")
+                    except Exception:
+                        pass
                 
             except Exception as e:
                 log_warning(f"LLM enhancement hatası (bölüm {idx}): {e}", "enhancer")
@@ -798,6 +914,12 @@ class DocumentEnhancer:
                     priority=priority,
                     violations=weakness_types
                 ))
+                # v3.3.0 [C5]: Progress callback — hata sonrası da bildirim
+                if progress_callback:
+                    try:
+                        progress_callback(idx + 1, len(sections), heading, "error")
+                    except Exception:
+                        pass
         
         return enhanced_sections
     
@@ -812,22 +934,60 @@ class DocumentEnhancer:
         """Tek bir bölüm için LLM'e iyileştirme isteği gönder"""
         from app.core.llm import call_llm_api
         
-        # Content çok uzunsa akıllı kırp (paragraf sınırından)
+        # v3.3.0: Akıllı kırpma — heading/ayıraç bazlı kesim noktası
         max_content_chars = 6000
         remaining_text = ""
+        context_overlap = ""  # LLM'e bağlam olarak gönderilecek kırpılan kısmın son 300 karakteri
         
         if len(content) > max_content_chars:
-            # Paragraf sınırından kes (ortasında kesme)
-            cut_point = content.rfind("\n", 0, max_content_chars)
-            if cut_point < max_content_chars // 2:
-                cut_point = max_content_chars  # Paragraf bulamazsa karakter limitinden kes
-            truncated = content[:cut_point]
-            remaining_text = content[cut_point:]  # Kırpılan kısım korunacak
+            # Öncelik 1: Heading veya bölüm ayracından kes
+            heading_cut_patterns = [
+                r'\n\d+[\.\)]\s+\S',       # 1. veya 1) ile başlayan satır
+                r'\n[A-ZÇĞİÖŞÜ]{4,}',     # TAMAMEN BÜYÜK HARF satır
+                r'\n---+',                   # --- ayıraç
+                r'\n#{1,3}\s',              # Markdown heading
+                r'\n(?:BÖLÜM|MADDE|KISIM)\s', # Türkçe bölüm kelimeleri
+            ]
+            
+            best_cut = -1
+            # max_content_chars aralığında heading ara (son %30'luk dilimde)
+            search_start = int(max_content_chars * 0.7)
+            search_end = max_content_chars
+            
+            for pattern in heading_cut_patterns:
+                matches = list(re.finditer(pattern, content[search_start:search_end]))
+                if matches:
+                    # En son eşleşmeyi al (mümkün olduğunca fazla içerik gönder)
+                    best_cut = search_start + matches[-1].start()
+                    break
+            
+            # Öncelik 2: Paragraf sınırından kes
+            if best_cut < 0:
+                cut_point = content.rfind("\n\n", 0, max_content_chars)
+                if cut_point > max_content_chars // 2:
+                    best_cut = cut_point
+            
+            # Öncelik 3: Tek satır sonundan kes
+            if best_cut < 0:
+                cut_point = content.rfind("\n", 0, max_content_chars)
+                if cut_point > max_content_chars // 2:
+                    best_cut = cut_point
+            
+            # Son çare: karakter limitinden kes
+            if best_cut < 0:
+                best_cut = max_content_chars
+            
+            truncated = content[:best_cut]
+            remaining_text = content[best_cut:]
+            
+            # v3.3.0: Kalan kısmın ilk 300 karakterini LLM'e context olarak gönder
+            # Bu sayede LLM paragrafı yarıda bırakmaz
+            context_overlap = remaining_text[:300].strip()
             
             log_system_event(
                 "INFO",
                 f"İçerik kırpıldı: {len(content)} → {len(truncated)} karakter "
-                f"(kalan {len(remaining_text)} karakter orijinal olarak korunacak)",
+                f"(heading/ayıraç bazlı kesim, kalan {len(remaining_text)} karakter orijinal korunacak)",
                 "enhancer"
             )
         else:
@@ -840,6 +1000,11 @@ class DocumentEnhancer:
             f"- {v.get('name', '')}: {v.get('detail', '')}" 
             for v in violations if v.get("status") in ("fail", "warning")
         ) or "Belirgin ihlal yok."
+        
+        # v3.3.0: Context overlap bilgisini prompt'a ekle
+        context_note = ""
+        if context_overlap:
+            context_note = f"\n\n**NOT:** Bu bölümün devamı aşağıdaki gibidir (sadece bağlam için, iyileştirmeye DAHİL ETMEYİN):\n{context_overlap}...\n"
         
         prompt = f"""Sen bir doküman optimize uzmanısın. Aşağıdaki doküman bölümünü RAG (Retrieval-Augmented Generation) sistemi için optimize et.
 
@@ -854,7 +1019,7 @@ class DocumentEnhancer:
 {violation_list}
 
 **Orijinal İçerik:**
-{truncated}
+{truncated}{context_note}
 
 **Yanıt Formatı (JSON):**
 {{
@@ -883,9 +1048,11 @@ class DocumentEnhancer:
         # JSON parse
         result = self._parse_llm_response(response, heading, content)
         
-        # v3.2.1: Kırpılan içeriği enhanced text'e ekle — veri kaybı önleme
+        # v3.3.0: Kırpılan içeriği enhanced text'e ekle — yumuşak geçiş
         if remaining_text:
-            result["enhanced_text"] = result.get("enhanced_text", "") + "\n" + remaining_text
+            enhanced_part = result.get("enhanced_text", "")
+            # Birleşim noktasında çift newline ile temiz geçiş sağla
+            result["enhanced_text"] = enhanced_part.rstrip() + "\n\n" + remaining_text.lstrip()
             result["explanation"] = (result.get("explanation", "") + 
                 f" (İlk {len(truncated)} karakter iyileştirildi, "
                 f"kalan {len(remaining_text)} karakter orijinal olarak korundu)")
@@ -1010,7 +1177,7 @@ class DocumentEnhancer:
         # PDF orijinalse: doğrudan PDF oluştur (docx ara adımı yok)
         if file_type.upper() in ("PDF", ".PDF"):
             try:
-                pdf_path = self._create_fresh_pdf(sections, original_name, session_id, original_images)
+                pdf_path = self._create_fresh_pdf(sections, original_name, session_id, original_images, original_content=original_content)
                 if pdf_path and os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
                     _enhanced_files[session_id] = pdf_path
                     log_system_event("INFO", f"Enhanced PDF oluşturuldu: {pdf_path}", "enhancer")
@@ -1177,7 +1344,7 @@ class DocumentEnhancer:
         
         return imgs_at_pos
     
-    def _create_fresh_pdf(self, sections: List[EnhancedSection], original_name: str, session_id: str, original_images: list = None) -> str:
+    def _create_fresh_pdf(self, sections: List[EnhancedSection], original_name: str, session_id: str, original_images: list = None, original_content: bytes = None) -> str:
         """
         fpdf2 ile doğrudan PDF oluştur.
         Saf Python — Word/COM/internet gerektirmez.
@@ -1210,6 +1377,36 @@ class DocumentEnhancer:
         
         pdf.set_font(font_name, size=11)
         
+        # v3.3.0 [C6]: Orijinal PDF'den font bilgisi çıkar (varsa)
+        original_body_size = 11  # Varsayılan
+        try:
+            import fitz  # PyMuPDF
+            if original_content:
+                orig_doc = fitz.open(stream=original_content, filetype="pdf")
+                font_sizes = []
+                # İlk 5 sayfa (performans) üzerinden font boyutlarını topla
+                for page_num in range(min(5, len(orig_doc))):
+                    page = orig_doc[page_num]
+                    blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE).get("blocks", [])
+                    for block in blocks:
+                        for line in block.get("lines", []):
+                            for span in line.get("spans", []):
+                                fs = span.get("size", 0)
+                                text = span.get("text", "").strip()
+                                if 8 <= fs <= 14 and len(text) > 20:
+                                    font_sizes.append(round(fs, 1))
+                orig_doc.close()
+                if font_sizes:
+                    # En sık kullanılan font boyutu = body text boyutu
+                    from collections import Counter
+                    original_body_size = Counter(font_sizes).most_common(1)[0][0]
+                    log_system_event("INFO", f"[C6] Orijinal PDF body font size: {original_body_size}pt", "enhancer")
+        except Exception as e:
+            log_warning(f"[C6] PDF font tespiti başarısız, varsayılan kullanılıyor: {e}", "enhancer")
+        
+        # Tespit edilen font boyutunu body text için kullan
+        pdf.set_font(font_name, size=original_body_size)
+        
         # Orijinal görselleri section + paragraf pozisyonuna eşleştir
         section_image_map = self._map_images_to_sections(sections, original_images)
         
@@ -1235,32 +1432,32 @@ class DocumentEnhancer:
                 # Alt-alt başlık (küçük bold)
                 heading_text = _clean_markdown(stripped[4:])
                 if has_bold:
-                    pdf.set_font(font_name, "B", 11)
+                    pdf.set_font(font_name, "B", original_body_size)
                 else:
-                    pdf.set_font(font_name, size=11)
+                    pdf.set_font(font_name, size=original_body_size)
                 pdf.multi_cell(0, 6, heading_text)
                 pdf.ln(1)
-                pdf.set_font(font_name, size=11)
+                pdf.set_font(font_name, size=original_body_size)
             elif stripped.startswith('## '):
                 # Alt başlık (orta bold)
                 heading_text = _clean_markdown(stripped[3:])
                 if has_bold:
-                    pdf.set_font(font_name, "B", 12)
+                    pdf.set_font(font_name, "B", original_body_size + 1)
                 else:
-                    pdf.set_font(font_name, size=12)
+                    pdf.set_font(font_name, size=original_body_size + 1)
                 pdf.multi_cell(0, 7, heading_text)
                 pdf.ln(2)
-                pdf.set_font(font_name, size=11)
+                pdf.set_font(font_name, size=original_body_size)
             elif stripped.startswith('# '):
                 # Ana başlık
                 heading_text = _clean_markdown(stripped[2:])
                 if has_bold:
-                    pdf.set_font(font_name, "B", 14)
+                    pdf.set_font(font_name, "B", original_body_size + 3)
                 else:
-                    pdf.set_font(font_name, size=14)
+                    pdf.set_font(font_name, size=original_body_size + 3)
                 pdf.multi_cell(0, 8, heading_text)
                 pdf.ln(3)
-                pdf.set_font(font_name, size=11)
+                pdf.set_font(font_name, size=original_body_size)
             elif stripped.startswith(('- ', '* ', '• ')):
                 # Madde işareti
                 bullet_text = _clean_markdown(stripped[2:])
@@ -1337,9 +1534,9 @@ class DocumentEnhancer:
             
             # Section başlığı
             if has_bold:
-                pdf.set_font(font_name, "B", 14)
+                pdf.set_font(font_name, "B", original_body_size + 3)
             else:
-                pdf.set_font(font_name, size=14)
+                pdf.set_font(font_name, size=original_body_size + 3)
             pdf.cell(0, 10, heading_text, new_x="LMARGIN", new_y="NEXT")
             pdf.ln(2)
             
@@ -1355,7 +1552,7 @@ class DocumentEnhancer:
             # Satırları ve görselleri sıralı render et
             visible_idx = 0
             if text:
-                pdf.set_font(font_name, size=11)
+                pdf.set_font(font_name, size=original_body_size)
                 for paragraph_text in lines:
                     _render_line(paragraph_text)
                     if paragraph_text.strip():

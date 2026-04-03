@@ -154,6 +154,49 @@
     font-size: 13px;
     font-weight: 500;
     margin-top: -8px;
+    transition: all 0.3s ease;
+}
+
+/* v3.3.0 [C5]: Enhancement Progress Bar */
+
+.enhancer-progress-bar-container {
+    width: 80%;
+    max-width: 400px;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 3px;
+    overflow: hidden;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.enhancer-progress-bar-container.active {
+    opacity: 1;
+}
+
+.enhancer-progress-bar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #3b82f6, #8b5cf6, #60a5fa);
+    background-size: 200% 100%;
+    border-radius: 3px;
+    transition: width 0.5s ease;
+    animation: enhancerProgressShimmer 2s linear infinite;
+}
+
+@keyframes enhancerProgressShimmer {
+    0% {
+        background-position: 200% 0;
+    }
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+.enhancer-progress-detail {
+    font-size: 12px;
+    color: var(--text-secondary, #a1a1aa);
+    min-height: 18px;
 }
 
 /* ─── SUMMARY CARDS ─── */

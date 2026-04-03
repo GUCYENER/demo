@@ -18,6 +18,7 @@ const DocumentEnhancerModal = (function () {
     let _currentSessionId = null;
     let _currentFileName = null;
     let _overlayEl = null;
+    let _progressListener = null;  // v3.3.0 [C5]: WebSocket progress listener reference
 
     // ─── API Base ───
     const API_BASE = window.API_BASE_URL || 'http://localhost:8002';
@@ -72,6 +73,12 @@ const DocumentEnhancerModal = (function () {
         if (_currentSessionId) {
             _cleanupSession(_currentSessionId);
             _currentSessionId = null;
+        }
+
+        // v3.3.0 [C5]: Progress listener temizle
+        if (_progressListener) {
+            window.removeEventListener('vyra:enhancement_progress', _progressListener);
+            _progressListener = null;
         }
     }
 
@@ -148,13 +155,41 @@ const DocumentEnhancerModal = (function () {
             <div class="enhancer-loading">
                 <div class="enhancer-loading-spinner"></div>
                 <div class="enhancer-loading-text">CatBoost analiz ve LLM iyileştirme süreci devam ediyor...</div>
-                <div class="enhancer-loading-step">${_escapeHtml(stepText)}</div>
+                <div class="enhancer-loading-step" id="enhancerProgressStep">${_escapeHtml(stepText)}</div>
+                <div class="enhancer-progress-bar-container" id="enhancerProgressBarContainer">
+                    <div class="enhancer-progress-bar" id="enhancerProgressBar"></div>
+                </div>
+                <div class="enhancer-progress-detail" id="enhancerProgressDetail"></div>
             </div>
         `;
 
         // Footer gizle
         const footer = document.getElementById('enhancerModalFooter');
         if (footer) footer.classList.add('hidden');
+
+        // v3.3.0 [C5]: WebSocket progress listener — canlı ilerleme
+        _progressListener = function (e) {
+            const { current, total, heading, status, percentage, message } = e.detail || {};
+            const stepEl = document.getElementById('enhancerProgressStep');
+            const barEl = document.getElementById('enhancerProgressBar');
+            const detailEl = document.getElementById('enhancerProgressDetail');
+            const barContainer = document.getElementById('enhancerProgressBarContainer');
+
+            if (stepEl && message) {
+                stepEl.textContent = message;
+            }
+            if (barEl && percentage != null) {
+                barEl.style.width = `${percentage}%`;
+            }
+            if (barContainer) {
+                barContainer.classList.add('active');
+            }
+            if (detailEl) {
+                const icon = status === 'processing' ? '⚡' : status === 'skipped' ? '✓' : '⚠';
+                detailEl.textContent = `${icon} ${current || 0}/${total || 0} bölüm işlendi`;
+            }
+        };
+        window.addEventListener('vyra:enhancement_progress', _progressListener);
     }
 
     // ─────────────────────────────────────────

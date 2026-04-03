@@ -215,6 +215,11 @@
                 handleRagUploadFailed(data);
                 break;
 
+            // === ENHANCEMENT PROGRESS (v3.3.0) ===
+            case 'enhancement_progress':
+                handleEnhancementProgress(data);
+                break;
+
             case 'error':
                 console.error('[NGSSAI-WS] Sunucu hatası:', data.message);
                 break;
@@ -528,6 +533,22 @@
         // Global event dispatch
         window.dispatchEvent(new CustomEvent('vyra:rag_upload_failed', {
             detail: { file_names: fileNames, failed_files: failedFiles, message }
+        }));
+    }
+
+    // === ENHANCEMENT PROGRESS HANDLER (v3.3.0) ===
+
+    /**
+     * v3.3.0 [C5]: Enhancement progress bildirimi handler'ı
+     * Doküman iyileştirme sırasında bölüm bazlı ilerleme gösterir.
+     */
+    function handleEnhancementProgress(data) {
+        const { current, total, heading, status, percentage, message } = data;
+        console.log(`[NGSSAI-WS] 📝 Enhancement progress: ${current}/${total} (${percentage}%) - ${status}`);
+
+        // Global event dispatch — DocumentEnhancerModal dinleyecek
+        window.dispatchEvent(new CustomEvent('vyra:enhancement_progress', {
+            detail: { current, total, heading, status, percentage, message }
         }));
     }
 

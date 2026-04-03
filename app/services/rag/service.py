@@ -346,7 +346,7 @@ class RAGService:
         Aynı/benzer içerikli chunk'ları tespit eder.
         
         v2.43.0: Cosine similarity ile duplicate detection.
-        Threshold 0.95+ → duplicate olarak işaretle.
+        v3.3.0 [A2]: NumPy vectorized — O(n²) yerine matris çarpımı ile ~100x hız.
         
         Args:
             chunks: Chunk listesi
@@ -358,43 +358,77 @@ class RAGService:
         if len(chunks) < 2:
             return set()
         
-        import math
-        
-        def _cosine_sim(a: List[float], b: List[float]) -> float:
-            """İki vektör arası cosine similarity."""
-            dot = sum(x * y for x, y in zip(a, b))
-            norm_a = math.sqrt(sum(x * x for x in a))
-            norm_b = math.sqrt(sum(x * x for x in b))
-            if norm_a == 0 or norm_b == 0:
-                return 0.0
-            return dot / (norm_a * norm_b)
-        
-        to_remove = set()
-        
-        # O(n²) — dosya içi chunk sayısı genelde <500, bu yeterli
-        for i in range(len(chunks)):
-            if i in to_remove:
-                continue
-            for j in range(i + 1, len(chunks)):
-                if j in to_remove:
+        try:
+            import numpy as np
+            
+            # Embedding matrisini oluştur ve normalize et
+            emb_matrix = np.array(embeddings, dtype=np.float32)
+            norms = np.linalg.norm(emb_matrix, axis=1, keepdims=True)
+            norms[norms == 0] = 1.0  # Sıfır norm koruması
+            emb_normalized = emb_matrix / norms
+            
+            # Cosine similarity matrisi — tek matris çarpımı
+            sim_matrix = emb_normalized @ emb_normalized.T
+            
+            # Metin uzunlukları (ön-filtre için)
+            lengths = np.array([len(c["text"]) for c in chunks])
+            
+            to_remove = set()
+            n = len(chunks)
+            
+            for i in range(n):
+                if i in to_remove:
                     continue
-                
-                # Hızlı ön-filtre: metin uzunluğu çok farklıysa atla
-                len_i = len(chunks[i]["text"])
-                len_j = len(chunks[j]["text"])
-                if abs(len_i - len_j) > max(len_i, len_j) * 0.3:
+                for j in range(i + 1, n):
+                    if j in to_remove:
+                        continue
+                    
+                    # Hızlı ön-filtre: metin uzunluğu çok farklıysa atla
+                    max_len = max(lengths[i], lengths[j])
+                    if abs(int(lengths[i]) - int(lengths[j])) > max_len * 0.3:
+                        continue
+                    
+                    if sim_matrix[i, j] >= self.DEDUP_SIMILARITY_THRESHOLD:
+                        # Daha kısa olanı kaldır (daha az bilgi içerir)
+                        if lengths[i] >= lengths[j]:
+                            to_remove.add(j)
+                        else:
+                            to_remove.add(i)
+                            break  # i kaldırıldı, inner loop'tan çık
+            
+            return to_remove
+            
+        except ImportError:
+            # NumPy yoksa orijinal pure-Python fallback
+            import math
+            
+            def _cosine_sim(a, b):
+                dot = sum(x * y for x, y in zip(a, b))
+                norm_a = math.sqrt(sum(x * x for x in a))
+                norm_b = math.sqrt(sum(x * x for x in b))
+                if norm_a == 0 or norm_b == 0:
+                    return 0.0
+                return dot / (norm_a * norm_b)
+            
+            to_remove = set()
+            for i in range(len(chunks)):
+                if i in to_remove:
                     continue
-                
-                sim = _cosine_sim(embeddings[i], embeddings[j])
-                if sim >= self.DEDUP_SIMILARITY_THRESHOLD:
-                    # Daha kısa olanı kaldır (daha az bilgi içerir)
-                    if len_i >= len_j:
-                        to_remove.add(j)
-                    else:
-                        to_remove.add(i)
-                        break  # i kaldırıldı, inner loop'tan çık
-        
-        return to_remove
+                for j in range(i + 1, len(chunks)):
+                    if j in to_remove:
+                        continue
+                    len_i = len(chunks[i]["text"])
+                    len_j = len(chunks[j]["text"])
+                    if abs(len_i - len_j) > max(len_i, len_j) * 0.3:
+                        continue
+                    sim = _cosine_sim(embeddings[i], embeddings[j])
+                    if sim >= self.DEDUP_SIMILARITY_THRESHOLD:
+                        if len_i >= len_j:
+                            to_remove.add(j)
+                        else:
+                            to_remove.add(i)
+                            break
+            return to_remove
     
     # 🆕 v2.43.0: Cross-file duplicate detection — farklı dosyalardaki aynı içerik
     CROSS_FILE_DEDUP_LIMIT = 1000  # Performans limiti

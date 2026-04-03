@@ -15,6 +15,9 @@ from typing import Dict, Any, List, BinaryIO
 
 logger = logging.getLogger("vyra")
 
+# v3.3.0 [B3]: Maturity analiz sonuçları cache'i (file hash bazlı, 10 dk TTL)
+_maturity_cache: dict = {}
+
 
 class MaturityRule:
     """Tek bir olgunluk kuralı"""
@@ -26,9 +29,10 @@ class MaturityRule:
         self.score = 100  # Varsayılan: tam puan
         self.status = "pass"  # pass / warning / fail
         self.detail = ""
+        self.recommendation = ""  # v3.3.0 [B4]: Violation için çözüm önerisi
     
     def to_dict(self):
-        return {
+        result = {
             "name": self.name,
             "category": self.category,
             "description": self.description,
@@ -36,6 +40,9 @@ class MaturityRule:
             "status": self.status,
             "detail": self.detail
         }
+        if self.recommendation:
+            result["recommendation"] = self.recommendation
+        return result
 
 
 def analyze_pdf(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
@@ -805,13 +812,26 @@ def analyze_pptx(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
         
         total_slides = len(prs.slides)
         total_text_chars = 0
+        total_notes_chars = 0
+        total_images = 0
+        total_tables = 0
         
         for slide in prs.slides:
             for shape in slide.shapes:
                 if shape.has_text_frame:
                     total_text_chars += len(shape.text_frame.text)
+                # Görsel sayısı
+                if shape.shape_type is not None and shape.shape_type == 13:  # Picture
+                    total_images += 1
+                # Tablo sayısı
+                if shape.has_table:
+                    total_tables += 1
+            # Speaker notes
+            if slide.has_notes_slide and slide.notes_slide.notes_text_frame:
+                notes_text = slide.notes_slide.notes_text_frame.text or ""
+                total_notes_chars += len(notes_text.strip())
         
-        # Metin yoğunluğu
+        # ─── KURAL 1: Metin yoğunluğu ───
         rule = MaturityRule("Metin İçeriği", "Metin", "Slaytlarda yeterli metin olmalı")
         chars_per_slide = total_text_chars / max(total_slides, 1)
         if chars_per_slide < 50:
@@ -827,7 +847,7 @@ def analyze_pptx(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
             rule.detail = f"Slayt başına {chars_per_slide:.0f} karakter. Yeterli."
         rules.append(rule)
         
-        # Yapı kontrolü
+        # ─── KURAL 2: Yapı kontrolü ───
         rule = MaturityRule("Slayt Başlıkları", "Yapı", "Her slaytın bir başlığı olmalı")
         titled_slides = sum(1 for s in prs.slides if s.shapes.title and s.shapes.title.text.strip())
         ratio = titled_slides / max(total_slides, 1)
@@ -844,6 +864,65 @@ def analyze_pptx(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
             rule.detail = f"Çoğu slaytın başlığı yok ({titled_slides}/{total_slides})."
         rules.append(rule)
         
+        # ─── KURAL 3: Speaker Notes ─── (v3.3.0)
+        rule = MaturityRule("Speaker Notes", "İçerik", "Slayt notları önemli bağlam sağlar, RAG kalitesini artırır")
+        if total_notes_chars > 100:
+            rule.score = 100
+            rule.detail = f"Toplam {total_notes_chars} karakter speaker notes var. RAG için zengin bağlam."
+        elif total_notes_chars > 0:
+            rule.score = 75
+            rule.detail = f"Az miktarda speaker notes ({total_notes_chars} karakter). Daha fazla not eklenmesi önerilir."
+        else:
+            rule.score = 50
+            rule.status = "warning"
+            rule.detail = "Speaker notes boş. Slayt notlarına açıklayıcı bilgiler eklemek RAG kalitesini artırır."
+        rules.append(rule)
+        
+        # ─── KURAL 4: Görsel/Metin Oranı ─── (v3.3.0)
+        rule = MaturityRule("Görsel/Metin Oranı", "İçerik", "Görseller RAG tarafından işlenebilir ama metin daha etkili")
+        if total_images > 0 and total_text_chars > 0:
+            img_per_slide = total_images / max(total_slides, 1)
+            if img_per_slide > 2 and chars_per_slide < 100:
+                rule.score = 40
+                rule.status = "fail"
+                rule.detail = f"{total_images} görsel, slayt başına {chars_per_slide:.0f} karakter. Çok görsel ağırlıklı — metin bilgisi yetersiz."
+            elif img_per_slide > 1.5:
+                rule.score = 70
+                rule.status = "warning"
+                rule.detail = f"{total_images} görsel var. Görsellerdeki bilgileri alt metin olarak da ekleyin."
+            else:
+                rule.score = 100
+                rule.detail = f"Görsel/metin dengesi uygun ({total_images} görsel)."
+        else:
+            rule.score = 100
+            rule.detail = "Sorunsuz."
+        rules.append(rule)
+        
+        # ─── KURAL 5: Tablo İçeriği ─── (v3.3.0)
+        rule = MaturityRule("Tablo İçeriği", "Yapı", "Tablolar otomatik metin olarak çıkarılır")
+        if total_tables > 0:
+            rule.score = 90
+            rule.detail = f"{total_tables} tablo tespit edildi. Tablolar metin olarak çıkarılacaktır."
+        else:
+            rule.score = 100
+            rule.detail = "Tablo içeriği tespit edilmedi."
+        rules.append(rule)
+        
+        # ─── KURAL 6: Slayt Sayısı ─── (v3.3.0)
+        rule = MaturityRule("Slayt Sayısı", "Performans", "Yeterli slayt sayısı olmalı")
+        if total_slides < 3:
+            rule.score = 40
+            rule.status = "warning"
+            rule.detail = f"Sadece {total_slides} slayt var. Çok az içerik — RAG faydasız olabilir."
+        elif total_slides > 200:
+            rule.score = 65
+            rule.status = "warning"
+            rule.detail = f"{total_slides} slayt var. Çok büyük sunum — işleme süresi uzun olabilir."
+        else:
+            rule.score = 100
+            rule.detail = f"{total_slides} slayt. Normal boyut."
+        rules.append(rule)
+        
     except Exception as e:
         rule = MaturityRule("Dosya Okunabilirlik", "Yapı", "Dosya okunabilir olmalı")
         rule.score = 50
@@ -857,7 +936,36 @@ def analyze_pptx(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
 def analyze_file(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
     """
     Ana analiz fonksiyonu — dosya türüne göre uygun analizi çağırır.
+    v3.3.0 [B3]: MD5 hash bazlı cache (10 dk TTL) — aynı dosyanın tekrar analizi önlenir.
     """
+    import hashlib
+    import time
+    
+    # Cache kontrolü — dosyanın ilk 1MB'ının MD5 hash'i
+    file_obj.seek(0)
+    first_mb = file_obj.read(1024 * 1024)
+    file_obj.seek(0)
+    
+    file_hash = hashlib.md5(first_mb).hexdigest()
+    cache_key = f"{file_hash}_{file_name}"
+    
+    now = time.time()
+    CACHE_TTL = 600  # 10 dakika
+    
+    # Cache'den kontrol
+    if cache_key in _maturity_cache:
+        cached_result, cached_at = _maturity_cache[cache_key]
+        if now - cached_at < CACHE_TTL:
+            logger.debug("[MaturityAnalyzer] Cache hit: %s (hash=%s)", file_name, file_hash[:8])
+            return cached_result
+        else:
+            del _maturity_cache[cache_key]
+    
+    # Cache temizliği (TTL geçmiş girişleri sil)
+    expired_keys = [k for k, (_, t) in _maturity_cache.items() if now - t >= CACHE_TTL]
+    for k in expired_keys:
+        del _maturity_cache[k]
+    
     ext = file_name.rsplit('.', 1)[-1].lower() if '.' in file_name else ''
     
     analyzers = {
@@ -884,7 +992,10 @@ def analyze_file(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
         }
     
     try:
-        return analyzer(file_obj, file_name)
+        result = analyzer(file_obj, file_name)
+        # Sonucu cache'e ekle
+        _maturity_cache[cache_key] = (result, now)
+        return result
     except Exception:
         logger.error("[MaturityAnalyzer] Analiz hatası: %s", file_name, exc_info=True)
         return {

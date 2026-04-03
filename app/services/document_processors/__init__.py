@@ -7,6 +7,7 @@ from .docx_processor import DOCXProcessor
 from .excel_processor import ExcelProcessor
 from .pptx_processor import PPTXProcessor
 from .txt_processor import TXTProcessor
+from .csv_processor import CSVProcessor
 
 # Processor Registry - Dosya uzantısına göre işleyici seçimi
 PROCESSOR_REGISTRY = {
@@ -18,6 +19,7 @@ PROCESSOR_REGISTRY = {
     '.pptx': PPTXProcessor,
     '.ppt': PPTXProcessor,
     '.txt': TXTProcessor,
+    '.csv': CSVProcessor,
 }
 
 SUPPORTED_EXTENSIONS = list(PROCESSOR_REGISTRY.keys())

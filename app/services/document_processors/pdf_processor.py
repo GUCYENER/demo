@@ -692,10 +692,11 @@ class PDFProcessor(BaseDocumentProcessor):
         
         return sections
     
-    def _split_large_section(self, text: str, max_size: int = 2000) -> List[str]:
+    def _split_large_section(self, text: str, max_size: int = 2000, overlap_size: int = 100) -> List[str]:
         """
         Büyük section'ları semantic bölümlere ayırır.
         Paragraf sınırlarında veya cümle sonlarında böler.
+        v3.3.0: Chunk'lar arası overlap ile bağlam korunması.
         v2.38.0: Türkçe-uyumlu cümle bölme (kısaltmaları korur).
         """
         if len(text) <= max_size:
@@ -719,20 +720,42 @@ class PDFProcessor(BaseDocumentProcessor):
                 if current_chunk:
                     chunks.append(current_chunk)
                 
+                # v3.3.0: Önceki chunk'ın son overlap_size karakterini overlap olarak al
+                overlap_prefix = ""
+                if chunks and overlap_size > 0:
+                    prev_chunk = chunks[-1]
+                    # Kelime sınırından overlap al
+                    overlap_start = max(0, len(prev_chunk) - overlap_size)
+                    overlap_candidate = prev_chunk[overlap_start:]
+                    # İlk boşluktan itibaren al (kelime ortasından bölme)
+                    space_pos = overlap_candidate.find(' ')
+                    if space_pos > 0:
+                        overlap_prefix = overlap_candidate[space_pos + 1:]
+                    else:
+                        overlap_prefix = overlap_candidate
+                
                 # Paragraf tek başına çok büyükse, cümlelere böl
                 if len(para) > max_size:
                     # Türkçe-uyumlu cümle bölme: .!? sonrası + büyük harf başlangıcı
                     sentences = re.split(r'(?<=[.!?])\s+(?=[A-ZÇĞİÖŞÜa-zçğıöşü])', para)
-                    current_chunk = ""
-                    for sentence in sentences:
+                    current_chunk = (overlap_prefix + " " + sentences[0]).strip() if overlap_prefix else sentences[0]
+                    for sentence in sentences[1:]:
                         if len(current_chunk) + len(sentence) + 1 > max_size:
                             if current_chunk:
                                 chunks.append(current_chunk)
-                            current_chunk = sentence
+                            # Overlap al
+                            overlap_prefix = ""
+                            if chunks and overlap_size > 0:
+                                prev = chunks[-1]
+                                ov_start = max(0, len(prev) - overlap_size)
+                                ov_cand = prev[ov_start:]
+                                sp = ov_cand.find(' ')
+                                overlap_prefix = ov_cand[sp + 1:] if sp > 0 else ov_cand
+                            current_chunk = (overlap_prefix + " " + sentence).strip() if overlap_prefix else sentence
                         else:
                             current_chunk = (current_chunk + " " + sentence).strip()
                 else:
-                    current_chunk = para
+                    current_chunk = (overlap_prefix + " " + para).strip() if overlap_prefix else para
             else:
                 current_chunk = (current_chunk + "\n\n" + para).strip()
         
