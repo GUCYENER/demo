@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.3.1"  # Anlık eğitim kriterden bağımsız, arka plan kontrol, notification
+    APP_VERSION: str = "3.3.2"  # CL interval fix, sample count DB, answer stats, responsive modal
 
     # Frontend & API prefix
     api_prefix: str = "/api"

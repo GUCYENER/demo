@@ -353,18 +353,28 @@ class MLJobRunnerMixin:
         return history
     
     def get_current_job_status(self) -> Optional[Dict[str, Any]]:
-        """Çalışan job durumunu al"""
-        if not self._current_job_id:
-            return None
-        
+        """Çalışan job durumunu al — v3.3.2: type bilgisi + DB fallback"""
         try:
             with get_db_context() as conn:
                 with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT id, job_name, status, start_time
-                        FROM ml_training_jobs
-                        WHERE id = %s
-                    """, (self._current_job_id,))
+                    # Önce kendi job_id varsa onu kontrol et
+                    target_id = self._current_job_id
+                    
+                    if target_id:
+                        cur.execute("""
+                            SELECT id, job_name, job_type, status, start_time
+                            FROM ml_training_jobs
+                            WHERE id = %s
+                        """, (target_id,))
+                    else:
+                        # Kendi job_id yoksa DB'den running job bul (CL veya scheduled)
+                        cur.execute("""
+                            SELECT id, job_name, job_type, status, start_time
+                            FROM ml_training_jobs
+                            WHERE status = 'running'
+                            ORDER BY id DESC
+                            LIMIT 1
+                        """)
                     
                     row = cur.fetchone()
                     if row:
@@ -375,6 +385,7 @@ class MLJobRunnerMixin:
                         return {
                             "job_id": row["id"],
                             "name": row["job_name"],
+                            "type": row["job_type"],
                             "status": row["status"],
                             "elapsed_seconds": elapsed
                         }

@@ -192,7 +192,16 @@ window.MLTrainingModule = (function () {
         try {
             const statusCheck = await apiCall('/ml/training/status');
             if (statusCheck.is_training) {
-                toast('warning', 'Arka planda otomatik bir eğitim süreci çalışıyor. Manuel eğitim başlatılamaz.');
+                const jobInfo = statusCheck.current_job;
+                const jobType = jobInfo?.type || 'unknown';
+                const jobName = jobInfo?.name || '';
+                let msg = 'Arka planda bir eğitim süreci zaten çalışıyor.';
+                if (jobType === 'continuous') {
+                    msg = 'Sürekli Öğrenme (CL) süreci çalışıyor. Manuel eğitim başlatılamaz — tamamlanmasını bekleyin.';
+                } else if (jobType === 'scheduled') {
+                    msg = 'Otomatik eğitim süreci çalışıyor. Manuel eğitim başlatılamaz — tamamlanmasını bekleyin.';
+                }
+                toast('warning', msg);
                 isTraining = true;
                 updateTrainingButtonState(true);
                 startTrainingPoll();
@@ -216,8 +225,9 @@ window.MLTrainingModule = (function () {
                 toast('success', 'Model eğitimi arka planda başlatıldı');
                 updateTrainingButtonState(true);
                 startTrainingPoll();
-                // v3.3.1: Eğitim başladığında geçmişi hemen yenile — "Çalışıyor" statüsüyle görünsün
-                loadHistory();
+                // v3.3.2: Eğitim başladığında geçmişi 1.5s gecikmeyle yenile
+                // — Job DB'de oluşana kadar süre tanı
+                setTimeout(() => loadHistory(), 1500);
             } else {
                 toast('error', result.error || 'Eğitim başlatılamadı');
                 await loadStats();
