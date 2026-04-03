@@ -944,14 +944,23 @@ window.MLTrainingModule = (function () {
                 <i class="fa-solid fa-filter-circle-xmark" style="margin-right: 6px;"></i>Filtre kriterlerine uygun örnek bulunamadı
             </td></tr>`;
         } else {
+            // v3.3.1: _currentJobStatus global'den oku (showJobSamples set eder)
+            const currentJobStatus = window._vyraCurrentJobStatus || 'unknown';
             tbody.innerHTML = sorted.map((s, i) => {
                 const relIcon = s.relevance === 1 ? '✅' : '❌';
                 const rowNum = offset + i + 1;
-                const showAnswerBtn = s.has_learned_answer
-                    ? `<button class="sample-answer-btn sample-answer-ready" data-query="${escapeHtml(s.query)}" onclick="MLTrainingModule.showSampleAnswer(this)" title="Öğrenilmiş cevabı göster"><i class="fa-solid fa-comment-dots"></i></button>`
-                    : (s.relevance === 1 && s.score >= 0.70)
-                        ? `<span class="sample-answer-pending" title="Cevap henüz üretilmedi"><i class="fa-solid fa-hourglass-half"></i></span>`
-                        : '<span class="sample-answer-na">—</span>';
+                let showAnswerBtn;
+                if (s.has_learned_answer) {
+                    showAnswerBtn = `<button class="sample-answer-btn sample-answer-ready" data-query="${escapeHtml(s.query)}" onclick="MLTrainingModule.showSampleAnswer(this)" title="Öğrenilmiş cevabı göster"><i class="fa-solid fa-comment-dots"></i></button>`;
+                } else if (s.relevance === 1 && s.score >= 0.70) {
+                    if (currentJobStatus === 'running') {
+                        showAnswerBtn = `<span class="sample-answer-pending" title="Cevap üretimi devam ediyor..."><i class="fa-solid fa-hourglass-half"></i></span>`;
+                    } else {
+                        showAnswerBtn = `<span class="sample-answer-failed" title="Cevap üretilemedi (doğrulama başarısız)"><i class="fa-solid fa-circle-xmark"></i></span>`;
+                    }
+                } else {
+                    showAnswerBtn = '<span class="sample-answer-na">—</span>';
+                }
                 return `<tr>
                     <td class="sample-num">${rowNum}</td>
                     <td class="sample-query">${escapeHtml(s.query)}</td>
@@ -1094,6 +1103,8 @@ window.MLTrainingModule = (function () {
             const samples = data.samples || [];
             const total = data.total || 0;
             const totalPages = Math.ceil(total / SAMPLES_PER_PAGE);
+            const answerStats = data.answer_stats || {};
+            const jobStatus = data.job_status || 'unknown';
 
             if (samples.length === 0 && page === 1) {
                 if (window.VyraModal) {
@@ -1114,6 +1125,8 @@ window.MLTrainingModule = (function () {
 
             // Sayfadaki datayı sakla (client-side filtre/sıralama için)
             _samplesPageData = samples;
+            // v3.3.1: Job status'unu global'e sakla (_renderSamplesTable erişimi için)
+            window._vyraCurrentJobStatus = jobStatus;
 
             // Intent benzersiz listesini çıkar (filtre dropdown için)
             const uniqueIntents = [...new Set(samples.map(s => s.intent).filter(Boolean))].sort();
@@ -1121,11 +1134,19 @@ window.MLTrainingModule = (function () {
             const rows = samples.map((s, i) => {
                 const relIcon = s.relevance === 1 ? '✅' : '❌';
                 const rowNum = offset + i + 1;
-                const showAnswerBtn = s.has_learned_answer
-                    ? `<button class="sample-answer-btn sample-answer-ready" data-query="${escapeHtml(s.query)}" onclick="MLTrainingModule.showSampleAnswer(this)" title="Öğrenilmiş cevabı göster"><i class="fa-solid fa-comment-dots"></i></button>`
-                    : (s.relevance === 1 && s.score >= 0.70)
-                        ? `<span class="sample-answer-pending" title="Cevap henüz üretilmedi"><i class="fa-solid fa-hourglass-half"></i></span>`
-                        : '<span class="sample-answer-na">—</span>';
+                let showAnswerBtn;
+                if (s.has_learned_answer) {
+                    showAnswerBtn = `<button class="sample-answer-btn sample-answer-ready" data-query="${escapeHtml(s.query)}" onclick="MLTrainingModule.showSampleAnswer(this)" title="Öğrenilmiş cevabı göster"><i class="fa-solid fa-comment-dots"></i></button>`;
+                } else if (s.relevance === 1 && s.score >= 0.70) {
+                    // v3.3.1: Job bittiğinde kum saati yerine ❌ göster
+                    if (jobStatus === 'running') {
+                        showAnswerBtn = `<span class="sample-answer-pending" title="Cevap üretimi devam ediyor..."><i class="fa-solid fa-hourglass-half"></i></span>`;
+                    } else {
+                        showAnswerBtn = `<span class="sample-answer-failed" title="Cevap üretilemedi (doğrulama başarısız)"><i class="fa-solid fa-circle-xmark"></i></span>`;
+                    }
+                } else {
+                    showAnswerBtn = '<span class="sample-answer-na">—</span>';
+                }
                 return `<tr>
                     <td class="sample-num">${rowNum}</td>
                     <td class="sample-query">${escapeHtml(s.query)}</td>
@@ -1214,6 +1235,20 @@ window.MLTrainingModule = (function () {
                     <div class="samples-summary">
                         <span>Toplam: <strong>${total}</strong> örnek</span>
                         <span>Gösterilen: <strong>${offset + 1}-${offset + samples.length}</strong></span>
+                    </div>
+                    <div class="samples-answer-stats">
+                        <span class="answer-stat-badge answer-stat-generated" title="Cevabı başarıyla üretilmiş">
+                            <i class="fa-solid fa-comment-dots"></i> Üretilen: <strong>${answerStats.generated || 0}</strong>
+                        </span>
+                        ${answerStats.pending > 0 ? `<span class="answer-stat-badge answer-stat-pending" title="Cevap üretimi devam ediyor">
+                            <i class="fa-solid fa-hourglass-half"></i> Bekleyen: <strong>${answerStats.pending}</strong>
+                        </span>` : ''}
+                        ${answerStats.failed > 0 ? `<span class="answer-stat-badge answer-stat-failed" title="Cevap üretilemedi (doğrulama başarısız veya LLM hatası)">
+                            <i class="fa-solid fa-circle-xmark"></i> Başarısız: <strong>${answerStats.failed}</strong>
+                        </span>` : ''}
+                        <span class="answer-stat-badge answer-stat-na" title="Negatif eşleşme veya düşük skor — cevap üretilmez">
+                            <i class="fa-solid fa-minus-circle"></i> Uygun Değil: <strong>${answerStats.not_eligible || 0}</strong>
+                        </span>
                     </div>
                     ${filterHtml}
                     <div class="samples-table-wrapper">

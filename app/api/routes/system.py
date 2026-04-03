@@ -632,6 +632,32 @@ async def get_training_samples(
                 )
                 total = cur.fetchone()["total"]
                 
+                # v3.3.1: Cevap üretim istatistikleri (header badge'leri için)
+                cur.execute("""
+                    SELECT 
+                        COUNT(*) FILTER (
+                            WHERE EXISTS(SELECT 1 FROM learned_answers la WHERE LOWER(TRIM(la.question)) = LOWER(TRIM(mts.query)))
+                        ) AS generated,
+                        COUNT(*) FILTER (
+                            WHERE mts.relevance_label = 1 AND mts.score >= 0.70
+                            AND NOT EXISTS(SELECT 1 FROM learned_answers la WHERE LOWER(TRIM(la.question)) = LOWER(TRIM(mts.query)))
+                        ) AS eligible_no_answer,
+                        COUNT(*) FILTER (
+                            WHERE mts.relevance_label != 1 OR mts.score < 0.70
+                        ) AS not_eligible
+                    FROM ml_training_samples mts
+                    WHERE mts.job_id = %s
+                """, (job_id,))
+                stats_row = cur.fetchone()
+                
+                # Job durumunu da al (running/completed/failed)
+                cur.execute(
+                    "SELECT status FROM ml_training_jobs WHERE id = %s",
+                    (job_id,)
+                )
+                job_row = cur.fetchone()
+                job_status = job_row["status"] if job_row else "unknown"
+                
                 # Sayfalı veri — EXISTS subquery ile learned_answers varlık kontrolü
                 # NOT: LEFT JOIN yerine EXISTS kullanıyoruz, aynı soruya birden 
                 # fazla cevap kaydedilmişse duplicate row döndürme riskini önler.
@@ -667,7 +693,14 @@ async def get_training_samples(
             "job_id": job_id,
             "offset": offset,
             "limit": limit,
-            "has_next": (offset + limit) < total
+            "has_next": (offset + limit) < total,
+            "job_status": job_status,
+            "answer_stats": {
+                "generated": stats_row["generated"],
+                "pending": stats_row["eligible_no_answer"] if job_status == "running" else 0,
+                "failed": stats_row["eligible_no_answer"] if job_status != "running" else 0,
+                "not_eligible": stats_row["not_eligible"]
+            }
         }
     
     except Exception as e:
