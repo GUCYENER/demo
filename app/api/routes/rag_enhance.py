@@ -400,7 +400,7 @@ async def upload_enhanced_to_rag(
                     SELECT doc_org.org_id
                     FROM document_organizations doc_org
                     JOIN uploaded_files f ON doc_org.file_id = f.id
-                    WHERE f.file_name = %s
+                    WHERE f.file_name = %s AND f.is_active = TRUE
                     """,
                     (del_name,)
                 )
@@ -408,11 +408,27 @@ async def upload_enhanced_to_rag(
                     if org_row["org_id"] not in saved_org_ids:
                         saved_org_ids.append(org_row["org_id"])
                 
+                # Eski versiyonların chunk'larını ve soft-delete
                 cur.execute(
-                    "DELETE FROM rag_chunks WHERE file_id IN (SELECT id FROM uploaded_files WHERE file_name = %s)",
+                    "DELETE FROM rag_chunks WHERE file_id IN (SELECT id FROM uploaded_files WHERE file_name = %s AND is_active = TRUE)",
                     (del_name,)
                 )
-                cur.execute("DELETE FROM uploaded_files WHERE file_name = %s", (del_name,))
+                cur.execute(
+                    "UPDATE uploaded_files SET is_active = FALSE WHERE file_name = %s AND is_active = TRUE",
+                    (del_name,)
+                )
+            
+            # Versiyon numarasını hesapla
+            cur.execute(
+                "SELECT MAX(file_version) as max_ver FROM uploaded_files WHERE file_name = %s",
+                (upload_name,)
+            )
+            ver_row = cur.fetchone()
+            next_version = (ver_row["max_ver"] or 0) + 1 if ver_row and ver_row["max_ver"] else 1
+            
+            # Dosya hash'i (bütünlük kontrolü)
+            import hashlib as _hashlib
+            file_hash = _hashlib.md5(file_content_bytes[:1024*1024]).hexdigest()
             
             # Dosyayı PostgreSQL'e kaydet (maturity_score ve status dahil)
             # v3.3.0 [B1]: Maturity skoru — iyileştirilmiş metin üzerinden hesapla
@@ -450,15 +466,17 @@ async def upload_enhanced_to_rag(
             
             cur.execute(
                 """
-                INSERT INTO uploaded_files (file_name, file_type, file_size_bytes, file_content, mime_type, uploaded_by, maturity_score, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, 'completed')
+                INSERT INTO uploaded_files (file_name, file_type, file_size_bytes, file_content, mime_type, uploaded_by, maturity_score, status, file_version, is_active, file_hash)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'completed', %s, TRUE, %s)
                 RETURNING id
                 """,
                 (
                     upload_name, upload_ext, file_size, file_content_bytes,
                     upload_mime,
                     current_user["id"],
-                    m_score
+                    m_score,
+                    next_version,
+                    file_hash
                 ),
             )
             file_id = cur.fetchone()["id"]
@@ -710,7 +728,7 @@ def _detect_file_type(file_name: str) -> str:
         '.pdf': 'PDF', '.docx': 'DOCX', '.doc': 'DOCX',
         '.xlsx': 'XLSX', '.xls': 'XLSX',
         '.pptx': 'PPTX', '.ppt': 'PPTX',
-        '.txt': 'TXT', '.csv': 'TXT'
+        '.txt': 'TXT', '.csv': 'CSV'
     }
     return type_map.get(ext, 'TXT')
 

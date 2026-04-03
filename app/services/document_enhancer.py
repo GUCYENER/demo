@@ -216,6 +216,8 @@ class DocumentEnhancer:
                 sections = self._extract_xlsx_sections(file_obj)
             elif file_type == "PPTX":
                 sections = self._extract_pptx_sections(file_obj)
+            elif file_type == "CSV":
+                sections = self._extract_csv_sections(file_obj)
             elif file_type == "TXT":
                 sections = self._extract_txt_sections(file_obj)
             else:
@@ -405,6 +407,104 @@ class DocumentEnhancer:
                     })
                     global_idx += 1
                     global_row_counter += len(block)
+        
+        return sections
+    
+    def _extract_csv_sections(self, file_obj: BinaryIO) -> List[Dict[str, Any]]:
+        """
+        CSV bölümlerini çıkar — v3.3.0: Satır bazlı bölümleme.
+        CSVProcessor mantığıyla tutarlı: delimiter tespiti, header detection.
+        """
+        import csv as _csv
+        
+        file_obj.seek(0)
+        raw = file_obj.read()
+        
+        # Encoding tespiti
+        text = None
+        try:
+            from charset_normalizer import from_bytes
+            result = from_bytes(raw).best()
+            if result and result.encoding:
+                text = str(result)
+        except (ImportError, Exception):
+            pass
+        
+        if text is None:
+            for enc in ['utf-8', 'utf-8-sig', 'cp1254', 'iso-8859-9', 'latin-1']:
+                try:
+                    text = raw.decode(enc)
+                    break
+                except (UnicodeDecodeError, UnicodeError):
+                    continue
+            if text is None:
+                text = raw.decode('utf-8', errors='replace')
+        
+        if not text or not text.strip():
+            return []
+        
+        # Delimiter tespiti
+        try:
+            sample = "\n".join(text.split("\n")[:10])
+            dialect = _csv.Sniffer().sniff(sample, delimiters=',;\t|')
+            delimiter = dialect.delimiter
+        except _csv.Error:
+            counts = {',': text.count(','), ';': text.count(';'), '\t': text.count('\t')}
+            delimiter = max(counts, key=counts.get)
+        
+        # CSV parse
+        reader = _csv.reader(io.StringIO(text), delimiter=delimiter)
+        all_rows = list(reader)
+        
+        if not all_rows:
+            return []
+        
+        # Header tespiti
+        has_header = False
+        if len(all_rows) >= 2:
+            first = all_rows[0]
+            non_empty = [c for c in first if c.strip()]
+            if non_empty and len(non_empty) >= 2:
+                all_text = all(not c.strip().replace('.', '').replace(',', '').isdigit() for c in non_empty)
+                all_short = all(len(c) < 50 for c in non_empty)
+                all_unique = len(set(c.strip().lower() for c in non_empty)) == len(non_empty)
+                has_header = all_text and all_short and all_unique
+        
+        header_row = all_rows[0] if has_header else None
+        data_rows = all_rows[1:] if has_header else all_rows
+        header_text = " | ".join(c.strip() for c in header_row if c.strip()) if header_row else ""
+        
+        # Bölümlere ayır (50 satır/bölüm)
+        MAX_ROWS_PER_SECTION = 50
+        sections = []
+        
+        for i in range(0, len(data_rows), MAX_ROWS_PER_SECTION):
+            batch = data_rows[i:i + MAX_ROWS_PER_SECTION]
+            row_texts = []
+            for row in batch:
+                row_text = " | ".join(c.strip() for c in row if c.strip())
+                if row_text:
+                    row_texts.append(row_text)
+            
+            if not row_texts:
+                continue
+            
+            block_text = ""
+            if header_text:
+                block_text = f"[Başlıklar: {header_text}]\n"
+            block_text += "\n".join(row_texts)
+            
+            section_heading = header_text or f"CSV Veri Bloğu {len(sections) + 1}"
+            if len(sections) > 0 or i > 0:
+                section_heading = f"{section_heading} — Bölüm {len(sections) + 1}"
+            
+            sections.append({
+                "heading": section_heading,
+                "content": block_text,
+                "index": len(sections),
+                "para_start": i,
+                "para_end": i + len(row_texts) - 1
+            })
         
         return sections
     
