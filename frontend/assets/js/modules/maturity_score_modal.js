@@ -39,7 +39,7 @@ const MaturityScoreModal = {
                             <button class="maturity-btn maturity-btn-violations" id="maturity-btn-violations">
                                 <i class="fas fa-exclamation-triangle"></i> İhlal Raporu
                             </button>
-                            <button class="maturity-btn maturity-btn-enhance" id="maturity-btn-enhance" style="display:none">
+                            <button class="maturity-btn maturity-btn-enhance hidden" id="maturity-btn-enhance">
                                 <i class="fas fa-magic"></i> İyileştir
                             </button>
                         </div>
@@ -74,6 +74,11 @@ const MaturityScoreModal = {
                 this.close();
             }
         });
+
+        // v3.2.1: Overlay tıklama koruması — modalın dışına tıklayınca kapanMAZ
+        // Global kural: "Overlay'e tıklayınca pencere KAPANMAMALIDIR"
+        // EventListener sadece modalIn kendisinde stopPropagation ile engelleniyor
+        // Overlay click yok — sadece X ve İptal butonu kapatır
 
         // İptal butonu
         document.getElementById('maturity-btn-cancel').addEventListener('click', () => this.close());
@@ -131,12 +136,18 @@ const MaturityScoreModal = {
             const formData = new FormData();
             files.forEach(file => formData.append('files', file));
 
+            // v3.2.1: Fetch timeout — büyük dosyalarda sonsuz spinner önlenir
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 saniye
+
             const token = localStorage.getItem('access_token');
             const response = await fetch(`${this.API_BASE}/rag/analyze-maturity`, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${token}` },
-                body: formData
+                body: formData,
+                signal: controller.signal
             });
+            clearTimeout(timeoutId);
 
             if (!response.ok) {
                 throw new Error('Analiz isteği başarısız oldu');
@@ -200,7 +211,12 @@ const MaturityScoreModal = {
             const activeResult = this.results[this.activeFileIndex];
             const avgScore = activeResult ? Math.round(activeResult.total_score) : 100;
             const threshold = window._maturityEnhanceThreshold ?? 80;
-            enhanceBtn.style.display = avgScore < threshold ? 'inline-flex' : 'none';
+            // v3.2.1: inline style yerine CSS class kullan
+            if (avgScore < threshold) {
+                enhanceBtn.classList.remove('hidden');
+            } else {
+                enhanceBtn.classList.add('hidden');
+            }
         }
     },
 
@@ -355,8 +371,14 @@ const MaturityScoreModal = {
      */
     _toggleViolations() {
         const panel = document.getElementById('maturity-violations-panel');
-        if (panel) {
-            panel.classList.toggle('active');
+        if (!panel) {
+            console.warn('[MaturityScore] Violations panel bulunamadı');
+            return;
+        }
+        panel.classList.toggle('active');
+        // Panel açıldıysa otomatik scroll ile görünür yap
+        if (panel.classList.contains('active')) {
+            setTimeout(() => panel.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
         }
     },
 
@@ -416,7 +438,8 @@ const MaturityScoreModal = {
      * @returns {string} HTML badge
      */
     renderBadge(score) {
-        if (score === null || score === undefined) {
+        // v3.2.1: Tip güvenliği — NaN, string veya beklenmedik değer kontrolü
+        if (score === null || score === undefined || typeof score !== 'number' || isNaN(score)) {
             return '<span class="maturity-badge badge-empty"><i class="fas fa-minus"></i> -</span>';
         }
         const s = Math.round(score);

@@ -25,6 +25,7 @@ from typing import Dict, Any, List, BinaryIO, Optional
 from dataclasses import dataclass, field
 
 from app.services.logging_service import log_system_event, log_error, log_warning
+from app.services.content_integrity_validator import get_integrity_validator
 
 
 # ============================================
@@ -38,10 +39,12 @@ class EnhancedSection:
     heading: str
     original_text: str
     enhanced_text: str
-    change_type: str          # "heading_added", "content_restructured", "table_fixed", "encoding_fixed", "no_change"
+    change_type: str          # "heading_added", "content_restructured", "table_fixed", "encoding_fixed", "no_change", "llm_error", "integrity_failed"
     explanation: str          # İyileştirme açıklaması
     priority: float           # CatBoost priority skoru (0-1)
     violations: List[str] = field(default_factory=list)
+    integrity_score: float = 1.0    # Bütünlük doğrulama skoru (0-1)
+    integrity_issues: List[str] = field(default_factory=list)  # Bütünlük sorunları
 
 
 @dataclass
@@ -159,7 +162,8 @@ class DocumentEnhancer:
             )
             
             # Sonucu derle
-            enhanced_count = sum(1 for s in enhanced_sections if s.change_type != "no_change")
+            enhanced_count = sum(1 for s in enhanced_sections if s.change_type not in ("no_change", "llm_error", "integrity_failed"))
+            error_count = sum(1 for s in enhanced_sections if s.change_type in ("llm_error", "integrity_failed"))
             
             result = EnhancementResult(
                 file_name=file_name,
@@ -457,6 +461,12 @@ class DocumentEnhancer:
         # Violation → section eşleştirme
         violation_names = [v.get("name", "") for v in violations]
         
+        # v3.2.1: Debug — hangi violation'lar tespit edildi
+        log_system_event("DEBUG", 
+            f"CatBoost prioritize: {len(sections)} section, "
+            f"violations={violation_names}, catboost={has_catboost}", 
+            "enhancer")
+        
         for section in sections:
             content = section.get("content", "")
             heading = section.get("heading", "")
@@ -531,7 +541,7 @@ class DocumentEnhancer:
         heading: str,
         violation_names: List[str]
     ) -> float:
-        """CatBoost yoksa basit heuristic ile priority hesapla"""
+        """CatBoost yoksa basit heuristic ile priority hesapla — tüm dosya türleri."""
         priority = 0.3  # Baseline
         
         word_count = len(content.split())
@@ -546,14 +556,42 @@ class DocumentEnhancer:
         if not heading or heading in ("Genel", "Giriş"):
             priority += 0.2
         
-        # Violation eşleştirme
-        if "Başlık Hiyerarşisi" in violation_names:
+        # Violation eşleştirme — PDF/DOCX/TXT
+        if "Başlık Hiyerarşisi" in violation_names or "Word Stilleri" in violation_names:
             priority += 0.15
-        if "Metin Yoğunluğu" in violation_names:
+        if "Metin Yoğunluğu" in violation_names or "Metin İçeriği" in violation_names:
             priority += 0.1
         if "Tablo Formatı" in violation_names:
             priority += 0.1
         if "Türkçe Karakter" in violation_names:
+            priority += 0.1
+        if "Gereksiz İçerik" in violation_names or "Gereksiz Boşluklar" in violation_names:
+            priority += 0.1
+        
+        # v3.2.1: Excel'e özel ihlal boost
+        if "İlk Satır Başlık" in violation_names:
+            priority += 0.15
+        if "Merge Hücreler" in violation_names:
+            priority += 0.1
+        if "Açıklama Satırları" in violation_names:
+            priority += 0.1
+        if "Boş Satır/Sütun" in violation_names:
+            priority += 0.1
+        if "Formül vs Değer" in violation_names:
+            priority += 0.1
+        if "Tutarlı Veri Tipi" in violation_names:
+            priority += 0.05
+        if "Gizli Sheet" in violation_names:
+            priority += 0.05
+        
+        # DOCX özel
+        if "Metin Kutusu" in violation_names:
+            priority += 0.15
+        if "Liste Formatı" in violation_names:
+            priority += 0.05
+        
+        # PPTX özel
+        if "Slayt Başlıkları" in violation_names:
             priority += 0.1
         
         return min(priority, 1.0)
@@ -564,7 +602,7 @@ class DocumentEnhancer:
         heading: str,
         violation_names: List[str]
     ) -> List[str]:
-        """Bölüm bazında zayıflıkları tespit et"""
+        """Bölüm bazında zayıflıkları tespit et — tüm dosya türleri desteklenir."""
         weaknesses = []
         
         word_count = len(content.split())
@@ -586,11 +624,45 @@ class DocumentEnhancer:
             if any(bc in content for bc in bad_chars):
                 weaknesses.append("encoding_issue")
         
+        # PDF / DOCX / TXT yapısal sorunlar
         if "Başlık Hiyerarşisi" in violation_names:
             weaknesses.append("structure_weak")
-        
         if "Metin Yoğunluğu" in violation_names:
             weaknesses.append("low_density")
+        if "Gereksiz İçerik" in violation_names:
+            weaknesses.append("redundant_content")
+        if "Gereksiz Boşluklar" in violation_names:
+            weaknesses.append("excess_whitespace")
+        
+        # DOCX özel
+        if "Word Stilleri" in violation_names:
+            weaknesses.append("structure_weak")
+        if "Metin Kutusu" in violation_names:
+            weaknesses.append("textbox_issue")
+        if "Liste Formatı" in violation_names:
+            weaknesses.append("list_format_issue")
+        
+        # v3.2.1: Excel'e özel ihlal eşleştirmesi
+        if "İlk Satır Başlık" in violation_names:
+            weaknesses.append("header_row_missing")
+        if "Merge Hücreler" in violation_names:
+            weaknesses.append("merged_cells")
+        if "Açıklama Satırları" in violation_names:
+            weaknesses.append("description_rows")
+        if "Boş Satır/Sütun" in violation_names:
+            weaknesses.append("empty_gaps")
+        if "Tutarlı Veri Tipi" in violation_names:
+            weaknesses.append("inconsistent_types")
+        if "Formül vs Değer" in violation_names:
+            weaknesses.append("formula_issue")
+        if "Gizli Sheet" in violation_names:
+            weaknesses.append("hidden_sheets")
+        
+        # PPTX özel
+        if "Metin İçeriği" in violation_names:
+            weaknesses.append("low_density")
+        if "Slayt Başlıkları" in violation_names:
+            weaknesses.append("heading_missing")
         
         return weaknesses
     
@@ -620,8 +692,18 @@ class DocumentEnhancer:
             priority = cb_info["priority"] if cb_info else 0.5
             weakness_types = cb_info.get("weakness_types", []) if cb_info else []
             
-            # Priority düşükse (yani kalite yüksek) değiştirme
+            # v3.2.1: Debug loglama — karar sürecini izlemek için
+            log_system_event("DEBUG", 
+                f"Bölüm [{idx}] '{heading[:30]}': priority={priority:.3f}, "
+                f"weaknesses={weakness_types}, catboost={cb_info is not None}", 
+                "enhancer")
+            
+            # Priority düşükse (yani kalite yüksek) VE zayıflık yoksa değiştirme
+            # v3.2.1: weakness_types varsa priority ne olursa olsun LLM'e gönder
             if priority < 0.4 and not weakness_types:
+                log_system_event("DEBUG", 
+                    f"Bölüm [{idx}] → SKIP (priority={priority:.3f}, no weaknesses)", 
+                    "enhancer")
                 enhanced_sections.append(EnhancedSection(
                     section_index=idx,
                     heading=heading,
@@ -643,27 +725,76 @@ class DocumentEnhancer:
                     file_type=file_type
                 )
                 
+                enhanced_text = llm_result.get("enhanced_text", content)
+                
+                # ─── Content Integrity Validation ───
+                # Halüsinasyon ve içerik kaybı kontrolü
+                validator = get_integrity_validator()
+                integrity = validator.validate(
+                    original=content,
+                    enhanced=enhanced_text,
+                    file_type=file_type,
+                    weakness_types=weakness_types
+                )
+                
+                if not integrity.is_valid:
+                    # Bütünlük doğrulaması BAŞARISIZ → Orijinali koru
+                    log_warning(
+                        f"Bölüm [{idx}] bütünlük doğrulaması BAŞARISIZ "
+                        f"(skor={integrity.score:.3f}): {'; '.join(integrity.issues[:2])}",
+                        "enhancer"
+                    )
+                    enhanced_sections.append(EnhancedSection(
+                        section_index=idx,
+                        heading=heading,  # Orijinal başlık koru
+                        original_text=content,
+                        enhanced_text=content,  # ORİJİNALİ KORU
+                        change_type="integrity_failed",
+                        explanation=(
+                            f"İyileştirme reddedildi — {'; '.join(integrity.issues[:2])}. "
+                            f"Bütünlük skoru: {integrity.score:.0%}"
+                        ),
+                        priority=priority,
+                        violations=weakness_types,
+                        integrity_score=integrity.score,
+                        integrity_issues=integrity.issues + integrity.warnings
+                    ))
+                    continue
+                
+                # Bütünlük OK — iyileştirmeyi kabul et
                 enhanced_sections.append(EnhancedSection(
                     section_index=idx,
                     heading=llm_result.get("heading", heading),
                     original_text=content,
-                    enhanced_text=llm_result.get("enhanced_text", content),
+                    enhanced_text=enhanced_text,
                     change_type=llm_result.get("change_type", "content_restructured"),
                     explanation=llm_result.get("explanation", "LLM ile iyileştirildi."),
                     priority=priority,
-                    violations=weakness_types
+                    violations=weakness_types,
+                    integrity_score=integrity.score,
+                    integrity_issues=integrity.warnings  # Sadece uyarılar (sorunlar yok)
                 ))
                 
             except Exception as e:
                 log_warning(f"LLM enhancement hatası (bölüm {idx}): {e}", "enhancer")
-                # LLM başarısızsa orijinali koru
+                # v3.2.1: LLM hatası kullanıcıya gösterilmeli — no_change yerine llm_error
+                error_msg = str(e)[:150]
+                if "Failed to resolve" in error_msg or "getaddrinfo" in error_msg:
+                    user_msg = "LLM API sunucusuna bağlanılamadı (DNS hatası). Ağ bağlantınızı kontrol edin."
+                elif "timed out" in error_msg.lower() or "timeout" in error_msg.lower():
+                    user_msg = "LLM API yanıt zaman aşımı. Lütfen tekrar deneyin."
+                elif "401" in error_msg or "403" in error_msg:
+                    user_msg = "LLM API yetkilendirme hatası. API anahtarını kontrol edin."
+                else:
+                    user_msg = f"LLM iyileştirme yapılamadı: {error_msg}"
+                
                 enhanced_sections.append(EnhancedSection(
                     section_index=idx,
                     heading=heading,
                     original_text=content,
                     enhanced_text=content,
-                    change_type="no_change",
-                    explanation=f"LLM iyileştirme yapılamadı: {str(e)[:100]}",
+                    change_type="llm_error",
+                    explanation=user_msg,
                     priority=priority,
                     violations=weakness_types
                 ))
@@ -683,12 +814,22 @@ class DocumentEnhancer:
         
         # Content çok uzunsa akıllı kırp (paragraf sınırından)
         max_content_chars = 6000
+        remaining_text = ""
+        
         if len(content) > max_content_chars:
             # Paragraf sınırından kes (ortasında kesme)
             cut_point = content.rfind("\n", 0, max_content_chars)
             if cut_point < max_content_chars // 2:
                 cut_point = max_content_chars  # Paragraf bulamazsa karakter limitinden kes
             truncated = content[:cut_point]
+            remaining_text = content[cut_point:]  # Kırpılan kısım korunacak
+            
+            log_system_event(
+                "INFO",
+                f"İçerik kırpıldı: {len(content)} → {len(truncated)} karakter "
+                f"(kalan {len(remaining_text)} karakter orijinal olarak korunacak)",
+                "enhancer"
+            )
         else:
             truncated = content
         
@@ -740,7 +881,16 @@ class DocumentEnhancer:
         response = call_llm_api(messages)
         
         # JSON parse
-        return self._parse_llm_response(response, heading, content)
+        result = self._parse_llm_response(response, heading, content)
+        
+        # v3.2.1: Kırpılan içeriği enhanced text'e ekle — veri kaybı önleme
+        if remaining_text:
+            result["enhanced_text"] = result.get("enhanced_text", "") + "\n" + remaining_text
+            result["explanation"] = (result.get("explanation", "") + 
+                f" (İlk {len(truncated)} karakter iyileştirildi, "
+                f"kalan {len(remaining_text)} karakter orijinal olarak korundu)")
+        
+        return result
     
     def _build_fix_instructions(self, weakness_types: List[str]) -> str:
         """Weakness tipine göre spesifik iyileştirme talimatları"""
@@ -753,6 +903,20 @@ class DocumentEnhancer:
             "encoding_issue": "- Türkçe karakter encoding sorunu var. Bozuk karakterleri (Ã¼→ü, Ã§→ç, Ã¶→ö, Ä±→ı, ÅŸ→ş) düzelt.",
             "structure_weak": "- Başlık hiyerarşisi zayıf. Alt başlıklar (##, ###) ekleyerek içeriği daha iyi yapılandır.",
             "low_density": "- Metin yoğunluğu düşük. Gereksiz boşlukları kaldır ve paragrafları birleştir.",
+            "redundant_content": "- Tekrarlayan header/footer içerik var. Her bölümde tekrar eden boilerplate metinleri kaldır.",
+            "excess_whitespace": "- Fazla boş satır/paragraf var. Gereksiz boşlukları temizle.",
+            # Excel özel
+            "header_row_missing": "- Excel'de başlık satırı eksik. İlk satırı sütun başlıkları olarak yeniden düzenle.",
+            "merged_cells": "- Birleştirilmiş hücreler var. Her hücrenin kendi değerini taşıyacak şekilde yapıyı düzelt.",
+            "description_rows": "- Veri tablosunun üstünde açıklama satırları var. Açıklamaları ayrı bir bölüme taşı veya kaldır.",
+            "empty_gaps": "- Veri blokları arasında boş satırlar var. Boşlukları kaldırarak sürekli bir veri akışı oluştur.",
+            "inconsistent_types": "- Sütunlarda karışık veri tipleri var. Her sütunda tutarlı format kullanılmalı.",
+            "formula_issue": "- Formüllü hücreler var. Formülleri değerlerine çevir (hesaplanmış sonuçları yaz).",
+            "hidden_sheets": "- Gizli sayfalar var. Gizli sayfa içeriğini ana bölüme dahil et veya gereksizse kaldır.",
+            # DOCX özel
+            "textbox_issue": "- Metin kutuları (text box) var. İçindeki metinleri normal paragraflara dönüştür.",
+            "list_format_issue": "- Manuel liste kullanılmış. Word'ün yerleşik liste stillerini kullan.",
+            # PPTX özel
         }
         
         for wt in weakness_types:
@@ -1487,6 +1651,8 @@ class DocumentEnhancer:
                     "explanation": s.explanation,
                     "priority": s.priority,
                     "violations": s.violations,
+                    "integrity_score": s.integrity_score,
+                    "integrity_issues": s.integrity_issues,
                 }
                 for s in result.sections
             ]

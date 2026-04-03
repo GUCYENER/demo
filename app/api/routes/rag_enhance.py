@@ -4,10 +4,11 @@ VYRA L1 Support API - RAG Enhancement Routes
 Doküman iyileştirme (CatBoost + LLM) endpoint'leri.
 
 Author: VYRA AI Team
-Version: 1.0.0 (v2.36.0)
+Version: 1.1.0 (v3.2.1)
 """
 
 import os
+import time
 import asyncio
 from typing import Dict, Any
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query
@@ -23,7 +24,22 @@ from app.services.logging_service import log_system_event, log_error
 router = APIRouter()
 
 # Selective download için session verilerini sakla
-_session_data: dict = {}  # session_id → {"original_content": bytes, "file_type": str, "sections": [...], "file_name": str}
+_session_data: dict = {}  # session_id → {"original_content": bytes, ..., "_created_at": float}
+
+# v3.2.1: Session TTL — 30 dakika sonra otomatik temizleme
+_SESSION_TTL_SECONDS = 1800  # 30 dakika
+
+
+def _cleanup_expired_sessions() -> None:
+    """TTL'i dolmuş session'ları temizler — memory leak önleme."""
+    now = time.time()
+    expired = [sid for sid, data in _session_data.items()
+               if now - data.get("_created_at", 0) > _SESSION_TTL_SECONDS]
+    for sid in expired:
+        cleanup_enhanced_file(sid)
+        _session_data.pop(sid, None)
+    if expired:
+        log_system_event("INFO", f"{len(expired)} expired session temizlendi", "rag_enhance")
 
 # Desteklenen dosya tipleri
 ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt', '.txt', '.csv'}
@@ -81,12 +97,14 @@ async def enhance_document(file: UploadFile = File(...)):
             raise HTTPException(status_code=500, detail=result.error)
         
         # Session verilerini sakla (selective download için)
+        _cleanup_expired_sessions()  # v3.2.1: Önce eski session'ları temizle
         _session_data[result.session_id] = {
             "original_content": file_content,
             "file_type": ext,
             "file_name": file_name,
             "sections": result.sections,
-            "maturity_score": maturity_result.get("total_score")
+            "maturity_score": maturity_result.get("total_score"),
+            "_created_at": time.time()
         }
         
         return JSONResponse(content=enhancer.to_dict(result))
@@ -99,7 +117,11 @@ async def enhance_document(file: UploadFile = File(...)):
 
 
 @router.get("/download-enhanced/{session_id}")
-async def download_enhanced(session_id: str, sections: str = Query(default=None)):
+async def download_enhanced(
+    session_id: str,
+    sections: str = Query(default=None),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
     """
     İyileştirilmiş DOCX dosyasını indirir.
     
@@ -203,7 +225,6 @@ async def upload_enhanced_to_rag(
     log_system_event("INFO", f"RAG yükleme isteği (enhanced): {file_name}", "rag_enhance")
     
     try:
-        # 1. Selective DOCX oluştur
         enhancer = DocumentEnhancer()
         
         if sections is not None:
@@ -212,37 +233,68 @@ async def upload_enhanced_to_rag(
             # Tüm section'lar onaylı
             approved_indexes = [s.section_index for s in data["sections"]]
         
-        docx_path = enhancer.generate_selective_docx(
-            original_content=data["original_content"],
-            sections=data["sections"],
-            approved_indexes=approved_indexes,
-            session_id=session_id,
-            file_type=data["file_type"]
-        )
+        # Orijinal dosya tipini belirle
+        orig_file_type = data.get("file_type", "DOCX").upper().replace(".", "")
         
-        if not docx_path or not os.path.exists(docx_path):
-            raise HTTPException(status_code=500, detail="İyileştirilmiş dosya oluşturulamadı.")
-        
-        # 2. Oluşturulan dosyayı oku (PDF veya DOCX olabilir)
-        with open(docx_path, "rb") as f:
-            file_content_bytes = f.read()
-        
-        file_size = len(file_content_bytes)
-        
-        # Dosya formatını belirle
-        is_pdf = docx_path.lower().endswith('.pdf')
-        if is_pdf:
-            upload_ext = '.pdf'
-            upload_mime = 'application/pdf'
-            upload_name = file_name  # Orijinal PDF adı korunsun
-            if not upload_name.lower().endswith('.pdf'):
-                upload_name = os.path.splitext(upload_name)[0] + '.pdf'
-        else:
-            upload_ext = '.docx'
-            upload_mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        # XLSX/PPTX gibi non-DOCX formatlar: orijinal dosyayı koru
+        # RAG chunk'ları enhanced text'ten oluşturulacak
+        if orig_file_type in ("XLSX", "XLS", "PPTX", "PPT"):
+            # Orijinal dosya binary'si korunur
+            file_content_bytes = data["original_content"]
+            file_size = len(file_content_bytes)
+            
+            ext_map = {
+                "XLSX": (".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+                "XLS": (".xls", "application/vnd.ms-excel"),
+                "PPTX": (".pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
+                "PPT": (".ppt", "application/vnd.ms-powerpoint"),
+            }
+            upload_ext, upload_mime = ext_map.get(orig_file_type, (".xlsx", "application/octet-stream"))
             upload_name = file_name
-            if not upload_name.lower().endswith('.docx'):
-                upload_name = os.path.splitext(upload_name)[0] + '.docx'
+            
+            # Uzantıyı düzelt (orijinal adı koru)
+            if not upload_name.lower().endswith(upload_ext):
+                upload_name = os.path.splitext(upload_name)[0] + upload_ext
+            
+            log_system_event(
+                "INFO",
+                f"Orijinal format korunuyor: {orig_file_type} → {upload_name} "
+                f"(chunk'lar enhanced text'ten oluşturulacak)",
+                "rag_enhance"
+            )
+        else:
+            # DOCX, PDF, TXT: enhanced DOCX/PDF oluştur
+            docx_path = enhancer.generate_selective_docx(
+                original_content=data["original_content"],
+                sections=data["sections"],
+                approved_indexes=approved_indexes,
+                session_id=session_id,
+                file_type=data["file_type"]
+            )
+            
+            if not docx_path or not os.path.exists(docx_path):
+                raise HTTPException(status_code=500, detail="İyileştirilmiş dosya oluşturulamadı.")
+            
+            # Oluşturulan dosyayı oku (PDF veya DOCX olabilir)
+            with open(docx_path, "rb") as f:
+                file_content_bytes = f.read()
+            
+            file_size = len(file_content_bytes)
+            
+            # Dosya formatını belirle
+            is_pdf = docx_path.lower().endswith('.pdf')
+            if is_pdf:
+                upload_ext = '.pdf'
+                upload_mime = 'application/pdf'
+                upload_name = file_name
+                if not upload_name.lower().endswith('.pdf'):
+                    upload_name = os.path.splitext(upload_name)[0] + '.pdf'
+            else:
+                upload_ext = '.docx'
+                upload_mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                upload_name = file_name
+                if not upload_name.lower().endswith('.docx'):
+                    upload_name = os.path.splitext(upload_name)[0] + '.docx'
         
         # 3. RAG pipeline: DB'ye yükle
         conn = get_db_conn()
@@ -280,7 +332,23 @@ async def upload_enhanced_to_rag(
                 cur.execute("DELETE FROM uploaded_files WHERE file_name = %s", (del_name,))
             
             # Dosyayı PostgreSQL'e kaydet (maturity_score ve status dahil)
-            m_score = data.get("maturity_score")
+            # v3.2.1: İyileştirilmiş dosyanın olgunluğunu yeniden hesapla
+            # (Orijinal dosyanın skorunu DEĞİL, iyileştirilmişi kullan)
+            try:
+                from app.services.maturity_analyzer import analyze_file
+                enhanced_file_obj = _io.BytesIO(file_content_bytes)
+                enhanced_maturity = analyze_file(enhanced_file_obj, upload_name)
+                m_score = enhanced_maturity.get("total_score")
+                log_system_event(
+                    "INFO",
+                    f"İyileştirilmiş dosya olgunluk skoru: {m_score} "
+                    f"(orijinal: {data.get('maturity_score')})",
+                    "rag_enhance"
+                )
+            except Exception as mat_err:
+                log_warning(f"İyileştirilmiş olgunluk hesaplanamadı: {mat_err}", "rag_enhance")
+                m_score = data.get("maturity_score")  # Fallback: orijinal skor
+            
             cur.execute(
                 """
                 INSERT INTO uploaded_files (file_name, file_type, file_size_bytes, file_content, mime_type, uploaded_by, maturity_score, status)
@@ -296,21 +364,78 @@ async def upload_enhanced_to_rag(
             )
             file_id = cur.fetchone()["id"]
             
-            # Embedding oluştur
-            processor = get_processor_for_extension(upload_ext)
-            if not processor:
-                raise ValueError(f"{upload_ext} işlemcisi bulunamadı.")
-            
-            file_obj = _io.BytesIO(file_content_bytes)
-            processed = processor.process_bytes(file_obj, upload_name)
-            
-            chunks = [
-                {
-                    "text": chunk.text,
-                    "metadata": {"source_file": upload_name, **chunk.metadata}
-                }
-                for chunk in processed.chunks
-            ]
+            # Embedding oluştur — XLSX/PPTX ise enhanced text'lerden
+            if orig_file_type in ("XLSX", "XLS", "PPTX", "PPT"):
+                # Enhanced section text'lerinden chunk oluştur
+                chunks = []
+                for s in data["sections"]:
+                    s_idx = s.section_index
+                    s_heading = s.heading
+                    
+                    # Onaylı section ise enhanced text, değilse orijinal
+                    if s_idx in approved_indexes:
+                        text_to_chunk = s.enhanced_text
+                    else:
+                        text_to_chunk = s.original_text
+                    
+                    if not text_to_chunk or not text_to_chunk.strip():
+                        continue
+                    
+                    # Text'i chunk'lara böl (inline splitter)
+                    # Her chunk'ın başına section heading prefix eklenir
+                    # → Embedding search sırasında heading context de vektöre dahil olur
+                    heading_prefix = f"[Bölüm: {s_heading}]\n" if s_heading else ""
+                    _chunk_size = 1000 - len(heading_prefix)  # Heading prefix'i düşerek hesapla
+                    _overlap = 100
+                    _start = 0
+                    ci = 0
+                    while _start < len(text_to_chunk):
+                        _end = min(_start + _chunk_size, len(text_to_chunk))
+                        # Kelime ortasında bölme
+                        if _end < len(text_to_chunk):
+                            _last_space = text_to_chunk.rfind(' ', _start, _end)
+                            if _last_space > _start:
+                                _end = _last_space
+                        
+                        chunk_text = text_to_chunk[_start:_end].strip()
+                        if chunk_text:
+                            # Heading prefix + chunk text
+                            full_chunk = heading_prefix + chunk_text
+                            chunks.append({
+                                "text": full_chunk,
+                                "metadata": {
+                                    "source_file": upload_name,
+                                    "section": s_heading,
+                                    "section_index": s_idx,
+                                    "chunk_index": ci,
+                                    "enhanced": s_idx in approved_indexes
+                                }
+                            })
+                            ci += 1
+                        
+                        _start = _end - _overlap if _end < len(text_to_chunk) else len(text_to_chunk)
+                
+                log_system_event(
+                    "INFO",
+                    f"Enhanced text'lerden {len(chunks)} chunk oluşturuldu ({orig_file_type})",
+                    "rag_enhance"
+                )
+            else:
+                # DOCX/PDF/TXT: processor ile parse et
+                processor = get_processor_for_extension(upload_ext)
+                if not processor:
+                    raise ValueError(f"{upload_ext} işlemcisi bulunamadı.")
+                
+                file_obj = _io.BytesIO(file_content_bytes)
+                processed = processor.process_bytes(file_obj, upload_name)
+                
+                chunks = [
+                    {
+                        "text": chunk.text,
+                        "metadata": {"source_file": upload_name, **chunk.metadata}
+                    }
+                    for chunk in processed.chunks
+                ]
             
             if not chunks:
                 raise ValueError("Dosyadan hiç veri çıkarılamadı.")
@@ -390,9 +515,14 @@ async def upload_enhanced_to_rag(
         finally:
             conn.close()
         
-        # 4. Session temizle
+        # 4. Session temizle — v3.2.1: Hemen silmek yerine flag ile işaretle
+        # Race condition: kullanıcı upload sonrası hâlâ "İndir" butonuna basabilir
+        # Session TTL mekanizması (_cleanup_expired_sessions) otomatik temizleyecek
         cleanup_enhanced_file(session_id)
-        _session_data.pop(session_id, None)
+        if session_id in _session_data:
+            _session_data[session_id]["_uploaded"] = True
+            # original_content bellek tüketimini azalt
+            _session_data[session_id].pop("original_content", None)
         
         return JSONResponse(content={
             "status": "ok",
@@ -439,7 +569,7 @@ def _run_maturity_analysis(file_content: bytes, file_name: str) -> dict:
         return {
             "file_type": _detect_file_type(file_name),
             "violations": [],
-            "overall_score": 0,
+            "total_score": 0,
             "categories": {}
         }
 

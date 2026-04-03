@@ -8,9 +8,12 @@ Best practices kurallarına göre kategorik skorlama yapar.
 """
 
 
+import logging
 import re
 from collections import Counter
 from typing import Dict, Any, List, BinaryIO
+
+logger = logging.getLogger("vyra")
 
 
 class MaturityRule:
@@ -39,9 +42,8 @@ def analyze_pdf(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
     """PDF dosyasını analiz eder"""
     try:
         from pypdf import PdfReader
-    except ImportError as e:
-        import sys
-        print(f"[MaturityAnalyzer] PyPDF2/pypdf import hatası: {e}", file=sys.stderr)
+    except ImportError:
+        logger.debug("[MaturityAnalyzer] pypdf bulunamadı, PyPDF2 deneniyor", exc_info=True)
         from PyPDF2 import PdfReader
     
     rules: List[MaturityRule] = []
@@ -258,9 +260,8 @@ def analyze_docx(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
     try:
         inline_shapes = doc.inline_shapes
         _ = len(inline_shapes) if inline_shapes else 0
-    except Exception as e:
-        import sys
-        print(f"[MaturityAnalyzer] inline_shapes okuma hatası: {e}", file=sys.stderr)
+    except Exception:
+        logger.debug("[MaturityAnalyzer] inline_shapes okuma hatası", exc_info=True)
         _ = 0
     
     # Floating shapes (text boxes) - XML tabanında kontrol
@@ -276,9 +277,8 @@ def analyze_docx(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
         else:
             rule.score = 100
             rule.detail = "Metin kutusu tespit edilmedi."
-    except Exception as e:
-        import sys
-        print(f"[MaturityAnalyzer] Metin kutusu kontrolü hatası: {e}", file=sys.stderr)
+    except Exception:
+        logger.debug("[MaturityAnalyzer] Metin kutusu kontrolü hatası", exc_info=True)
         rule.score = 90
         rule.detail = "Metin kutusu kontrolü yapılamadı (sorun değil)."
     rules.append(rule)
@@ -317,9 +317,8 @@ def analyze_docx(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
     rule = MaturityRule("Görseller vs Metin", "İçerik", "Önemli bilgiler metin olarak yazılmalı, görselde olmamalı")
     try:
         image_count = len(doc.inline_shapes) if doc.inline_shapes else 0
-    except Exception as e:
-        import sys
-        print(f"[MaturityAnalyzer] Görsel sayısı okuma hatası: {e}", file=sys.stderr)
+    except Exception:
+        logger.debug("[MaturityAnalyzer] Görsel sayısı okuma hatası", exc_info=True)
         image_count = 0
     
     text_paragraphs = [p for p in paragraphs if p.text.strip()]
@@ -421,24 +420,23 @@ def analyze_xlsx(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
     rules.append(rule)
     
     # ─── KURAL 2: Merge Hücreler ───
-    rule = MaturityRule("Merge Hücreler", "Hücre", "Birleştirilmiş hücreler veri kaybına neden olur")
+    rule = MaturityRule("Merge Hücreler", "Hücre", "Birleştirilmiş hücreler veri kaybına neden olabilir (processor otomatik çözümler)")
     total_merged = 0
     for sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
         total_merged += len(ws.merged_cells.ranges)
     
-    if total_merged > 10:
-        rule.score = 30
-        rule.status = "fail"
-        rule.detail = f"{total_merged} birleştirilmiş hücre aralığı tespit edildi. Veri kaybı riski yüksek."
-    elif total_merged > 3:
-        rule.score = 60
+    if total_merged > 20:
+        rule.score = 50
         rule.status = "warning"
-        rule.detail = f"{total_merged} birleştirilmiş hücre var. Minimize edilmesi önerilir."
+        rule.detail = f"{total_merged} birleştirilmiş hücre aralığı var. Çoğu otomatik çözümlenir ama karmaşık merge yapıları sorun çıkarabilir."
+    elif total_merged > 5:
+        rule.score = 75
+        rule.status = "warning"
+        rule.detail = f"{total_merged} birleştirilmiş hücre var. Otomatik çözümleme uygulanır."
     elif total_merged > 0:
-        rule.score = 85
-        rule.status = "warning"
-        rule.detail = f"{total_merged} birleştirilmiş hücre var."
+        rule.score = 90
+        rule.detail = f"{total_merged} birleştirilmiş hücre var (otomatik çözümlenir)."
     else:
         rule.score = 100
         rule.detail = "Birleştirilmiş hücre yok."
@@ -567,7 +565,174 @@ def analyze_xlsx(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
         rule.detail = "Veri bulunamadı."
     rules.append(rule)
     
+    # ─── KURAL 7: Gizli Sheet Kontrolü ───
+    rule = MaturityRule("Gizli Sheet", "Yapı", "Gizli sayfalar chunk'a dahil edilir, istenmeyen veri sızabilir")
+    hidden_sheets = []
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        if ws.sheet_state != 'visible':
+            hidden_sheets.append(sheet_name)
+    
+    if hidden_sheets:
+        rule.score = 70
+        rule.status = "warning"
+        rule.detail = f"{len(hidden_sheets)} gizli sayfa tespit edildi ({', '.join(hidden_sheets[:3])}). Bu sayfalar da işlenecektir."
+    else:
+        rule.score = 100
+        rule.detail = "Gizli sayfa yok."
+    rules.append(rule)
+    
+    # ─── KURAL 8: Veri Boyutu Uyarısı ───
+    rule = MaturityRule("Veri Boyutu", "Performans", "Çok büyük dosyalar işleme süresini uzatır")
+    total_rows = 0
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        total_rows += ws.max_row or 0
+    
+    if total_rows > 50000:
+        rule.score = 30
+        rule.status = "fail"
+        rule.detail = f"Toplam {total_rows:,} satır. Çok büyük dosya — işleme süresi uzun olabilir, bellek kullanımı yüksek."
+    elif total_rows > 10000:
+        rule.score = 65
+        rule.status = "warning"
+        rule.detail = f"Toplam {total_rows:,} satır. Büyük dosya — chunk sayısı yüksek olacaktır."
+    else:
+        rule.score = 100
+        rule.detail = f"Toplam {total_rows:,} satır. Normal boyut."
+    rules.append(rule)
+    
     return _build_result(rules, file_name, "XLSX", total_sheets)
+
+
+def analyze_xls(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
+    """XLS (.xls) dosyasını xlrd ile analiz eder"""
+    import xlrd
+    
+    rules: List[MaturityRule] = []
+    
+    file_obj.seek(0)
+    content = file_obj.read()
+    wb = xlrd.open_workbook(file_contents=content)
+    total_sheets = wb.nsheets
+    
+    # ─── KURAL 1: İlk Satır Başlık ───
+    rule = MaturityRule("İlk Satır Başlık", "Yapı", "Her sayfanın ilk satırı sütun başlıklarını içermeli")
+    sheets_with_header = 0
+    for sheet_idx in range(wb.nsheets):
+        sheet = wb.sheet_by_index(sheet_idx)
+        if sheet.nrows > 0:
+            first_row = [sheet.cell_value(0, c) for c in range(sheet.ncols) if sheet.cell_value(0, c)]
+            if first_row:
+                all_text_vals = all(isinstance(v, str) and len(str(v)) < 50 for v in first_row)
+                unique = len(set(str(v) for v in first_row)) == len(first_row)
+                if all_text_vals and unique and len(first_row) >= 2:
+                    sheets_with_header += 1
+    
+    if total_sheets > 0:
+        ratio = sheets_with_header / total_sheets
+        if ratio >= 0.8:
+            rule.score = 100
+            rule.detail = f"{total_sheets} sayfanın {sheets_with_header} tanesinde başlık satırı var."
+        elif ratio >= 0.5:
+            rule.score = 60
+            rule.status = "warning"
+            rule.detail = f"{total_sheets} sayfanın sadece {sheets_with_header} tanesinde başlık satırı tespit edildi."
+        else:
+            rule.score = 25
+            rule.status = "fail"
+            rule.detail = f"Başlık satırı eksik. {total_sheets} sayfanın {sheets_with_header} tanesinde var."
+    rules.append(rule)
+    
+    # ─── KURAL 2: Boş Satır/Sütun ───
+    rule = MaturityRule("Boş Satır/Sütun", "Veri", "Veriler arasında boşluk bırakılmamalı")
+    empty_row_gaps = 0
+    for sheet_idx in range(wb.nsheets):
+        sheet = wb.sheet_by_index(sheet_idx)
+        prev_empty = False
+        data_started = False
+        for row_idx in range(min(sheet.nrows, 200)):
+            row_values = [sheet.cell_value(row_idx, c) for c in range(sheet.ncols)]
+            has_data = any(v is not None and str(v).strip() for v in row_values)
+            if has_data:
+                data_started = True
+                if prev_empty and data_started:
+                    empty_row_gaps += 1
+                prev_empty = False
+            else:
+                if data_started:
+                    prev_empty = True
+    
+    if empty_row_gaps > 5:
+        rule.score = 35
+        rule.status = "fail"
+        rule.detail = f"{empty_row_gaps} yerde veri blokları arasında boşluk var."
+    elif empty_row_gaps > 2:
+        rule.score = 65
+        rule.status = "warning"
+        rule.detail = f"{empty_row_gaps} yerde veri arasında boşluk tespit edildi."
+    else:
+        rule.score = 100
+        rule.detail = "Veri blokları arasında boşluk yok."
+    rules.append(rule)
+    
+    # ─── KURAL 3: Tutarlı Veri Tipi ───
+    rule = MaturityRule("Tutarlı Veri Tipi", "Veri", "Her sütunda aynı veri tipi olmalı")
+    type_issues = 0
+    for sheet_idx in range(wb.nsheets):
+        sheet = wb.sheet_by_index(sheet_idx)
+        if sheet.nrows < 3:
+            continue
+        max_col = min(sheet.ncols, 20)
+        for col_idx in range(max_col):
+            types_in_col = set()
+            for row_idx in range(1, min(sheet.nrows, 50)):
+                cell_type = sheet.cell_type(row_idx, col_idx)
+                if cell_type != xlrd.XL_CELL_EMPTY:
+                    types_in_col.add(cell_type)
+            if len(types_in_col) > 2:
+                type_issues += 1
+    
+    if type_issues > 5:
+        rule.score = 40
+        rule.status = "fail"
+        rule.detail = f"{type_issues} sütunda karışık veri tipleri tespit edildi."
+    elif type_issues > 2:
+        rule.score = 65
+        rule.status = "warning"
+        rule.detail = f"{type_issues} sütunda tip tutarsızlığı var."
+    else:
+        rule.score = 100
+        rule.detail = "Veri tipleri tutarlı."
+    rules.append(rule)
+    
+    # ─── KURAL 4: Merge Hücreler (v3.2.1 — XLSX ile tutarlılık) ───
+    rule = MaturityRule("Merge Hücreler", "Hücre", "Birleştirilmiş hücreler veri kaybına neden olabilir (processor otomatik çözümler)")
+    total_merged = 0
+    for sheet_idx in range(wb.nsheets):
+        sheet = wb.sheet_by_index(sheet_idx)
+        try:
+            total_merged += len(sheet.merged_cells)
+        except Exception:
+            pass
+    
+    if total_merged > 20:
+        rule.score = 50
+        rule.status = "warning"
+        rule.detail = f"{total_merged} birleştirilmiş hücre aralığı var. Çoğu otomatik çözümlenir ama karmaşık merge yapıları sorun çıkarabilir."
+    elif total_merged > 5:
+        rule.score = 75
+        rule.status = "warning"
+        rule.detail = f"{total_merged} birleştirilmiş hücre var. Otomatik çözümleme uygulanır."
+    elif total_merged > 0:
+        rule.score = 90
+        rule.detail = f"{total_merged} birleştirilmiş hücre var (otomatik çözümlenir)."
+    else:
+        rule.score = 100
+        rule.detail = "Birleştirilmiş hücre yok."
+    rules.append(rule)
+    
+    return _build_result(rules, file_name, "XLS", total_sheets)
 
 
 def analyze_txt(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
@@ -578,9 +743,8 @@ def analyze_txt(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
     content = file_obj.read()
     try:
         text = content.decode("utf-8")
-    except UnicodeDecodeError as e:
-        import sys
-        print(f"[MaturityAnalyzer] UTF-8 decode hatası, latin-1 fallback: {e}", file=sys.stderr)
+    except UnicodeDecodeError:
+        logger.debug("[MaturityAnalyzer] UTF-8 decode hatası, latin-1 fallback", exc_info=True)
         text = content.decode("latin-1", errors="replace")
     
     lines = text.split("\n")
@@ -605,9 +769,8 @@ def analyze_txt(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
         content.decode("utf-8")
         rule.score = 100
         rule.detail = "UTF-8 encoding sorunsuz."
-    except UnicodeDecodeError as e:
-        import sys
-        print(f"[MaturityAnalyzer] Encoding kontrolü - UTF-8 değil: {e}", file=sys.stderr)
+    except UnicodeDecodeError:
+        logger.debug("[MaturityAnalyzer] Encoding kontrolü - UTF-8 değil", exc_info=True)
         rule.score = 50
         rule.status = "warning"
         rule.detail = "UTF-8 encoding değil. Karakter sorunları olabilir."
@@ -702,7 +865,7 @@ def analyze_file(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
         'docx': analyze_docx,
         'doc': analyze_docx,
         'xlsx': analyze_xlsx,
-        'xls': analyze_xlsx,
+        'xls': analyze_xls,
         'pptx': analyze_pptx,
         'ppt': analyze_pptx,
         'txt': analyze_txt,
@@ -722,9 +885,8 @@ def analyze_file(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
     
     try:
         return analyzer(file_obj, file_name)
-    except Exception as e:
-        import sys
-        print(f"[MaturityAnalyzer] Analiz hatası ({file_name}): {e}", file=sys.stderr)
+    except Exception:
+        logger.error("[MaturityAnalyzer] Analiz hatası: %s", file_name, exc_info=True)
         return {
             "file_name": file_name,
             "file_type": ext.upper(),
@@ -732,7 +894,7 @@ def analyze_file(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
             "categories": [],
             "violations": [],
             "detail_count": 0,
-            "message": f"Analiz hatası: {str(e)[:200]}"
+            "message": "Dosya analizi sırasında bir hata oluştu."
         }
 
 

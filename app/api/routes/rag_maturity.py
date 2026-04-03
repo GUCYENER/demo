@@ -34,7 +34,7 @@ async def analyze_maturity(
             result = analyze_file(file_obj, f.filename)
             results.append(result)
         except Exception as e:
-            log_error(f"Maturity analiz hatası ({f.filename}): {e}", "rag")
+            log_error(f"Maturity analiz hatası ({f.filename})", "rag", error_detail=str(e))
             results.append({
                 "file_name": f.filename,
                 "file_type": f.filename.rsplit('.', 1)[-1].upper() if '.' in f.filename else "?",
@@ -42,7 +42,7 @@ async def analyze_maturity(
                 "categories": [],
                 "violations": [],
                 "detail_count": 0,
-                "message": f"Analiz hatası: {str(e)[:200]}"
+                "message": "Dosya analizi sırasında bir hata oluştu."
             })
     
     return {"results": results}

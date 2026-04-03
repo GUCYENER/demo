@@ -829,3 +829,64 @@
     color: #f87171;
     border: 1px solid rgba(239, 68, 68, 0.3);
 }
+
+/* ---- v3.2.0: Retry Button ---- */
+.btn-retry-file {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(52, 211, 153, 0.2));
+    color: #34d399;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.btn-retry-file:hover {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.4), rgba(52, 211, 153, 0.4));
+    transform: scale(1.1);
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+}
+
+/* ─── v3.2.0: Upload Progress Bar ─── */
+.rag-upload-progress-bar {
+    display: none;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(139, 92, 246, 0.06));
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    animation: fadeInDown 0.3s ease;
+}
+.rag-progress-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-secondary, #94a3b8);
+}
+.rag-progress-info i {
+    color: var(--primary-color, #3b82f6);
+}
+.rag-progress-track {
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(148, 163, 184, 0.15);
+    overflow: hidden;
+}
+.rag-progress-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+    transition: width 0.4s ease;
+}
+@keyframes fadeInDown {
+    from { opacity: 0; transform: translateY(-8px); }
+    to   { opacity: 1; transform: translateY(0); }
+}

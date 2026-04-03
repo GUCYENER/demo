@@ -218,10 +218,12 @@ class RAGService:
         elif stripped and stripped[-1] in ',;':
             score += 0.05  # Kısmi bütünlük
         
-        # 4. Tablo bonusu (+0.15)
+        # 4. Tablo / Speaker Notes bonusu (+0.15 / +0.1)
         content_type = metadata.get("type", "") if isinstance(metadata, dict) else ""
         if content_type == "table_row":
             score += 0.15
+        elif content_type == "speaker_notes":
+            score += 0.1   # v3.2.0: Speaker notes genelde açıklayıcı metin içerir
         elif content_type == "paragraph":
             score += 0.05
         
@@ -280,6 +282,57 @@ class RAGService:
                     score -= 0.05  # İçerik heading'le hiç ilişkisiz
         
         return round(max(0.1, min(1.0, score)), 3)
+    
+    # ── v3.2.0: Context Injection ─────────────────────────────────
+    
+    def _inject_context_prefix(self, chunks: List[Dict[str, Any]], file_id: int) -> None:
+        """
+        v3.2.0: Her chunk'ın text'ine dosya adı ve bölüm bilgisi prefix ekler.
+        
+        Bu prefix embedding modeline bağlam sağlar ve retrieval doğruluğunu
+        %15-30 artırır (RAG Best Practice).
+        
+        Prefix formatı: [Kaynak: dosya_adı | Bölüm: heading]
+        Chunk text in-place güncellenir.
+        """
+        # Dosya adını DB'den çek
+        file_name = ""
+        try:
+            conn = get_db_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT file_name FROM uploaded_files WHERE id = %s", (file_id,))
+            row = cur.fetchone()
+            if row:
+                file_name = row["file_name"]
+            cur.close()
+            conn.close()
+        except Exception:
+            pass
+        
+        if not file_name:
+            # Metadata'dan source alanını dene
+            for c in chunks:
+                src = c.get("metadata", {}).get("source", "")
+                if src:
+                    file_name = src
+                    break
+        
+        if not file_name:
+            return  # Dosya adı bulunamadı — prefix ekleme
+        
+        for chunk in chunks:
+            meta = chunk.get("metadata", {})
+            heading = meta.get("heading", "")
+            
+            # Prefix oluştur
+            prefix = f"[Kaynak: {file_name}"
+            if heading and heading.strip():
+                prefix += f" | Bölüm: {heading.strip()}"
+            prefix += "] "
+            
+            # Zaten prefix varsa ekleme (retry durumu)
+            if not chunk["text"].startswith("[Kaynak:"):
+                chunk["text"] = prefix + chunk["text"]
     
     # v2.43.0: Chunk deduplication — aynı/benzer içerikli chunk tespiti
     DEDUP_SIMILARITY_THRESHOLD = 0.95
@@ -465,6 +518,10 @@ class RAGService:
         """
         if not chunks:
             return 0
+        
+        # 🆕 v3.2.0: Context Injection — chunk text'e bağlamsal prefix ekle
+        # Embedding modeli dosya/bölüm bağlamını görür → retrieval doğruluğu artar
+        self._inject_context_prefix(chunks, file_id)
         
         # 🆕 v2.42.0: Embedding'leri batch'ler halinde üret (memory-safe)
         batch_size = self.EMBEDDING_BATCH_SIZE

@@ -9,12 +9,15 @@ v2.43.0: Font-level heading detection — font size, bold, italic bilgileriyle
          başlık tespiti. Heading hiyerarşi (breadcrumb) koruması.
 """
 
+import logging
 import re
 from pathlib import Path
 from typing import List, BinaryIO, Dict, Any, Optional
 import io
 
 from .base import BaseDocumentProcessor, DocumentChunk
+
+logger = logging.getLogger("vyra")
 
 
 # Minimum metin uzunluğu - bunun altında OCR denenecek
@@ -87,8 +90,7 @@ class PDFProcessor(BaseDocumentProcessor):
             return text
             
         except ImportError as e:
-            import sys
-            print(f"[PDFProcessor] pypdf import hatası: {e}", file=sys.stderr)
+            logger.warning("[PDFProcessor] pypdf import hatası: %s", e)
             raise ImportError("pypdf kütüphanesi yüklü değil.")
         except Exception as e:
             # pypdf başarısız olursa OCR dene
@@ -796,6 +798,7 @@ class PDFProcessor(BaseDocumentProcessor):
                             "heading": "",
                             "heading_level": 0,
                             "heading_path": [],
+                            "file_type": "pdf",
                             "chunk_index": chunk_index,
                             "source": file_name
                         }
@@ -829,6 +832,7 @@ class PDFProcessor(BaseDocumentProcessor):
                             "heading_level": heading_level,
                             "heading_path": heading_path,
                             "page": page,
+                            "file_type": "pdf",
                             "chunk_index": chunk_index,
                             "source": file_name
                         }
@@ -861,8 +865,7 @@ class PDFProcessor(BaseDocumentProcessor):
                     "page_count": len(reader.pages),
                 })
             except Exception as e:
-                import sys
-                print(f"[PDFProcessor] Metadata okuma hatası: {e}", file=sys.stderr)
+                logger.warning("[PDFProcessor] Metadata okuma hatası", exc_info=True)
                 base_meta["title"] = file_path.stem if file_path else file_name
         else:
             base_meta["file_name"] = file_name

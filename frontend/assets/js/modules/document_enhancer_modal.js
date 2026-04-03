@@ -29,7 +29,9 @@ const DocumentEnhancerModal = (function () {
         'table_fixed': 'Tablo Düzeltildi',
         'encoding_fixed': 'Encoding Düzeltildi',
         'formatting_improved': 'Format İyileştirildi',
-        'no_change': 'Değişiklik Yok'
+        'no_change': 'Değişiklik Yok',
+        'llm_error': '⚠ LLM Hatası',
+        'integrity_failed': '⚠ Bütünlük Hatası'
     };
 
     // ─────────────────────────────────────────
@@ -152,7 +154,7 @@ const DocumentEnhancerModal = (function () {
 
         // Footer gizle
         const footer = document.getElementById('enhancerModalFooter');
-        if (footer) footer.style.display = 'none';
+        if (footer) footer.classList.add('hidden');
     }
 
     // ─────────────────────────────────────────
@@ -172,9 +174,9 @@ const DocumentEnhancerModal = (function () {
 
         // Footer göster (sadece iptal)
         const footer = document.getElementById('enhancerModalFooter');
-        if (footer) footer.style.display = 'flex';
+        if (footer) footer.classList.remove('hidden');
         const downloadBtn = document.getElementById('enhancerBtnDownload');
-        if (downloadBtn) downloadBtn.style.display = 'none';
+        if (downloadBtn) downloadBtn.classList.add('hidden');
     }
 
     // ─────────────────────────────────────────
@@ -208,7 +210,9 @@ const DocumentEnhancerModal = (function () {
                         ${summary.catboost_available ? '<i class="fas fa-check-circle"></i> Aktif' : '<i class="fas fa-minus-circle"></i> Heuristik'}
                     </div>
                     <div class="enhancer-summary-card-sub">
-                        ${summary.high_priority_count || 0} yüksek öncelikli bölüm
+                        ${summary.catboost_available
+                            ? `${summary.high_priority_count || 0} yüksek öncelikli bölüm`
+                            : `${summary.high_priority_count || 0} bölüm · Önceliklendirme yaklaşık`}
                     </div>
                 </div>
             </div>
@@ -219,10 +223,13 @@ const DocumentEnhancerModal = (function () {
         if (sections.length === 0) {
             html += `<div class="enhancer-error-text">Analiz edilecek bölüm bulunamadı.</div>`;
         } else {
-            // Önce değişiklik olanları, sonra olmayanları göster
+            // Önce başarılı değişiklikler, sonra hatalar/değişiklik olmayanlar
+            const skipTypes = ['no_change', 'llm_error', 'integrity_failed'];
             const sorted = [...sections].sort((a, b) => {
-                if (a.change_type === 'no_change' && b.change_type !== 'no_change') return 1;
-                if (a.change_type !== 'no_change' && b.change_type === 'no_change') return -1;
+                const aSkip = skipTypes.includes(a.change_type);
+                const bSkip = skipTypes.includes(b.change_type);
+                if (aSkip && !bSkip) return 1;
+                if (!aSkip && bSkip) return -1;
                 return b.priority - a.priority;
             });
 
@@ -235,23 +242,23 @@ const DocumentEnhancerModal = (function () {
 
         // Footer göster
         const footer = document.getElementById('enhancerModalFooter');
-        if (footer) footer.style.display = 'flex';
+        if (footer) footer.classList.remove('hidden');
 
-        // Download butonu aktifle
+        // Download butonu aktifle — v3.2.1: onclick ile listener birikimi önlenir
         const downloadBtn = document.getElementById('enhancerBtnDownload');
         if (downloadBtn && data.session_id) {
             downloadBtn.disabled = false;
-            downloadBtn.style.display = 'flex';
+            downloadBtn.classList.remove('hidden');
             downloadBtn.innerHTML = '<i class="fas fa-download"></i> Seçilenleri Uygula & İndir';
-            downloadBtn.addEventListener('click', () => _downloadEnhanced(data.session_id));
+            downloadBtn.onclick = () => _downloadEnhanced(data.session_id);
         }
 
-        // Upload butonu aktifle
+        // Upload butonu aktifle — v3.2.1: onclick ile listener birikimi önlenir
         const uploadBtn = document.getElementById('enhancerBtnUpload');
         if (uploadBtn && data.session_id) {
             uploadBtn.disabled = false;
-            uploadBtn.style.display = 'flex';
-            uploadBtn.addEventListener('click', () => _uploadToRag(data.session_id));
+            uploadBtn.classList.remove('hidden');
+            uploadBtn.onclick = () => _uploadToRag(data.session_id);
         }
 
         // Footer info
@@ -276,36 +283,60 @@ const DocumentEnhancerModal = (function () {
     function _renderSectionCard(section) {
         const changeType = section.change_type || 'no_change';
         const isNoChange = changeType === 'no_change';
-        const label = CHANGE_LABELS[changeType] || changeType;
+        const isError = changeType === 'llm_error';
+        const isIntegrityFail = changeType === 'integrity_failed';
+        const isSkipped = isNoChange || isError || isIntegrityFail;
+        
+        // Pipe-separated change type'ları Türkçe badge'lere çevir
+        const changeTypes = changeType.toLowerCase().split('|').map(t => t.trim());
+        const labels = changeTypes
+            .map(t => CHANGE_LABELS[t])
+            .filter(Boolean);
+        const label = labels.length > 0
+            ? (labels.length <= 2 ? labels.join(' + ') : labels.slice(0, 2).join(' + ') + ` +${labels.length - 2}`)
+            : (CHANGE_LABELS[changeType] || changeType);
+        
         const priorityPercent = Math.round((section.priority || 0) * 100);
+        const integrityScore = section.integrity_score != null ? Math.round(section.integrity_score * 100) : null;
 
         // Orijinal ve enhanced text preview (kırpılmış)
         const origPreview = _truncateText(section.original_text, 500);
         const enhPreview = _truncateText(section.enhanced_text, 500);
 
         return `
-            <div class="enhancer-section-card ${isNoChange ? 'no-change' : ''}" data-section-index="${section.section_index}">
+            <div class="enhancer-section-card ${isNoChange ? 'no-change' : ''} ${isError ? 'llm-error' : ''} ${isIntegrityFail ? 'integrity-failed' : ''}" data-section-index="${section.section_index}">
                 <div class="enhancer-section-header">
                     <div class="enhancer-section-header-left">
-                        ${!isNoChange ? `
+                        ${!isSkipped ? `
                             <label class="enhancer-toggle-switch" title="Bu değişikliği onayla / reddet">
                                 <input type="checkbox" class="enhancer-section-checkbox" 
                                        data-index="${section.section_index}" checked />
                                 <span class="enhancer-toggle-slider"></span>
                             </label>
                         ` : `
-                            <i class="fas fa-check-circle enhancer-icon-unchanged"></i>
+                            <i class="fas ${isIntegrityFail ? 'fa-shield-alt enhancer-icon-integrity' : isError ? 'fa-exclamation-circle enhancer-icon-error' : 'fa-check-circle enhancer-icon-unchanged'}"></i>
                         `}
                         <span class="enhancer-section-heading">${_escapeHtml(section.heading || 'Başlıksız Bölüm')}</span>
                     </div>
                     <div class="enhancer-section-header-right">
-                        ${!isNoChange ? `<span class="enhancer-priority-badge">⚡ ${priorityPercent}%</span>` : ''}
+                        ${!isSkipped ? `<span class="enhancer-priority-badge">⚡ ${priorityPercent}%</span>` : ''}
+                        ${integrityScore != null && !isSkipped ? `<span class="enhancer-integrity-badge" title="Bütünlük skoru">🛡️ ${integrityScore}%</span>` : ''}
                         <span class="enhancer-change-badge ${changeType.replace(/_/g, '-')}">${_escapeHtml(label)}</span>
                         <i class="fas fa-chevron-down enhancer-collapse-icon"></i>
                     </div>
                 </div>
                 <div class="enhancer-section-body">
-                    ${!isNoChange ? `
+                    ${isIntegrityFail ? `
+                        <div class="enhancer-explanation enhancer-integrity-warning">
+                            <i class="fas fa-shield-alt"></i>
+                            <span>${_escapeHtml(section.explanation || 'Bütünlük doğrulaması başarısız')}</span>
+                        </div>
+                    ` : isError ? `
+                        <div class="enhancer-explanation enhancer-llm-error">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            <span>${_escapeHtml(section.explanation || 'LLM bağlantı hatası')}</span>
+                        </div>
+                    ` : !isNoChange ? `
                         <div class="enhancer-explanation">
                             <i class="fas fa-lightbulb"></i>
                             <span>${_escapeHtml(section.explanation || '')}</span>
@@ -338,18 +369,31 @@ const DocumentEnhancerModal = (function () {
         const formData = new FormData();
         formData.append('file', file);
 
+        // v3.2.1: Fetch timeout — LLM pipeline uzun sürebilir (180s)
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 180000);
+
         return fetch(`${API_BASE}/api/rag/enhance-document`, {
             method: 'POST',
             headers: _authHeaders(),
-            body: formData
+            body: formData,
+            signal: controller.signal
         })
             .then(res => {
+                clearTimeout(timeoutId);
                 if (!res.ok) {
                     return res.json().then(err => {
                         throw new Error(err.detail || `HTTP ${res.status}`);
                     });
                 }
                 return res.json();
+            })
+            .catch(err => {
+                clearTimeout(timeoutId);
+                if (err.name === 'AbortError') {
+                    throw new Error('İşlem zaman aşımına uğradı. Lütfen daha küçük bir dosya deneyin.');
+                }
+                throw err;
             });
     }
 

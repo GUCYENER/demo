@@ -49,6 +49,100 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.2.1 (2026-04-03) - RAG Best Practice: Context Injection, Chunk Overlap & Native Format Enhance
+
+**🔴 P0 — RAG Retrieval Doğruluğu:**
+- ✅ **Context Injection:** `rag/service.py` — Her chunk text'ine `[Kaynak: dosya_adı | Bölüm: heading]` prefix eklenir → embedding modeli bağlamı görür, retrieval doğruluğu %15-30 artar
+- ✅ **Heading prefix (tüm processor'lar):** `excel_processor.py`, `txt_processor.py`, `docx_processor.py` — Chunk text'e `[Bölüm: sheet/heading]` prefix eklenerek embedding arama bağlamı güçlendirildi
+- ✅ **Chunk overlap:** `docx_processor.py`, `txt_processor.py` — `OVERLAP_SIZE=100` karakter — bölüm geçişlerinde bağlam kaybı önlendi
+- ✅ **Speaker notes bonus:** `rag/service.py` — `speaker_notes` tipi chunk'lara +0.10 quality bonus (açıklayıcı içerik)
+
+**🟡 P1 — Document Enhancement Pipeline:**
+- ✅ **Native XLSX/PPTX enhance:** `rag_enhance.py` — Enhanced dosyalar artık orijinal formatında (XLSX/PPTX) kalır, zorla DOCX dönüştürme kaldırıldı
+- ✅ **Section-based chunking (enhance):** `rag_enhance.py` — XLSX/PPTX enhance sonrası approved section text'lerinden heading prefix'li chunk oluşturulur
+- ✅ **İyileştirilmiş maturity re-score:** `rag_enhance.py` — Upload öncesi enhance edilmiş dosyanın olgunluk skoru yeniden hesaplanır (orijinal skor değil)
+- ✅ **Content Integrity Validator:** `content_integrity_validator.py` (**YENİ**) — LLM çıktısının orijinal içerikle tutarlılığını doğrular (`integrity_score`, `integrity_issues`)
+- ✅ **LLM hata yönetimi:** `document_enhancer.py` — `llm_error` ve `integrity_failed` change type'ları eklendi, başarısız bölümler kullanıcıya gösterilir
+- ✅ **Session temizleme güvenliği:** `rag_enhance.py` — Upload sonrası session hemen silinmez, `_uploaded` flag ile işaretlenir (race condition koruması)
+
+**🟢 P2 — Processor İyileştirmeleri:**
+- ✅ **Excel sheet summary chunk:** `excel_processor.py` — Dosya seviyesinde sheet özeti chunk'ı (satır/sütun sayısı) → RAG'da dosya bağlamı
+- ✅ **charset-normalizer encoding:** `txt_processor.py` — `charset_normalizer.from_bytes()` ile akıllı encoding tespiti (Türkçe dosyalarda iyileştirme)
+- ✅ **file_type metadata:** `docx_processor.py`, `txt_processor.py`, `pptx_processor.py` — Tüm chunk metadata'ya `file_type` alanı eklendi
+- ✅ **Fortify uyumluluk:** `docx_processor.py`, `pptx_processor.py` — `print(sys.stderr)` → `logging` modülüne taşındı
+- ✅ **Enhancer priority genişletme:** `document_enhancer.py` — Excel (merge, boş satır, formül), DOCX (metin kutusu, liste), PPTX (slayt başlık) ihlal boost'ları eklendi
+- ✅ **Enhancer weakness genişletme:** `document_enhancer.py` — Tüm dosya türleri için yapısal zayıflık tespiti
+
+**🎨 Frontend İyileştirmeleri:**
+- ✅ **Enhancer modal LLM hata gösterimi:** `document_enhancer_modal.js` — `llm_error` ve `integrity_failed` badge'leri, sıralama iyileştirmesi
+- ✅ **Maturity modal PPTX/TXT desteği:** `maturity_score_modal.js` — Tüm dosya türleri için maturity analiz başlatma
+- ✅ **Inline CSS temizliği:** `document_enhancer_modal.js` — `style.display` → CSS class (`hidden`) geçişi
+- ✅ **Retry butonu:** `rag_file_list.js` — Başarısız dosyalarda `fa-rotate-right` butonu + `retryFile()` fonksiyonu
+- ✅ **Upload progress bar:** `rag_file_list.js` — WebSocket `rag_upload_progress` event ile gerçek zamanlı ilerleme çubuğu
+- ✅ **WS progress handler:** `websocket_client.js` — `rag_upload_progress` ve `rag_upload_complete` event dispatch
+- ✅ **CSS iyileştirmeleri:** `document_enhancer_modal.css` + `rag_upload.css` — Progress bar, retry buton, integrity badge stilleri
+
+**📁 Yeni Dosyalar:**
+- `app/services/content_integrity_validator.py` — LLM çıktısı bütünlük doğrulama servisi
+
+**📁 Değişen Dosyalar (23 dosya):**
+- `app/core/config.py` — `APP_VERSION: 3.2.1`
+- `app/core/schema.py` — `app_version: 3.2.1` (system_settings)
+- `app/api/routes/rag_enhance.py` — Native format + section chunking + maturity re-score + session guard
+- `app/api/routes/rag_upload.py` — WS progress + retry endpoint
+- `app/api/routes/rag_maturity.py` — API güvenlik (exception maskeleme)
+- `app/services/document_enhancer.py` — Integrity validator + LLM hata yönetimi + priority/weakness genişletme
+- `app/services/maturity_analyzer.py` — Logging + merge penalty yumuşatma + gizli sheet + büyük dosya kuralları
+- `app/services/rag/service.py` — `_inject_context_prefix()` + speaker notes bonus
+- `app/services/document_processors/excel_processor.py` — Sheet summary + gruplu chunking + heading prefix
+- `app/services/document_processors/docx_processor.py` — Chunk overlap + file_type metadata + logging
+- `app/services/document_processors/txt_processor.py` — charset-normalizer + chunk overlap + heading prefix
+- `app/services/document_processors/pptx_processor.py` — file_type metadata + logging
+- `app/services/document_processors/pdf_processor.py` — file_type metadata
+- `app/services/document_processors/image_extractor.py` — Minor fix
+- `frontend/assets/js/modules/document_enhancer_modal.js` — LLM hata UI + inline CSS kaldırma
+- `frontend/assets/js/modules/maturity_score_modal.js` — Tüm dosya türleri desteği
+- `frontend/assets/js/modules/rag_file_list.js` — Retry + progress listener
+- `frontend/assets/js/websocket_client.js` — Progress event dispatch
+- `frontend/assets/js/modules/company_module.js` — Logo 404 fallback
+- `frontend/assets/css/modules/document_enhancer_modal.css` — Integrity badge + hata stilleri
+- `frontend/assets/css/rag_upload.css` — Progress bar + retry buton stilleri
+- `frontend/home.html` — Cache busting v3.2.1
+
+---
+
+### 🆕 v3.2.0 (2026-04-02) - XLSX Upload Pipeline Optimizasyonu
+
+**🔴 P0 — Kritik Düzeltmeler:**
+- ✅ **Veri kaybı fix:** `excel_processor.py` — `'0'` ve `'0.0'` değerleri artık filtrelenmiyor (finansal tablolarda veri kaybı önlendi)
+- ✅ **Fortify uyumluluk:** `excel_processor.py` + `maturity_analyzer.py` — Tüm `print(sys.stderr)` → `logging` modülüne taşındı (10+ satır)
+- ✅ **API güvenlik:** `rag_maturity.py` + `maturity_analyzer.py` — Exception detayları API response'dan kaldırıldı, genel hata mesajı döndürülür
+
+**🟡 P1 — İşlevsel İyileştirmeler:**
+- ✅ **`.xls` maturity analiz:** `analyze_xls()` fonksiyonu — `xlrd` tabanlı bağımsız analiz (3 kural: başlık, boşluk, veri tipi)
+- ✅ **Logo 404 fallback:** `company_module.js` — Logo `<img>` tag'ına `onerror` handler eklendi
+- ✅ **Merge penalty yumuşatma:** Eşik 10→20, skor 30→50 — processor merge'leri otomatik çözümlediği için ağır penalty gereksiz
+- ✅ **Gruplu chunking:** `MIN_CHUNK_LENGTH=20` — Kısa satırlar birleştirilerek daha anlamlı chunk'lar oluşturuluyor
+
+**🟢 P2 — Altyapı Geliştirmeleri:**
+- ✅ **`.xls` merge hücre desteği:** `_chunks_from_xlrd()` — xlrd merge haritası ile boş hücreler doldurulur
+- ✅ **Gizli sheet kontrolü:** Maturity KURAL 7 — hidden sheet uyarısı
+- ✅ **Büyük dosya uyarısı:** Maturity KURAL 8 — 10K+ satır performans uyarısı
+- ✅ **WebSocket progress:** `rag_upload_progress` mesaj tipi — dosya bazlı gerçek zamanlı ilerleme
+- ✅ **Retry endpoint:** `POST /retry-file/{file_id}` — başarısız dosyaları tekrar işleme
+
+**📁 Değişen Dosyalar:**
+- `app/services/document_processors/excel_processor.py` — 4 düzeltme (veri kaybı, logging, gruplu chunking, XLS merge)
+- `app/services/maturity_analyzer.py` — 6 düzeltme (logging, XLS desteği, merge penalty, gizli sheet, boyut uyarısı)
+- `app/api/routes/rag_maturity.py` — API güvenlik (exception maskeleme)
+- `app/api/routes/rag_upload.py` — WS progress bildirimi + retry endpoint
+- `frontend/assets/js/websocket_client.js` — Progress handler
+- `frontend/assets/js/modules/company_module.js` — Logo fallback
+
+**🧪 Test:** 46 passed, 0 failed ✅
+
+---
+
 ### 🆕 v3.1.2 (2026-04-02) - ML Training Stabilization & Learned Q&A All-Training
 
 **🧠 Learned Q&A — Tüm Eğitim Tiplerine Entegrasyon:**

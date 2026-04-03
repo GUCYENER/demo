@@ -4,10 +4,13 @@ Uses python-pptx for PPTX text extraction
 Enhanced with slide title extraction, speaker notes, and semantic chunking (2024 Best Practices)
 """
 
+import logging
 from pathlib import Path
 from typing import BinaryIO, List
 
 from .base import BaseDocumentProcessor
+
+logger = logging.getLogger("vyra")
 
 
 class PPTXProcessor(BaseDocumentProcessor):
@@ -104,8 +107,7 @@ class PPTXProcessor(BaseDocumentProcessor):
                 notes_text = notes_slide.notes_text_frame.text.strip()
                 return notes_text
         except Exception as e:
-            import sys
-            print(f"[PPTXProcessor] Speaker notes okuma hatası: {e}", file=sys.stderr)
+            logger.debug("[PPTXProcessor] Speaker notes okuma hatası", exc_info=True)
         return ""
     
     def _extract_slide_content(self, slide) -> dict:
@@ -167,8 +169,7 @@ class PPTXProcessor(BaseDocumentProcessor):
             
         except Exception as e:
             # Fallback - boş liste dön, base.py standart chunking yapacak
-            import sys
-            print(f"[PPTXProcessor] extract_chunks hatası: {e}", file=sys.stderr)
+            logger.warning("[PPTXProcessor] extract_chunks hatası", exc_info=True)
             return []
         
         chunks = []
@@ -198,6 +199,7 @@ class PPTXProcessor(BaseDocumentProcessor):
                                     "type": content_type,
                                     "heading": title,
                                     "slide": slide_num,
+                                    "file_type": "pptx",
                                     "chunk_index": chunk_index,
                                     "source": file_name
                                 }
@@ -210,6 +212,7 @@ class PPTXProcessor(BaseDocumentProcessor):
                             "type": content_type,
                             "heading": title,
                             "slide": slide_num,
+                            "file_type": "pptx",
                             "chunk_index": chunk_index,
                             "source": file_name
                         }
@@ -224,6 +227,7 @@ class PPTXProcessor(BaseDocumentProcessor):
                         "type": "speaker_notes",
                         "heading": f"{title} - Notlar" if title else "Konuşmacı Notları",
                         "slide": slide_num,
+                        "file_type": "pptx",
                         "chunk_index": chunk_index,
                         "source": file_name
                     }
@@ -272,8 +276,7 @@ class PPTXProcessor(BaseDocumentProcessor):
                     "file_name": file_path.name,
                 })
             except Exception as e:
-                import sys
-                print(f"[PPTXProcessor] Metadata okuma hatası: {e}", file=sys.stderr)
+                logger.warning("[PPTXProcessor] Metadata okuma hatası", exc_info=True)
                 base_meta["file_name"] = file_path.name
         else:
             base_meta["file_name"] = file_name

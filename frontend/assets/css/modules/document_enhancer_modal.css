@@ -304,6 +304,71 @@
     color: #71717a;
 }
 
+.enhancer-change-badge.llm-error {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+}
+
+.enhancer-section-card.llm-error {
+    border-left: 3px solid #ef4444;
+    opacity: 0.85;
+}
+
+.enhancer-section-card.llm-error:hover {
+    border-color: #ef4444;
+}
+
+.enhancer-llm-error {
+    color: #ef4444 !important;
+    background: rgba(239, 68, 68, 0.08) !important;
+}
+
+.enhancer-llm-error i {
+    color: #ef4444;
+}
+
+/* Integrity Failed */
+.enhancer-change-badge.integrity-failed {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+}
+
+.enhancer-section-card.integrity-failed {
+    border-left: 3px solid #f59e0b;
+    opacity: 0.85;
+}
+
+.enhancer-section-card.integrity-failed:hover {
+    border-color: #f59e0b;
+}
+
+.enhancer-integrity-warning {
+    color: #f59e0b !important;
+    background: rgba(245, 158, 11, 0.08) !important;
+}
+
+.enhancer-integrity-warning i {
+    color: #f59e0b;
+}
+
+.enhancer-icon-integrity {
+    color: #f59e0b;
+}
+
+.enhancer-icon-error {
+    color: #ef4444;
+}
+
+/* Integrity Badge */
+.enhancer-integrity-badge {
+    font-size: 11px;
+    font-weight: 500;
+    padding: 3px 8px;
+    border-radius: 6px;
+    color: #34d399;
+    background: rgba(52, 211, 153, 0.1);
+}
+
 .enhancer-priority-badge {
     font-size: 11px;
     font-weight: 500;

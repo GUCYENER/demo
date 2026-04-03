@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.1.2"  # ML Training: Learned Q&A all-training + overflow protection
+    APP_VERSION: str = "3.2.1"  # RAG Best Practice: context injection, chunk overlap, encoding, metadata enrichment
 
     # Frontend & API prefix
     api_prefix: str = "/api"

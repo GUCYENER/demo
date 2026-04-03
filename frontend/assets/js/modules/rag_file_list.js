@@ -356,6 +356,16 @@ window.RAGFileList = {
                 this.openFileOrgEditModal(fileId, fileName, currentOrgs);
             });
         });
+
+        // Retry butonlarına event listener ekle
+        container.querySelectorAll('.btn-retry-file').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const fileId = btn.dataset.fileId;
+                const fileName = btn.dataset.fileName;
+                this.retryFile(fileId, fileName);
+            });
+        });
     },
 
     /**
@@ -498,6 +508,9 @@ window.RAGFileList = {
                 </td>
                 <td>
                     <div class="file-actions">
+                        ${isFailed ? `<button class="btn-retry-file" data-file-id="${file.id}" data-file-name="${this.escapeHtml(file.file_name)}" title="Yeniden işle">
+                            <i class="fas fa-rotate-right"></i>
+                        </button>` : ''}
                         <button class="btn-edit-file-org" data-file-id="${file.id}" data-file-name="${this.escapeHtml(file.file_name)}" data-current-orgs='${JSON.stringify(file.org_groups || [])}' title="Org gruplarını düzenle" ${isProcessing ? 'disabled' : ''}>
                             <i class="fas fa-pen-to-square"></i>
                         </button>
@@ -549,4 +562,120 @@ window.RAGFileList = {
         return `<span class="ds-source-badge ${cfg.cls}">${cfg.label}</span>`;
     },
 
+    /**
+     * Başarısız dosyayı yeniden işleme alır
+     */
+    async retryFile(fileId, fileName) {
+        // Çift tıklama koruması — buton disabled yapılır
+        const retryBtn = document.querySelector(`.btn-retry-file[data-file-id="${fileId}"]`);
+        if (retryBtn) {
+            retryBtn.disabled = true;
+            retryBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> İşleniyor...';
+        }
+
+        try {
+            const token = localStorage.getItem('access_token');
+            const response = await fetch(`${this.API_BASE}/rag/retry-file/${fileId}`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'Yeniden işleme hatası');
+            }
+
+            this.showToast(`"${fileName}" yeniden işleniyor...`, 'success');
+            if (window.NgssNotification) {
+                NgssNotification.info('Dosya Yeniden İşleniyor', `"${fileName}" arkaplanda işleniyor`);
+            }
+
+            // Dosya listesini yenile (processing durumunu görmek için)
+            await this.loadFiles();
+
+        } catch (error) {
+            console.error('[RAGUpload] Retry hatası:', error);
+            this.showToast(error.message || 'Yeniden işleme hatası', 'error');
+            // Hata durumunda butonu tekrar aktif et
+            if (retryBtn) {
+                retryBtn.disabled = false;
+                retryBtn.innerHTML = '<i class="fa-solid fa-rotate-right"></i> Tekrar Dene';
+            }
+        }
+    },
+
+    /**
+     * v3.2.0: WebSocket progress dinleyicisini başlat
+     * rag_upload_progress ve rag_upload_complete event'lerini dinler
+     */
+    initProgressListener() {
+        // Progress event — dosya bazlı ilerleme
+        window.addEventListener('vyra:rag_upload_progress', (e) => {
+            const { current, total, file_name, percentage } = e.detail;
+            this._showUploadProgress(current, total, file_name, percentage);
+        });
+
+        // Upload complete — işlem bitti, listeyi yenile
+        window.addEventListener('vyra:rag_upload_complete', () => {
+            this._hideUploadProgress();
+            this.loadFiles();
+        });
+
+        // Upload failed — hata durumu, listeyi yenile
+        window.addEventListener('vyra:rag_upload_failed', () => {
+            this._hideUploadProgress();
+            this.loadFiles();
+        });
+    },
+
+    /**
+     * Dosya tablosu üstünde progress bar gösterir
+     */
+    _showUploadProgress(current, total, fileName, percentage) {
+        let bar = document.getElementById('ragUploadProgressBar');
+        if (!bar) {
+            const container = document.querySelector('.rag-file-list-container') ||
+                              document.querySelector('#ragFileListBody')?.closest('.card-body');
+            if (!container) return;
+
+            bar = document.createElement('div');
+            bar.id = 'ragUploadProgressBar';
+            bar.className = 'rag-upload-progress-bar';
+            bar.innerHTML = `
+                <div class="rag-progress-info">
+                    <i class="fa-solid fa-spinner fa-spin"></i>
+                    <span class="rag-progress-text"></span>
+                </div>
+                <div class="rag-progress-track">
+                    <div class="rag-progress-fill"></div>
+                </div>
+            `;
+            container.insertBefore(bar, container.firstChild);
+        }
+
+        bar.style.display = 'flex';
+        bar.querySelector('.rag-progress-text').textContent =
+            `${current}/${total} dosya işlendi: ${fileName}`;
+        bar.querySelector('.rag-progress-fill').style.width = `${percentage}%`;
+    },
+
+    /**
+     * Progress bar'ı gizler
+     */
+    _hideUploadProgress() {
+        const bar = document.getElementById('ragUploadProgressBar');
+        if (bar) {
+            bar.style.display = 'none';
+        }
+    },
+
 };
+
+// v3.2.0: Sayfa yüklendiğinde progress listener'ı başlat
+document.addEventListener('DOMContentLoaded', () => {
+    if (window.RAGFileList) {
+        window.RAGFileList.initProgressListener();
+    }
+});

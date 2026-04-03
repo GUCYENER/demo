@@ -384,7 +384,8 @@ async def _process_files_background(
     loop = asyncio.get_event_loop()
     
     try:
-        for file_info in files_to_process:
+        total_files = len(files_to_process)
+        for idx, file_info in enumerate(files_to_process):
             # v2.43.0: CPU-bound işlemi thread pool'da çalıştır
             chunk_count, file_name, success = await loop.run_in_executor(
                 _file_processing_executor,
@@ -401,6 +402,21 @@ async def _process_files_background(
                 processed_count += 1
             else:
                 failed_files.append(file_name)
+            
+            # 🔔 Dosya bazlı progress bildirimi
+            try:
+                await ws_manager.send_to_user(user_id, {
+                    "type": "rag_upload_progress",
+                    "current": idx + 1,
+                    "total": total_files,
+                    "file_name": file_name,
+                    "success": success,
+                    "chunk_count": chunk_count if success else 0,
+                    "percentage": round(((idx + 1) / total_files) * 100),
+                    "message": f"{idx + 1}/{total_files} dosya işlendi: {file_name}"
+                })
+            except Exception:
+                pass  # Progress bildirimi kritik değil
                     
     except Exception as outer_err:
         log_error(
@@ -552,3 +568,91 @@ def _update_chunk_image_refs(cursor, file_id: int, images, image_ids: list):
         )
     
     _log("INFO", f"Dosya {file_id}: {len(matched_ids)}/{len(image_ids)} görsel chunk'a eşleştirildi", "rag_upload")
+
+
+@router.post("/retry-file/{file_id}")
+async def retry_file_processing(
+    file_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """
+    Başarısız (status='failed') dosyayı tekrar işleme alır.
+    Mevcut chunk'ları temizler ve yeniden background processing başlatır.
+    """
+    conn = get_db_conn()
+    try:
+        cur = conn.cursor()
+        
+        # Dosyanın varlığını ve durumunu kontrol et
+        cur.execute(
+            "SELECT id, file_name, file_type, status, company_id, maturity_score FROM rag_files WHERE id = %s",
+            (file_id,)
+        )
+        row = cur.fetchone()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="Dosya bulunamadı")
+        
+        db_id, file_name, file_type, status, company_id, maturity_score = row
+        
+        if status not in ('failed', 'error'):
+            raise HTTPException(
+                status_code=400,
+                detail="Sadece başarısız dosyalar yeniden işlenebilir"
+            )
+        
+        # Dosya içeriğini al
+        cur.execute("SELECT file_data FROM rag_files WHERE id = %s", (file_id,))
+        file_data_row = cur.fetchone()
+        if not file_data_row or not file_data_row[0]:
+            raise HTTPException(status_code=400, detail="Dosya verisi bulunamadı")
+        
+        file_data = bytes(file_data_row[0])
+        
+        # Mevcut chunk'ları temizle
+        cur.execute("DELETE FROM rag_chunks WHERE file_id = %s", (file_id,))
+        
+        # Status'ü 'processing' yap
+        cur.execute(
+            "UPDATE rag_files SET status = 'processing', error_message = NULL WHERE id = %s",
+            (file_id,)
+        )
+        conn.commit()
+        
+        _log("INFO", f"Retry başlatıldı: {file_name} (id={file_id})", "rag_upload")
+        
+        # Mevcut maturity_score'u koru
+        maturity_map = None
+        if maturity_score is not None:
+            maturity_map = {file_name: maturity_score}
+        
+        # Background task olarak yeniden işle
+        file_info = {
+            "file_id": db_id,
+            "file_name": file_name,
+            "file_type": file_type,
+            "file_data": file_data,
+            "company_id": company_id
+        }
+        
+        asyncio.ensure_future(
+            _process_files_background(
+                [file_info],
+                current_user["user_id"],
+                maturity_score_map=maturity_map
+            )
+        )
+        
+        return {
+            "status": "processing",
+            "message": f"{file_name} yeniden işleniyor...",
+            "file_id": file_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Retry hatası (file_id={file_id})", "rag", error_detail=str(e))
+        raise HTTPException(status_code=500, detail="Yeniden işleme başlatılamadı")
+    finally:
+        conn.close()

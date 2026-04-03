@@ -7,11 +7,14 @@ Semantik chunking ile geliştirilmiş DOCX işleme.
 - Türkçe pattern tanıma
 """
 
+import logging
 import re
 from pathlib import Path
 from typing import BinaryIO, List, Dict, Any
 
 from .base import BaseDocumentProcessor
+
+logger = logging.getLogger("vyra")
 
 
 class DOCXProcessor(BaseDocumentProcessor):
@@ -280,6 +283,8 @@ class DOCXProcessor(BaseDocumentProcessor):
                     "page": 1,  # DOCX'te sayfa bilgisi yok, yaklaşık
                 })
         
+        OVERLAP_SIZE = 100  # v3.2.0 RAG-1: Chunk overlap
+        
         def _save_section():
             """Mevcut section'ı chunk'lara çevir ve kaydet."""
             nonlocal chunk_index
@@ -287,13 +292,22 @@ class DOCXProcessor(BaseDocumentProcessor):
                 section_text = "\n\n".join(current_section)
                 section_text = self._fix_turkish_chars(section_text)
                 
-                for sub_text in self._split_large_chunk(section_text):
+                sub_chunks = self._split_large_chunk(section_text)
+                for i, sub_text in enumerate(sub_chunks):
                     if len(sub_text.strip()) >= self.MIN_CHUNK_SIZE:
+                        # v3.2.0 RAG-1: Overlap — önceki chunk'ın sonundan bağlam ekle
+                        overlap_prefix = ""
+                        if i > 0 and len(sub_chunks[i - 1]) > OVERLAP_SIZE:
+                            overlap_prefix = sub_chunks[i - 1][-OVERLAP_SIZE:].strip() + "\n"
+                        
+                        final_text = (overlap_prefix + sub_text).strip() if overlap_prefix else sub_text
+                        
                         chunk_meta = {
                             "type": "paragraph",
                             "heading": current_heading,
                             "heading_level": current_heading_level,
                             "heading_path": _get_heading_path(),
+                            "file_type": "docx",
                             "chunk_index": chunk_index
                         }
                         
@@ -302,7 +316,7 @@ class DOCXProcessor(BaseDocumentProcessor):
                             chunk_meta["image_refs"] = heading_image_map[current_heading]
                         
                         chunks.append({
-                            "text": sub_text,
+                            "text": final_text,
                             "metadata": chunk_meta
                         })
                         chunk_index += 1
@@ -415,8 +429,7 @@ class DOCXProcessor(BaseDocumentProcessor):
                     "created": str(props.created) if props.created else "",
                 })
             except Exception as e:
-                import sys
-                print(f"[DOCXProcessor] Metadata okuma hatası: {e}", file=sys.stderr)
+                logger.warning("[DOCXProcessor] Metadata okuma hatası", exc_info=True)
                 base_meta["title"] = file_path.stem
         else:
             base_meta["file_name"] = file_name

@@ -4,11 +4,14 @@ Plain text file processing with encoding detection
 Enhanced with heading detection and semantic chunking (2024 Best Practices)
 """
 
+import logging
 import re
 from pathlib import Path
 from typing import BinaryIO, List
 
 from .base import BaseDocumentProcessor
+
+logger = logging.getLogger("vyra")
 
 
 class TXTProcessor(BaseDocumentProcessor):
@@ -51,13 +54,27 @@ class TXTProcessor(BaseDocumentProcessor):
             raise RuntimeError(f"TXT okuma hatası: {str(e)}")
     
     def extract_text_from_bytes(self, file_obj: BinaryIO, file_name: str) -> str:
-        """BytesIO'dan TXT metni çıkarır"""
+        """BytesIO'dan TXT metni çıkarır — charset-normalizer ile akıllı encoding tespiti"""
         content = file_obj.read()
         
+        # 🆕 v3.2.0 RAG-6: charset-normalizer ile otomatik encoding tespiti
+        try:
+            from charset_normalizer import from_bytes
+            result = from_bytes(content).best()
+            if result and result.encoding:
+                detected_encoding = result.encoding
+                logger.debug("[TXTProcessor] charset-normalizer encoding: %s (dosya: %s)", detected_encoding, file_name)
+                text = str(result)
+                return self._fix_turkish_chars(text)
+        except ImportError:
+            logger.debug("[TXTProcessor] charset-normalizer bulunamadı, fallback kullanılıyor")
+        except Exception:
+            logger.debug("[TXTProcessor] charset-normalizer hatası, fallback kullanılıyor", exc_info=True)
+        
+        # Fallback: manuel encoding denemesi
         for encoding in self.ENCODINGS:
             try:
                 text = content.decode(encoding)
-                # 🇹🇷 Türkçe karakter düzeltme
                 return self._fix_turkish_chars(text)
             except (UnicodeDecodeError, UnicodeError):
                 continue
@@ -202,6 +219,8 @@ class TXTProcessor(BaseDocumentProcessor):
         TXT dosyasından zengin metadata ile chunk'lar çıkarır.
         PDF/DOCX/PPTX processor ile tutarlı format.
         
+        v3.2.0: Chunk overlap ve file_type metadata desteği.
+        
         Returns:
             List[dict]: [{"text": "...", "metadata": {"heading": "...", "type": "..."}}, ...]
         """
@@ -217,19 +236,27 @@ class TXTProcessor(BaseDocumentProcessor):
         
         chunks = []
         chunk_index = 0
+        OVERLAP_SIZE = 100  # v3.2.0 RAG-1: Chunk overlap — bağlam kaybını önler
         
         # Heading'lere göre bölümle
         sections = self._extract_sections(text)
         
         if not sections:
             # Heading bulunamadıysa, paragraf bazlı chunking yap
-            for chunk_text in self._split_large_content(text):
+            sub_chunks = self._split_large_content(text)
+            for i, chunk_text in enumerate(sub_chunks):
                 if len(chunk_text.strip()) >= 30:
+                    # Overlap: önceki chunk'ın sonundan bağlam ekle
+                    overlap_prefix = ""
+                    if i > 0 and len(sub_chunks[i - 1]) > OVERLAP_SIZE:
+                        overlap_prefix = sub_chunks[i - 1][-OVERLAP_SIZE:].strip() + "\n"
+                    
                     chunks.append({
-                        "text": chunk_text.strip(),
+                        "text": (overlap_prefix + chunk_text).strip(),
                         "metadata": {
                             "type": "paragraph",
                             "heading": "",
+                            "file_type": "txt",
                             "chunk_index": chunk_index,
                             "source": file_name
                         }
@@ -243,14 +270,25 @@ class TXTProcessor(BaseDocumentProcessor):
                 line_start = section.get("line_start")
                 
                 # Büyük section'ları böl
-                for sub_text in self._split_large_content(content):
+                sub_chunks = self._split_large_content(content)
+                for i, sub_text in enumerate(sub_chunks):
                     if len(sub_text.strip()) >= 30:
+                        # Overlap: önceki chunk'ın sonundan bağlam ekle
+                        overlap_prefix = ""
+                        if i > 0 and len(sub_chunks[i - 1]) > OVERLAP_SIZE:
+                            overlap_prefix = sub_chunks[i - 1][-OVERLAP_SIZE:].strip() + "\n"
+                        
+                        # v3.2.1: Heading prefix → embedding search için bölüm contexti
+                        heading_prefix = f"[Bölüm: {heading}]\n" if heading else ""
+                        chunk_text_final = (heading_prefix + overlap_prefix + sub_text).strip()
+                        
                         chunks.append({
-                            "text": sub_text.strip(),
+                            "text": chunk_text_final,
                             "metadata": {
                                 "type": "section",
                                 "heading": heading,
                                 "line_start": line_start,
+                                "file_type": "txt",
                                 "chunk_index": chunk_index,
                                 "source": file_name
                             }

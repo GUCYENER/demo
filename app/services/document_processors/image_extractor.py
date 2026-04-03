@@ -365,8 +365,7 @@ class ImageExtractor:
             img = Image.open(io.BytesIO(image_data))
             return img.size  # (width, height)
         except Exception as e:
-            import sys
-            print(f"[ImageExtractor] Image boyut okuma hatası: {e}", file=sys.stderr)
+            log_error(f"Image boyut okuma hatası: {e}", "image_extractor")
             return (0, 0)
 
     # ─────────────────────────────────────────

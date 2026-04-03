@@ -6,10 +6,13 @@ Her Excel dosyasında otomatik olarak header satırını bulur.
 Enhanced with consistent metadata format (2024 Best Practices)
 """
 
+import logging
 from pathlib import Path
 from typing import BinaryIO, List, Dict, Any, Tuple
 
 from .base import BaseDocumentProcessor
+
+logger = logging.getLogger("vyra")
 
 
 class ExcelProcessor(BaseDocumentProcessor):
@@ -191,8 +194,33 @@ class ExcelProcessor(BaseDocumentProcessor):
             return False
     
     def _chunks_from_openpyxl(self, wb, file_name: str = None, file_path: Path = None) -> List[Dict[str, Any]]:
-        """openpyxl workbook'tan satır bazlı chunk'lar oluşturur - MERGE HÜCRE DESTEKLİ"""
+        """openpyxl workbook'tan satır bazlı chunk'lar oluşturur - MERGE HÜCRE DESTEKLİ + GRUPLU CHUNKİNG"""
         chunks = []
+        # Çok kısa satırları birleştirmek için minimum chunk uzunluğu
+        MIN_CHUNK_LENGTH = 20
+        
+        source = file_name or (file_path.name if file_path else "")
+        
+        # 🆕 v3.2.0 RAG-3: Sheet Summary Chunk — dosya seviyesinde bağlam
+        summary_parts = []
+        for sheet_name in wb.sheetnames:
+            sheet = wb[sheet_name]
+            row_count = sheet.max_row or 0
+            col_count = sheet.max_column or 0
+            summary_parts.append(f"  - {sheet_name}: {row_count} satır, {col_count} sütun")
+        
+        if summary_parts:
+            summary_text = f"Dosya Özeti: {source}\nSayfalar:\n" + "\n".join(summary_parts)
+            chunks.append({
+                "text": summary_text,
+                "metadata": {
+                    "type": "excel_summary",
+                    "heading": "Dosya Özeti",
+                    "sheet": "",
+                    "chunk_index": 0,
+                    "source": source
+                }
+            })
         
         for sheet_name in wb.sheetnames:
             sheet = wb[sheet_name]
@@ -213,8 +241,13 @@ class ExcelProcessor(BaseDocumentProcessor):
             # Akıllı header tespiti
             header_row_idx, headers = self._detect_header_row(all_rows)
             
-            # Header satırından sonraki satırları işle
-            for row_idx, row_values in enumerate(all_rows[header_row_idx + 1:], start=header_row_idx + 2):
+            # Header satırından sonraki satırları işle — gruplu chunking
+            pending_text = ""      # Birleştirilecek kısa satırlar
+            pending_start_row = 0  # Birleştirme başlangıç satırı
+            
+            data_rows = all_rows[header_row_idx + 1:]
+            for i, row_values in enumerate(data_rows):
+                row_idx = header_row_idx + 2 + i
                 row_str_values = [str(cell).strip() if cell is not None else "" for cell in row_values]
                 
                 # Boş satırları atla
@@ -224,21 +257,74 @@ class ExcelProcessor(BaseDocumentProcessor):
                 # Satırı anlamlı formata çevir
                 chunk_text = self._format_row_as_text(headers, row_str_values)
                 
-                if chunk_text:
-                    chunk_text = self._fix_turkish_chars(chunk_text)
-                    
+                if not chunk_text:
+                    continue
+                
+                chunk_text = self._fix_turkish_chars(chunk_text)
+                
+                # Gruplu chunking: kısa satırları birleştir
+                if len(chunk_text) < MIN_CHUNK_LENGTH:
+                    if not pending_text:
+                        pending_start_row = row_idx
+                    pending_text += ("\n---\n" if pending_text else "") + chunk_text
+                    continue
+                
+                # Birleştirilmiş kısa satırlar varsa önce onları flush et
+                # v3.2.1: Heading prefix → embedding search için bölüm contexti
+                heading_prefix = f"[Bölüm: {sheet_name}]\n"
+                
+                if pending_text:
+                    # Kısa satırı mevcut satırla birleştir
+                    combined = heading_prefix + pending_text + "\n---\n" + chunk_text
                     chunks.append({
-                        "text": chunk_text,
+                        "text": combined,
+                        "metadata": {
+                            "type": "excel_row_group",
+                            "heading": sheet_name,
+                            "sheet": sheet_name,
+                            "row": pending_start_row,
+                            "row_end": row_idx,
+                            "header_row": header_row_idx + 1,
+                            "column_headers": headers,
+                            "file_type": "xlsx",
+                            "chunk_index": len(chunks),
+                            "source": source
+                        }
+                    })
+                    pending_text = ""
+                else:
+                    # Normal uzunlukta satır — tek başına chunk
+                    chunks.append({
+                        "text": heading_prefix + chunk_text,
                         "metadata": {
                             "type": "excel_row",
-                            "heading": sheet_name,  # Sheet adı heading olarak kullanılır
+                            "heading": sheet_name,
                             "sheet": sheet_name,
                             "row": row_idx,
                             "header_row": header_row_idx + 1,
+                            "column_headers": headers,
+                            "file_type": "xlsx",
                             "chunk_index": len(chunks),
-                            "source": file_name or (file_path.name if file_path else "")
+                            "source": source
                         }
                     })
+            
+            # Sheet sonu — kalan kısa satırları flush et
+            if pending_text:
+                chunks.append({
+                    "text": f"[Bölüm: {sheet_name}]\n" + pending_text,
+                    "metadata": {
+                        "type": "excel_row_group",
+                        "heading": sheet_name,
+                        "sheet": sheet_name,
+                        "row": pending_start_row,
+                        "header_row": header_row_idx + 1,
+                        "column_headers": headers,
+                        "file_type": "xlsx",
+                        "chunk_index": len(chunks),
+                        "source": source
+                    }
+                })
         
         return chunks
     
@@ -269,8 +355,7 @@ class ExcelProcessor(BaseDocumentProcessor):
                         merge_map[(row, col)] = value
         except Exception as e:
             # Merge range okuma hatası - devam et ama logla
-            import sys
-            print(f"[ExcelProcessor] Merge range okuma hatası: {e}", file=sys.stderr)
+            logger.debug("[ExcelProcessor] Merge range okuma hatası", exc_info=True)
         
         return merge_map
     
@@ -297,8 +382,10 @@ class ExcelProcessor(BaseDocumentProcessor):
         return resolved
     
     def _chunks_from_xlrd(self, wb, file_name: str = None, file_path: Path = None) -> List[Dict[str, Any]]:
-        """xlrd workbook'tan satır bazlı chunk'lar oluşturur"""
+        """xlrd workbook'tan satır bazlı chunk'lar oluşturur — MERGE HÜCRE DESTEKLİ + GRUPLU CHUNKİNG"""
         chunks = []
+        # Çok kısa satırları birleştirmek için minimum chunk uzunluğu (openpyxl ile tutarlı)
+        MIN_CHUNK_LENGTH = 20
         
         for sheet_idx in range(wb.nsheets):
             sheet = wb.sheet_by_index(sheet_idx)
@@ -306,18 +393,53 @@ class ExcelProcessor(BaseDocumentProcessor):
             if sheet.nrows < 2:
                 continue
             
-            # Tüm satırları al
+            # 🆕 XLS Merge hücre haritası oluştur
+            merge_map = {}
+            try:
+                for crange in sheet.merged_cells:
+                    rlo, rhi, clo, chi = crange
+                    master_value = sheet.cell_value(rlo, clo)
+                    if master_value is not None and str(master_value).strip():
+                        for r in range(rlo, rhi):
+                            for c in range(clo, chi):
+                                if r != rlo or c != clo:  # master hücreyi atla
+                                    merge_map[(r, c)] = master_value
+            except Exception:
+                logger.debug("[ExcelProcessor] XLS merge range okuma hatası", exc_info=True)
+            
+            # Tüm satırları al ve merge değerlerini uygula
             rows = []
             for row_idx in range(sheet.nrows):
-                row = [sheet.cell_value(row_idx, col) for col in range(sheet.ncols)]
+                row = []
+                for col in range(sheet.ncols):
+                    cell_type = sheet.cell_type(row_idx, col)
+                    val = sheet.cell_value(row_idx, col)
+                    
+                    # v3.2.0 CR-4: xlrd date cell formatı
+                    # XL_CELL_DATE (3) tipindeki hücreler float olarak gelir → tarihe çevir
+                    if cell_type == 3 and isinstance(val, float):
+                        try:
+                            import xlrd
+                            date_tuple = xlrd.xldate_as_tuple(val, wb.datemode)
+                            val = f"{date_tuple[0]:04d}-{date_tuple[1]:02d}-{date_tuple[2]:02d}"
+                        except Exception:
+                            pass
+                    
+                    # Merge map'te varsa ve boşsa, merge değerini kullan
+                    if (not val or not str(val).strip()) and (row_idx, col) in merge_map:
+                        val = merge_map[(row_idx, col)]
+                    row.append(val)
                 rows.append(row)
             
             # Akıllı header tespiti
             header_row_idx, headers = self._detect_header_row(rows)
             
-            # Header satırından sonraki satırları işle
+            # Header satırından sonraki satırları işle — gruplu chunking
+            pending_text = ""      # Birleştirilecek kısa satırlar
+            pending_start_row = 0  # Birleştirme başlangıç satırı
+            
             for row_idx in range(header_row_idx + 1, sheet.nrows):
-                row_values = [str(sheet.cell_value(row_idx, col)).strip() 
+                row_values = [str(rows[row_idx][col]).strip() 
                              for col in range(sheet.ncols)]
                 
                 # Boş satırları atla
@@ -327,21 +449,74 @@ class ExcelProcessor(BaseDocumentProcessor):
                 # Satırı anlamlı formata çevir
                 chunk_text = self._format_row_as_text(headers, row_values)
                 
-                if chunk_text:
-                    chunk_text = self._fix_turkish_chars(chunk_text)
-                    
+                if not chunk_text:
+                    continue
+                
+                chunk_text = self._fix_turkish_chars(chunk_text)
+                
+                # Gruplu chunking: kısa satırları birleştir
+                if len(chunk_text) < MIN_CHUNK_LENGTH:
+                    if not pending_text:
+                        pending_start_row = row_idx + 1
+                    pending_text += ("\n---\n" if pending_text else "") + chunk_text
+                    continue
+                
+                # Birleştirilmiş kısa satırlar varsa önce onları flush et
+                # v3.2.1: Heading prefix → embedding search için bölüm contexti
+                xls_heading_prefix = f"[Bölüm: {sheet.name}]\n"
+                
+                if pending_text:
+                    # Kısa satırı mevcut satırla birleştir
+                    combined = xls_heading_prefix + pending_text + "\n---\n" + chunk_text
                     chunks.append({
-                        "text": chunk_text,
+                        "text": combined,
                         "metadata": {
-                            "type": "excel_row",
-                            "heading": sheet.name,  # Sheet adı heading olarak kullanılır
+                            "type": "excel_row_group",
+                            "heading": sheet.name,
                             "sheet": sheet.name,
-                            "row": row_idx + 1,
+                            "row": pending_start_row,
+                            "row_end": row_idx + 1,
                             "header_row": header_row_idx + 1,
+                            "column_headers": headers,
+                            "file_type": "xls",
                             "chunk_index": len(chunks),
                             "source": file_name or (file_path.name if file_path else "")
                         }
                     })
+                    pending_text = ""
+                else:
+                    # Normal uzunlukta satır — tek başına chunk
+                    chunks.append({
+                        "text": xls_heading_prefix + chunk_text,
+                        "metadata": {
+                            "type": "excel_row",
+                            "heading": sheet.name,
+                            "sheet": sheet.name,
+                            "row": row_idx + 1,
+                            "header_row": header_row_idx + 1,
+                            "column_headers": headers,
+                            "file_type": "xls",
+                            "chunk_index": len(chunks),
+                            "source": file_name or (file_path.name if file_path else "")
+                        }
+                    })
+            
+            # Sheet sonu — kalan kısa satırları flush et
+            if pending_text:
+                chunks.append({
+                    "text": f"[Bölüm: {sheet.name}]\n" + pending_text,
+                    "metadata": {
+                        "type": "excel_row_group",
+                        "heading": sheet.name,
+                        "sheet": sheet.name,
+                        "row": pending_start_row,
+                        "header_row": header_row_idx + 1,
+                        "column_headers": headers,
+                        "file_type": "xls",
+                        "chunk_index": len(chunks),
+                        "source": file_name or (file_path.name if file_path else "")
+                    }
+                })
         
         return chunks
     
@@ -353,7 +528,8 @@ class ExcelProcessor(BaseDocumentProcessor):
         lines = []
         for header, value in zip(headers, values):
             # Boş veya anlamsız değerleri atla
-            if not value or value.lower() in ['none', 'nan', '', '0', '0.0']:
+            # NOT: '0' ve '0.0' gerçek veri olabilir (stok, bakiye vb.), filtrelenmez
+            if not value or value.lower() in ['none', 'nan', '']:
                 continue
             
             # Header temizle

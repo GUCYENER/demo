@@ -203,6 +203,10 @@
                 break;
 
             // === RAG UPLOAD BİLDİRİMLERİ (v2.39.0) ===
+            case 'rag_upload_progress':
+                handleRagUploadProgress(data);
+                break;
+
             case 'rag_upload_complete':
                 handleRagUploadComplete(data);
                 break;
@@ -417,6 +421,24 @@
     }
 
     // === RAG UPLOAD HANDLERS (v2.39.0) ===
+
+    /**
+     * Dosya bazlı ilerleme bildirimi handler'ı
+     */
+    function handleRagUploadProgress(data) {
+        const { current, total, file_name, percentage, message } = data;
+        console.log(`[NGSSAI-WS] 📄 RAG upload ilerleme: ${current}/${total} (${percentage}%)`);
+
+        // Toast ile ilerleme göster (sadece çoklu dosyada göster)
+        if (total > 1 && typeof VyraToast !== 'undefined') {
+            VyraToast.info(`${message}`, 2000);
+        }
+
+        // Global event dispatch — RAG upload sayfası progress bar'ı güncelleyebilir
+        window.dispatchEvent(new CustomEvent('vyra:rag_upload_progress', {
+            detail: { current, total, file_name, percentage }
+        }));
+    }
 
     /**
      * v2.39.0: RAG dosya yükleme tamamlandı bildirimi

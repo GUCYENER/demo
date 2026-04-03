@@ -519,7 +519,7 @@ window.CompanyModule = (function () {
                 <div class="company-card-top">
                     <div class="company-logo-wrap">
                         ${logoUrl
-                            ? '<img src="' + logoUrl + '" alt="Logo" class="company-logo-img">'
+                            ? '<img src="' + logoUrl + '" alt="Logo" class="company-logo-img" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'"><div class="company-logo-placeholder" style="display:none"><i class="fa-solid fa-building"></i></div>'
                             : '<div class="company-logo-placeholder"><i class="fa-solid fa-building"></i></div>'
                         }
                     </div>
