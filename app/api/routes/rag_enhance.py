@@ -19,7 +19,7 @@ from app.api.routes.auth import get_current_user
 from app.services.document_enhancer import (
     DocumentEnhancer, get_enhanced_file_path, cleanup_enhanced_file
 )
-from app.services.logging_service import log_system_event, log_error, log_warning
+from app.services.logging_service import log_system_event, log_error
 
 
 router = APIRouter()
@@ -293,11 +293,7 @@ async def upload_enhanced_to_rag(
     4. Embedding'leri oluştur
     5. Session temizle
     """
-    import io as _io
     from app.core.db import get_db_conn
-    from app.services.rag_service import get_rag_service
-    from app.services.document_processors import get_processor_for_extension
-    from app.services.rag.topic_extraction import extract_and_save_topics
     
     if session_id not in _session_data:
         raise HTTPException(status_code=404, detail="Session bulunamadı. Lütfen önce dokümanı analiz edin.")
@@ -379,22 +375,20 @@ async def upload_enhanced_to_rag(
                 if not upload_name.lower().endswith('.docx'):
                     upload_name = os.path.splitext(upload_name)[0] + '.docx'
         
-        # 3. RAG pipeline: DB'ye yükle
+        # ═══════════════════════════════════════════════
+        # SENKRON KISIM: Dosya kaydı (hızlı, ~1sn)
+        # ═══════════════════════════════════════════════
         conn = get_db_conn()
-        rag_service = get_rag_service()
-        total_chunks = 0
         file_id = None
         
         try:
             cur = conn.cursor()
             
             # Aynı isimli dosya varsa org grup atamalarını koru, sonra sil (sil-yaz)
-            # Hem orijinal isim hem de çıkış formatındaki isim silinmeli
             names_to_delete = list(set([file_name, upload_name]))
             saved_org_ids = []
             
             for del_name in names_to_delete:
-                # Org grup atamalarını koru (silinmeden önce)
                 cur.execute(
                     """
                     SELECT doc_org.org_id
@@ -408,7 +402,6 @@ async def upload_enhanced_to_rag(
                     if org_row["org_id"] not in saved_org_ids:
                         saved_org_ids.append(org_row["org_id"])
                 
-                # Eski versiyonların chunk'larını ve soft-delete
                 cur.execute(
                     "DELETE FROM rag_chunks WHERE file_id IN (SELECT id FROM uploaded_files WHERE file_name = %s AND is_active = TRUE)",
                     (del_name,)
@@ -418,7 +411,7 @@ async def upload_enhanced_to_rag(
                     (del_name,)
                 )
             
-            # Versiyon numarasını hesapla
+            # Versiyon numarası
             cur.execute(
                 "SELECT MAX(file_version) as max_ver FROM uploaded_files WHERE file_name = %s",
                 (upload_name,)
@@ -426,44 +419,14 @@ async def upload_enhanced_to_rag(
             ver_row = cur.fetchone()
             next_version = (ver_row["max_ver"] or 0) + 1 if ver_row and ver_row["max_ver"] else 1
             
-            # Dosya hash'i (bütünlük kontrolü)
+            # Dosya hash
             import hashlib as _hashlib
             file_hash = _hashlib.md5(file_content_bytes[:1024*1024]).hexdigest()
             
-            # Dosyayı PostgreSQL'e kaydet (maturity_score ve status dahil)
-            # v3.3.0 [B1]: Maturity skoru — iyileştirilmiş metin üzerinden hesapla
-            m_score = data.get("maturity_score")  # Fallback: orijinal skor
+            # Maturity skoru (ön hesaplama, background'da güncellenecek)
+            m_score = data.get("maturity_score")
             
-            try:
-                from app.services.maturity_analyzer import analyze_file
-                
-                if orig_file_type in ("XLSX", "XLS", "PPTX", "PPT"):
-                    # XLSX/PPTX: Orijinal binary değişmedi, maturity'yi
-                    # iyileştirilmiş section text'leri üzerinden ölçmek gerekiyor.
-                    # combined_text henüz oluşturulmadı, burada erken hesaplama yapamayız.
-                    # Chunk'lar oluşturulduktan sonra hesaplanacak (aşağıda).
-                    m_score = data.get("maturity_score")  # Geçici olarak orijinal
-                    log_system_event(
-                        "INFO",
-                        f"Orijinal format korunuyor ({orig_file_type}), "
-                        f"maturity skoru chunk'lar sonrası güncellenecek",
-                        "rag_enhance"
-                    )
-                else:
-                    # DOCX/PDF/TXT: Enhanced dosyanın kendisi üzerinden maturity hesapla
-                    enhanced_file_obj = _io.BytesIO(file_content_bytes)
-                    enhanced_maturity = analyze_file(enhanced_file_obj, upload_name)
-                    m_score = enhanced_maturity.get("total_score")
-                    log_system_event(
-                        "INFO",
-                        f"İyileştirilmiş dosya olgunluk skoru: {m_score} "
-                        f"(orijinal: {data.get('maturity_score')})",
-                        "rag_enhance"
-                    )
-            except Exception as mat_err:
-                log_warning(f"İyileştirilmiş olgunluk hesaplanamadı: {mat_err}", "rag_enhance")
-                m_score = data.get("maturity_score")
-            
+            # Dosyayı DB'ye kaydet — status='processing'
             cur.execute(
                 """
                 INSERT INTO uploaded_files (file_name, file_type, file_size_bytes, file_content, mime_type, uploaded_by, maturity_score, status, file_version, is_active, file_hash)
@@ -481,103 +444,8 @@ async def upload_enhanced_to_rag(
             )
             file_id = cur.fetchone()["id"]
             
-            # v3.3.0 [D2]: Tüm formatları processor pipeline üzerinden işle
-            # XLSX/PPTX dahil — inline chunking kaldırıldı
-            # Bu sayede dedup, quality score, heading prefix otomatik uygulanır
-            if orig_file_type in ("XLSX", "XLS", "PPTX", "PPT"):
-                # Enhanced section text'lerini birleştirip geçici TXT dosyası olarak processor'a ver
-                combined_text = ""
-                for s in data["sections"]:
-                    s_idx = s.section_index
-                    s_heading = s.heading or f"Bölüm {s_idx + 1}"
-                    
-                    if s_idx in approved_indexes:
-                        section_text = s.enhanced_text
-                    else:
-                        section_text = s.original_text
-                    
-                    if section_text and section_text.strip():
-                        combined_text += f"\n\n{s_heading}\n{'=' * len(s_heading)}\n{section_text}"
-                
-                if combined_text.strip():
-                    # TXT processor ile chunk oluştur (heading detection + overlap + quality score)
-                    from app.services.document_processors.txt_processor import TXTProcessor
-                    txt_proc = TXTProcessor()
-                    temp_file_obj = _io.BytesIO(combined_text.strip().encode("utf-8"))
-                    processed = txt_proc.process_bytes(temp_file_obj, upload_name)
-                    
-                    chunks = [
-                        {
-                            "text": chunk.text,
-                            "metadata": {"source_file": upload_name, "enhanced": True, **chunk.metadata}
-                        }
-                        for chunk in processed.chunks
-                    ]
-                else:
-                    chunks = []
-                
-                log_system_event(
-                    "INFO",
-                    f"Enhanced text'lerden processor pipeline ile {len(chunks)} chunk oluşturuldu ({orig_file_type})",
-                    "rag_enhance"
-                )
-                
-                # XLSX/PPTX: Maturity'yi iyileştirilmiş metin üzerinden yeniden hesapla
-                try:
-                    from app.services.maturity_analyzer import analyze_file as _analyze
-                    enhanced_text_obj = _io.BytesIO(combined_text.strip().encode("utf-8"))
-                    enhanced_mat = _analyze(enhanced_text_obj, upload_name.replace(upload_ext, '.txt'))
-                    new_m_score = enhanced_mat.get("total_score")
-                    if new_m_score is not None:
-                        m_score = new_m_score
-                        # uploaded_files'ta maturity_score'u güncelle
-                        cur.execute(
-                            "UPDATE uploaded_files SET maturity_score = %s WHERE id = %s",
-                            (m_score, file_id)
-                        )
-                        log_system_event(
-                            "INFO",
-                            f"XLSX/PPTX maturity yeniden hesaplandı: {m_score} "
-                            f"(orijinal: {data.get('maturity_score')})",
-                            "rag_enhance"
-                        )
-                except Exception as mat_err2:
-                    log_warning(f"XLSX/PPTX maturity yeniden hesaplanamadı: {mat_err2}", "rag_enhance")
-            else:
-                # DOCX/PDF/TXT: processor ile parse et
-                processor = get_processor_for_extension(upload_ext)
-                if not processor:
-                    raise ValueError(f"{upload_ext} işlemcisi bulunamadı.")
-                
-                file_obj = _io.BytesIO(file_content_bytes)
-                processed = processor.process_bytes(file_obj, upload_name)
-                
-                chunks = [
-                    {
-                        "text": chunk.text,
-                        "metadata": {"source_file": upload_name, **chunk.metadata}
-                    }
-                    for chunk in processed.chunks
-                ]
-            
-            if not chunks:
-                raise ValueError("Dosyadan hiç veri çıkarılamadı.")
-            
-            chunk_count = rag_service.add_chunks_with_embeddings(
-                file_id, chunks, cursor=cur
-            )
-            total_chunks = chunk_count
-            
-            # v3.4.2: Görsel çıkarma — background thread'de çalışır
-            # Kullanıcıya hemen yanıt dönmesi için senkron pipeline'dan çıkarıldı
-            _original_content_for_bg = data.get("original_content")
-            _original_ext_for_bg = data.get("file_type", upload_ext)
-            if not _original_ext_for_bg.startswith('.'):
-                _original_ext_for_bg = f".{_original_ext_for_bg}"
-            _file_id_for_bg = file_id
-            
-            # Org grup atamalarını yaz: frontend'den gelen + eski dosyadan kopyalanan
-            all_org_ids = list(saved_org_ids)  # Eski dosyadan kopyalananlar
+            # Org grup atamaları
+            all_org_ids = list(saved_org_ids)
             if org_ids:
                 frontend_org_ids = [int(x.strip()) for x in org_ids.split(",") if x.strip()]
                 for oid in frontend_org_ids:
@@ -596,148 +464,254 @@ async def upload_enhanced_to_rag(
                     )
                 log_system_event("INFO", f"Org grupları atandı: {len(all_org_ids)} org", "rag_enhance")
             
-            # COMMIT
+            # COMMIT — dosya kaydı tamamlandı
             conn.commit()
-            
-            # Topic çıkarma (commit sonrası)
-            try:
-                topic_count = extract_and_save_topics(chunks, upload_name, file_id)
-                if topic_count > 0:
-                    log_system_event("INFO", f"{upload_name}: {topic_count} topic çıkarıldı", "rag_enhance")
-            except Exception as te:
-                log_error(f"Topic çıkarma hatası: {te}", "rag_enhance")
             
             log_system_event(
                 "INFO",
-                f"Enhanced dosya RAG'a yüklendi: {upload_name} ({total_chunks} chunk)",
+                f"Enhanced dosya kaydedildi: {upload_name} (file_id={file_id}), processing başlıyor...",
                 "rag_enhance",
                 user_id=current_user["id"]
             )
-            
-            # v3.3.0: enhancement_history tablosunu güncelle (maturity_score_after + uploaded_to_rag)
-            try:
-                conn2 = get_db_conn()
-                cur2 = conn2.cursor()
-                cur2.execute(
-                    """
-                    UPDATE enhancement_history 
-                    SET maturity_score_after = %s, uploaded_to_rag = TRUE
-                    WHERE session_id = %s
-                    """,
-                    (m_score, session_id)
-                )
-                conn2.commit()
-                cur2.close()
-                conn2.close()
-                log_system_event(
-                    "INFO",
-                    f"Enhancement history güncellendi: session={session_id}, "
-                    f"score_after={m_score}, uploaded=true",
-                    "rag_enhance"
-                )
-            except Exception as hist_err:
-                log_warning(f"Enhancement history güncellenemedi: {hist_err}", "rag_enhance")
             
         except HTTPException:
             conn.rollback()
             raise
         except Exception as e:
             conn.rollback()
-            log_error(f"Enhanced RAG yükleme hatası (rollback): {e}", "rag_enhance")
-            raise HTTPException(status_code=500, detail="Bilgi tabanına yükleme sırasında bir hata oluştu.")
+            log_error(f"Enhanced dosya kayıt hatası (rollback): {e}", "rag_enhance")
+            raise HTTPException(status_code=500, detail="Dosya kaydı sırasında bir hata oluştu.")
         finally:
             conn.close()
         
-        # v3.4.2: Görsel çıkarma — background thread'de çalışır (tüm görseller eksiksiz)
-        # Kullanıcıya hemen yanıt dönülür, görseller arka planda eklenir
-        if locals().get('_original_content_for_bg'):
-            def _bg_image_extraction():
-                bg_conn = None
-                try:
-                    from app.services.document_processors.image_extractor import ImageExtractor
-                    from app.api.routes.rag_upload import _update_chunk_image_refs
-                    from app.core.db import get_db_conn as _get_db_conn
-                    
-                    bg_conn = _get_db_conn()
-                    bg_cur = bg_conn.cursor()
-                    
-                    img_extractor = ImageExtractor()
-                    extracted_images = img_extractor.extract(
-                        _original_content_for_bg, _original_ext_for_bg, skip_ocr=True
-                    )
-                    if extracted_images:
-                        image_ids = img_extractor.save_to_db(
-                            extracted_images, _file_id_for_bg, cursor=bg_cur
-                        )
-                        if image_ids:
-                            _update_chunk_image_refs(
-                                bg_cur, _file_id_for_bg, extracted_images, image_ids
-                            )
-                        bg_conn.commit()
-                        log_system_event(
-                            "INFO",
-                            f"[BG] Orijinal dosyadan {len(extracted_images)} görsel çıkarıldı ve kaydedildi (file_id={_file_id_for_bg})",
-                            "rag_enhance"
-                        )
-                    else:
-                        bg_conn.commit()
-                except Exception as bg_err:
-                    log_system_event("WARNING", f"[BG] Görsel çıkarma hatası: {bg_err}", "rag_enhance")
-                    if bg_conn:
-                        try:
-                            bg_conn.rollback()
-                        except Exception:
-                            pass
-                finally:
-                    # Görsel işleme bittiğinde (başarılı veya hatalı) status → completed
-                    if bg_conn:
-                        try:
-                            _fin_cur = bg_conn.cursor()
-                            _fin_cur.execute(
-                                "UPDATE uploaded_files SET status = 'completed' WHERE id = %s",
-                                (_file_id_for_bg,)
-                            )
-                            bg_conn.commit()
-                            _fin_cur.close()
-                            log_system_event("INFO", f"[BG] Dosya status → completed (file_id={_file_id_for_bg})", "rag_enhance")
-                        except Exception:
-                            pass
-                        try:
-                            bg_conn.close()
-                        except Exception:
-                            pass
-            
-            bg_thread = threading.Thread(target=_bg_image_extraction, daemon=True)
-            bg_thread.start()
-            log_system_event("INFO", f"Görsel çıkarma background thread başlatıldı (file_id={_file_id_for_bg})", "rag_enhance")
-        else:
-            # Görsel çıkarma gerekmiyorsa hemen completed yap
-            try:
-                _fc = get_db_conn()
-                _fc_cur = _fc.cursor()
-                _fc_cur.execute(
-                    "UPDATE uploaded_files SET status = 'completed' WHERE id = %s AND status = 'processing'",
-                    (file_id,)
-                )
-                _fc.commit()
-                _fc_cur.close()
-                _fc.close()
-            except Exception:
-                pass
+        # ═══════════════════════════════════════════════
+        # ASENKRON KISIM: Ağır işlemler background'da
+        # ═══════════════════════════════════════════════
+        _bg_params = {
+            "file_id": file_id,
+            "upload_name": upload_name,
+            "upload_ext": upload_ext,
+            "file_content_bytes": file_content_bytes,
+            "orig_file_type": orig_file_type,
+            "approved_indexes": approved_indexes,
+            "sections": data["sections"],
+            "original_content": data.get("original_content"),
+            "original_file_type": data.get("file_type", upload_ext),
+            "m_score_initial": m_score,
+            "session_id": session_id,
+            "user_id": current_user["id"],
+        }
         
-        # 4. Session temizle — v3.2.1: Hemen silmek yerine flag ile işaretle
+        def _bg_enhanced_processing():
+            """Background thread: Chunk oluşturma, embedding, image, topic, maturity"""
+            import io as _bio
+            bg_conn = None
+            try:
+                from app.services.rag_service import get_rag_service as _get_rag_svc
+                from app.services.document_processors import get_processor_for_extension as _get_proc
+                from app.services.rag.topic_extraction import extract_and_save_topics as _extract_topics
+                from app.core.db import get_db_conn as _get_db
+                
+                bg_conn = _get_db()
+                bg_cur = bg_conn.cursor()
+                _rag = _get_rag_svc()
+                
+                _fid = _bg_params["file_id"]
+                _uname = _bg_params["upload_name"]
+                _uext = _bg_params["upload_ext"]
+                _fcontent = _bg_params["file_content_bytes"]
+                _otype = _bg_params["orig_file_type"]
+                _approvals = _bg_params["approved_indexes"]
+                _sections = _bg_params["sections"]
+                _m = _bg_params["m_score_initial"]
+                
+                log_system_event("INFO", f"[BG] Enhanced processing başladı: {_uname} (file_id={_fid})", "rag_enhance")
+                
+                # 1. Chunk oluştur
+                chunks = []
+                if _otype in ("XLSX", "XLS", "PPTX", "PPT"):
+                    combined_text = ""
+                    for s in _sections:
+                        s_idx = s.section_index
+                        s_heading = s.heading or f"Bölüm {s_idx + 1}"
+                        section_text = s.enhanced_text if s_idx in _approvals else s.original_text
+                        if section_text and section_text.strip():
+                            combined_text += f"\n\n{s_heading}\n{'=' * len(s_heading)}\n{section_text}"
+                    
+                    if combined_text.strip():
+                        from app.services.document_processors.txt_processor import TXTProcessor
+                        txt_proc = TXTProcessor()
+                        temp_file = _bio.BytesIO(combined_text.strip().encode("utf-8"))
+                        processed = txt_proc.process_bytes(temp_file, _uname)
+                        chunks = [
+                            {"text": c.text, "metadata": {"source_file": _uname, "enhanced": True, **c.metadata}}
+                            for c in processed.chunks
+                        ]
+                    
+                    # Maturity yeniden hesapla
+                    try:
+                        from app.services.maturity_analyzer import analyze_file as _analyze
+                        mat_obj = _bio.BytesIO(combined_text.strip().encode("utf-8"))
+                        mat_result = _analyze(mat_obj, _uname.replace(_uext, '.txt'))
+                        new_score = mat_result.get("total_score")
+                        if new_score is not None:
+                            _m = new_score
+                    except Exception:
+                        pass
+                else:
+                    processor = _get_proc(_uext)
+                    if processor:
+                        file_obj = _bio.BytesIO(_fcontent)
+                        processed = processor.process_bytes(file_obj, _uname)
+                        chunks = [
+                            {"text": c.text, "metadata": {"source_file": _uname, **c.metadata}}
+                            for c in processed.chunks
+                        ]
+                    
+                    # Maturity hesapla
+                    try:
+                        from app.services.maturity_analyzer import analyze_file as _analyze
+                        mat_obj = _bio.BytesIO(_fcontent)
+                        mat_result = _analyze(mat_obj, _uname)
+                        new_score = mat_result.get("total_score")
+                        if new_score is not None:
+                            _m = new_score
+                    except Exception:
+                        pass
+                
+                if not chunks:
+                    raise ValueError("Dosyadan hiç veri çıkarılamadı.")
+                
+                # 2. Embedding + DB kayıt
+                chunk_count = _rag.add_chunks_with_embeddings(_fid, chunks, cursor=bg_cur)
+                log_system_event("INFO", f"[BG] {_uname}: {chunk_count} chunk eklendi", "rag_enhance")
+                
+                # 3. Görsel çıkarma (skip_ocr=True)
+                _orig_content = _bg_params.get("original_content")
+                if _orig_content:
+                    try:
+                        from app.services.document_processors.image_extractor import ImageExtractor
+                        from app.api.routes.rag_upload import _update_chunk_image_refs
+                        
+                        img_ext = ImageExtractor()
+                        _oext = _bg_params.get("original_file_type", _uext)
+                        if not _oext.startswith('.'):
+                            _oext = f".{_oext}"
+                        extracted_images = img_ext.extract(_orig_content, _oext, skip_ocr=True)
+                        if extracted_images:
+                            image_ids = img_ext.save_to_db(extracted_images, _fid, cursor=bg_cur)
+                            if image_ids:
+                                _update_chunk_image_refs(bg_cur, _fid, extracted_images, image_ids)
+                            log_system_event("INFO", f"[BG] {len(extracted_images)} görsel çıkarıldı (file_id={_fid})", "rag_enhance")
+                    except Exception as img_err:
+                        log_system_event("WARNING", f"[BG] Görsel çıkarma hatası: {img_err}", "rag_enhance")
+                
+                # 4. Status → completed + maturity + chunk_count güncelle
+                bg_cur.execute(
+                    "UPDATE uploaded_files SET status = 'completed', chunk_count = %s, maturity_score = %s WHERE id = %s",
+                    (chunk_count, _m, _fid)
+                )
+                bg_conn.commit()
+                
+                # 5. Topic çıkarma (commit sonrası)
+                try:
+                    topic_count = _extract_topics(chunks, _uname, _fid)
+                    if topic_count > 0:
+                        log_system_event("INFO", f"[BG] {_uname}: {topic_count} topic çıkarıldı", "rag_enhance")
+                except Exception:
+                    pass
+                
+                # 6. Enhancement history güncelle
+                try:
+                    _sid = _bg_params.get("session_id")
+                    if _sid:
+                        h_conn = _get_db()
+                        h_cur = h_conn.cursor()
+                        h_cur.execute(
+                            "UPDATE enhancement_history SET maturity_score_after = %s, uploaded_to_rag = TRUE WHERE session_id = %s",
+                            (_m, _sid)
+                        )
+                        h_conn.commit()
+                        h_cur.close()
+                        h_conn.close()
+                except Exception:
+                    pass
+                
+                log_system_event(
+                    "INFO",
+                    f"[BG] Enhanced processing tamamlandı: {_uname} ({chunk_count} chunk, maturity={_m})",
+                    "rag_enhance",
+                    user_id=_bg_params["user_id"]
+                )
+                
+                # 7. WebSocket bildirimi — "Yükleme tamamlandı"
+                try:
+                    import asyncio as _aio
+                    from app.core.websocket_manager import ws_manager
+                    loop = _aio.new_event_loop()
+                    loop.run_until_complete(ws_manager.send_to_user(_bg_params["user_id"], {
+                        "type": "rag_upload_complete",
+                        "file_names": [_uname],
+                        "processed_count": 1,
+                        "total_chunks": chunk_count,
+                        "message": f"'{_uname}' bilgi tabanına başarıyla yüklendi ({chunk_count} chunk)"
+                    }))
+                    loop.close()
+                except Exception as ws_err:
+                    log_system_event("WARNING", f"[BG] WS bildirim gönderilemedi: {ws_err}", "rag_enhance")
+                
+            except Exception as bg_err:
+                log_error(f"[BG] Enhanced processing hatası: {bg_err}", "rag_enhance")
+                # Status → failed
+                if bg_conn:
+                    try:
+                        bg_conn.rollback()
+                        f_cur = bg_conn.cursor()
+                        f_cur.execute(
+                            "UPDATE uploaded_files SET status = 'failed' WHERE id = %s",
+                            (_bg_params["file_id"],)
+                        )
+                        bg_conn.commit()
+                        f_cur.close()
+                    except Exception:
+                        pass
+                # WS hata bildirimi
+                try:
+                    import asyncio as _aio
+                    from app.core.websocket_manager import ws_manager
+                    loop = _aio.new_event_loop()
+                    loop.run_until_complete(ws_manager.send_to_user(_bg_params["user_id"], {
+                        "type": "rag_upload_failed",
+                        "file_names": [_bg_params["upload_name"]],
+                        "message": f"'{_bg_params['upload_name']}' yüklenirken hata oluştu"
+                    }))
+                    loop.close()
+                except Exception:
+                    pass
+            finally:
+                if bg_conn:
+                    try:
+                        bg_conn.close()
+                    except Exception:
+                        pass
+        
+        # Background thread başlat
+        bg_thread = threading.Thread(target=_bg_enhanced_processing, daemon=True)
+        bg_thread.start()
+        log_system_event("INFO", f"Enhanced background thread başlatıldı (file_id={file_id})", "rag_enhance")
+        
+        # Session temizle
         cleanup_enhanced_file(session_id)
         if session_id in _session_data:
             _session_data[session_id]["_uploaded"] = True
-            # NOT: original_content background thread kullanıyor, hemen silme
-            # _session_data[session_id].pop("original_content", None)
         
+        # HEMEN YANIT DÖN — modal kapanır, dosya listesinde "İşleniyor" görünür
         return JSONResponse(content={
             "status": "ok",
-            "message": f"'{upload_name}' bilgi tabanına başarıyla yüklendi.",
+            "message": f"'{upload_name}' kaydedildi, işleniyor...",
             "file_name": upload_name,
             "file_id": file_id,
-            "chunk_count": total_chunks,
+            "chunk_count": 0,
             "enhanced_sections": len(approved_indexes)
         })
         
