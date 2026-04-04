@@ -568,31 +568,13 @@ async def upload_enhanced_to_rag(
             )
             total_chunks = chunk_count
             
-            # Görsel çıkarma — ORİJİNAL dosyadan (enhanced PDF sadece metin içerir)
-            try:
-                from app.services.document_processors.image_extractor import ImageExtractor
-                img_extractor = ImageExtractor()
-                original_content = data.get("original_content")
-                original_ext = data.get("file_type", upload_ext)
-                if not original_ext.startswith('.'):
-                    original_ext = f".{original_ext}"
-                
-                if original_content:
-                    # v3.4.2: 100'den fazla görselde OCR atlanır (performans)
-                    # Görseller yine de DB'ye kaydedilir ama ocr_text boş olur
-                    extracted_images = img_extractor.extract(
-                        original_content, original_ext, skip_ocr=True
-                    )
-                    if extracted_images:
-                        image_ids = img_extractor.save_to_db(
-                            extracted_images, file_id, cursor=cur
-                        )
-                        if image_ids:
-                            from app.api.routes.rag_upload import _update_chunk_image_refs
-                            _update_chunk_image_refs(cur, file_id, extracted_images, image_ids)
-                        log_system_event("INFO", f"Orijinal dosyadan {len(extracted_images)} görsel çıkarıldı (OCR atlandı)", "rag_enhance")
-            except Exception as img_err:
-                log_system_event("WARNING", f"Görsel çıkarma atlandı: {img_err}", "rag_enhance")
+            # v3.4.2: Görsel çıkarma — background thread'de çalışır
+            # Kullanıcıya hemen yanıt dönmesi için senkron pipeline'dan çıkarıldı
+            _original_content_for_bg = data.get("original_content")
+            _original_ext_for_bg = data.get("file_type", upload_ext)
+            if not _original_ext_for_bg.startswith('.'):
+                _original_ext_for_bg = f".{_original_ext_for_bg}"
+            _file_id_for_bg = file_id
             
             # Org grup atamalarını yaz: frontend'den gelen + eski dosyadan kopyalanan
             all_org_ids = list(saved_org_ids)  # Eski dosyadan kopyalananlar
@@ -666,14 +648,53 @@ async def upload_enhanced_to_rag(
         finally:
             conn.close()
         
+        # v3.4.2: Görsel çıkarma — background thread'de çalışır (tüm görseller eksiksiz)
+        # Kullanıcıya hemen yanıt dönülür, görseller arka planda eklenir
+        if _original_content_for_bg:
+            def _bg_image_extraction():
+                try:
+                    from app.services.document_processors.image_extractor import ImageExtractor
+                    from app.api.routes.rag_upload import _update_chunk_image_refs
+                    from app.core.db import get_db_conn as _get_db_conn
+                    
+                    bg_conn = _get_db_conn()
+                    bg_cur = bg_conn.cursor()
+                    
+                    img_extractor = ImageExtractor()
+                    extracted_images = img_extractor.extract(
+                        _original_content_for_bg, _original_ext_for_bg
+                    )
+                    if extracted_images:
+                        image_ids = img_extractor.save_to_db(
+                            extracted_images, _file_id_for_bg, cursor=bg_cur
+                        )
+                        if image_ids:
+                            _update_chunk_image_refs(
+                                bg_cur, _file_id_for_bg, extracted_images, image_ids
+                            )
+                        bg_conn.commit()
+                        log_system_event(
+                            "INFO",
+                            f"[BG] Orijinal dosyadan {len(extracted_images)} görsel çıkarıldı ve kaydedildi (file_id={_file_id_for_bg})",
+                            "rag_enhance"
+                        )
+                    else:
+                        bg_conn.commit()
+                    bg_cur.close()
+                    bg_conn.close()
+                except Exception as bg_err:
+                    log_system_event("WARNING", f"[BG] Görsel çıkarma hatası: {bg_err}", "rag_enhance")
+            
+            bg_thread = threading.Thread(target=_bg_image_extraction, daemon=True)
+            bg_thread.start()
+            log_system_event("INFO", f"Görsel çıkarma background thread başlatıldı (file_id={_file_id_for_bg})", "rag_enhance")
+        
         # 4. Session temizle — v3.2.1: Hemen silmek yerine flag ile işaretle
-        # Race condition: kullanıcı upload sonrası hâlâ "İndir" butonuna basabilir
-        # Session TTL mekanizması (_cleanup_expired_sessions) otomatik temizleyecek
         cleanup_enhanced_file(session_id)
         if session_id in _session_data:
             _session_data[session_id]["_uploaded"] = True
-            # original_content bellek tüketimini azalt
-            _session_data[session_id].pop("original_content", None)
+            # NOT: original_content background thread kullanıyor, hemen silme
+            # _session_data[session_id].pop("original_content", None)
         
         return JSONResponse(content={
             "status": "ok",
