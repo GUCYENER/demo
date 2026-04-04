@@ -682,6 +682,18 @@ class PDFProcessor(BaseDocumentProcessor):
             if stripped.endswith('.') and not re.match(r'^\d+\.', stripped):
                 continue
             
+            # ❌ v3.4.2: Virgülle biten satırlar heading olamaz ("SP miktarı,")
+            if stripped.endswith(','):
+                continue
+            
+            # ❌ v3.4.2: İki nokta ile biten — cümle devamı ("Teslimat Paket (Ana):")
+            if stripped.endswith(':') and not re.match(r'^\d+[\.\)]\s', stripped):
+                continue
+            
+            # ❌ v3.4.2: Parantez içi cümle parçası ("alanlarının otomatik")
+            if stripped.endswith(("'", '"')) or stripped[-1] in (';', '…'):
+                continue
+            
             # ❌ Fiil eki içeren satırlar cümle parçası
             stripped_lower = stripped.lower()
             if any(stripped_lower.endswith(ve) for ve in _VERB_ENDINGS):

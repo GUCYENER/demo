@@ -145,7 +145,7 @@ def format_single_result(match: Dict) -> str:
         image_tags = " ".join(
             f'<img class="rag-inline-image" src="/api/rag/images/{img_id}" '
             f'alt="Doküman görseli" data-image-id="{img_id}" />'
-            for img_id in image_ids[:4]  # Max 4 görsel
+            for img_id in image_ids[:8]  # Max 8 görsel
         )
         image_section = f"\n\n📷 **İlgili Görseller:**\n\n{image_tags}\n"
     
