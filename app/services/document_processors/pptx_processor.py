@@ -246,16 +246,26 @@ class PPTXProcessor(BaseDocumentProcessor):
         """
         v3.4.1: Alt-chunk içindeki heading satırını tespit eder.
         İlk 3 satıra bakarak Title Case veya uppercase heading arar.
+        v3.4.1-fix: Cümle parçası false-positive filtresi.
         """
         if not text or len(text.strip()) < 10:
             return None
         
+        _ve = ('ır.','ir.','ur.','ür.','ar.','er.','ler.','lar.',
+               'dır.','dir.','dur.','dür.','tır.','tir.','tur.','tür.',
+               'bilir','mektedir','ması','mesi','malıdır','melidir')
+        
         lines = text.strip().split('\n')
         for line in lines[:3]:
             stripped = line.strip()
-            if not stripped or len(stripped) < 3 or len(stripped) > 80:
+            if not stripped or len(stripped) < 3 or len(stripped) > 60:
                 continue
             if stripped.endswith('.'):
+                continue
+            if stripped[0].islower():
+                continue
+            s_lower = stripped.lower()
+            if any(s_lower.endswith(e) for e in _ve):
                 continue
             # Tüm büyük harf → heading
             if stripped.isupper() and len(stripped) < 60:

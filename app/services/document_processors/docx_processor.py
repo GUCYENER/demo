@@ -365,14 +365,19 @@ class DOCXProcessor(BaseDocumentProcessor):
                 except Exception:
                     pass
                 
-                # Title Case tespiti (fallback)
-                if not is_heading and len(text) < 60:
-                    words = text.split()
-                    if 2 <= len(words) <= 12:
-                        tc_count = sum(1 for w in words if len(w) > 1 and w[0].isupper())
-                        if tc_count / len(words) >= 0.7:
-                            is_heading = True
-                            detected_level = 3
+                # Title Case tespiti (fallback) — v3.4.1-fix: sıkı filtre
+                if not is_heading and len(text) < 60 and text and text[0].isupper():
+                    _ve = ('ır.','ir.','ur.','ür.','ar.','er.','ler.','lar.',
+                           'dır.','dir.','dur.','dür.','tır.','tir.','tur.','tür.',
+                           'bilir','mektedir','ması','mesi','malıdır','melidir')
+                    t_lower = text.lower()
+                    if not any(t_lower.endswith(e) for e in _ve):
+                        words = text.split()
+                        if 2 <= len(words) <= 10:
+                            tc_count = sum(1 for w in words if len(w) > 1 and w[0].isupper())
+                            if tc_count / len(words) >= 0.7:
+                                is_heading = True
+                                detected_level = 3
             
             if is_heading:
                 # Önceki section'ı kaydet

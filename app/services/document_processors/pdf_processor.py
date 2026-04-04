@@ -232,17 +232,25 @@ class PDFProcessor(BaseDocumentProcessor):
                 
                 # v3.4.1: Title Case tespiti — bold olmasa bile kısa Title Case satırlar heading olabilir
                 # "Tanımsız Seri Okutma İşlemi", "Depo Sayım İşlemleri" gibi
-                if not is_heading and len(full_text) < 80 and not full_text.endswith('.'):
-                    words = full_text.split()
-                    if 2 <= len(words) <= 12:
-                        title_case_count = sum(
-                            1 for w in words 
-                            if len(w) > 1 and w[0].isupper()
-                        )
-                        if title_case_count / len(words) >= 0.7:
-                            # Cümle/paragraf değil → heading
-                            is_heading = True
-                            heading_level = heading_level or 3
+                # v3.4.1-fix: Cümle parçası false-positive filtresi
+                if not is_heading and len(full_text) < 60 and not full_text.endswith('.'):
+                    # Küçük harfle başlayan → heading olamaz
+                    if full_text and full_text[0].isupper():
+                        # Fiil eki kontrolü
+                        _ve = ('ır.','ir.','ur.','ür.','ar.','er.','ler.','lar.',
+                               'dır.','dir.','dur.','dür.','tır.','tir.','tur.','tür.',
+                               'bilir','mektedir','ması','mesi','malıdır','melidir')
+                        ft_lower = full_text.lower()
+                        if not any(ft_lower.endswith(e) for e in _ve):
+                            words = full_text.split()
+                            if 2 <= len(words) <= 10:
+                                title_case_count = sum(
+                                    1 for w in words 
+                                    if len(w) > 1 and w[0].isupper()
+                                )
+                                if title_case_count / len(words) >= 0.7:
+                                    is_heading = True
+                                    heading_level = heading_level or 3
                 
                 structured.append({
                     "text": full_text,
@@ -635,43 +643,63 @@ class PDFProcessor(BaseDocumentProcessor):
         alt-chunk'ın ilk satırlarında yeni bir başlık olabilir.
         Bu başlığı tespit edip döndürür.
         
+        v3.4.1-fix: Sıkı filtreleme — cümle parçalarını heading olarak
+        algılamayı önler (küçük harf, fiil ekleri, uzunluk kontrolleri).
+        
         Returns:
             Tespit edilen heading metni veya None
         """
         if not text or len(text.strip()) < 10:
             return None
         
+        # Türkçe fiil ekleri — heading'de ASLA bulunmaz
+        _VERB_ENDINGS = (
+            'ır.', 'ir.', 'ur.', 'ür.', 'ar.', 'er.',
+            'ler.', 'lar.', 'nır', 'nir', 'lir', 'lır',
+            'bilir', 'mektedir', 'ması', 'mesi',
+            'dır.', 'dir.', 'dur.', 'dür.',
+            'tır.', 'tir.', 'tur.', 'tür.',
+            'caktır', 'cektir', 'malıdır', 'melidir',
+        )
+        
         lines = text.strip().split('\n')
         
-        # İlk 5 satıra bak (heading genelde başta olur)
-        for line in lines[:5]:
+        # İlk 3 satıra bak (heading genelde başta olur, 5 çok agresif)
+        for line in lines[:3]:
             stripped = line.strip()
             if not stripped or len(stripped) < 3:
                 continue
             
-            # Çok uzun satırlar heading olamaz
-            if len(stripped) > 100:
+            # ❌ Çok uzun satırlar heading olamaz
+            if len(stripped) > 80:
                 continue
             
-            # Heading tespiti: _detect_heading + ek pattern'ler
+            # ❌ Küçük harfle başlayan satırlar heading olamaz
+            if stripped[0].islower():
+                continue
+            
+            # ❌ Nokta ile biten (numaralı başlık hariç: "1. Başlık")
+            if stripped.endswith('.') and not re.match(r'^\d+\.', stripped):
+                continue
+            
+            # ❌ Fiil eki içeren satırlar cümle parçası
+            stripped_lower = stripped.lower()
+            if any(stripped_lower.endswith(ve) for ve in _VERB_ENDINGS):
+                continue
+            
+            # ✅ Heading tespiti: _detect_heading (regex patterns)
             if self._detect_heading(stripped):
                 return stripped
             
-            # Ek: Türkçe İşlem/Ekran/Süreç başlıkları (Title Case)
-            # "Tanımsız Seri Okutma İşlemi" gibi Title Case başlıklar
+            # ✅ Title Case kontrolü (ek güvence)
             words = stripped.split()
-            if 3 <= len(words) <= 10:
-                # Her kelimenin ilk harfi büyük mü kontrol et
+            if 3 <= len(words) <= 10 and len(stripped) < 60:
                 title_case_count = sum(
                     1 for w in words 
                     if w[0].isupper() and len(w) > 1
                 )
-                # %70+ kelime Title Case ise ve nokta ile bitmiyorsa → heading
-                if title_case_count / len(words) >= 0.7 and not stripped.endswith('.'):
-                    # İçerik paragrafı olmadığından emin ol
-                    # Heading'ler genelde kısa olur (< 60 karakter)
-                    if len(stripped) < 60:
-                        return stripped
+                if title_case_count / len(words) >= 0.7:
+                    return stripped
         
         return None
     
