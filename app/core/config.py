@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.4.2"  # Enhance görsel koruması + heading false-positive filtresi
+    APP_VERSION: str = "3.4.3"  # Enhanced upload tam asenkron + WS notification
 
     # Frontend & API prefix
     api_prefix: str = "/api"
