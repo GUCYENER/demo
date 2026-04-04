@@ -578,7 +578,11 @@ async def upload_enhanced_to_rag(
                     original_ext = f".{original_ext}"
                 
                 if original_content:
-                    extracted_images = img_extractor.extract(original_content, original_ext)
+                    # v3.4.2: 100'den fazla görselde OCR atlanır (performans)
+                    # Görseller yine de DB'ye kaydedilir ama ocr_text boş olur
+                    extracted_images = img_extractor.extract(
+                        original_content, original_ext, skip_ocr=True
+                    )
                     if extracted_images:
                         image_ids = img_extractor.save_to_db(
                             extracted_images, file_id, cursor=cur
@@ -586,7 +590,7 @@ async def upload_enhanced_to_rag(
                         if image_ids:
                             from app.api.routes.rag_upload import _update_chunk_image_refs
                             _update_chunk_image_refs(cur, file_id, extracted_images, image_ids)
-                        log_system_event("INFO", f"Orijinal dosyadan {len(extracted_images)} görsel çıkarıldı", "rag_enhance")
+                        log_system_event("INFO", f"Orijinal dosyadan {len(extracted_images)} görsel çıkarıldı (OCR atlandı)", "rag_enhance")
             except Exception as img_err:
                 log_system_event("WARNING", f"Görsel çıkarma atlandı: {img_err}", "rag_enhance")
             
