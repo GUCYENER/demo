@@ -467,7 +467,7 @@ async def upload_enhanced_to_rag(
             cur.execute(
                 """
                 INSERT INTO uploaded_files (file_name, file_type, file_size_bytes, file_content, mime_type, uploaded_by, maturity_score, status, file_version, is_active, file_hash)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, 'completed', %s, TRUE, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'processing', %s, TRUE, %s)
                 RETURNING id
                 """,
                 (
@@ -663,7 +663,7 @@ async def upload_enhanced_to_rag(
                     
                     img_extractor = ImageExtractor()
                     extracted_images = img_extractor.extract(
-                        _original_content_for_bg, _original_ext_for_bg
+                        _original_content_for_bg, _original_ext_for_bg, skip_ocr=True
                     )
                     if extracted_images:
                         image_ids = img_extractor.save_to_db(
@@ -689,7 +689,19 @@ async def upload_enhanced_to_rag(
                         except Exception:
                             pass
                 finally:
+                    # Görsel işleme bittiğinde (başarılı veya hatalı) status → completed
                     if bg_conn:
+                        try:
+                            _fin_cur = bg_conn.cursor()
+                            _fin_cur.execute(
+                                "UPDATE uploaded_files SET status = 'completed' WHERE id = %s",
+                                (_file_id_for_bg,)
+                            )
+                            bg_conn.commit()
+                            _fin_cur.close()
+                            log_system_event("INFO", f"[BG] Dosya status → completed (file_id={_file_id_for_bg})", "rag_enhance")
+                        except Exception:
+                            pass
                         try:
                             bg_conn.close()
                         except Exception:
@@ -698,6 +710,20 @@ async def upload_enhanced_to_rag(
             bg_thread = threading.Thread(target=_bg_image_extraction, daemon=True)
             bg_thread.start()
             log_system_event("INFO", f"Görsel çıkarma background thread başlatıldı (file_id={_file_id_for_bg})", "rag_enhance")
+        else:
+            # Görsel çıkarma gerekmiyorsa hemen completed yap
+            try:
+                _fc = get_db_conn()
+                _fc_cur = _fc.cursor()
+                _fc_cur.execute(
+                    "UPDATE uploaded_files SET status = 'completed' WHERE id = %s AND status = 'processing'",
+                    (file_id,)
+                )
+                _fc.commit()
+                _fc_cur.close()
+                _fc.close()
+            except Exception:
+                pass
         
         # 4. Session temizle — v3.2.1: Hemen silmek yerine flag ile işaretle
         cleanup_enhanced_file(session_id)
