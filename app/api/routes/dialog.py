@@ -354,7 +354,7 @@ async def send_message_stream(
                 
         except Exception as e:
             log_system_event("ERROR", f"SSE stream hatası: {e}", "dialog", user["id"])
-            error_payload = json.dumps({"type": "error", "data": str(e)}, ensure_ascii=False)
+            error_payload = json.dumps({"type": "error", "data": "Yanıt oluşturulurken bir hata oluştu."}, ensure_ascii=False)
             yield f"data: {error_payload}\n\n"
     
     return StreamingResponse(
@@ -409,22 +409,25 @@ def enhance_message(
             qa_service = get_learned_qa_service()
             
             # RAG kaynak metinlerini birleştir (doğrulama için)
+            # v3.4.0 FIX: 300→2000 char — LLM tüm chunk'ı görüyor,
+            # validator da aynı içeriğe bakmalı yoksa grounding yanlış düşük çıkıyor
             source_texts = " ".join(
-                r.get("content", "")[:300] for r in rag_results[:3]
+                r.get("content", "")[:2000] for r in rag_results[:3]
             )
             
-            # v2.52.1: Kısa kaynak metinlerde (@@ < 500 char, Excel komut tabloları vb.)
-            # validation çok agresif oluyor çünkü LLM cevabı doğal olarak
-            # kaynaktan farklı kelimeler içerir — bu halüsinasyon değil, zenginleştirme.
-            # Kısa kaynaklar için validasyonu atla (source zaten kısa = sınırlı bilgi).
+            # v3.4.0 FIX: Eşik 500→1500 — LLM sentezi kaynak metninden
+            # farklı kelimeler kullandığı için 500-1500 arası source'larda
+            # grounding yanlış pozitif veriyordu (Türkçe çekim eki sorunu)
             source_len = len(source_texts.strip())
             
-            if source_len >= 500:
+            if source_len >= 1500:
                 # Yeterli kaynak metin var → validasyonu uygula
+                # v3.4.0: lenient=True — Enhance (canlı LLM sentezi) için düşük eşikler
                 validation = qa_service._validate_answer(
                     answer=synthesized,
                     source_text=source_texts,
-                    question=request.query
+                    question=request.query,
+                    lenient=True
                 )
                 
                 if not validation["passed"]:
@@ -442,7 +445,7 @@ def enhance_message(
             else:
                 log_system_event(
                     "INFO",
-                    f"Enhance validation SKIPPED: source_len={source_len} < 500 (kısa chunk)",
+                    f"Enhance validation SKIPPED: source_len={source_len} < 1500 (kısa chunk)",
                     "dialog"
                 )
         except Exception as val_err:

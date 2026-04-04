@@ -702,13 +702,9 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
             return db_part
 
     # ========================================
-    # 🛡️ v3.1.0: Sorgu Zamanı Halüsinasyon Doğrulaması
+    # 🛡️ v3.1.0 → v3.4.0: Sorgu Zamanı Halüsinasyon Doğrulaması
     # ========================================
-
-    # Sorgu zamanı eşikleri (eğitim zamanından biraz daha toleranslı)
-    _QUERY_GROUNDING_THRESHOLD = 0.20
-    _QUERY_FAITHFULNESS_THRESHOLD = 0.35
-    _QUERY_MAX_LENGTH_RATIO = 10.0
+    # v3.4.0: Eşik sabitleri kaldırıldı — lenient=True parametresi kullanılıyor
 
     def _validate_synthesis(
         self,
@@ -744,41 +740,29 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
             qa_service = get_learned_qa_service()
 
             # RAG kaynak metinlerini birleştir (doğrulama için)
+            # v3.4.0 FIX: 400→2000 char — LLM tüm chunk'ı görüp sentezliyor
             source_texts = " ".join(
-                r.get("content", "")[:400] for r in rag_results[:3]
+                r.get("content", "")[:2000] for r in rag_results[:3]
             )
 
-            # Kısa kaynak metin ise doğrulama atla (false positive riski)
+            # v3.4.0 FIX: Eşik 500→1500 — kısa source'larda yanlış pozitif
             source_len = len(source_texts.strip())
-            if source_len < 500:
+            if source_len < 1500:
                 log_system_event(
                     "DEBUG",
-                    f"Hallucination check SKIPPED: source_len={source_len} < 500",
+                    f"Hallucination check SKIPPED: source_len={source_len} < 1500",
                     "deep_think"
                 )
                 return synthesized
 
-            # 3 katmanlı doğrulama (özel eşiklerle)
-            # Geçici olarak service eşiklerini override ediyoruz
-            orig_faith = qa_service.FAITHFULNESS_THRESHOLD
-            orig_ground = qa_service.GROUNDING_THRESHOLD
-            orig_length = qa_service.MAX_LENGTH_RATIO
-
-            qa_service.FAITHFULNESS_THRESHOLD = self._QUERY_FAITHFULNESS_THRESHOLD
-            qa_service.GROUNDING_THRESHOLD = self._QUERY_GROUNDING_THRESHOLD
-            qa_service.MAX_LENGTH_RATIO = self._QUERY_MAX_LENGTH_RATIO
-
-            try:
-                validation = qa_service._validate_answer(
-                    answer=synthesized,
-                    source_text=source_texts,
-                    question=query
-                )
-            finally:
-                # Eşikleri geri yükle
-                qa_service.FAITHFULNESS_THRESHOLD = orig_faith
-                qa_service.GROUNDING_THRESHOLD = orig_ground
-                qa_service.MAX_LENGTH_RATIO = orig_length
+            # v3.4.0 FIX: Thread-unsafe eşik override kaldırıldı
+            # lenient=True ile sorgu zamanı için düşük eşikler kullanılıyor
+            validation = qa_service._validate_answer(
+                answer=synthesized,
+                source_text=source_texts,
+                question=query,
+                lenient=True
+            )
 
             if not validation["passed"]:
                 log_warning(

@@ -767,13 +767,19 @@ HAM CEVAP:
         'olarak', 'üzerinden', 'tarafından', 'aracılığıyla', 'durumda'
     }
     
-    def _validate_answer(self, answer: str, source_text: str, question: str) -> Dict[str, Any]:
+    def _validate_answer(self, answer: str, source_text: str, question: str,
+                         lenient: bool = False) -> Dict[str, Any]:
         """
         LLM cevabının kaynağa sadık olup olmadığını 3 katmanlı kontrol ile doğrula.
         
         Katman 1: Semantik Sadakat (Faithfulness)
         Katman 2: Anahtar Kelime Temellendirme (Grounding)
         Katman 3: Uzunluk Oranı Kontrolü (Length Ratio)
+        
+        Args:
+            lenient: True ise Enhance endpoint için düşük eşikler kullanılır.
+                     LLM sentezi doğal olarak kaynak metinden farklı kelimeler
+                     kullandığı için standart eşikler yanlış pozitif verir.
         
         Returns:
             {"passed": bool, "reason": str, "faithfulness": float, "grounding": float, "length_ratio": float}
@@ -786,6 +792,16 @@ HAM CEVAP:
             "length_ratio": 0.0
         }
         
+        # v3.4.0: Enhance vs Learned QA eşik ayrımı
+        if lenient:
+            grounding_threshold = 0.10       # %10 — LLM sentez doğal parafraz yapar
+            faithfulness_threshold = 0.25     # Düşük semantik benzerlik toleransı
+            max_length_ratio = 15.0           # Sentez daha uzun olabilir
+        else:
+            grounding_threshold = self.GROUNDING_THRESHOLD      # 0.30
+            faithfulness_threshold = self.FAITHFULNESS_THRESHOLD  # 0.45
+            max_length_ratio = self.MAX_LENGTH_RATIO              # 8.0
+        
         # === Katman 3: Uzunluk Oranı Kontrolü (en hızlı — ilk kontrol) ===
         source_len = len(source_text.strip())
         answer_len = len(answer.strip())
@@ -796,13 +812,12 @@ HAM CEVAP:
             
             # v3.1.2: Dinamik eşik — kısa kaynak metinlerde (komut referansları,
             # tablo hücreleri, kısa açıklamalar) LLM doğal olarak daha uzun cevap üretir.
-            # Sabit 8x eşiği bu tür içeriklerde tüm cevapları engelliyor.
             if source_len < 200:
                 effective_ratio = 30.0   # Çok kısa kaynak (komut satırları)
             elif source_len < 500:
                 effective_ratio = 15.0   # Orta kaynak (kısa paragraflar)
             else:
-                effective_ratio = self.MAX_LENGTH_RATIO  # Uzun kaynak (8.0x)
+                effective_ratio = max_length_ratio
             
             if length_ratio > effective_ratio:
                 result["passed"] = False
@@ -813,15 +828,13 @@ HAM CEVAP:
         grounding_score = self._check_keyword_grounding(answer, source_text)
         result["grounding"] = grounding_score
         
-        # v3.1.2: Kısa kaynaklarda anahtar kelime havuzu küçük,
-        # LLM zorunlu olarak kaynak dışı teknik terimler kullanır.
-        # Faithfulness (semantik benzerlik) zaten anlam korumasını garantiler.
+        # v3.1.2: Kısa kaynaklarda anahtar kelime havuzu küçük
         if source_len < 200:
             effective_grounding = 0.05   # Çok kısa kaynak
         elif source_len < 500:
             effective_grounding = 0.15   # Orta kaynak
         else:
-            effective_grounding = self.GROUNDING_THRESHOLD  # Uzun kaynak (0.30)
+            effective_grounding = grounding_threshold
         
         if grounding_score < effective_grounding:
             result["passed"] = False
@@ -832,9 +845,9 @@ HAM CEVAP:
         faithfulness = self._check_faithfulness(answer, source_text)
         result["faithfulness"] = faithfulness
         
-        if faithfulness < self.FAITHFULNESS_THRESHOLD:
+        if faithfulness < faithfulness_threshold:
             result["passed"] = False
-            result["reason"] = f"low_faithfulness ({faithfulness:.2f} < {self.FAITHFULNESS_THRESHOLD})"
+            result["reason"] = f"low_faithfulness ({faithfulness:.2f} < {faithfulness_threshold})"
             return result
         
         return result
@@ -859,7 +872,20 @@ HAM CEVAP:
         
         source_lower = source_text.lower()
         
-        grounded = sum(1 for w in answer_words if w in source_lower)
+        # v3.4.0 FIX: Türkçe çekim eki toleransı — "sayımlar" → "sayım" kökü
+        # Tam kelime eşleşmezse, son 2 karakter atılarak kök kırpma denenir
+        def _is_grounded(word: str) -> bool:
+            if word in source_lower:
+                return True
+            # Kök kırpma: 5+ char kelimelerde son 1-2 char atarak dene
+            if len(word) >= 5:
+                if word[:-1] in source_lower:
+                    return True
+                if word[:-2] in source_lower:
+                    return True
+            return False
+        
+        grounded = sum(1 for w in answer_words if _is_grounded(w))
         
         return grounded / len(answer_words)
     
