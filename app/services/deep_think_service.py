@@ -1036,33 +1036,74 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
                 return cached
         
         # 🆕 v2.51.0: Tier 1 — Learned Q&A (semantik eşleşme, ~100ms)
+        # v3.4.1: RAG cross-validation ile yanlış eşleşme önleme
         if category_index is None:
             try:
                 from app.services.learned_qa_service import get_learned_qa_service
                 qa_match = get_learned_qa_service().search(query, user_id)
                 if qa_match:
-                    elapsed_ms = (time.time() - start_time) * 1000
-                    log_system_event(
-                        "INFO",
-                        f"Learned QA HIT: score={qa_match['score']:.2f}, {elapsed_ms:.0f}ms",
-                        "deep_think"
-                    )
-                    # v3.3.2: Kaynak ve görsel zenginleştirmesi
-                    enriched = self._enrich_learned_qa(qa_match, user_id)
-                    result = DeepThinkResult(
-                        synthesized_response=enriched["answer"],
-                        sources=[qa_match.get("source_file", "")] if qa_match.get("source_file") else [],
-                        intent=self.analyze_intent(query),
-                        rag_result_count=1,
-                        processing_time_ms=elapsed_ms,
-                        best_score=qa_match["score"],
-                        image_ids=enriched["image_ids"],
-                        heading_images=enriched["heading_images"]
-                    )
-                    # Cache'e de kaydet (sonraki sorguda Tier 0'dan gelsin)
-                    if cache_key is not None:
-                        cache_service.deep_think.set(cache_key, result)
-                    return result
+                    qa_score = qa_match['score']
+                    qa_question = qa_match.get('question', '')
+                    
+                    # v3.4.1: RAG Cross-Validation — Learned QA cevabı gerçekten doğru kaynaktan mı?
+                    _qa_validated = True
+                    try:
+                        _qa_intent = self.analyze_intent(query)
+                        _rag_check = self.expanded_retrieval(query, _qa_intent, user_id)
+                        if _rag_check:
+                            _top_rag = _rag_check[0]
+                            _rag_text = _top_rag.get('content', '')
+                            _rag_heading = ''
+                            _meta = _top_rag.get('metadata')
+                            if isinstance(_meta, dict):
+                                _rag_heading = _meta.get('heading', '')
+                            elif isinstance(_meta, str):
+                                try:
+                                    import json as _j
+                                    _rag_heading = _j.loads(_meta).get('heading', '')
+                                except Exception:
+                                    pass
+                            
+                            # Soru kelimelerini RAG sonuç ile karşılaştır
+                            _q_words = set(w.lower() for w in query.split() if len(w) >= 3)
+                            _qa_words = set(w.lower() for w in qa_question.split() if len(w) >= 3)
+                            _rag_words = set(w.lower() for w in (_rag_text[:500] + ' ' + _rag_heading).split() if len(w) >= 3)
+                            
+                            _q_in_rag = len(_q_words & _rag_words) / max(len(_q_words), 1)
+                            _q_in_qa = len(_q_words & _qa_words) / max(len(_q_words), 1)
+                            
+                            if _q_in_rag > _q_in_qa and _q_in_qa < 0.6:
+                                _qa_validated = False
+                                log_system_event(
+                                    "WARNING",
+                                    f"Learned QA CROSS-VALIDATION FAIL: QA='{qa_question[:50]}' "
+                                    f"(q_in_rag={_q_in_rag:.2f} > q_in_qa={_q_in_qa:.2f}), RAG'a devam",
+                                    "deep_think"
+                                )
+                    except Exception as cv_err:
+                        log_system_event("DEBUG", f"Learned QA cross-validation hatası: {cv_err}", "deep_think")
+                    
+                    if _qa_validated:
+                        elapsed_ms = (time.time() - start_time) * 1000
+                        log_system_event(
+                            "INFO",
+                            f"Learned QA HIT (validated): score={qa_score:.2f}, {elapsed_ms:.0f}ms",
+                            "deep_think"
+                        )
+                        enriched = self._enrich_learned_qa(qa_match, user_id)
+                        result = DeepThinkResult(
+                            synthesized_response=enriched["answer"],
+                            sources=[qa_match.get("source_file", "")] if qa_match.get("source_file") else [],
+                            intent=self.analyze_intent(query),
+                            rag_result_count=1,
+                            processing_time_ms=elapsed_ms,
+                            best_score=qa_score,
+                            image_ids=enriched["image_ids"],
+                            heading_images=enriched["heading_images"]
+                        )
+                        if cache_key is not None:
+                            cache_service.deep_think.set(cache_key, result)
+                        return result
             except Exception as qa_err:
                 log_system_event("DEBUG", f"Learned QA check hatası: {qa_err}", "deep_think")
         
@@ -1272,49 +1313,89 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
             return
         
         # 🆕 v2.51.0: Tier 1 — Learned Q&A (semantik eşleşme, ~100ms)
+        # v3.4.1: RAG cross-validation ile yanlış eşleşme önleme
         try:
             from app.services.learned_qa_service import get_learned_qa_service
             qa_match = get_learned_qa_service().search(query, user_id)
             if qa_match:
-                elapsed_ms = (time.time() - start_time) * 1000
-                log_system_event(
-                    "INFO",
-                    f"Learned QA HIT (stream): score={qa_match['score']:.2f}, {elapsed_ms:.0f}ms",
-                    "deep_think"
-                )
-                # v3.3.2: Kaynak ve görsel zenginleştirmesi
-                enriched = self._enrich_learned_qa(qa_match, user_id)
-                enriched_answer = enriched["answer"]
-                enriched_images = enriched["image_ids"]
-                enriched_heading = enriched["heading_images"]
+                qa_score = qa_match['score']
+                qa_question = qa_match.get('question', '')
                 
-                # Cache'e kaydet (mevcut cache_key kullan)
-                if cache_key is not None:
-                    result = DeepThinkResult(
-                        synthesized_response=enriched_answer,
-                        sources=[qa_match.get("source_file", "")] if qa_match.get("source_file") else [],
-                        intent=self.analyze_intent(query),
-                        rag_result_count=1,
-                        processing_time_ms=elapsed_ms,
-                        best_score=qa_match["score"],
-                        image_ids=enriched_images,
-                        heading_images=enriched_heading
+                # v3.4.1: RAG Cross-Validation
+                _qa_validated = True
+                try:
+                    _qa_intent = self.analyze_intent(query)
+                    _rag_check = self.expanded_retrieval(query, _qa_intent, user_id)
+                    if _rag_check:
+                        _top_rag = _rag_check[0]
+                        _rag_text = _top_rag.get('content', '')
+                        _rag_heading = ''
+                        _meta = _top_rag.get('metadata')
+                        if isinstance(_meta, dict):
+                            _rag_heading = _meta.get('heading', '')
+                        elif isinstance(_meta, str):
+                            try:
+                                import json as _j
+                                _rag_heading = _j.loads(_meta).get('heading', '')
+                            except Exception:
+                                pass
+                        
+                        _q_words = set(w.lower() for w in query.split() if len(w) >= 3)
+                        _qa_words = set(w.lower() for w in qa_question.split() if len(w) >= 3)
+                        _rag_words = set(w.lower() for w in (_rag_text[:500] + ' ' + _rag_heading).split() if len(w) >= 3)
+                        
+                        _q_in_rag = len(_q_words & _rag_words) / max(len(_q_words), 1)
+                        _q_in_qa = len(_q_words & _qa_words) / max(len(_q_words), 1)
+                        
+                        if _q_in_rag > _q_in_qa and _q_in_qa < 0.6:
+                            _qa_validated = False
+                            log_system_event(
+                                "WARNING",
+                                f"Learned QA CROSS-VALIDATION FAIL (stream): QA='{qa_question[:50]}' "
+                                f"(q_in_rag={_q_in_rag:.2f} > q_in_qa={_q_in_qa:.2f})",
+                                "deep_think"
+                            )
+                except Exception as cv_err:
+                    log_system_event("DEBUG", f"Learned QA cross-validation hatası: {cv_err}", "deep_think")
+                
+                if _qa_validated:
+                    elapsed_ms = (time.time() - start_time) * 1000
+                    log_system_event(
+                        "INFO",
+                        f"Learned QA HIT (stream, validated): score={qa_score:.2f}, {elapsed_ms:.0f}ms",
+                        "deep_think"
                     )
-                    cache_service.deep_think.set(cache_key, result)
-                
-                yield {"type": "done", "data": {
-                    "content": enriched_answer,
-                    "metadata": {
-                        "rag_result_count": 1,
-                        "best_score": qa_match["score"],
-                        "deep_think": True,
-                        "learned_qa": True,
-                        "sources": [qa_match.get("source_file", "")] if qa_match.get("source_file") else [],
-                        "image_ids": enriched_images,
-                        "heading_images": enriched_heading
-                    }
-                }}
-                return
+                    enriched = self._enrich_learned_qa(qa_match, user_id)
+                    enriched_answer = enriched["answer"]
+                    enriched_images = enriched["image_ids"]
+                    enriched_heading = enriched["heading_images"]
+                    
+                    if cache_key is not None:
+                        result = DeepThinkResult(
+                            synthesized_response=enriched_answer,
+                            sources=[qa_match.get("source_file", "")] if qa_match.get("source_file") else [],
+                            intent=self.analyze_intent(query),
+                            rag_result_count=1,
+                            processing_time_ms=elapsed_ms,
+                            best_score=qa_score,
+                            image_ids=enriched_images,
+                            heading_images=enriched_heading
+                        )
+                        cache_service.deep_think.set(cache_key, result)
+                    
+                    yield {"type": "done", "data": {
+                        "content": enriched_answer,
+                        "metadata": {
+                            "rag_result_count": 1,
+                            "best_score": qa_score,
+                            "deep_think": True,
+                            "learned_qa": True,
+                            "sources": [qa_match.get("source_file", "")] if qa_match.get("source_file") else [],
+                            "image_ids": enriched_images,
+                            "heading_images": enriched_heading
+                        }
+                    }}
+                    return
         except Exception as qa_err:
             log_system_event("DEBUG", f"Learned QA check hatası: {qa_err}", "deep_think")
         
