@@ -327,14 +327,59 @@ class DOCXProcessor(BaseDocumentProcessor):
             if not text:
                 continue
             
-            # Başlık kontrolü
+            # Başlık kontrolü — Style bazlı
             is_heading = para.style and para.style.name.startswith('Heading')
+            detected_level = 0
+            
+            # v3.4.1: Style Heading değilse, font özelliklerine bak
+            if not is_heading and len(text) < 100 and not text.endswith('.'):
+                try:
+                    runs = para.runs
+                    if runs:
+                        # Tüm run'lar bold mu?
+                        all_bold = all(r.bold for r in runs if r.text.strip())
+                        # İlk run'ın font boyutu
+                        first_run = runs[0]
+                        font_size = first_run.font.size
+                        font_color = first_run.font.color
+                        
+                        # Renkli text (body text genelde siyah/otomatik)
+                        has_color = False
+                        if font_color and font_color.rgb:
+                            color_val = str(font_color.rgb)
+                            has_color = color_val not in ('000000', 'FFFFFF', 'None')
+                        
+                        # Bold + kısa satır → heading
+                        if all_bold and len(text) < 80:
+                            is_heading = True
+                            detected_level = 3
+                        # Renkli + kısa satır → heading
+                        elif has_color and len(text) < 80:
+                            is_heading = True
+                            detected_level = 3
+                        # Büyük font (14pt+) + kısa → heading
+                        elif font_size and font_size.pt >= 14 and len(text) < 100:
+                            is_heading = True
+                            detected_level = 2
+                except Exception:
+                    pass
+                
+                # Title Case tespiti (fallback)
+                if not is_heading and len(text) < 60:
+                    words = text.split()
+                    if 2 <= len(words) <= 12:
+                        tc_count = sum(1 for w in words if len(w) > 1 and w[0].isupper())
+                        if tc_count / len(words) >= 0.7:
+                            is_heading = True
+                            detected_level = 3
             
             if is_heading:
                 # Önceki section'ı kaydet
                 _save_section()
                 
-                level = _get_heading_level(para.style.name)
+                level = _get_heading_level(para.style.name) if para.style else 0
+                if level == 0:
+                    level = detected_level or 3  # Font-based tespit
                 
                 # Heading stack güncelle
                 while heading_stack and heading_stack[-1][0] >= level:

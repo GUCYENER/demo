@@ -193,11 +193,17 @@ class PPTXProcessor(BaseDocumentProcessor):
                     parts = self._split_content(content, max_size=800)
                     for part in parts:
                         if len(part.strip()) >= 30:
+                            # v3.4.1: Alt-chunk'ta sub-heading tespiti
+                            effective_heading = title
+                            sub_head = self._detect_sub_heading_text(part)
+                            if sub_head and sub_head != title:
+                                effective_heading = sub_head
+                            
                             chunks.append({
                                 "text": part.strip(),
                                 "metadata": {
                                     "type": content_type,
-                                    "heading": title,
+                                    "heading": effective_heading,
                                     "slide": slide_num,
                                     "file_type": "pptx",
                                     "chunk_index": chunk_index,
@@ -235,6 +241,32 @@ class PPTXProcessor(BaseDocumentProcessor):
                 chunk_index += 1
         
         return chunks
+    
+    def _detect_sub_heading_text(self, text: str):
+        """
+        v3.4.1: Alt-chunk içindeki heading satırını tespit eder.
+        İlk 3 satıra bakarak Title Case veya uppercase heading arar.
+        """
+        if not text or len(text.strip()) < 10:
+            return None
+        
+        lines = text.strip().split('\n')
+        for line in lines[:3]:
+            stripped = line.strip()
+            if not stripped or len(stripped) < 3 or len(stripped) > 80:
+                continue
+            if stripped.endswith('.'):
+                continue
+            # Tüm büyük harf → heading
+            if stripped.isupper() and len(stripped) < 60:
+                return stripped
+            # Title Case kontrolü
+            words = stripped.split()
+            if 2 <= len(words) <= 10:
+                tc_count = sum(1 for w in words if len(w) > 1 and w[0].isupper())
+                if tc_count / len(words) >= 0.7:
+                    return stripped
+        return None
     
     def _split_content(self, text: str, max_size: int = 800) -> List[str]:
         """Büyük içeriği paragraf sınırlarında böler."""

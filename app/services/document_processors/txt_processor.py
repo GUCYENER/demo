@@ -104,6 +104,14 @@ class TXTProcessor(BaseDocumentProcessor):
         if line.isupper() and len(line) < 60 and len(line) > 3:
             return True
         
+        # v3.4.1: Title Case tespiti
+        if len(line) < 60 and not line.endswith('.'):
+            words = line.split()
+            if 2 <= len(words) <= 10:
+                tc_count = sum(1 for w in words if len(w) > 1 and w[0].isupper())
+                if tc_count / len(words) >= 0.7:
+                    return True
+        
         return False
     
     def _is_separator(self, line: str) -> bool:
