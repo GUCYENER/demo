@@ -67,6 +67,12 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 - ✅ LLM JSON parse hatası log seviyesi WARNING→DEBUG
 - ✅ Unused import temizliği
 - ✅ CSS: thread-images-section inline style → harici CSS
+- ✅ RAG görsel limiti 4 → 8'e yükseltildi
+
+**📊 Maturity Analyzer — Başlık Kalite Kontrolleri (Yeni):**
+- ✅ **Kural 1b: Başlık Kalitesi** — Virgül/iki nokta/fiil ekiyle biten false-positive heading tespiti (ağırlık 1.5x)
+- ✅ **Kural 1c: Başlık Alt Yapısı** — Numaralı başlık hiyerarşi tutarlılığı (1., 1.1, 2.a., 3b.) kontrolü (ağırlık 1.2x)
+- ✅ **Heading filtre iyileştirmesi** — pdf_processor'da virgül/iki nokta/noktalı virgül ile biten satırlar heading olarak algılanmıyor
 
 ---
 
