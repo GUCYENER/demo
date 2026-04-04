@@ -165,6 +165,11 @@ class CatBoostPrioritizer:
         # Violation eşleştirme — PDF/DOCX/TXT
         if "Başlık Hiyerarşisi" in violation_names or "Word Stilleri" in violation_names:
             raw_score += 1.5
+        # v3.4.2: Yeni maturity kuralları — heading kalitesi
+        if "Başlık Kalitesi" in violation_names:
+            raw_score += 2.0  # Yüksek: false heading RAG'ı doğrudan etkiler
+        if "Başlık Alt Yapısı" in violation_names:
+            raw_score += 1.5
         if "Metin Yoğunluğu" in violation_names or "Metin İçeriği" in violation_names:
             raw_score += 1.0
         if "Tablo Formatı" in violation_names:
@@ -245,6 +250,11 @@ class CatBoostPrioritizer:
         # PDF / DOCX / TXT yapısal sorunlar
         if "Başlık Hiyerarşisi" in violation_names:
             weaknesses.append("structure_weak")
+        # v3.4.2: Yeni maturity kuralları
+        if "Başlık Kalitesi" in violation_names:
+            weaknesses.append("false_heading")
+        if "Başlık Alt Yapısı" in violation_names:
+            weaknesses.append("heading_hierarchy_broken")
         if "Metin Yoğunluğu" in violation_names:
             weaknesses.append("low_density")
         if "Gereksiz İçerik" in violation_names:
