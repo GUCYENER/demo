@@ -49,6 +49,40 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.4.0 (2026-04-04) - Modular Refactoring: document_enhancer.py → 8 Modül
+
+**🏗️ Modüler Mimari (2350 satır → 8 modül, her biri ≤300 satır):**
+- ✅ **Facade Pattern:** `document_enhancer.py` artık sadece orchestrator — iş mantığı alt modüllere delege edildi
+- ✅ **Backward Compatibility:** Mevcut import path'leri (`from app.services.document_enhancer import ...`) aynen çalışmaya devam ediyor
+- ✅ **Dosya türüne göre output bölme:** PDF, DOCX, XLSX oluşturma ayrı modüllerde
+
+**📁 Yeni Modüller (`app/services/enhancer/`):**
+
+| Modül | Satır | Sorumluluk |
+|-------|-------|------------|
+| `__init__.py` | 26 | Paket yönetimi ve re-export |
+| `section_extractors.py` | 373 | PDF, DOCX, XLSX, CSV, PPTX, TXT bölüm çıkarma |
+| `catboost_prioritizer.py` | 242 | CatBoost kalite tahmini, heuristic priority, weakness tespiti |
+| `llm_enhancement.py` | 563 | LLM iyileştirme akışı + anchor + corrective retry |
+| `output_pdf.py` | 220 | fpdf2 ile PDF oluşturma (Türkçe + Markdown + görseller) |
+| `output_docx.py` | 188 | DOCX oluşturma/güncelleme (format koruma + görsel koruma) |
+| `output_xlsx.py` | 99 | XLSX enhanced sheet ekleme (orijinal korunur) |
+| `image_helpers.py` | 110 | Görsel-bölüm eşleştirme ve pozisyon hesaplama |
+
+**🧪 Test Sonuçları:**
+- ✅ **80 passed**, 3 skipped (eksik kütüphane), 0 failed
+- ✅ **37 yeni modüler test** (`test_enhancer_modules.py`): SectionExtractor, CatBoostPrioritizer, LLMEnhancer, OutputXlsx, Facade, ImageHelpers
+- ✅ **45 mevcut test** (`test_document_enhancer.py`): Regresyon — tümü geçti
+
+**📁 Değişen Dosyalar:**
+- `app/services/document_enhancer.py` — Monolitik → Facade (2350 → 304 satır)
+- `app/core/config.py` — `APP_VERSION: 3.4.0`
+- `app/core/schema.py` — `app_version: 3.4.0`
+- `tests/test_document_enhancer.py` — Modüler import'lara uyum
+- `tests/test_enhancer_modules.py` — 37 yeni modüler unit test
+
+---
+
 ### 🆕 v3.3.3 (2026-04-04) - Zero-Loss Enhancement Architecture
 
 **🛡️ Faz 1: Content Anchor Service (Extract-Protect-Reinject):**
