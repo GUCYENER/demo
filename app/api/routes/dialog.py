@@ -400,6 +400,9 @@ def enhance_message(
         if not rag_results:
             return {"success": False, "error": "Bilgi bulunamadı"}
         
+        # v3.4.1: RAG sonuçlarından görselleri topla (enhance'de kaybolmasın)
+        enhance_image_ids, enhance_heading_map = service._collect_images_from_rag(rag_results)
+        
         # LLM synthesis (bypass yok — tam sentez)
         synthesized = service.synthesize_response(request.query, rag_results, intent)
         
@@ -454,7 +457,7 @@ def enhance_message(
         
         elapsed_ms = (time.time() - start) * 1000
         
-        # Orijinal mesajı güncelle (metadata'ya enhanced ekle)
+        # Orijinal mesajı güncelle (metadata'ya enhanced + image_ids ekle)
         try:
             from app.core.db import get_db_context
             import json
@@ -477,6 +480,9 @@ def enhance_message(
                         meta["enhanced"] = True
                         meta["enhanced_content"] = synthesized
                         meta["enhance_time_ms"] = elapsed_ms
+                        # v3.4.1: Görselleri koru — enhance sonrası da gösterilsin
+                        if enhance_image_ids:
+                            meta["image_ids"] = enhance_image_ids
                         
                         cur.execute(
                             "UPDATE dialog_messages SET content = %s, metadata = %s WHERE id = %s",
@@ -499,7 +505,8 @@ def enhance_message(
         return {
             "success": True,
             "content": synthesized,
-            "elapsed_ms": elapsed_ms
+            "elapsed_ms": elapsed_ms,
+            "image_ids": enhance_image_ids  # v3.4.1: Görseller enhance'de de dönecek
         }
         
     except Exception as e:

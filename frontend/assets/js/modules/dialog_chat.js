@@ -1948,7 +1948,36 @@ window.DialogChatModule = (function () {
                 if (msgRow) {
                     const contentEl = msgRow.querySelector('.message-content');
                     if (contentEl) {
-                        contentEl.innerHTML = formatMessageContent(data.content);
+                        let enhancedHtml = formatMessageContent(data.content);
+                        
+                        // v3.4.1: Görselleri koru — backend'den gelen image_ids veya mevcut görseller
+                        const imageIds = data.image_ids || [];
+                        if (imageIds.length > 0) {
+                            const apiBase = window.API_BASE_URL || 'http://localhost:8002';
+                            const imgTags = imageIds.map(imgId =>
+                                `<img class="rag-inline-image" src="${apiBase}/api/rag/images/${imgId}" alt="Doküman görseli" data-image-id="${imgId}" />`
+                            ).join(' ');
+                            enhancedHtml += `
+                                <div class="thread-images-section" style="margin-top: 12px;">
+                                    <div class="dt-section-label dt-section-info">
+                                        <span class="dt-section-icon">📷</span>
+                                        <span class="dt-section-title">İlgili Görseller</span>
+                                    </div>
+                                    <div class="dt-image-container">${imgTags}</div>
+                                </div>
+                            `;
+                        } else {
+                            // Fallback: mevcut mesajdaki görselleri kurtar
+                            const existingImages = contentEl.querySelector('.thread-images-section, .rag-inline-image');
+                            if (existingImages) {
+                                const imgSection = contentEl.querySelector('.thread-images-section');
+                                if (imgSection) {
+                                    enhancedHtml += imgSection.outerHTML;
+                                }
+                            }
+                        }
+                        
+                        contentEl.innerHTML = enhancedHtml;
                     }
                 }
                 // Butonu kaldır
