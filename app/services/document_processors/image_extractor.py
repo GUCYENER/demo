@@ -50,13 +50,14 @@ class ImageExtractor:
     # OCR desteklenen formatlar (EMF/WMF Pillow tarafından açılamayabilir)
     OCR_FORMATS = {"png", "jpeg", "jpg", "gif", "bmp", "tiff"}
 
-    def extract(self, file_content: bytes, file_type: str) -> List[ExtractedImage]:
+    def extract(self, file_content: bytes, file_type: str, skip_ocr: bool = False) -> List[ExtractedImage]:
         """
         Dosya tipine göre görselleri çıkarır.
         
         Args:
             file_content: Dosya binary içeriği
             file_type: Dosya uzantısı (örn: ".docx", ".pdf")
+            skip_ocr: True ise OCR atlanır (preview/enhancement için performans)
         
         Returns:
             Çıkarılan görsellerin listesi
@@ -73,8 +74,8 @@ class ImageExtractor:
             else:
                 return []
             
-            # Tüm görseller için OCR çalıştır
-            if images:
+            # v3.4.2: Enhancement preview'da OCR gereksiz — skip_ocr ile atlanabilir
+            if images and not skip_ocr:
                 self._run_ocr_batch(images)
             
             return images

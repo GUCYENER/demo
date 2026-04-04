@@ -213,15 +213,25 @@ class DocumentEnhancer:
         """
 
         # Orijinal dosyadan görselleri çıkar (tüm format'lar için ortak)
+        # v3.4.2: Performans — 50'den fazla görseli olan dosyalarda
+        # görsel eşleştirme atlanır (OCR + mapping çok yavaş).
+        # Görseller RAG upload sırasında ayrıca çıkarılır.
         original_images = []
         if original_content:
             try:
                 from app.services.document_processors.image_extractor import ImageExtractor
                 img_extractor = ImageExtractor()
                 ext_for_extract = file_type if file_type.startswith(".") else f".{file_type.lower()}"
-                original_images = img_extractor.extract(original_content, ext_for_extract)
+                original_images = img_extractor.extract(original_content, ext_for_extract, skip_ocr=True)
                 if original_images:
-                    log_system_event("INFO", f"Enhanced çıktı için {len(original_images)} görsel çıkarıldı", "enhancer")
+                    if len(original_images) > 50:
+                        log_system_event("INFO",
+                            f"Enhanced çıktı: {len(original_images)} görsel var, "
+                            f"performans için preview'da görseller atlanıyor (>50 limit)",
+                            "enhancer")
+                        original_images = []  # Preview'da görsel ekleme
+                    else:
+                        log_system_event("INFO", f"Enhanced çıktı için {len(original_images)} görsel çıkarıldı", "enhancer")
             except Exception as e:
                 log_warning(f"Enhanced çıktı görsel çıkarma hatası: {e}", "enhancer")
 
