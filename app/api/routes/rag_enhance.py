@@ -650,8 +650,9 @@ async def upload_enhanced_to_rag(
         
         # v3.4.2: Görsel çıkarma — background thread'de çalışır (tüm görseller eksiksiz)
         # Kullanıcıya hemen yanıt dönülür, görseller arka planda eklenir
-        if _original_content_for_bg:
+        if locals().get('_original_content_for_bg'):
             def _bg_image_extraction():
+                bg_conn = None
                 try:
                     from app.services.document_processors.image_extractor import ImageExtractor
                     from app.api.routes.rag_upload import _update_chunk_image_refs
@@ -680,10 +681,19 @@ async def upload_enhanced_to_rag(
                         )
                     else:
                         bg_conn.commit()
-                    bg_cur.close()
-                    bg_conn.close()
                 except Exception as bg_err:
                     log_system_event("WARNING", f"[BG] Görsel çıkarma hatası: {bg_err}", "rag_enhance")
+                    if bg_conn:
+                        try:
+                            bg_conn.rollback()
+                        except Exception:
+                            pass
+                finally:
+                    if bg_conn:
+                        try:
+                            bg_conn.close()
+                        except Exception:
+                            pass
             
             bg_thread = threading.Thread(target=_bg_image_extraction, daemon=True)
             bg_thread.start()
