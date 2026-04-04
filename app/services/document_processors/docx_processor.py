@@ -473,7 +473,7 @@ class DOCXProcessor(BaseDocumentProcessor):
                     "author": props.author or "",
                     "created": str(props.created) if props.created else "",
                 })
-            except Exception as e:
+            except Exception:
                 logger.warning("[DOCXProcessor] Metadata okuma hatası", exc_info=True)
                 base_meta["title"] = file_path.stem
         else:

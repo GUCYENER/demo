@@ -353,7 +353,7 @@ class ExcelProcessor(BaseDocumentProcessor):
                 for row in range(merge_range.min_row, merge_range.max_row + 1):
                     for col in range(merge_range.min_col, merge_range.max_col + 1):
                         merge_map[(row, col)] = value
-        except Exception as e:
+        except Exception:
             # Merge range okuma hatası - devam et ama logla
             logger.debug("[ExcelProcessor] Merge range okuma hatası", exc_info=True)
         

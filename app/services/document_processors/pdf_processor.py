@@ -964,7 +964,7 @@ class PDFProcessor(BaseDocumentProcessor):
                     "author": meta.get("/Author", ""),
                     "page_count": len(reader.pages),
                 })
-            except Exception as e:
+            except Exception:
                 logger.warning("[PDFProcessor] Metadata okuma hatası", exc_info=True)
                 base_meta["title"] = file_path.stem if file_path else file_name
         else:

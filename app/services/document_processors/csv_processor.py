@@ -12,7 +12,6 @@ v3.3.0: CSV dosyalarını RAG için işler.
 import csv
 import io
 import logging
-import re
 from pathlib import Path
 from typing import BinaryIO, List
 

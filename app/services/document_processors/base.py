@@ -7,7 +7,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import List, Optional, BinaryIO
 from pathlib import Path
-from io import BytesIO
 
 
 @dataclass

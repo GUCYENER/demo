@@ -106,7 +106,7 @@ class PPTXProcessor(BaseDocumentProcessor):
                 notes_slide = slide.notes_slide
                 notes_text = notes_slide.notes_text_frame.text.strip()
                 return notes_text
-        except Exception as e:
+        except Exception:
             logger.debug("[PPTXProcessor] Speaker notes okuma hatası", exc_info=True)
         return ""
     
@@ -167,7 +167,7 @@ class PPTXProcessor(BaseDocumentProcessor):
             
             prs = Presentation(file_obj)
             
-        except Exception as e:
+        except Exception:
             # Fallback - boş liste dön, base.py standart chunking yapacak
             logger.warning("[PPTXProcessor] extract_chunks hatası", exc_info=True)
             return []
@@ -307,7 +307,7 @@ class PPTXProcessor(BaseDocumentProcessor):
                     "slide_count": len(prs.slides),
                     "file_name": file_path.name,
                 })
-            except Exception as e:
+            except Exception:
                 logger.warning("[PPTXProcessor] Metadata okuma hatası", exc_info=True)
                 base_meta["file_name"] = file_path.name
         else:
