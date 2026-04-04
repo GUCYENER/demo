@@ -946,6 +946,52 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
             heading_images={}
         )
     
+    def _collect_images_from_rag(self, rag_results: list, max_images: int = 8) -> tuple:
+        """
+        v3.4.0: RAG chunk metadata'sından görselleri toplar.
+        DRY helper — CatBoost BYPASS, Hybrid, LLM Sentez akışlarında ortak kullanılır.
+        
+        Returns:
+            (image_ids: list, heading_image_map: dict)
+        """
+        heading_map = {}
+        image_ids = []
+        seen = set()
+        primary_source = None
+        best_score = 0.0
+        
+        for r in rag_results:
+            s = r.get("score", 0)
+            if s > best_score:
+                best_score = s
+                primary_source = r.get("source_file", "")
+        
+        for r in rag_results:
+            if r.get("source_file", "") != primary_source:
+                continue
+            meta = r.get("metadata")
+            if isinstance(meta, str):
+                try:
+                    import json as _json
+                    meta = _json.loads(meta)
+                except (ValueError, TypeError):
+                    meta = {}
+            if not isinstance(meta, dict):
+                continue
+            ids = meta.get("image_ids", [])
+            if not ids or not isinstance(ids, list):
+                continue
+            heading = meta.get("heading", "").strip()
+            if not heading:
+                heading = "__no_heading__"
+            for img_id in ids:
+                if isinstance(img_id, int) and img_id not in seen:
+                    seen.add(img_id)
+                    heading_map.setdefault(heading, []).append(img_id)
+                    image_ids.append(img_id)
+        
+        return image_ids[:max_images], heading_map
+    
     def process(self, query: str, user_id: int) -> DeepThinkResult:
         """
         Deep Think ana pipeline'ı.
@@ -1057,6 +1103,11 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
                     
                     elapsed_ms = (time.time() - start_time) * 1000
                     
+                    # v3.4.0: HYBRID modda RAG sonuçlarından görselleri topla
+                    _hybrid_img_ids, _hybrid_h_map = [], {}
+                    if intent.intent_type == IntentType.HYBRID and rag_results:
+                        _hybrid_img_ids, _hybrid_h_map = self._collect_images_from_rag(rag_results)
+                    
                     result = DeepThinkResult(
                         synthesized_response=synthesized,
                         sources=sources,
@@ -1064,8 +1115,8 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
                         rag_result_count=len(hybrid_result.db_results),
                         processing_time_ms=elapsed_ms,
                         best_score=0.9,
-                        image_ids=[],
-                        heading_images={}
+                        image_ids=_hybrid_img_ids,
+                        heading_images=_hybrid_h_map
                     )
                     
                     if cache_key is not None:
@@ -1135,64 +1186,9 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
         # 🔧 v2.33.2: Sonuç yokken boş sources döndür (sahte kaynak gösterimini önle)
         sources = list(set(r.get("source_file", "") for r in rag_results if r.get("source_file"))) if rag_results else []
         
-        # 🆕 v2.45.1: Görsel ID'lerini kaynak dosya ilişkisine dayalı topla
-        # ────────────────────────────────────────────────────────────
-        # DB İlişkisi: rag_chunks.file_id → uploaded_files ← document_images.file_id
-        # Sadece cevabı veren asıl (primary) kaynak dosyanın görsellerini al.
-        # ────────────────────────────────────────────────────────────
-        heading_image_map = {}  # heading → [image_id, ...]
-        all_image_ids = []
-        seen_ids = set()
-        
-        # 1) En yüksek skorlu kaynak dosyayı belirle (primary source)
-        primary_source = None
-        best_score = 0.0
-        for r in rag_results:
-            score = r.get("score", 0)
-            if score > best_score:
-                best_score = score
-                primary_source = r.get("source_file", "")
-        
-        for r in rag_results:
-            # 🔧 v2.45.1: Sadece primary source dosyasından görsel al
-            if r.get("source_file", "") != primary_source:
-                continue
-            
-            meta = r.get("metadata")
-            if isinstance(meta, str):
-                try:
-                    import json as _json
-                    meta = _json.loads(meta)
-                except (ValueError, TypeError):
-                    meta = {}
-            
-            if not isinstance(meta, dict):
-                continue
-            
-            ids = meta.get("image_ids", [])
-            if not ids or not isinstance(ids, list):
-                continue
-            
-            heading = meta.get("heading", "").strip()
-            if not heading:
-                heading = "__no_heading__"
-            
-            for img_id in ids:
-                if isinstance(img_id, int) and img_id not in seen_ids:
-                    seen_ids.add(img_id)
-                    heading_image_map.setdefault(heading, []).append(img_id)
-                    all_image_ids.append(img_id)
-        
-        if primary_source:
-            log_system_event(
-                "DEBUG",
-                f"Deep Think: Görseller primary source'tan alındı: '{primary_source}' "
-                f"(skor: {best_score:.2f}, {len(all_image_ids)} görsel)",
-                "deep_think"
-            )
-        
-        # Max 8 görsel limiti (heading bazlı sırayla)
-        unique_image_ids = all_image_ids[:8]
+        # v3.4.0: DRY helper ile görsel toplama (inline kod kaldırıldı)
+        unique_image_ids, heading_image_map = self._collect_images_from_rag(rag_results) if rag_results else ([], {})
+        best_score = max((r.get("score", 0) for r in rag_results), default=0.0) if rag_results else 0.0
         
         elapsed_ms = (time.time() - start_time) * 1000
         log_system_event(
@@ -1345,6 +1341,7 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
                     }}
                     
                     # HYBRID: DB + RAG birleştir
+                    _stream_hybrid_imgs, _stream_hybrid_hmap = [], {}
                     if intent.intent_type == IntentType.HYBRID:
                         rag_results = self.expanded_retrieval(query, intent, user_id)
                         synthesized = self._merge_hybrid_answer(
@@ -1355,6 +1352,8 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
                             [r.get("source_file", "") for r in rag_results if r.get("source_file")]
                         ))
                         sources = [s for s in sources if s]
+                        # v3.4.0: HYBRID modda RAG sonuçlarından görselleri topla
+                        _stream_hybrid_imgs, _stream_hybrid_hmap = self._collect_images_from_rag(rag_results)
                     else:
                         synthesized = self._synthesize_hybrid(query, hybrid_result, intent)
                         sources = [hybrid_result.source_db] if hybrid_result.source_db else []
@@ -1370,8 +1369,8 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
                             rag_result_count=len(hybrid_result.db_results),
                             processing_time_ms=elapsed_ms,
                             best_score=0.9,
-                            image_ids=[],
-                            heading_images={}
+                            image_ids=_stream_hybrid_imgs,
+                            heading_images=_stream_hybrid_hmap
                         )
                         cache_service.deep_think.set(cache_key, result)
                     
@@ -1384,6 +1383,8 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
                             "hybrid_db": True,
                             "sources": sources,
                             "sql_executed": hybrid_result.sql_executed or "",
+                            "image_ids": _stream_hybrid_imgs,
+                            "heading_images": _stream_hybrid_hmap
                         }
                     }}
                     
@@ -1445,44 +1446,8 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
             final_content = self._postprocess_llm_response(best_content, intent)
             final_content = self._clean_prompt_leak(final_content)
             
-            # v3.4.0 FIX: CatBoost BYPASS'ta da görselleri topla
-            # Daha önce image_ids=[] / heading_images={} hardcode → kılavuz görselleri gösterilmiyordu
-            bypass_heading_map = {}
-            bypass_image_ids = []
-            bypass_seen = set()
-            bypass_primary = None
-            bypass_best = 0.0
-            for r in rag_results:
-                s = r.get("score", 0)
-                if s > bypass_best:
-                    bypass_best = s
-                    bypass_primary = r.get("source_file", "")
-            
-            for r in rag_results:
-                if r.get("source_file", "") != bypass_primary:
-                    continue
-                meta = r.get("metadata")
-                if isinstance(meta, str):
-                    try:
-                        import json as _json
-                        meta = _json.loads(meta)
-                    except (ValueError, TypeError):
-                        meta = {}
-                if not isinstance(meta, dict):
-                    continue
-                ids = meta.get("image_ids", [])
-                if not ids or not isinstance(ids, list):
-                    continue
-                heading = meta.get("heading", "").strip()
-                if not heading:
-                    heading = "__no_heading__"
-                for img_id in ids:
-                    if isinstance(img_id, int) and img_id not in bypass_seen:
-                        bypass_seen.add(img_id)
-                        bypass_heading_map.setdefault(heading, []).append(img_id)
-                        bypass_image_ids.append(img_id)
-            
-            bypass_image_ids = bypass_image_ids[:8]  # Max 8 görsel
+            # v3.4.0 FIX: CatBoost BYPASS'ta da görselleri topla (DRY helper)
+            bypass_image_ids, bypass_heading_map = self._collect_images_from_rag(rag_results)
             
             # Cache'e kaydet (mevcut cache_key kullan)
             if cache_key is not None:
@@ -1607,7 +1572,10 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 
                 if not partial_responses:
                     fallback = self._fallback_response(rag_results, intent)
-                    yield {"type": "done", "data": {"content": fallback}}
+                    yield {"type": "done", "data": {
+                        "content": fallback,
+                        "metadata": {"deep_think": True, "chunked_fallback": True}
+                    }}
                     return
                 
                 if len(partial_responses) == 1:
@@ -1665,45 +1633,12 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
         if is_irrelevant:
             final_content = final_content.replace("[NO_MATCH]", "").strip()
         
-        # Kaynak ve görsel bilgilerini topla (process() mantığının aynısı)
+        # Kaynak ve görsel bilgilerini topla
         sources = list(set(r.get("source_file", "") for r in rag_results if r.get("source_file"))) if rag_results else []
         
-        heading_image_map = {}
-        all_image_ids = []
-        seen_ids = set()
-        primary_source = None
-        best_score = 0.0
-        for r in rag_results:
-            score = r.get("score", 0)
-            if score > best_score:
-                best_score = score
-                primary_source = r.get("source_file", "")
-        
-        for r in rag_results:
-            if r.get("source_file", "") != primary_source:
-                continue
-            meta = r.get("metadata")
-            if isinstance(meta, str):
-                try:
-                    import json as _json
-                    meta = _json.loads(meta)
-                except (ValueError, TypeError):
-                    meta = {}
-            if not isinstance(meta, dict):
-                continue
-            ids = meta.get("image_ids", [])
-            if not ids or not isinstance(ids, list):
-                continue
-            heading = meta.get("heading", "").strip()
-            if not heading:
-                heading = "__no_heading__"
-            for img_id in ids:
-                if isinstance(img_id, int) and img_id not in seen_ids:
-                    seen_ids.add(img_id)
-                    heading_image_map.setdefault(heading, []).append(img_id)
-                    all_image_ids.append(img_id)
-        
-        unique_image_ids = all_image_ids[:8]
+        # v3.4.0: DRY helper ile görsel toplama (inline kod kaldırıldı)
+        unique_image_ids, heading_image_map = self._collect_images_from_rag(rag_results) if rag_results else ([], {})
+        best_score = max((r.get("score", 0) for r in rag_results), default=0.0) if rag_results else 0.0
         elapsed_ms = (time.time() - start_time) * 1000
         
         # v2.52.1: İlgisiz sonuç ise mesajı değiştir
