@@ -67,7 +67,11 @@ class LLMEnhancer:
 
             # Priority düşükse (yani kalite yüksek) VE zayıflık yoksa değiştirme
             # v3.2.1: weakness_types varsa priority ne olursa olsun LLM'e gönder
-            if priority < 0.4 and not weakness_types:
+            # v3.4.2: Dosya-düzeyi maturity sorunları (heading tespiti) LLM ile çözülemez
+            # Bu tür weakness'lar sadece raporlama amaçlı — LLM tetikleyici değil
+            _MATURITY_ONLY_WEAKNESSES = {'false_heading', 'heading_hierarchy_broken'}
+            llm_relevant_weaknesses = [w for w in weakness_types if w not in _MATURITY_ONLY_WEAKNESSES]
+            if priority < 0.4 and not llm_relevant_weaknesses:
                 log_system_event("DEBUG",
                     f"Bölüm [{idx}] → SKIP (priority={priority:.3f}, no weaknesses)",
                     "enhancer")
