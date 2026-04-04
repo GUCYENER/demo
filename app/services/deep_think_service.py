@@ -1445,6 +1445,45 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
             final_content = self._postprocess_llm_response(best_content, intent)
             final_content = self._clean_prompt_leak(final_content)
             
+            # v3.4.0 FIX: CatBoost BYPASS'ta da görselleri topla
+            # Daha önce image_ids=[] / heading_images={} hardcode → kılavuz görselleri gösterilmiyordu
+            bypass_heading_map = {}
+            bypass_image_ids = []
+            bypass_seen = set()
+            bypass_primary = None
+            bypass_best = 0.0
+            for r in rag_results:
+                s = r.get("score", 0)
+                if s > bypass_best:
+                    bypass_best = s
+                    bypass_primary = r.get("source_file", "")
+            
+            for r in rag_results:
+                if r.get("source_file", "") != bypass_primary:
+                    continue
+                meta = r.get("metadata")
+                if isinstance(meta, str):
+                    try:
+                        import json as _json
+                        meta = _json.loads(meta)
+                    except (ValueError, TypeError):
+                        meta = {}
+                if not isinstance(meta, dict):
+                    continue
+                ids = meta.get("image_ids", [])
+                if not ids or not isinstance(ids, list):
+                    continue
+                heading = meta.get("heading", "").strip()
+                if not heading:
+                    heading = "__no_heading__"
+                for img_id in ids:
+                    if isinstance(img_id, int) and img_id not in bypass_seen:
+                        bypass_seen.add(img_id)
+                        bypass_heading_map.setdefault(heading, []).append(img_id)
+                        bypass_image_ids.append(img_id)
+            
+            bypass_image_ids = bypass_image_ids[:8]  # Max 8 görsel
+            
             # Cache'e kaydet (mevcut cache_key kullan)
             if cache_key is not None:
                 result = DeepThinkResult(
@@ -1454,8 +1493,8 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
                     rag_result_count=len(rag_results),
                     processing_time_ms=(time.time() - start_time) * 1000,
                     best_score=best_combined,
-                    image_ids=[],
-                    heading_images={}
+                    image_ids=bypass_image_ids,
+                    heading_images=bypass_heading_map
                 )
                 cache_service.deep_think.set(cache_key, result)
             
@@ -1468,7 +1507,9 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
                     "catboost_bypass": True,
                     "can_enhance": True,
                     "original_query": query,
-                    "sources": sources
+                    "sources": sources,
+                    "image_ids": bypass_image_ids,
+                    "heading_images": bypass_heading_map
                 }
             }}
             return
