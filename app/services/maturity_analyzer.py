@@ -79,6 +79,7 @@ def analyze_pdf(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
         r'^(?:BÖLÜM|MADDE|KISIM|BAŞLIK)\s',       # Türkçe bölüm kelimeleri
     ]
     heading_count = 0
+    detected_headings = []  # v3.4.2
     for line in lines:
         line_stripped = line.strip()
         if len(line_stripped) > 80:
@@ -86,6 +87,7 @@ def analyze_pdf(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
         for pattern in heading_patterns:
             if re.match(pattern, line_stripped):
                 heading_count += 1
+                detected_headings.append(line_stripped)
                 break
     
     if heading_count == 0:
@@ -100,6 +102,135 @@ def analyze_pdf(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
         rule.score = 100
         rule.detail = f"{heading_count} başlık tespit edildi."
     rules.append(rule)
+    
+    # ─── KURAL 1b: Başlık Kalitesi (v3.4.2 false-positive heading tespiti) ───
+    rule = MaturityRule("Başlık Kalitesi", "Yapı",
+                        "Başlıklar cümle parçası olmamalı, net ve kısa olmalı",
+                        weight=1.5)
+    _FP_VERB_ENDINGS = (
+        'ır.', 'ir.', 'ur.', 'ür.', 'ar.', 'er.',
+        'ler.', 'lar.', 'nır', 'nir', 'lir', 'lır',
+        'bilir', 'mektedir', 'ması', 'mesi',
+        'dır.', 'dir.', 'dur.', 'dür.',
+        'tır.', 'tir.', 'tur.', 'tür.',
+        'caktır', 'cektir', 'malıdır', 'melidir',
+    )
+    false_positive_count = 0
+    false_examples = []
+    
+    for h in detected_headings:
+        h_s = h.strip()
+        h_low = h_s.lower()
+        is_false = False
+        
+        # Virgülle biten ("SP miktarı,")
+        if h_s.endswith(','):
+            is_false = True
+        # İki nokta ile biten ("Teslimat Paket (Ana):")
+        elif h_s.endswith(':') and not re.match(r'^\d+[\.\\)]\s', h_s):
+            is_false = True
+        # Noktalı virgül, tırnak
+        elif h_s[-1:] in (';', "'", '"'):
+            is_false = True
+        # Küçük harfle başlayan
+        elif h_s[0:1].islower():
+            is_false = True
+        # Fiil eki ile biten (cümle parçası)
+        elif any(h_low.endswith(ve) for ve in _FP_VERB_ENDINGS):
+            is_false = True
+        # Nokta ile biten ama numaralı başlık değil
+        elif h_s.endswith('.') and not re.match(r'^\d+\.', h_s):
+            is_false = True
+        
+        if is_false:
+            false_positive_count += 1
+            if len(false_examples) < 3:
+                false_examples.append(h_s[:40])
+    
+    if false_positive_count > 5:
+        rule.score = 30
+        rule.status = "fail"
+        rule.detail = (f"{false_positive_count} yanlış başlık (cümle parçası) tespit edildi. "
+                       f"Örnekler: {', '.join(false_examples)}")
+        rule.recommendation = ("Başlıklar kısa, net ve büyük harfle başlamalı. "
+                               "Virgül, noktalı virgül veya fiil ekiyle bitmemeli.")
+    elif false_positive_count > 2:
+        rule.score = 60
+        rule.status = "warning"
+        rule.detail = (f"{false_positive_count} olası yanlış başlık tespit edildi. "
+                       f"Örnekler: {', '.join(false_examples)}")
+        rule.recommendation = "Cümle parçalarını başlık olarak kullanmaktan kaçının."
+    elif false_positive_count > 0:
+        rule.score = 80
+        rule.status = "warning"
+        rule.detail = f"{false_positive_count} olası yanlış başlık: {', '.join(false_examples)}"
+    else:
+        rule.score = 100
+        rule.detail = "Tüm başlıklar kalite kontrolünden geçti."
+    rules.append(rule)
+    
+    # ─── KURAL 1c: Başlık-Alt Başlık Hiyerarşi Tutarlılığı (v3.4.2) ───
+    rule = MaturityRule("Başlık Alt Yapısı", "Yapı",
+                        "Numaralı başlıklar (1., 1.1, 2.a.) tutarlı hiyerarşi izlemeli",
+                        weight=1.2)
+    
+    _hier_patterns = [
+        (r'^(\d+)\.\s', 1),                      # "1. Başlık" -> level 1
+        (r'^(\d+)\.(\d+)[\.\\)]\s', 2),           # "1.1 Alt" -> level 2
+        (r'^(\d+)\.(\d+)\.(\d+)[\.\\)]\s', 3),    # "1.1.1" -> level 3
+        (r'^(\d+)\.([a-zçğıöşü])[\.\\)]\s', 2),   # "2.a. Sarf" -> level 2
+        (r'^(\d+)([a-zçğıöşü])[\.\\)]\s', 2),     # "3a." -> level 2
+    ]
+    
+    numbered_headings = []
+    for h in detected_headings:
+        h_s = h.strip()
+        for pat, level in _hier_patterns:
+            m = re.match(pat, h_s)
+            if m:
+                numbered_headings.append((h_s, level, m.group(1)))
+                break
+    
+    orphan_count = 0
+    orphan_examples = []
+    
+    if numbered_headings:
+        level1_nums = {pn for _, lv, pn in numbered_headings if lv == 1}
+        for h_text, level, parent_num in numbered_headings:
+            if level >= 2 and parent_num not in level1_nums:
+                orphan_count += 1
+                if len(orphan_examples) < 3:
+                    orphan_examples.append(h_text[:35])
+        
+        total_numbered = len(numbered_headings)
+        multi_level = len(set(lv for _, lv, _ in numbered_headings)) > 1
+        
+        if orphan_count > 3:
+            rule.score = 50
+            rule.status = "warning"
+            rule.detail = (f"{orphan_count} yetim alt başlık (üst başlığı yok). "
+                           f"Örnekler: {', '.join(orphan_examples)}")
+            rule.recommendation = ("Alt başlıklar (1.1, 2.a.) üst başlıklarla (1., 2.) "
+                                   "tutarlı olmalı.")
+        elif orphan_count > 0:
+            rule.score = 75
+            rule.status = "warning"
+            rule.detail = (f"{orphan_count} yetim alt başlık tespit edildi. "
+                           f"{total_numbered} numaralı başlık arasında.")
+        elif multi_level:
+            rule.score = 100
+            rule.detail = (f"{total_numbered} numaralı başlık, "
+                           f"{len(set(lv for _, lv, _ in numbered_headings))} seviyeli hiyerarşi.")
+        else:
+            rule.score = 90
+            rule.detail = f"{total_numbered} numaralı başlık — tek seviye."
+    else:
+        rule.score = 70
+        rule.status = "warning"
+        rule.detail = ("Numaralı başlık hiyerarşisi bulunamadı. "
+                       "'1.', '1.1', '2.a.' formatı önerilir.")
+    rules.append(rule)
+
     
     # ─── KURAL 2: Tablo Formatı ───
     rule = MaturityRule("Tablo Formatı", "Tablo", "Tablolar düzenli satır/sütunlarla oluşturulmalı, merge hücre olmamalı")
