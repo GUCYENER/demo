@@ -570,6 +570,12 @@ const DocumentEnhancerModal = (function () {
                     window.RAGUpload.filesCurrentPage = 1;
                     window.RAGUpload.loadFiles();
                     window.RAGUpload.loadStats();
+                    // v3.4.2: Background görsel ekleme için polling başlat
+                    // Dosya 'processing' statüsünde kalır, tamamlanınca liste yenilenir
+                    const uploadedName = data.file_name || '';
+                    if (uploadedName) {
+                        window.RAGUpload._startProcessingPoll([uploadedName]);
+                    }
                 }
 
                 _currentSessionId = null;
