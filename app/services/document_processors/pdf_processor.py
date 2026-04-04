@@ -160,6 +160,7 @@ class PDFProcessor(BaseDocumentProcessor):
                                 "is_bold": is_bold,
                                 "is_italic": is_italic,
                                 "font_name": font_name,
+                                "color": span.get("color", 0),  # v3.4.1: RGB packed int
                             })
                             all_font_sizes.append(font_size)
                         
@@ -188,10 +189,12 @@ class PDFProcessor(BaseDocumentProcessor):
                 if not full_text:
                     continue
                 
-                # Dominant font size ve bold durumu (en uzun span baz alınır)
+                # Dominant font size, bold ve renk durumu (en uzun span baz alınır)
                 dominant_span = max(raw["line_spans"], key=lambda s: len(s["text"]))
                 font_size = dominant_span["font_size"]
                 is_bold = dominant_span["is_bold"]
+                text_color = dominant_span.get("color", 0)  # v3.4.1: 0 = siyah
+                is_colored = text_color != 0  # Siyah (body) dışı renk = potansiyel heading
                 
                 # Heading tespiti: font büyük VEYA (bold VE yeterli boyut)
                 is_heading = False
@@ -200,6 +203,9 @@ class PDFProcessor(BaseDocumentProcessor):
                 if font_size >= heading_threshold and len(full_text) < 200:
                     is_heading = True
                 elif is_bold and font_size >= MIN_HEADING_FONT_SIZE and len(full_text) < 150:
+                    is_heading = True
+                # v3.4.1: Renkli + kısa satır → heading adayı
+                elif is_colored and font_size >= MIN_HEADING_FONT_SIZE and len(full_text) < 100:
                     is_heading = True
                 
                 # Heading level belirleme (font size'a göre)
@@ -223,6 +229,20 @@ class PDFProcessor(BaseDocumentProcessor):
                 if not is_heading and self._detect_heading(full_text):
                     is_heading = True
                     heading_level = heading_level or 2
+                
+                # v3.4.1: Title Case tespiti — bold olmasa bile kısa Title Case satırlar heading olabilir
+                # "Tanımsız Seri Okutma İşlemi", "Depo Sayım İşlemleri" gibi
+                if not is_heading and len(full_text) < 80 and not full_text.endswith('.'):
+                    words = full_text.split()
+                    if 2 <= len(words) <= 12:
+                        title_case_count = sum(
+                            1 for w in words 
+                            if len(w) > 1 and w[0].isupper()
+                        )
+                        if title_case_count / len(words) >= 0.7:
+                            # Cümle/paragraf değil → heading
+                            is_heading = True
+                            heading_level = heading_level or 3
                 
                 structured.append({
                     "text": full_text,
@@ -607,6 +627,54 @@ class PDFProcessor(BaseDocumentProcessor):
         
         return False
     
+    def _detect_sub_heading(self, text: str) -> Optional[str]:
+        """
+        v3.4.1: Alt-chunk içindeki heading satırını tespit eder.
+        
+        Büyük section'lar _split_large_section() ile parçalandığında,
+        alt-chunk'ın ilk satırlarında yeni bir başlık olabilir.
+        Bu başlığı tespit edip döndürür.
+        
+        Returns:
+            Tespit edilen heading metni veya None
+        """
+        if not text or len(text.strip()) < 10:
+            return None
+        
+        lines = text.strip().split('\n')
+        
+        # İlk 5 satıra bak (heading genelde başta olur)
+        for line in lines[:5]:
+            stripped = line.strip()
+            if not stripped or len(stripped) < 3:
+                continue
+            
+            # Çok uzun satırlar heading olamaz
+            if len(stripped) > 100:
+                continue
+            
+            # Heading tespiti: _detect_heading + ek pattern'ler
+            if self._detect_heading(stripped):
+                return stripped
+            
+            # Ek: Türkçe İşlem/Ekran/Süreç başlıkları (Title Case)
+            # "Tanımsız Seri Okutma İşlemi" gibi Title Case başlıklar
+            words = stripped.split()
+            if 3 <= len(words) <= 10:
+                # Her kelimenin ilk harfi büyük mü kontrol et
+                title_case_count = sum(
+                    1 for w in words 
+                    if w[0].isupper() and len(w) > 1
+                )
+                # %70+ kelime Title Case ise ve nokta ile bitmiyorsa → heading
+                if title_case_count / len(words) >= 0.7 and not stripped.endswith('.'):
+                    # İçerik paragrafı olmadığından emin ol
+                    # Heading'ler genelde kısa olur (< 60 karakter)
+                    if len(stripped) < 60:
+                        return stripped
+        
+        return None
+    
     def _detect_table_content(self, text: str) -> bool:
         """
         Metin içinde tablo yapısı olup olmadığını tespit eder.
@@ -849,11 +917,20 @@ class PDFProcessor(BaseDocumentProcessor):
                 
                 for sub_text in self._split_large_section(content):
                     if len(sub_text.strip()) >= 50:
+                        # v3.4.1: Alt-chunk içinde yeni heading varsa kullan
+                        effective_heading = heading
+                        effective_path = list(heading_path)
+                        sub_heading = self._detect_sub_heading(sub_text)
+                        if sub_heading and sub_heading != heading:
+                            effective_heading = sub_heading
+                            # heading_path'i güncelle (üst path + yeni heading)
+                            effective_path = list(heading_path) + [sub_heading]
+                        
                         chunk_meta = {
                             "type": content_type,
-                            "heading": heading,
+                            "heading": effective_heading,
                             "heading_level": heading_level,
-                            "heading_path": heading_path,
+                            "heading_path": effective_path,
                             "page": page,
                             "file_type": "pdf",
                             "chunk_index": chunk_index,
