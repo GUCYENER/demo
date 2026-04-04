@@ -3258,7 +3258,7 @@ netstat -an | findstr "5005"
 
 **Geliştirici:** Yasın Fazlıoğlu  
 **E-posta:** yasin.fazlioglu@consultant.turkcell.com.tr  
-**Versiyon:** 3.1.0 (Enrichment-Aware Routing + Hallucination Guard)
+**Versiyon:** 3.4.1 (RAG Chunking Heading İyileştirmesi + Cross-Validation)
 
 ---
 

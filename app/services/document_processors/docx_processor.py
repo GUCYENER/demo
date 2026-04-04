@@ -336,8 +336,9 @@ class DOCXProcessor(BaseDocumentProcessor):
                 try:
                     runs = para.runs
                     if runs:
-                        # Tüm run'lar bold mu?
-                        all_bold = all(r.bold for r in runs if r.text.strip())
+                        # Tüm run'lar bold mu? (boş run listesinde false-positive önleme)
+                        text_runs = [r for r in runs if r.text.strip()]
+                        all_bold = bool(text_runs) and all(r.bold for r in text_runs)
                         # İlk run'ın font boyutu
                         first_run = runs[0]
                         font_size = first_run.font.size

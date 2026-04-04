@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.4.0"  # Modular refactoring: document_enhancer 8 modüle bölündü
+    APP_VERSION: str = "3.4.1"  # RAG chunking heading iyileştirmesi + lint temizliği
 
     # Frontend & API prefix
     api_prefix: str = "/api"
