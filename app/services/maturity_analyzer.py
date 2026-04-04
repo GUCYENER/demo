@@ -127,7 +127,7 @@ def analyze_pdf(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
         if h_s.endswith(','):
             is_false = True
         # İki nokta ile biten ("Teslimat Paket (Ana):")
-        elif h_s.endswith(':') and not re.match(r'^\d+[\.\\)]\s', h_s):
+        elif h_s.endswith(':') and not re.match(r'^\d+[.)]\s', h_s):
             is_false = True
         # Noktalı virgül, tırnak
         elif h_s[-1:] in (';', "'", '"'):
@@ -176,10 +176,10 @@ def analyze_pdf(file_obj: BinaryIO, file_name: str) -> Dict[str, Any]:
     
     _hier_patterns = [
         (r'^(\d+)\.\s', 1),                      # "1. Başlık" -> level 1
-        (r'^(\d+)\.(\d+)[\.\\)]\s', 2),           # "1.1 Alt" -> level 2
-        (r'^(\d+)\.(\d+)\.(\d+)[\.\\)]\s', 3),    # "1.1.1" -> level 3
-        (r'^(\d+)\.([a-zçğıöşü])[\.\\)]\s', 2),   # "2.a. Sarf" -> level 2
-        (r'^(\d+)([a-zçğıöşü])[\.\\)]\s', 2),     # "3a." -> level 2
+        (r'^(\d+)\.(\d+)[.)]\s', 2),           # "1.1 Alt" -> level 2
+        (r'^(\d+)\.(\d+)\.(\d+)[.)]\s', 3),    # "1.1.1" -> level 3
+        (r'^(\d+)\.([a-zçğıöşü])[.)]\s', 2),   # "2.a. Sarf" -> level 2
+        (r'^(\d+)([a-zçğıöşü])[.)]\s', 2),     # "3a." -> level 2
     ]
     
     numbered_headings = []
