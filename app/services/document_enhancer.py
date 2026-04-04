@@ -178,7 +178,7 @@ class DocumentEnhancer:
             )
             
             elapsed = round(time.time() - start_time, 2)
-            log_system_event("INFO", f"Enhancement tamamlandı: {enhanced_count}/{len(sections)} bölüm, {elapsed}s", "enhancer")
+            log_system_event("INFO", f"Enhancement tamamlandı: {enhanced_count}/{len(sections)} bölüm iyileştirildi, {error_count} hata, {elapsed}s", "enhancer")
             
             return result
             
@@ -1058,7 +1058,7 @@ class DocumentEnhancer:
                 elif "401" in error_msg or "403" in error_msg:
                     user_msg = "LLM API yetkilendirme hatası. API anahtarını kontrol edin."
                 else:
-                    user_msg = f"LLM iyileştirme yapılamadı: {error_msg}"
+                    user_msg = "LLM iyileştirme sırasında beklenmeyen bir hata oluştu. Lütfen tekrar deneyin."
                 
                 enhanced_sections.append(EnhancedSection(
                     section_index=idx,

@@ -12,6 +12,8 @@ build/
 .venv/
 venv/
 env/
+Lib/
+scripts/
 
 # Environment Variables
 .env
