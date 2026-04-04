@@ -1037,6 +1037,7 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
         
         # 🆕 v2.51.0: Tier 1 — Learned Q&A (semantik eşleşme, ~100ms)
         # v3.4.1: RAG cross-validation ile yanlış eşleşme önleme
+        _cv_intent = None  # Cross-validation'da hesaplanan intent (tekrar kullanım için)
         if category_index is None:
             try:
                 from app.services.learned_qa_service import get_learned_qa_service
@@ -1048,8 +1049,8 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
                     # v3.4.1: RAG Cross-Validation — Learned QA cevabı gerçekten doğru kaynaktan mı?
                     _qa_validated = True
                     try:
-                        _qa_intent = self.analyze_intent(query)
-                        _rag_check = self.expanded_retrieval(query, _qa_intent, user_id)
+                        _cv_intent = self.analyze_intent(query)
+                        _rag_check = self.expanded_retrieval(query, _cv_intent, user_id)
                         if _rag_check:
                             _top_rag = _rag_check[0]
                             _rag_text = _top_rag.get('content', '')
@@ -1094,7 +1095,7 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
                         result = DeepThinkResult(
                             synthesized_response=enriched["answer"],
                             sources=[qa_match.get("source_file", "")] if qa_match.get("source_file") else [],
-                            intent=self.analyze_intent(query),
+                            intent=_cv_intent or self.analyze_intent(query),
                             rag_result_count=1,
                             processing_time_ms=elapsed_ms,
                             best_score=qa_score,
@@ -1109,8 +1110,8 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
         
         log_system_event("INFO", f"Deep Think: Pipeline başlatıldı - '{query[:50]}...'", "deep_think")
         
-        # 1. Intent Detection
-        intent = self.analyze_intent(query)
+        # 1. Intent Detection (cross-validation'da hesaplandıysa tekrar kullan)
+        intent = _cv_intent if _cv_intent else self.analyze_intent(query)
         log_system_event(
             "INFO", 
             f"Deep Think: Intent={intent.intent_type.value}, n_results={intent.suggested_n_results}", 
@@ -1314,6 +1315,7 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
         
         # 🆕 v2.51.0: Tier 1 — Learned Q&A (semantik eşleşme, ~100ms)
         # v3.4.1: RAG cross-validation ile yanlış eşleşme önleme
+        _cv_intent = None  # Cross-validation'da hesaplanan intent (tekrar kullanım için)
         try:
             from app.services.learned_qa_service import get_learned_qa_service
             qa_match = get_learned_qa_service().search(query, user_id)
@@ -1324,8 +1326,8 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
                 # v3.4.1: RAG Cross-Validation
                 _qa_validated = True
                 try:
-                    _qa_intent = self.analyze_intent(query)
-                    _rag_check = self.expanded_retrieval(query, _qa_intent, user_id)
+                    _cv_intent = self.analyze_intent(query)
+                    _rag_check = self.expanded_retrieval(query, _cv_intent, user_id)
                     if _rag_check:
                         _top_rag = _rag_check[0]
                         _rag_text = _top_rag.get('content', '')
@@ -1374,7 +1376,7 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
                         result = DeepThinkResult(
                             synthesized_response=enriched_answer,
                             sources=[qa_match.get("source_file", "")] if qa_match.get("source_file") else [],
-                            intent=self.analyze_intent(query),
+                            intent=_cv_intent or self.analyze_intent(query),
                             rag_result_count=1,
                             processing_time_ms=elapsed_ms,
                             best_score=qa_score,
@@ -1401,8 +1403,8 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
         
         log_system_event("INFO", f"Deep Think STREAM: Pipeline başlatıldı - '{query[:50]}...'", "deep_think")
         
-        # 1. Intent Detection (anlık)
-        intent = self.analyze_intent(query)
+        # 1. Intent Detection (cross-validation'da hesaplandıysa tekrar kullan)
+        intent = _cv_intent if _cv_intent else self.analyze_intent(query)
         
         # 🆕 v2.58.0: DB intent → Hybrid Router (streaming)
         if intent.intent_type in (IntentType.DATABASE_QUERY, IntentType.HYBRID):
