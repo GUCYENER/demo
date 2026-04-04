@@ -17,7 +17,7 @@ import re
 import json
 from typing import Dict, Any, List
 
-from app.services.logging_service import log_system_event, log_warning
+from app.services.logging_service import log_system_event
 from app.services.content_integrity_validator import get_integrity_validator
 
 
@@ -643,7 +643,7 @@ Lütfen orijinal metni BAZ ALARAK tekrar iyileştir. Bu sefer aşağıdaki hatal
             }
 
         except (json.JSONDecodeError, ValueError) as e:
-            log_warning(f"LLM JSON parse hatası: {e}", "enhancer")
+            log_system_event("DEBUG", f"LLM JSON parse fallback: {e}", "enhancer")
             # Fallback: ham yanıtı kullan
             return {
                 "heading": fallback_heading,
