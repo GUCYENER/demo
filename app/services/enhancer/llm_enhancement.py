@@ -17,7 +17,7 @@ import re
 import json
 from typing import Dict, Any, List
 
-from app.services.logging_service import log_system_event
+from app.services.logging_service import log_system_event, log_warning
 from app.services.content_integrity_validator import get_integrity_validator
 
 

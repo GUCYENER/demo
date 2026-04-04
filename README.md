@@ -49,6 +49,27 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.4.2 (2026-04-04) - Enhance Görsel Koruması + Heading False-Positive Filtresi
+
+**🖼️ Enhance Görsel Koruması:**
+- ✅ **DAHİ önerisi al** (LLM enhance) sonrası görseller artık korunuyor
+- ✅ Backend: `_collect_images_from_rag()` ile image_ids toplanıyor ve response'a ekleniyor
+- ✅ Frontend: `handleEnhance` fonksiyonu image_ids'i render ediyor + fallback mevcut görseller
+
+**📝 Heading Detection İyileştirmesi:**
+- ✅ PDF/DOCX/PPTX/TXT processor'larda false-positive heading filtreleme
+- ✅ Küçük harfle başlayan satırlar heading olarak algılanmıyor
+- ✅ Türkçe fiil ekleriyle biten cümleler heading olarak algılanmıyor
+- ✅ 60+ karakter uzunluğundaki satırlar heading olarak algılanmıyor
+
+**🔧 Bug Fix & Bakım:**
+- ✅ numpy kurulumu — CatBoost ve FeatureExtractor artık çalışıyor
+- ✅ LLM JSON parse hatası log seviyesi WARNING→DEBUG
+- ✅ Unused import temizliği
+- ✅ CSS: thread-images-section inline style → harici CSS
+
+---
+
 ### 🆕 v3.4.0 (2026-04-04) - Modular Refactoring: document_enhancer.py → 8 Modül
 
 **🏗️ Modüler Mimari (2350 satır → 8 modül, her biri ≤300 satır):**
@@ -3258,7 +3279,7 @@ netstat -an | findstr "5005"
 
 **Geliştirici:** Yasın Fazlıoğlu  
 **E-posta:** yasin.fazlioglu@consultant.turkcell.com.tr  
-**Versiyon:** 3.4.1 (RAG Chunking Heading İyileştirmesi + Cross-Validation)
+**Versiyon:** 3.4.2 (Enhance Görsel Koruması + Heading False-Positive Filtresi)
 
 ---
 

@@ -11,6 +11,11 @@
     margin: 4px 2px;
 }
 
+/* v3.4.1: Enhance sonrası görsel section */
+.thread-images-section {
+    margin-top: 12px;
+}
+
 /* ─── INLINE IMAGE GRID ─── */
 
 .rag-inline-image {

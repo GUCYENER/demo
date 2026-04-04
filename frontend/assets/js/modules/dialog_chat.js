@@ -1958,7 +1958,7 @@ window.DialogChatModule = (function () {
                                 `<img class="rag-inline-image" src="${apiBase}/api/rag/images/${imgId}" alt="Doküman görseli" data-image-id="${imgId}" />`
                             ).join(' ');
                             enhancedHtml += `
-                                <div class="thread-images-section" style="margin-top: 12px;">
+                                <div class="thread-images-section">
                                     <div class="dt-section-label dt-section-info">
                                         <span class="dt-section-icon">📷</span>
                                         <span class="dt-section-title">İlgili Görseller</span>
