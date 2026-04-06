@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import functools
+import hashlib
 from typing import List, Optional, Dict, Any, Tuple
 import io
 from concurrent.futures import ThreadPoolExecutor
@@ -137,8 +138,7 @@ async def upload_files(
                 )
 
             # v3.3.0 [A4]: Dosya versiyonlama — silmek yerine soft-delete
-            import hashlib as _hashlib
-            file_hash = _hashlib.md5(content[:1024*1024]).hexdigest()
+            file_hash = hashlib.md5(content[:1024*1024]).hexdigest()
             
             # Mevcut aktif versiyonu bul (varsa)
             cur.execute(
@@ -187,11 +187,11 @@ async def upload_files(
                     )
             
             # Background processing için dosya bilgilerini sakla
+            # v3.4.4: file_content bellek optimizasyonu — icerik DB'den okunacak
             files_to_process.append({
                 "file_id": file_id,
                 "file_name": f.filename,
                 "file_type": ext,
-                "file_content": content,
                 "file_size": file_size
             })
 
@@ -281,12 +281,19 @@ def _process_single_file_sync(
         cur = conn.cursor()
         rag_service = get_rag_service()
         
+        # v3.4.4: Dosya içeriğini DB'den oku (bellek optimizasyonu)
+        cur.execute("SELECT file_content FROM uploaded_files WHERE id = %s", (file_info["file_id"],))
+        content_row = cur.fetchone()
+        if not content_row or not content_row["file_content"]:
+            raise ValueError(f"Dosya içeriği DB'de bulunamadı (id={file_info['file_id']})")
+        file_content = bytes(content_row["file_content"])
+        
         # 1. Processor ile dosyayı parse et
         processor = get_processor_for_extension(file_info["file_type"])
         if not processor:
             raise ValueError(f"İşlemci bulunamadı: {file_info['file_type']}")
         
-        file_obj = io.BytesIO(file_info["file_content"])
+        file_obj = io.BytesIO(file_content)
         processed = processor.process_bytes(file_obj, file_info["file_name"])
         
         # 2. Chunk'ları hazırla
@@ -320,7 +327,7 @@ def _process_single_file_sync(
             from app.services.document_processors.image_extractor import ImageExtractor
             img_extractor = ImageExtractor()
             extracted_images = img_extractor.extract(
-                file_info["file_content"], file_info["file_type"]
+                file_content, file_info["file_type"]
             )
             if extracted_images:
                 image_ids = img_extractor.save_to_db(
@@ -377,8 +384,8 @@ def _process_single_file_sync(
         except Exception as e:
             log_error(f"Topic çıkarma hatası ({file_name}): {e}", "rag")
         
-        # 7. 🧹 v2.42.0: Memory cleanup — büyük dosyalarda bellek tasarrufu
-        file_info["file_content"] = None
+        # 7. 🧹 v2.42.0 + v3.4.4: Memory cleanup — büyük dosyalarda bellek tasarrufu
+        del file_content
         gc.collect()
         
         return (chunk_count, file_name, True)
@@ -545,69 +552,118 @@ async def _process_files_background(
 
 def _update_chunk_image_refs(cursor, file_id: int, images, image_ids: list):
     """
-    Chunk metadata'larını image_ids ile günceller.
-    v2.38.0: Heading bazlı eşleştirme — görselin context_heading'i ile
-    chunk'ın metadata.heading'ini eşleştirir (chunk_index yerine).
+    v3.4.5: Chunk metadata'larını image_ids ile günceller.
     
-    v2.40.1: ExtractedImage dataclass attribute erişimi düzeltmesi.
-    Görseller hem heading eşleştirmesi hem de chunk_index ile eşleştirilir.
+    Metin bazlı akıllı eşleştirme — 4 adımlı:
+    1. Heading tam eşleşme (normalize)
+    2. Heading keyword overlap (≥%50)
+    3. Nearby_text → chunk_text keyword overlap (≥%40)
+    4. Eşleşmeyenler → atanmaz (yanlış eşleşme yerine eksik tercih edilir)
     """
     from app.services.logging_service import log_system_event as _log
+    import re
     
     if not image_ids:
         return
 
-    matched_ids = set()
+    # --- Yardımcı: Heading/metin normalizasyonu ---
+    def _normalize(text: str) -> str:
+        """Küçük harf, fazla boşluk temizle, sayfa/bölüm prefix kaldır"""
+        t = (text or "").strip().lower()
+        t = re.sub(r'^(sayfa\s*\d+\s*[-–:]*\s*)', '', t)  # "Sayfa 54 - " prefix kaldır
+        t = re.sub(r'^(\d+[\.\)]\s*)', '', t)  # "1. " veya "1) " prefix kaldır
+        t = re.sub(r'\s+', ' ', t).strip()
+        return t
+    
+    def _extract_keywords(text: str, min_len: int = 3) -> set:
+        """Anlamlı kelimeleri çıkar (≥min_len karakter)"""
+        words = re.findall(r'[a-zçğıöşüA-ZÇĞİÖŞÜ]{' + str(min_len) + r',}', _normalize(text))
+        # Türkçe stop words
+        stop = {'bir', 'ile', 'olan', 'için', 'gibi', 'daha', 'çok', 'veya',
+                'ise', 'hem', 'her', 'ama', 'fakat', 'ancak', 'kadar', 'and', 'the'}
+        return {w.lower() for w in words if w.lower() not in stop}
+    
+    def _keyword_overlap(kw1: set, kw2: set) -> float:
+        """İki kelime kümesi arasındaki örtüşme oranı (Jaccard-benzeri)"""
+        if not kw1 or not kw2:
+            return 0.0
+        common = kw1 & kw2
+        smaller = min(len(kw1), len(kw2))
+        return len(common) / smaller if smaller > 0 else 0.0
+    
+    # --- Tüm chunk heading'lerini ve text'lerini ön-yükle ---
+    cursor.execute(
+        """
+        SELECT id, chunk_index, metadata->>'heading' as heading, 
+               LEFT(chunk_text, 300) as chunk_text_preview
+        FROM rag_chunks 
+        WHERE file_id = %s 
+        ORDER BY chunk_index
+        """,
+        (file_id,)
+    )
+    chunk_rows = cursor.fetchall()
+    
+    if not chunk_rows:
+        _log("WARNING", f"Dosya {file_id}: Chunk bulunamadı, görsel eşleştirme atlandı", "rag_upload")
+        return
+    
+    # Chunk bilgileri: {chunk_id: {heading, heading_kw, text_kw, chunk_index}}
+    chunk_info = {}
+    for cr in chunk_rows:
+        heading = cr["heading"] or ""
+        text_preview = cr["chunk_text_preview"] or ""
+        chunk_info[cr["id"]] = {
+            "chunk_index": cr["chunk_index"],
+            "heading_norm": _normalize(heading),
+            "heading_kw": _extract_keywords(heading),
+            "text_kw": _extract_keywords(text_preview),
+        }
+    
+    matched_count = 0
     
     for img, img_id in zip(images, image_ids):
-        # ExtractedImage dataclass → attribute access (dict .get() değil!)
-        heading = getattr(img, "context_heading", "") or ""
-        chunk_idx = getattr(img, "context_chunk_index", None)
+        img_heading = getattr(img, "context_heading", "") or ""
+        img_nearby = getattr(img, "nearby_text", "") or ""
         
-        if not heading:
-            continue
-
-        # 1. Heading eşleştirmesi (tam match)
-        cursor.execute(
-            """
-            UPDATE rag_chunks
-            SET metadata = jsonb_set(
-                COALESCE(metadata, '{}'::jsonb),
-                '{image_ids}',
-                (COALESCE(metadata->'image_ids', '[]'::jsonb) || %s::jsonb)
-            )
-            WHERE file_id = %s
-              AND metadata->>'heading' = %s
-            RETURNING id
-            """,
-            (f'[{img_id}]', file_id, heading)
-        )
-        if cursor.fetchone():
-            matched_ids.add(img_id)
+        if not img_heading and not img_nearby:
             continue
         
-        # 2. Partial heading eşleştirmesi (heading içerme)
-        cursor.execute(
-            """
-            UPDATE rag_chunks
-            SET metadata = jsonb_set(
-                COALESCE(metadata, '{}'::jsonb),
-                '{image_ids}',
-                (COALESCE(metadata->'image_ids', '[]'::jsonb) || %s::jsonb)
-            )
-            WHERE file_id = %s
-              AND metadata->>'heading' ILIKE %s
-              AND (metadata->'image_ids' IS NULL OR NOT metadata->'image_ids' @> %s::jsonb)
-            RETURNING id
-            """,
-            (f'[{img_id}]', file_id, f'%{heading[:60]}%', f'[{img_id}]')
-        )
-        if cursor.fetchone():
-            matched_ids.add(img_id)
-            continue
+        img_heading_norm = _normalize(img_heading)
+        img_heading_kw = _extract_keywords(img_heading)
+        img_nearby_kw = _extract_keywords(img_nearby) if img_nearby else set()
         
-        # 3. Chunk index eşleştirmesi (sayfa bazlı fallback)
-        if chunk_idx is not None:
+        best_chunk_id = None
+        best_score = 0.0
+        
+        for c_id, c_info in chunk_info.items():
+            score = 0.0
+            
+            # Adım 1: Heading tam eşleşme (normalize)
+            if img_heading_norm and c_info["heading_norm"]:
+                if img_heading_norm == c_info["heading_norm"]:
+                    score = 1.0
+                elif img_heading_norm in c_info["heading_norm"] or c_info["heading_norm"] in img_heading_norm:
+                    score = 0.85
+            
+            # Adım 2: Heading keyword overlap
+            if score < 0.85 and img_heading_kw and c_info["heading_kw"]:
+                h_overlap = _keyword_overlap(img_heading_kw, c_info["heading_kw"])
+                if h_overlap >= 0.5:
+                    score = max(score, 0.5 + h_overlap * 0.3)
+            
+            # Adım 3: Nearby text → chunk text overlap
+            if score < 0.5 and img_nearby_kw and c_info["text_kw"]:
+                t_overlap = _keyword_overlap(img_nearby_kw, c_info["text_kw"])
+                if t_overlap >= 0.4:
+                    score = max(score, 0.3 + t_overlap * 0.3)
+            
+            if score > best_score:
+                best_score = score
+                best_chunk_id = c_id
+        
+        # Eşleşme eşiği: ≥0.3 (çok düşük benzerlikli eşleşmeleri engelle)
+        if best_chunk_id and best_score >= 0.3:
             cursor.execute(
                 """
                 UPDATE rag_chunks
@@ -616,35 +672,18 @@ def _update_chunk_image_refs(cursor, file_id: int, images, image_ids: list):
                     '{image_ids}',
                     (COALESCE(metadata->'image_ids', '[]'::jsonb) || %s::jsonb)
                 )
-                WHERE file_id = %s
-                  AND chunk_index = %s
+                WHERE id = %s
                   AND (metadata->'image_ids' IS NULL OR NOT metadata->'image_ids' @> %s::jsonb)
-                RETURNING id
                 """,
-                (f'[{img_id}]', file_id, chunk_idx, f'[{img_id}]')
+                (f'[{img_id}]', best_chunk_id, f'[{img_id}]')
             )
-            if cursor.fetchone():
-                matched_ids.add(img_id)
-
-    # Eşleşmeyen görselleri ilk chunk'a ata (son çare fallback)
-    unmatched = [iid for iid in image_ids if iid not in matched_ids]
-    for img_id in unmatched:
-        cursor.execute(
-            """
-            UPDATE rag_chunks
-            SET metadata = jsonb_set(
-                COALESCE(metadata, '{}'::jsonb),
-                '{image_ids}',
-                (COALESCE(metadata->'image_ids', '[]'::jsonb) || %s::jsonb)
-            )
-            WHERE file_id = %s
-              AND chunk_index = 0
-              AND (metadata->'image_ids' IS NULL OR NOT metadata->'image_ids' @> %s::jsonb)
-            """,
-            (f'[{img_id}]', file_id, f'[{img_id}]')
-        )
+            matched_count += 1
     
-    _log("INFO", f"Dosya {file_id}: {len(matched_ids)}/{len(image_ids)} görsel chunk'a eşleştirildi", "rag_upload")
+    _log(
+        "INFO", 
+        f"Dosya {file_id}: {matched_count}/{len(image_ids)} görsel chunk'a eşleştirildi (metin bazlı)", 
+        "rag_upload"
+    )
 
 
 @router.post("/retry-file/{file_id}")
@@ -684,7 +723,7 @@ async def retry_file_processing(
         if not file_data_row or not file_data_row[0]:
             raise HTTPException(status_code=400, detail="Dosya verisi bulunamadı")
         
-        file_data = bytes(file_data_row[0])
+        # v3.4.5: file_data artık background'da DB'den okunuyor, retry'da gerekmez
         
         # Mevcut chunk'ları temizle
         cur.execute("DELETE FROM rag_chunks WHERE file_id = %s", (file_id,))
@@ -704,11 +743,11 @@ async def retry_file_processing(
             maturity_map = {db_id: maturity_score}
         
         # Background task olarak yeniden işle
+        # v3.4.4: file_content gönderilmiyor — background'da DB'den okunuyor
         file_info = {
             "file_id": db_id,
             "file_name": file_name,
             "file_type": file_type,
-            "file_content": file_data,
             "company_id": company_id
         }
         

@@ -515,6 +515,23 @@
     border-radius: 2px;
 }
 
+/* v3.4.4: Word-level diff renklendirme */
+.diff-removed {
+    background: rgba(239, 68, 68, 0.2);
+    color: #fca5a5;
+    text-decoration: line-through;
+    padding: 1px 3px;
+    border-radius: 3px;
+}
+
+.diff-added {
+    background: rgba(52, 211, 153, 0.2);
+    color: #6ee7b7;
+    padding: 1px 3px;
+    border-radius: 3px;
+    font-weight: 500;
+}
+
 /* ─── FOOTER ─── */
 
 .enhancer-modal-footer {

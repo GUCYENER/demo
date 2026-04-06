@@ -214,6 +214,15 @@ const MaturityScoreModal = {
             // v3.2.1: inline style yerine CSS class kullan
             if (avgScore < threshold) {
                 enhanceBtn.classList.remove('hidden');
+                // v3.4.4: Çoklu düşük skorlu dosya bilgisi
+                const lowScoreCount = this.results.filter(r => 
+                    Math.round(r.total_score) < threshold
+                ).length;
+                if (lowScoreCount > 1) {
+                    enhanceBtn.innerHTML = `<i class="fas fa-magic"></i> İyileştir (${this.activeFileIndex + 1}/${lowScoreCount})`;
+                } else {
+                    enhanceBtn.innerHTML = '<i class="fas fa-magic"></i> İyileştir';
+                }
             } else {
                 enhanceBtn.classList.add('hidden');
             }

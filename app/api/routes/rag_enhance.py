@@ -4,13 +4,14 @@ VYRA L1 Support API - RAG Enhancement Routes
 Doküman iyileştirme (CatBoost + LLM) endpoint'leri.
 
 Author: VYRA AI Team
-Version: 1.2.0 (v3.3.0)
+Version: 1.3.0 (v3.4.5)
 """
 
 import os
 import time
 import asyncio
-import threading
+import hashlib
+import tempfile
 from typing import Dict, Any
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
@@ -25,10 +26,20 @@ from app.services.logging_service import log_system_event, log_error
 router = APIRouter()
 
 # Selective download için session verilerini sakla
-_session_data: dict = {}  # session_id → {"original_content": bytes, ..., "_created_at": float}
+# v3.4.4: original_content disk'te saklanır, bellekte sadece path tutulur
+_session_data: dict = {}  # session_id → {"original_content_path": str, ..., "_created_at": float}
 
 # v3.2.1: Session TTL — 30 dakika sonra otomatik temizleme
 _SESSION_TTL_SECONDS = 1800  # 30 dakika
+
+
+def _get_original_content(data: dict) -> bytes:
+    """Session verisinden orijinal dosya içeriğini okur (disk'ten)."""
+    path = data.get("original_content_path")
+    if path and os.path.exists(path):
+        with open(path, "rb") as f:
+            return f.read()
+    return b""
 
 
 def _cleanup_expired_sessions() -> None:
@@ -37,6 +48,14 @@ def _cleanup_expired_sessions() -> None:
     expired = [sid for sid, data in _session_data.items()
                if now - data.get("_created_at", 0) > _SESSION_TTL_SECONDS]
     for sid in expired:
+        # v3.4.4: Disk'teki orijinal dosyayı da temizle
+        _data = _session_data.get(sid, {})
+        _orig_path = _data.get("original_content_path")
+        if _orig_path and os.path.exists(_orig_path):
+            try:
+                os.remove(_orig_path)
+            except Exception:
+                pass
         cleanup_enhanced_file(sid)
         _session_data.pop(sid, None)
     if expired:
@@ -154,8 +173,14 @@ async def enhance_document(
         
         # Session verilerini sakla (selective download için)
         _cleanup_expired_sessions()  # v3.2.1: Önce eski session'ları temizle
+        
+        # v3.4.4: original_content'i disk'e yaz (bellek sızıntısı önleme)
+        _orig_path = tempfile.mktemp(suffix=f"_{result.session_id}_orig", prefix="enhance_")
+        with open(_orig_path, "wb") as _of:
+            _of.write(file_content)
+        
         _session_data[result.session_id] = {
-            "original_content": file_content,
+            "original_content_path": _orig_path,  # v3.4.4: bellek yerine disk
             "file_type": ext,
             "file_name": file_name,
             "sections": result.sections,
@@ -166,7 +191,6 @@ async def enhance_document(
         # v3.3.0 [C2]: Enhancement geçmişini DB'ye kaydet
         try:
             from app.core.db import get_db_conn
-            import hashlib
             import json as _json
             file_hash = hashlib.md5(file_content[:1024*1024]).hexdigest()
             sections_summary = []
@@ -234,7 +258,7 @@ async def download_enhanced(
             
             enhancer = DocumentEnhancer()
             selective_path = enhancer.generate_selective_docx(
-                original_content=data["original_content"],
+                original_content=_get_original_content(data),
                 sections=data["sections"],
                 approved_indexes=approved_indexes,
                 session_id=session_id,
@@ -281,6 +305,7 @@ async def upload_enhanced_to_rag(
     session_id: str,
     sections: str = Query(default=None),
     org_ids: str = Query(default=None),
+    company_id: int = Query(default=None),
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     """
@@ -319,7 +344,7 @@ async def upload_enhanced_to_rag(
         # RAG chunk'ları enhanced text'ten oluşturulacak
         if orig_file_type in ("XLSX", "XLS", "PPTX", "PPT"):
             # Orijinal dosya binary'si korunur
-            file_content_bytes = data["original_content"]
+            file_content_bytes = _get_original_content(data)
             file_size = len(file_content_bytes)
             
             ext_map = {
@@ -344,7 +369,7 @@ async def upload_enhanced_to_rag(
         else:
             # DOCX, PDF, TXT: enhanced DOCX/PDF oluştur
             docx_path = enhancer.generate_selective_docx(
-                original_content=data["original_content"],
+                original_content=_get_original_content(data),
                 sections=data["sections"],
                 approved_indexes=approved_indexes,
                 session_id=session_id,
@@ -420,8 +445,7 @@ async def upload_enhanced_to_rag(
             next_version = (ver_row["max_ver"] or 0) + 1 if ver_row and ver_row["max_ver"] else 1
             
             # Dosya hash
-            import hashlib as _hashlib
-            file_hash = _hashlib.md5(file_content_bytes[:1024*1024]).hexdigest()
+            file_hash = hashlib.md5(file_content_bytes[:1024*1024]).hexdigest()
             
             # Maturity skoru (ön hesaplama, background'da güncellenecek)
             m_score = data.get("maturity_score")
@@ -429,8 +453,8 @@ async def upload_enhanced_to_rag(
             # Dosyayı DB'ye kaydet — status='processing'
             cur.execute(
                 """
-                INSERT INTO uploaded_files (file_name, file_type, file_size_bytes, file_content, mime_type, uploaded_by, maturity_score, status, file_version, is_active, file_hash)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, 'processing', %s, TRUE, %s)
+                INSERT INTO uploaded_files (file_name, file_type, file_size_bytes, file_content, mime_type, uploaded_by, maturity_score, status, file_version, is_active, file_hash, company_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'processing', %s, TRUE, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -439,7 +463,8 @@ async def upload_enhanced_to_rag(
                     current_user["id"],
                     m_score,
                     next_version,
-                    file_hash
+                    file_hash,
+                    company_id
                 ),
             )
             file_id = cur.fetchone()["id"]
@@ -487,16 +512,17 @@ async def upload_enhanced_to_rag(
         # ═══════════════════════════════════════════════
         # ASENKRON KISIM: Ağır işlemler background'da
         # ═══════════════════════════════════════════════
+        # v3.4.5: file_content_bytes ve original_content artık bg_params'ta tutulmuyor
+        # Background thread DB'den okur — bellek optimizasyonu + normal upload ile tutarlı
         _bg_params = {
             "file_id": file_id,
             "upload_name": upload_name,
             "upload_ext": upload_ext,
-            "file_content_bytes": file_content_bytes,
             "orig_file_type": orig_file_type,
             "approved_indexes": approved_indexes,
             "sections": data["sections"],
-            "original_content": data.get("original_content"),
             "original_file_type": data.get("file_type", upload_ext),
+            "original_content_path": data.get("original_content_path"),  # disk path (image extraction için)
             "m_score_initial": m_score,
             "session_id": session_id,
             "user_id": current_user["id"],
@@ -508,7 +534,6 @@ async def upload_enhanced_to_rag(
             bg_conn = None
             try:
                 from app.services.rag_service import get_rag_service as _get_rag_svc
-                from app.services.document_processors import get_processor_for_extension as _get_proc
                 from app.services.rag.topic_extraction import extract_and_save_topics as _extract_topics
                 from app.core.db import get_db_conn as _get_db
                 
@@ -519,65 +544,54 @@ async def upload_enhanced_to_rag(
                 _fid = _bg_params["file_id"]
                 _uname = _bg_params["upload_name"]
                 _uext = _bg_params["upload_ext"]
-                _fcontent = _bg_params["file_content_bytes"]
-                _otype = _bg_params["orig_file_type"]
                 _approvals = _bg_params["approved_indexes"]
                 _sections = _bg_params["sections"]
                 _m = _bg_params["m_score_initial"]
                 
+                # v3.4.5: Dosya içeriğini DB'den oku (bellek optimizasyonu)
+                bg_cur.execute("SELECT file_content FROM uploaded_files WHERE id = %s", (_fid,))
+                _content_row = bg_cur.fetchone()
+                if not _content_row or not _content_row["file_content"]:
+                    raise ValueError(f"Dosya içeriği DB'de bulunamadı (id={_fid})")
+                _fcontent = bytes(_content_row["file_content"])
+                
                 log_system_event("INFO", f"[BG] Enhanced processing başladı: {_uname} (file_id={_fid})", "rag_enhance")
                 
-                # 1. Chunk oluştur
+                # 1. Chunk oluştur — iyileştirilmiş bölümlerden combined_text
+                # v3.4.5: TÜM dosya türleri için aynı yaklaşım (XLSX gibi)
+                # Enhancement yapıldığında _sections'da onaylı/orijinal bölüm metinleri hazırdır
+                # Binary parse gereksizdir ve format uyumsuzluğu riski taşır
                 chunks = []
-                if _otype in ("XLSX", "XLS", "PPTX", "PPT"):
-                    combined_text = ""
-                    for s in _sections:
-                        s_idx = s.section_index
-                        s_heading = s.heading or f"Bölüm {s_idx + 1}"
-                        section_text = s.enhanced_text if s_idx in _approvals else s.original_text
-                        if section_text and section_text.strip():
-                            combined_text += f"\n\n{s_heading}\n{'=' * len(s_heading)}\n{section_text}"
-                    
-                    if combined_text.strip():
-                        from app.services.document_processors.txt_processor import TXTProcessor
-                        txt_proc = TXTProcessor()
-                        temp_file = _bio.BytesIO(combined_text.strip().encode("utf-8"))
-                        processed = txt_proc.process_bytes(temp_file, _uname)
-                        chunks = [
-                            {"text": c.text, "metadata": {"source_file": _uname, "enhanced": True, **c.metadata}}
-                            for c in processed.chunks
-                        ]
-                    
-                    # Maturity yeniden hesapla
-                    try:
-                        from app.services.maturity_analyzer import analyze_file as _analyze
-                        mat_obj = _bio.BytesIO(combined_text.strip().encode("utf-8"))
-                        mat_result = _analyze(mat_obj, _uname.replace(_uext, '.txt'))
-                        new_score = mat_result.get("total_score")
-                        if new_score is not None:
-                            _m = new_score
-                    except Exception:
-                        pass
-                else:
-                    processor = _get_proc(_uext)
-                    if processor:
-                        file_obj = _bio.BytesIO(_fcontent)
-                        processed = processor.process_bytes(file_obj, _uname)
-                        chunks = [
-                            {"text": c.text, "metadata": {"source_file": _uname, **c.metadata}}
-                            for c in processed.chunks
-                        ]
-                    
-                    # Maturity hesapla
-                    try:
-                        from app.services.maturity_analyzer import analyze_file as _analyze
-                        mat_obj = _bio.BytesIO(_fcontent)
-                        mat_result = _analyze(mat_obj, _uname)
-                        new_score = mat_result.get("total_score")
-                        if new_score is not None:
-                            _m = new_score
-                    except Exception:
-                        pass
+                combined_text = ""
+                for s in _sections:
+                    s_idx = s.section_index
+                    s_heading = s.heading or f"Bölüm {s_idx + 1}"
+                    section_text = s.enhanced_text if s_idx in _approvals else s.original_text
+                    if section_text and section_text.strip():
+                        combined_text += f"\n\n{s_heading}\n{'=' * len(s_heading)}\n{section_text}"
+                
+                if combined_text.strip():
+                    from app.services.document_processors.txt_processor import TXTProcessor
+                    txt_proc = TXTProcessor()
+                    temp_file = _bio.BytesIO(combined_text.strip().encode("utf-8"))
+                    processed = txt_proc.process_bytes(temp_file, _uname)
+                    chunks = [
+                        {"text": c.text, "metadata": {"source_file": _uname, "enhanced": True, **c.metadata}}
+                        for c in processed.chunks
+                    ]
+                
+                # Maturity: iyileştirilmiş metin üzerinden hesapla
+                try:
+                    from app.services.maturity_analyzer import analyze_file as _analyze
+                    mat_obj = _bio.BytesIO(combined_text.strip().encode("utf-8"))
+                    mat_result = _analyze(mat_obj, _uname.rsplit('.', 1)[0] + '.txt')
+                    new_score = mat_result.get("total_score")
+                    if new_score is not None:
+                        _m = new_score
+                        log_system_event("INFO", f"[BG] {_uname}: maturity yeniden hesaplandı: {new_score}", "rag_enhance")
+                except Exception as mat_err:
+                    log_system_event("WARNING", f"[BG] {_uname}: maturity hesaplama hatası: {mat_err}", "rag_enhance")
+                
                 
                 if not chunks:
                     raise ValueError("Dosyadan hiç veri çıkarılamadı.")
@@ -587,7 +601,18 @@ async def upload_enhanced_to_rag(
                 log_system_event("INFO", f"[BG] {_uname}: {chunk_count} chunk eklendi", "rag_enhance")
                 
                 # 3. Görsel çıkarma (skip_ocr=True)
-                _orig_content = _bg_params.get("original_content")
+                # v3.4.5: Orijinal dosya içeriğini disk'ten oku (varsa)
+                _orig_path = _bg_params.get("original_content_path")
+                _orig_content = None
+                if _orig_path and os.path.exists(_orig_path):
+                    try:
+                        with open(_orig_path, "rb") as _of:
+                            _orig_content = _of.read()
+                    except Exception:
+                        pass
+                # Orijinal yoksa DB'deki dosyayı kullan
+                if not _orig_content:
+                    _orig_content = _fcontent
                 if _orig_content:
                     try:
                         from app.services.document_processors.image_extractor import ImageExtractor
@@ -645,18 +670,20 @@ async def upload_enhanced_to_rag(
                 )
                 
                 # 7. WebSocket bildirimi — "Yükleme tamamlandı"
+                # v3.4.4: run_coroutine_threadsafe ile ana event loop'a gönder
                 try:
-                    import asyncio as _aio
                     from app.core.websocket_manager import ws_manager
-                    loop = _aio.new_event_loop()
-                    loop.run_until_complete(ws_manager.send_to_user(_bg_params["user_id"], {
+                    _ws_msg = {
                         "type": "rag_upload_complete",
                         "file_names": [_uname],
                         "processed_count": 1,
                         "total_chunks": chunk_count,
                         "message": f"'{_uname}' bilgi tabanına başarıyla yüklendi ({chunk_count} chunk)"
-                    }))
-                    loop.close()
+                    }
+                    asyncio.run_coroutine_threadsafe(
+                        ws_manager.send_to_user(_bg_params["user_id"], _ws_msg),
+                        _bg_params["_loop"]
+                    )
                 except Exception as ws_err:
                     log_system_event("WARNING", f"[BG] WS bildirim gönderilemedi: {ws_err}", "rag_enhance")
                 
@@ -677,15 +704,15 @@ async def upload_enhanced_to_rag(
                         pass
                 # WS hata bildirimi
                 try:
-                    import asyncio as _aio
                     from app.core.websocket_manager import ws_manager
-                    loop = _aio.new_event_loop()
-                    loop.run_until_complete(ws_manager.send_to_user(_bg_params["user_id"], {
-                        "type": "rag_upload_failed",
-                        "file_names": [_bg_params["upload_name"]],
-                        "message": f"'{_bg_params['upload_name']}' yüklenirken hata oluştu"
-                    }))
-                    loop.close()
+                    asyncio.run_coroutine_threadsafe(
+                        ws_manager.send_to_user(_bg_params["user_id"], {
+                            "type": "rag_upload_failed",
+                            "file_names": [_bg_params["upload_name"]],
+                            "message": f"'{_bg_params['upload_name']}' yüklenirken hata oluştu"
+                        }),
+                        _bg_params["_loop"]
+                    )
                 except Exception:
                     pass
             finally:
@@ -695,12 +722,15 @@ async def upload_enhanced_to_rag(
                     except Exception:
                         pass
         
-        # Background thread başlat
-        bg_thread = threading.Thread(target=_bg_enhanced_processing, daemon=True)
-        bg_thread.start()
-        log_system_event("INFO", f"Enhanced background thread başlatıldı (file_id={file_id})", "rag_enhance")
+        # v3.4.4: asyncio.ensure_future + run_in_executor ile çalıştır
+        # Normal upload pipeline ile tutarlı yaklaşım
+        _bg_params["_loop"] = asyncio.get_event_loop()
+        loop = asyncio.get_event_loop()
+        asyncio.ensure_future(loop.run_in_executor(None, _bg_enhanced_processing))
+        log_system_event("INFO", f"Enhanced background task başlatıldı (file_id={file_id})", "rag_enhance")
         
-        # Session temizle
+        # v3.4.5: Session temizleme background task tamamlandığında yapılır
+        # (original_content_path hâlâ background thread tarafından okunabilir)
         cleanup_enhanced_file(session_id)
         if session_id in _session_data:
             _session_data[session_id]["_uploaded"] = True
@@ -725,6 +755,14 @@ async def upload_enhanced_to_rag(
 @router.delete("/cleanup-enhanced/{session_id}")
 async def cleanup_enhanced(session_id: str):
     """Geçici iyileştirilmiş dosyayı ve session verisini temizle"""
+    # v3.4.4: Disk'teki orijinal dosyayı da temizle
+    data = _session_data.get(session_id, {})
+    _orig_path = data.get("original_content_path")
+    if _orig_path and os.path.exists(_orig_path):
+        try:
+            os.remove(_orig_path)
+        except Exception:
+            pass
     cleanup_enhanced_file(session_id)
     _session_data.pop(session_id, None)
     return {"status": "ok", "message": "Geçici dosya temizlendi."}

@@ -276,10 +276,10 @@ window.RAGFileList = {
 
         if (this.files.length === 0) {
             container.innerHTML = `
-                <div class="rag-empty-state" style="padding:40px;text-align:center">
-                    <i class="fas fa-folder-open" style="font-size:32px;color:var(--text-3);margin-bottom:12px;display:block"></i>
-                    <h4 style="font-size:14px;color:var(--text-1);margin-bottom:6px">Henüz dosya yok</h4>
-                    <p style="font-size:12.5px;color:var(--text-3)">Bilgi tabanınıza doküman eklemek için yukarıdaki alana dosya sürükleyin.</p>
+                <div class="rag-empty-state">
+                    <i class="fas fa-folder-open rag-empty-state-icon"></i>
+                    <h4 class="rag-empty-state-title">Henüz dosya yok</h4>
+                    <p class="rag-empty-state-desc">Bilgi tabanınıza doküman eklemek için yukarıdaki alana dosya sürükleyin.</p>
                 </div>
             `;
             return;
@@ -619,9 +619,14 @@ window.RAGFileList = {
         });
 
         // Upload complete — işlem bitti, listeyi yenile
-        window.addEventListener('vyra:rag_upload_complete', () => {
+        window.addEventListener('vyra:rag_upload_complete', (e) => {
             this._hideUploadProgress();
             this.loadFiles();
+            // v3.4.4: WS'ten bildirilen dosyaları _notifiedFiles'a kaydet — polling çift bildirim engelleme
+            const fileNames = (e.detail && e.detail.file_names) || [];
+            if (window.RAGUpload && window.RAGUpload._notifiedFiles) {
+                fileNames.forEach(n => window.RAGUpload._notifiedFiles.add(n));
+            }
         });
 
         // Upload failed — hata durumu, listeyi yenile

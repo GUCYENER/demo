@@ -68,12 +68,27 @@ def map_images_to_sections(
                 best_section = sec
                 break
 
-        # ── 2. chunk_index ile section eşleştirmesi (fallback) ──
+        # ── 2. Keyword overlap ile section eşleştirmesi (v3.4.5) ──
         if best_section is None:
-            if chunk_idx < len(sections):
+            nearby = getattr(img_obj, "nearby_text", "") or ""
+            if nearby:
+                import re as _re
+                _stop = {'bir', 'ile', 'olan', 'için', 'gibi', 'daha', 'çok', 'veya'}
+                _nearby_kw = {w.lower() for w in _re.findall(r'[a-zçğıöşüA-ZÇĞİÖŞÜ]{3,}', nearby.lower()) if w.lower() not in _stop}
+                best_overlap = 0.0
+                for sec in sections:
+                    sec_text = get_section_text(sec)[:300]
+                    sec_heading = sec.heading or ""
+                    _sec_kw = {w.lower() for w in _re.findall(r'[a-zçğıöşüA-ZÇĞİÖŞÜ]{3,}', (sec_heading + " " + sec_text).lower()) if w.lower() not in _stop}
+                    if _nearby_kw and _sec_kw:
+                        overlap = len(_nearby_kw & _sec_kw) / min(len(_nearby_kw), len(_sec_kw))
+                        if overlap > best_overlap:
+                            best_overlap = overlap
+                            best_section = sec
+            
+            # Son fallback: chunk_index geçerliyse kullan
+            if best_section is None and chunk_idx >= 0 and chunk_idx < len(sections):
                 best_section = sections[chunk_idx]
-            elif sections:
-                best_section = sections[-1]
 
         if best_section is None:
             continue

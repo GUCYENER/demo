@@ -44,6 +44,7 @@ const RAGUpload = {
         await this.loadDataSources(); // v2.55.0: Veri kaynağı seçici
         await this.loadFiles();
         await this.loadStats();
+        this.loadEnhancementHistory();  // v3.4.4: Enhancement geçmişi widget (async, non-blocking)
 
         console.log('[RAGUpload] Modül hazır.');
     },
@@ -268,7 +269,7 @@ const RAGUpload = {
         });
 
         try {
-            this.updateProgress(20, 'Dosyalar yükleniyor...');
+            this.updateProgress(5, 'Dosyalar yükleniyor...');
 
             const token = localStorage.getItem('access_token');
 
@@ -294,20 +295,45 @@ const RAGUpload = {
                 uploadUrl += `${sep}company_id=${compSel.value}`;
             }
 
-            const response = await fetch(uploadUrl, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                },
-                body: formData
+            // v3.4.4: XMLHttpRequest ile gerçek upload progress
+            const result = await new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', uploadUrl, true);
+                xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+                
+                // Gerçek upload ilerleme ölçümü
+                xhr.upload.onprogress = (e) => {
+                    if (e.lengthComputable) {
+                        const pct = Math.round((e.loaded / e.total) * 90) + 5;  // 5-95 arası
+                        const loaded = (e.loaded / (1024 * 1024)).toFixed(1);
+                        const total = (e.total / (1024 * 1024)).toFixed(1);
+                        this.updateProgress(pct, `Yükleniyor... ${loaded}/${total} MB`);
+                    }
+                };
+                
+                xhr.onload = () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        try {
+                            resolve(JSON.parse(xhr.responseText));
+                        } catch (e) {
+                            reject(new Error('Geçersiz sunucu yanıtı'));
+                        }
+                    } else {
+                        try {
+                            const err = JSON.parse(xhr.responseText);
+                            reject(new Error(err.detail || `HTTP ${xhr.status}`));
+                        } catch (e) {
+                            reject(new Error(`Yükleme hatası (HTTP ${xhr.status})`));
+                        }
+                    }
+                };
+                
+                xhr.onerror = () => reject(new Error('Ağ bağlantı hatası'));
+                xhr.ontimeout = () => reject(new Error('Yükleme zaman aşımına uğradı'));
+                xhr.timeout = 300000; // 5 dakika
+                
+                xhr.send(formData);
             });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || 'Yükleme hatası');
-            }
-
-            const result = await response.json();
 
             // v2.39.0: Dosya kaydedildi, processing arkaplanda devam ediyor
             this.updateProgress(100, 'Dosya kaydedildi, işleniyor...');
@@ -338,10 +364,8 @@ const RAGUpload = {
             // v3.3.1: Processing polling başlat — WS çalışmasa bile tamamlanma bildirimi gelsin
             this._startProcessingPoll(fileNames);
 
-            // Hedef Org Grupları'nı sıfırla
-            this.selectedOrgIds = [];
-            sessionStorage.removeItem('rag_selected_org_ids');
-            this.renderOrgBadges();
+            // v3.4.4: Org sıfırlama kaldırıldı — ardışık yüklemelerde seçim korunsun
+            // Kullanıcı farklı org'a yüklemek isterse manuel değiştirir
 
         } catch (error) {
             console.error('[RAGUpload] Yükleme hatası:', error);
@@ -369,6 +393,7 @@ const RAGUpload = {
      */
     _processingPollTimer: null,
     _processingPollCount: 0,
+    _notifiedFiles: new Set(),  // v3.4.4: Çift bildirim engelleme
     _startProcessingPoll(uploadedFileNames) {
         // Önceki polling varsa durdur
         if (this._processingPollTimer) {
@@ -391,7 +416,8 @@ const RAGUpload = {
 
             try {
                 const token = localStorage.getItem('access_token');
-                const resp = await fetch(`${self.API_BASE}/rag/files?page=1&per_page=10`, {
+                // v3.4.4: Tüm dosya listesi yerine sadece processing dosyaları sorgula
+                const resp = await fetch(`${self.API_BASE}/rag/files?page=1&per_page=10&status=processing`, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 if (!resp.ok) return;
@@ -413,15 +439,24 @@ const RAGUpload = {
                     await self.loadFiles();
                     await self.loadStats();
 
-                    // Bildirim yaz (WS'ten zaten geldiyse duplicate olmasın)
-                    const completedNames = uploadedFileNames.length <= 3
-                        ? uploadedFileNames.join(', ')
-                        : `${uploadedFileNames.slice(0, 2).join(', ')} ve ${uploadedFileNames.length - 2} dosya daha`;
+                    // v3.4.4: Çift bildirim engelleme — WS'ten zaten bildirilen dosyaları atla
+                    const newNames = uploadedFileNames.filter(n => !self._notifiedFiles.has(n));
+                    if (newNames.length > 0) {
+                        const completedNames = newNames.length <= 3
+                            ? newNames.join(', ')
+                            : `${newNames.slice(0, 2).join(', ')} ve ${newNames.length - 2} dosya daha`;
 
-                    if (window.NgssNotification) {
-                        NgssNotification.add('success', '✅ Dosya İşleme Tamamlandı',
-                            `${completedNames} — bilgi tabanına başarıyla eklendi.`, null, 'rag');
+                        if (window.NgssNotification) {
+                            NgssNotification.add('success', '✅ Dosya İşleme Tamamlandı',
+                                `${completedNames} — bilgi tabanına başarıyla eklendi.`, null, 'rag');
+                        }
+                        newNames.forEach(n => self._notifiedFiles.add(n));
                     }
+
+                    // 30 sn sonra notified set'i temizle (memory leak önleme)
+                    setTimeout(() => {
+                        uploadedFileNames.forEach(n => self._notifiedFiles.delete(n));
+                    }, 30000);
                 }
             } catch (err) {
                 console.warn('[RAGUpload] Processing poll hatası:', err);
@@ -448,6 +483,71 @@ const RAGUpload = {
     openFile(id) { if (window.RAGFileList) window.RAGFileList.openFile.call(this, id); },
     renderFileRow(f) { if (window.RAGFileList) return window.RAGFileList.renderFileRow.call(this, f); return ''; },
     getFileIconClass(t) { if (window.RAGFileList) return window.RAGFileList.getFileIconClass.call(this, t); return ''; },
+
+    /**
+     * v3.4.4: Enhancement geçmişi widget'ı yükler
+     */
+    async loadEnhancementHistory() {
+        const container = document.getElementById('rag-enhancement-history');
+        if (!container) return;
+
+        try {
+            const token = localStorage.getItem('access_token');
+            const resp = await fetch(`${this.API_BASE}/rag/enhancement-impact?limit=5`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!resp.ok) { container.innerHTML = ''; return; }
+
+            const data = await resp.json();
+            const summary = data.summary || {};
+            const items = data.items || [];
+
+            if (items.length === 0) {
+                container.innerHTML = '';
+                return;
+            }
+
+            let html = `
+                <div class="rag-enhance-history-card">
+                    <div class="rag-enhance-history-header">
+                        <h4><i class="fas fa-chart-line"></i> İyileştirme Geçmişi</h4>
+                        <span class="rag-enhance-history-count">${summary.total_enhancements || 0} toplam</span>
+                    </div>
+                    <div class="rag-enhance-history-summary">
+                        <div class="rag-enhance-stat">
+                            <span class="rag-enhance-stat-label">Ort. Öncesi</span>
+                            <span class="rag-enhance-stat-value before">${summary.avg_score_before ?? '-'}</span>
+                        </div>
+                        <div class="rag-enhance-stat">
+                            <span class="rag-enhance-stat-label">Ort. Sonrası</span>
+                            <span class="rag-enhance-stat-value after">${summary.avg_score_after ?? '-'}</span>
+                        </div>
+                        <div class="rag-enhance-stat">
+                            <span class="rag-enhance-stat-label">İyileşme</span>
+                            <span class="rag-enhance-stat-value improvement">+${summary.avg_improvement ?? 0}</span>
+                        </div>
+                    </div>
+                    <div class="rag-enhance-history-items">
+            `;
+            for (const item of items.slice(0, 5)) {
+                const scoreClass = (item.improvement && item.improvement > 0) ? 'positive' : 'neutral';
+                html += `
+                    <div class="rag-enhance-history-item">
+                        <span class="rag-enhance-item-name" title="${item.file_name}">${item.file_name}</span>
+                        <span class="rag-enhance-item-scores">
+                            ${item.score_before ?? '-'} → ${item.score_after ?? '-'}
+                            ${item.improvement ? `<span class="rag-enhance-item-diff ${scoreClass}">+${item.improvement}</span>` : ''}
+                        </span>
+                    </div>
+                `;
+            }
+            html += '</div></div>';
+            container.innerHTML = html;
+        } catch (err) {
+            console.warn('[RAGUpload] Enhancement history yüklenemedi:', err);
+            container.innerHTML = '';
+        }
+    },
 
 
     /**

@@ -379,13 +379,13 @@ const DocumentEnhancerModal = (function () {
                             <div class="enhancer-diff-label original">
                                 <i class="fas fa-minus-circle"></i> Orijinal
                             </div>
-                            <div class="enhancer-diff-content">${_escapeHtml(origPreview)}</div>
+                            <div class="enhancer-diff-content">${_wordDiff(origPreview, enhPreview).original}</div>
                         </div>
                         <div class="enhancer-diff-panel enhancer-diff-panel-enhanced">
                             <div class="enhancer-diff-label enhanced">
                                 <i class="fas fa-plus-circle"></i> İyileştirilmiş
                             </div>
-                            <div class="enhancer-diff-content">${_escapeHtml(enhPreview)}</div>
+                            <div class="enhancer-diff-content">${_wordDiff(origPreview, enhPreview).enhanced}</div>
                         </div>
                     </div>
                 </div>
@@ -401,9 +401,10 @@ const DocumentEnhancerModal = (function () {
         const formData = new FormData();
         formData.append('file', file);
 
-        // v3.2.1: Fetch timeout — LLM pipeline uzun sürebilir (180s)
+        // v3.4.4: Timeout artırıldı — büyük dosyalarda LLM pipeline 3+ dakika sürebilir
+        const ENHANCEMENT_TIMEOUT_MS = 300000; // 5 dakika
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 180000);
+        const timeoutId = setTimeout(() => controller.abort(), ENHANCEMENT_TIMEOUT_MS);
 
         return fetch(`${API_BASE}/api/rag/enhance-document`, {
             method: 'POST',
@@ -423,7 +424,7 @@ const DocumentEnhancerModal = (function () {
             .catch(err => {
                 clearTimeout(timeoutId);
                 if (err.name === 'AbortError') {
-                    throw new Error('İşlem zaman aşımına uğradı. Lütfen daha küçük bir dosya deneyin.');
+                    throw new Error('İyileştirme işlemi zaman aşımına uğradı (5 dk). Büyük dosyaları bölerek deneyebilirsiniz.');
                 }
                 throw err;
             });
@@ -503,9 +504,15 @@ const DocumentEnhancerModal = (function () {
         const approvedIndexes = _getApprovedSections();
 
         if (approvedIndexes.length === 0) {
-            if (window.showToast) {
-                window.showToast('Lütfen en az bir bölüm seçin.', 'warning');
-            }
+            // v3.4.4: Hiç iyileştirme onaylanmamış — orijinal dosyayı yükle seçeneği sun
+            _showConfirmDialog({
+                title: 'Orijinal Dosyayı Yükle',
+                message: 'Hiçbir iyileştirme seçilmedi. Dosyayı <strong>orijinal haliyle</strong> bilgi tabanına yüklemek ister misiniz?',
+                confirmText: 'Orijinal Yükle',
+                cancelText: 'Vazgeç',
+                icon: 'file-upload',
+                onConfirm: () => _executeUpload(sessionId, [])
+            });
             return;
         }
 
@@ -530,16 +537,26 @@ const DocumentEnhancerModal = (function () {
         if (window.RAGUpload && window.RAGUpload.selectedOrgIds && window.RAGUpload.selectedOrgIds.length > 0) {
             urlParams.push(`org_ids=${window.RAGUpload.selectedOrgIds.join(',')}`);
         }
+        // Firma ID'sini ekle
+        if (window.RAGUpload && typeof window.RAGUpload._getCompanyId === 'function') {
+            const compId = window.RAGUpload._getCompanyId();
+            if (compId) {
+                urlParams.push(`company_id=${compId}`);
+            }
+        }
         if (urlParams.length > 0) {
             url += `?${urlParams.join('&')}`;
         }
 
+        // Upload butonunu "Yükleniyor" durumuna al
         const uploadBtn = document.getElementById('enhancerBtnUpload');
         if (uploadBtn) {
             uploadBtn.disabled = true;
             uploadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Yükleniyor...';
         }
 
+        // v3.4.5: API yanıtını BEKLE (dosya DB'ye kaydedilsin)
+        // Yanıt gelince HEMEN modal kapat — normal upload akışıyla tutarlı
         fetch(url, {
             method: 'POST',
             headers: _authHeaders()
@@ -549,45 +566,56 @@ const DocumentEnhancerModal = (function () {
                 return res.json();
             })
             .then(data => {
-                if (uploadBtn) {
-                    uploadBtn.innerHTML = '<i class="fas fa-check"></i> Yüklendi!';
+                // ─── Dosya DB'ye kaydedildi, background processing başladı ───
+                // HEMEN modal kapat (bekleme yok)
+                _currentSessionId = null;
+                close();
+
+                // Bildirim — normal upload ile tutarlı
+                const fileName = data.file_name || _currentFileName || 'Dosya';
+                if (window.NgssNotification) {
+                    NgssNotification.info('📄 İyileştirilmiş Dosya Yüklendi',
+                        `${fileName} — işlem arkaplanda devam ediyor...`);
+                } else if (window.showToast) {
+                    window.showToast(data.message || 'Dosya kaydedildi, işleniyor...', 'info');
                 }
 
-                const msg = data.message || 'Bilgi tabanına yüklendi.';
-                if (window.showToast) {
-                    window.showToast(msg, 'success');
-                }
-
-                // Upload sonrası download butonunu devre dışı bırak (temp dosya silindi)
-                const downloadBtn = document.getElementById('enhancerBtnDownload');
-                if (downloadBtn) {
-                    downloadBtn.disabled = true;
-                    downloadBtn.innerHTML = '<i class="fas fa-check"></i> Yüklendi';
-                }
-
-                // Bilgi Tabanı dosya listesini yenile (sayfa refresh'e gerek kalmadan)
+                // Dosya listesini yenile — "İşleniyor" durumunu göster
                 if (window.RAGUpload) {
                     window.RAGUpload.filesCurrentPage = 1;
                     window.RAGUpload.loadFiles();
                     window.RAGUpload.loadStats();
-                    // v3.4.2: Background görsel ekleme için polling başlat
-                    // Dosya 'processing' statüsünde kalır, tamamlanınca liste yenilenir
+
+                    // Processing polling başlat — tamamlanma bildirimi için
                     const uploadedName = data.file_name || '';
                     if (uploadedName) {
                         window.RAGUpload._startProcessingPoll([uploadedName]);
                     }
                 }
 
-                _currentSessionId = null;
-                setTimeout(() => close(), 1500);
+                // Dosya listesine scroll + ilk satırı vurgula
+                setTimeout(() => {
+                    const filesList = document.getElementById('rag-files-list');
+                    if (filesList) {
+                        filesList.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        const firstRow = filesList.querySelector('tbody tr:first-child');
+                        if (firstRow) {
+                            firstRow.classList.add('rag-row-highlight');
+                            setTimeout(() => firstRow.classList.remove('rag-row-highlight'), 3000);
+                        }
+                    }
+                }, 500);
             })
             .catch(err => {
                 console.error('[Enhancer] Upload hatası:', err);
+                // Hata durumunda butonu geri aç
                 if (uploadBtn) {
                     uploadBtn.disabled = false;
                     uploadBtn.innerHTML = '<i class="fas fa-cloud-upload-alt"></i> Onayla & Bilgi Tabanına Yükle';
                 }
-                if (window.showToast) {
+                if (window.NgssNotification) {
+                    NgssNotification.error('Yükleme Hatası', err.message || 'Dosya yüklenirken hata oluştu');
+                } else if (window.showToast) {
                     window.showToast('Yükleme sırasında hata: ' + err.message, 'error');
                 }
             });
@@ -678,6 +706,68 @@ const DocumentEnhancerModal = (function () {
         if (!text) return '';
         if (text.length <= maxLen) return text;
         return text.substring(0, maxLen) + '...';
+    }
+
+    /**
+     * v3.4.4: Word-level diff — basit LCS tabanlı kelime karşılaştırma
+     * Returns: { original: html, enhanced: html }
+     */
+    function _wordDiff(origText, enhText) {
+        if (!origText && !enhText) return { original: '', enhanced: '' };
+        if (!origText) return { original: '', enhanced: `<span class="diff-added">${_escapeHtml(enhText)}</span>` };
+        if (!enhText) return { original: `<span class="diff-removed">${_escapeHtml(origText)}</span>`, enhanced: '' };
+
+        const origWords = origText.split(/\s+/);
+        const enhWords = enhText.split(/\s+/);
+        
+        // Simple LCS-based diff
+        const m = origWords.length, n = enhWords.length;
+        // For very large texts, fallback to plain
+        if (m > 500 || n > 500) {
+            return { original: _escapeHtml(origText), enhanced: _escapeHtml(enhText) };
+        }
+        
+        const dp = Array.from({length: m + 1}, () => new Uint16Array(n + 1));
+        for (let i = 1; i <= m; i++) {
+            for (let j = 1; j <= n; j++) {
+                dp[i][j] = origWords[i-1] === enhWords[j-1]
+                    ? dp[i-1][j-1] + 1
+                    : Math.max(dp[i-1][j], dp[i][j-1]);
+            }
+        }
+        
+        // Backtrack
+        const origParts = [], enhParts = [];
+        let i = m, j = n;
+        const origResult = [], enhResult = [];
+        while (i > 0 || j > 0) {
+            if (i > 0 && j > 0 && origWords[i-1] === enhWords[j-1]) {
+                origResult.unshift({ type: 'same', word: origWords[i-1] });
+                enhResult.unshift({ type: 'same', word: enhWords[j-1] });
+                i--; j--;
+            } else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) {
+                enhResult.unshift({ type: 'added', word: enhWords[j-1] });
+                j--;
+            } else {
+                origResult.unshift({ type: 'removed', word: origWords[i-1] });
+                i--;
+            }
+        }
+        
+        // Render
+        let origHtml = '', enhHtml = '';
+        origResult.forEach(r => {
+            origHtml += r.type === 'removed'
+                ? `<span class="diff-removed">${_escapeHtml(r.word)}</span> `
+                : `${_escapeHtml(r.word)} `;
+        });
+        enhResult.forEach(r => {
+            enhHtml += r.type === 'added'
+                ? `<span class="diff-added">${_escapeHtml(r.word)}</span> `
+                : `${_escapeHtml(r.word)} `;
+        });
+        
+        return { original: origHtml.trim(), enhanced: enhHtml.trim() };
     }
 
     // ─── PUBLIC API ───

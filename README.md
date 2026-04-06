@@ -49,6 +49,40 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.4.5 (2026-04-06) - Görsel-Chunk Akıllı Eşleştirme (Metin Bazlı)
+
+**🐛 Kritik Bug Fix — Yanlış Görsel Eşleştirme:**
+- ✅ **Kök neden:** PDF'te `context_chunk_index = page_num` (sayfa numarası), ama chunk index farklı → rastgele eşleşme
+- ✅ **DOCX/PPTX:** Aynı sorun — heading sayacı / slayt index ≠ chunk index
+- ✅ **Sonuç:** %40-60 görselin yanlış chunk'a atandığı tespit ve düzeltildi
+
+**🧠 Metin Bazlı Akıllı Eşleştirme Algoritması:**
+- ✅ **Adım 1:** Heading tam eşleşme (normalize: lowercase, prefix kaldırma) — skor 1.0
+- ✅ **Adım 2:** Heading keyword overlap ≥%50 — skor 0.5-0.8
+- ✅ **Adım 3:** Nearby_text → chunk_text keyword overlap ≥%40 — skor 0.3-0.6
+- ✅ **Adım 4:** Eşleşmeyenler atanmaz (yanlış eşleşme yerine eksik tercih edilir)
+- ✅ **Türkçe stop-word listesi:** 16 kelime filtreleme
+
+**📝 Nearby Text Çıkarma (Tüm Dosya Türleri):**
+- ✅ **PDF:** Görselin Y pozisyonuna yakın ±5 satırlık metin (300 char)
+- ✅ **DOCX:** Son 5 paragraf metni (görselin bağlamı)
+- ✅ **PPTX:** Slayttaki tüm metin shape'leri
+
+**🔧 Temizlik:**
+- ✅ `threading` import kaldırıldı (rag_enhance.py)
+- ✅ `_get_proc` unused import kaldırıldı (rag_enhance.py)
+- ✅ `_otype` unused variable kaldırıldı (rag_enhance.py)
+- ✅ `file_data` unused variable kaldırıldı (rag_upload.py)
+- ✅ Enhancer modal image_helpers.py — chunk_idx fallback düzeltildi
+
+**📁 Değişen Dosyalar:**
+- `app/services/document_processors/image_extractor.py` — nearby_text, page_number, context_chunk_index=-1
+- `app/api/routes/rag_upload.py` — `_update_chunk_image_refs()` metin bazlı yeniden yazım
+- `app/api/routes/rag_enhance.py` — Unused import/variable temizliği
+- `app/services/enhancer/image_helpers.py` — Keyword overlap fallback
+
+---
+
 ### 🆕 v3.4.2 (2026-04-04) - Enhance Görsel Koruması + Heading False-Positive Filtresi
 
 **🖼️ Enhance Görsel Koruması:**

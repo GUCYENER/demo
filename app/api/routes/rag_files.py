@@ -28,6 +28,7 @@ async def list_files(
     per_page: int = Query(10, ge=1, le=100),
     search: Optional[str] = Query(None, max_length=200),
     company_id: Optional[int] = Query(None),
+    status: Optional[str] = Query(None, max_length=20),  # v3.4.4: status filtresi (polling optimizasyonu)
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     """Yüklenen dosyaları listeler (org grupları ile)"""
@@ -46,6 +47,11 @@ async def list_files(
         if company_id is not None:
             where_clauses.append("f.company_id = %s")
             count_params.append(company_id)
+        
+        # v3.4.4: Status filtresi (polling optimizasyonu)
+        if status:
+            where_clauses.append("f.status = %s")
+            count_params.append(status)
         
         where_sql = ""
         if where_clauses:

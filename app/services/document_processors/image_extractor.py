@@ -26,8 +26,10 @@ class ExtractedImage:
     context_chunk_index: int = 0
     alt_text: str = ""
     ocr_text: str = ""      # EasyOCR ile çıkarılan metin
+    nearby_text: str = ""   # v3.4.5: Görselin yakın çevresindeki metin (chunk eşleştirme için)
     paragraph_index: int = -1    # Görselin orijinal dosyadaki paragraf sırası (0-indexed)
     page_y_position: float = -1  # PDF: sayfa içi Y koordinatı (mm)
+    page_number: int = -1        # v3.4.5: PDF sayfa no (0-indexed, eşleştirme için değil referans)
 
 
 # Singleton OCR reader (lazy load — model yüklemesi ~20sn sadece ilk kez)
@@ -88,21 +90,28 @@ class ImageExtractor:
     # ─────────────────────────────────────────
 
     def _extract_docx_images(self, file_content: bytes) -> List[ExtractedImage]:
-        """python-docx ile DOCX'ten görsel çıkar — paragraf pozisyonu da kaydedilir"""
+        """python-docx ile DOCX'ten görsel çıkar — nearby_text ile bağlam kaydedilir"""
         from docx import Document
 
         doc = Document(io.BytesIO(file_content))
         images: List[ExtractedImage] = []
         current_heading = "Genel"
-        chunk_index = 0
+        # v3.4.5: Nearby text için son N paragrafı tut
+        recent_paragraphs: list = []
 
         for para_idx, para in enumerate(doc.paragraphs):
             style_name = para.style.name if para.style else ""
+            para_text = para.text.strip()
 
             # Heading takibi
-            if style_name.startswith("Heading") and para.text.strip():
-                current_heading = para.text.strip()
-                chunk_index += 1
+            if style_name.startswith("Heading") and para_text:
+                current_heading = para_text
+
+            # Son 5 paragrafı nearby_text için tut
+            if para_text:
+                recent_paragraphs.append(para_text)
+                if len(recent_paragraphs) > 5:
+                    recent_paragraphs.pop(0)
 
             # InlineShape (gömülü resimler) kontrolü
             for run in para.runs:
@@ -118,8 +127,9 @@ class ImageExtractor:
                             '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed'
                         )
                         if embed_id:
+                            nearby = " ".join(recent_paragraphs)[:300]
                             img = self._get_docx_image_from_rel(
-                                doc, embed_id, current_heading, chunk_index, para_idx
+                                doc, embed_id, current_heading, para_idx, nearby
                             )
                             if img:
                                 images.append(img)
@@ -127,7 +137,7 @@ class ImageExtractor:
         log_system_event("INFO", f"DOCX'ten {len(images)} görsel çıkarıldı", "image_extractor")
         return images
 
-    def _get_docx_image_from_rel(self, doc, embed_id: str, heading: str, chunk_idx: int, para_idx: int = -1) -> Optional[ExtractedImage]:
+    def _get_docx_image_from_rel(self, doc, embed_id: str, heading: str, para_idx: int = -1, nearby_text: str = "") -> Optional[ExtractedImage]:
         """DOCX relationship'ten görsel verisini alır"""
         try:
             rel = doc.part.rels.get(embed_id)
@@ -155,8 +165,9 @@ class ImageExtractor:
                 width=width,
                 height=height,
                 context_heading=heading[:500],
-                context_chunk_index=chunk_idx,
+                context_chunk_index=-1,  # v3.4.5: Metin bazlı eşleştirme kullanılacak
                 alt_text=f"Görsel - {heading[:100]}",
+                nearby_text=nearby_text,
                 paragraph_index=para_idx
             )
         except Exception as e:
@@ -261,10 +272,20 @@ class ImageExtractor:
                             best_heading = h_text
                             break
                     
-                    # Yapay paragraph_index: görselden önceki metin satır sayısı
+                    # v3.4.5: Nearby text — görselin Y pozisyonuna yakın ±5 satırlık metin
+                    nearby = ""
+                    if page_lines and y_pos > 0:
+                        page_height = page.rect.height
+                        approx_line = int((y_pos / page_height) * len(page_lines)) if page_height > 0 else 0
+                        start_l = max(0, approx_line - 5)
+                        end_l = min(len(page_lines), approx_line + 5)
+                        nearby = " ".join(page_lines[start_l:end_l])[:300]
+                    elif page_lines:
+                        nearby = " ".join(page_lines[:10])[:300]
+                    
+                    # Yapay paragraph_index
                     lines_before_img = sum(1 for l in page_lines if l.strip())
                     if y_pos > 0:
-                        # Y pozisyonuna göre yaklaşık satır hesaplama
                         page_height = page.rect.height
                         lines_before_img = int((y_pos / page_height) * len(page_lines)) if page_height > 0 else 0
                     
@@ -276,10 +297,12 @@ class ImageExtractor:
                         width=width,
                         height=height,
                         context_heading=best_heading,
-                        context_chunk_index=page_num,
+                        context_chunk_index=-1,  # v3.4.5: Sayfa no ≠ chunk index, fallback kaldırıldı
                         alt_text=f"PDF Sayfa {page_num + 1} - Görsel {img_idx + 1}",
+                        nearby_text=nearby,
                         paragraph_index=para_idx,
-                        page_y_position=y_pos
+                        page_y_position=y_pos,
+                        page_number=page_num
                     ))
                 except Exception as e:
                     log_error(f"PDF görsel çıkarma hatası (sayfa {page_num}): {e}", "image_extractor")
@@ -326,14 +349,25 @@ class ImageExtractor:
                         if width < 50 or height < 50:
                             continue
 
+                        # v3.4.5: Slayttaki tüm metin shape'lerini nearby_text olarak topla
+                        slide_texts = []
+                        for s in slide.shapes:
+                            if s.has_text_frame:
+                                for p in s.text_frame.paragraphs:
+                                    t = p.text.strip()
+                                    if t:
+                                        slide_texts.append(t)
+                        slide_nearby = " ".join(slide_texts)[:300]
+                        
                         images.append(ExtractedImage(
                             image_data=image_data,
                             image_format=fmt,
                             width=width,
                             height=height,
                             context_heading=(slide_title or f"Slayt {slide_idx + 1}")[:500],
-                            context_chunk_index=slide_idx,
-                            alt_text=f"Slayt {slide_idx + 1} - {slide_title[:100]}"
+                            context_chunk_index=-1,  # v3.4.5: Metin bazlı eşleştirme kullanılacak
+                            alt_text=f"Slayt {slide_idx + 1} - {slide_title[:100]}",
+                            nearby_text=slide_nearby
                         ))
                     except Exception as e:
                         log_error(f"PPTX görsel çıkarma hatası (slayt {slide_idx}): {e}", "image_extractor")

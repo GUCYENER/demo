@@ -16,7 +16,7 @@ PORT = 5500
 
 # Cache süreleri (saniye)
 CACHE_LONG = 3600     # 1 saat — versiyonlu dosyalar (?v=)
-CACHE_SHORT = 600     # 10 dk — statik asset'ler (js/css/font/img)
+CACHE_SHORT = 0       # v3.4.5: Dev modunda no-cache — JS/CSS değişiklikleri anında geçerli
 CACHE_NONE = 0        # No-cache — HTML ve diğer
 
 
@@ -30,9 +30,14 @@ class SmartCacheHandler(http.server.SimpleHTTPRequestHandler):
         if '?v=' in path:
             self.send_header('Cache-Control', f'public, max-age={CACHE_LONG}')
         
-        # Statik asset'ler (versiyonsuz) — kısa cache
+        # Statik asset'ler (versiyonsuz)
         elif any(path.endswith(ext) for ext in ('.js', '.css', '.woff2', '.woff', '.ttf', '.png', '.jpg', '.svg', '.ico')):
-            self.send_header('Cache-Control', f'public, max-age={CACHE_SHORT}')
+            if CACHE_SHORT > 0:
+                self.send_header('Cache-Control', f'public, max-age={CACHE_SHORT}')
+            else:
+                # Dev mod: no-cache
+                self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+                self.send_header('Pragma', 'no-cache')
         
         # HTML ve diğer — no-cache
         else:
