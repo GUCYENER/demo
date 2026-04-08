@@ -290,15 +290,27 @@ class TXTProcessor(BaseDocumentProcessor):
                         if i > 0 and len(sub_chunks[i - 1]) > OVERLAP_SIZE:
                             overlap_prefix = sub_chunks[i - 1][-OVERLAP_SIZE:].strip() + "\n"
                         
+                        # v3.4.7: Sub-chunk'ın ilk satırı heading ise, heading'i güncelle
+                        # Bu sayede LLM iyileştirmesinde birleştirilen alt bölümler
+                        # doğru heading alır (ör: "TEMU Uygulamasının Yüklenmesi")
+                        chunk_heading = heading
+                        sub_lines = sub_text.strip().split('\n')
+                        if sub_lines and self._is_heading(sub_lines[0].strip()):
+                            new_heading = re.sub(r'^#+\s*', '', sub_lines[0].strip())
+                            if new_heading and new_heading != heading:
+                                chunk_heading = new_heading
+                                # Heading satırını chunk text'ten çıkar (prefix olarak eklenecek)
+                                sub_text = '\n'.join(sub_lines[1:]).strip()
+                        
                         # v3.2.1: Heading prefix → embedding search için bölüm contexti
-                        heading_prefix = f"[Bölüm: {heading}]\n" if heading else ""
+                        heading_prefix = f"[Bölüm: {chunk_heading}]\n" if chunk_heading else ""
                         chunk_text_final = (heading_prefix + overlap_prefix + sub_text).strip()
                         
                         chunks.append({
                             "text": chunk_text_final,
                             "metadata": {
                                 "type": "section",
-                                "heading": heading,
+                                "heading": chunk_heading,
                                 "line_start": line_start,
                                 "file_type": "txt",
                                 "chunk_index": chunk_index,

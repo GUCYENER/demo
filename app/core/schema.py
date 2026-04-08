@@ -225,6 +225,8 @@ CREATE TABLE IF NOT EXISTS document_images (
     height_px INTEGER,
     file_size_bytes INTEGER,
     context_heading VARCHAR(500),
+    next_heading VARCHAR(500),
+    page_number INTEGER,
     context_chunk_index INTEGER,
     alt_text TEXT DEFAULT '',
     ocr_text TEXT DEFAULT '',
@@ -233,6 +235,11 @@ CREATE TABLE IF NOT EXISTS document_images (
 
 CREATE INDEX IF NOT EXISTS idx_document_images_file_id ON document_images(file_id);
 CREATE INDEX IF NOT EXISTS idx_document_images_context ON document_images(file_id, context_chunk_index);
+CREATE INDEX IF NOT EXISTS idx_document_images_heading ON document_images(file_id, context_heading);
+
+-- v3.4.8: Görsel heading matrisi ve sayfa bilgisi
+ALTER TABLE document_images ADD COLUMN IF NOT EXISTS next_heading VARCHAR(500);
+ALTER TABLE document_images ADD COLUMN IF NOT EXISTS page_number INTEGER;
 
 -- =====================================================
 -- Performance Indexes
@@ -511,7 +518,7 @@ CREATE INDEX IF NOT EXISTS idx_system_settings_key ON system_settings(setting_ke
 
 -- Varsayılan ayarlar
 INSERT INTO system_settings (setting_key, setting_value, description) VALUES
-    ('app_version', '3.4.5', 'Uygulama versiyonu'),
+    ('app_version', '3.4.8', 'Uygulama versiyonu'),
     ('cl_interval_minutes', '30', 'Sürekli öğrenme aralığı (dakika)'),
     ('cl_is_active', 'true', 'Sürekli öğrenme aktiflik durumu'),
     ('maturity_enhance_threshold', '80', 'Maturity iyileştirme eşik değeri (0-100)')

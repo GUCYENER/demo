@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.4.7"  # Görsel RAG pipeline: OCR, 3-tier matching, lazy loading, BM25 OCR
+    APP_VERSION: str = "3.4.8"  # Heading matrisi (before+after), runtime image fallback, OCR 2-phase
 
     # Frontend & API prefix
     api_prefix: str = "/api"

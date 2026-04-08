@@ -215,6 +215,25 @@ def init_db() -> None:
                 
                 print("[VYRA] PostgreSQL database initialized (Alembic + SCHEMA_SQL)!")
                 print(f"[VYRA] Connection: {settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}")
+                
+                # v3.4.8: DB'deki app_version'ı koddaki APP_VERSION ile senkronize et
+                # Canlıya deploy edildiğinde DB versiyonu eski kalabilir — otomatik güncelle
+                try:
+                    with get_db_context() as vc:
+                        vcur = vc.cursor()
+                        vcur.execute(
+                            "SELECT setting_value FROM system_settings WHERE setting_key = 'app_version'"
+                        )
+                        vrow = vcur.fetchone()
+                        db_ver = vrow["setting_value"] if vrow else None
+                        if db_ver != settings.APP_VERSION:
+                            vcur.execute(
+                                "UPDATE system_settings SET setting_value = %s, updated_at = NOW() WHERE setting_key = 'app_version'",
+                                (settings.APP_VERSION,)
+                            )
+                            print(f"[VYRA] DB app_version güncellendi: {db_ver} → {settings.APP_VERSION}")
+                except Exception as ve:
+                    print(f"[VYRA] DB versiyon sync hatası (kritik değil): {ve}")
                 return
                 
             finally:

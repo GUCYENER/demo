@@ -996,6 +996,77 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
                     seen.add(img_id)
                     heading_map.setdefault(heading, []).append(img_id)
                     image_ids.append(img_id)
+        # v3.4.8: Runtime fallback — chunk'ta image_ids yoksa
+        # document_images tablosundan context_heading eşleşmesiyle getir
+        if not image_ids and rag_results:
+            _fb_conn = None
+            try:
+                from app.core.db import get_db_conn
+                _fb_conn = get_db_conn()
+                _fb_cur = _fb_conn.cursor()
+                
+                # Chunk'ların heading'lerini ve file_id'lerini topla
+                _headings_to_search = []
+                _file_ids = set()
+                for r in rag_results:
+                    if r.get("source_file", "") not in top_sources_set:
+                        continue
+                    meta = r.get("metadata")
+                    if isinstance(meta, str):
+                        try:
+                            import json as _json2
+                            meta = _json2.loads(meta)
+                        except (ValueError, TypeError):
+                            meta = {}
+                    if isinstance(meta, dict):
+                        h = (meta.get("heading", "") or "").strip()
+                        if h and h not in _headings_to_search:
+                            _headings_to_search.append(h)
+                    # file_id'yi bul
+                    _fid = r.get("file_id")
+                    if _fid:
+                        _file_ids.add(_fid)
+                
+                if _file_ids and _headings_to_search:
+                    _fid_ph = ','.join(['%s'] * len(_file_ids))
+                    _fb_cur.execute(
+                        f"""SELECT id, context_heading, next_heading, page_number 
+                        FROM document_images 
+                        WHERE file_id IN ({_fid_ph}) 
+                        ORDER BY image_index LIMIT 50""",
+                        list(_file_ids)
+                    )
+                    _di_rows = _fb_cur.fetchall()
+                    
+                    for di in _di_rows:
+                        di_heading = (di.get("context_heading", "") or "").strip().lower()
+                        di_next = (di.get("next_heading", "") or "").strip().lower()
+                        if not di_heading:
+                            continue
+                        for h in _headings_to_search:
+                            h_lower = h.lower()
+                            # heading_before veya heading_after eşleşmesi
+                            matched = (
+                                h_lower in di_heading or di_heading in h_lower or
+                                (di_next and (h_lower in di_next or di_next in h_lower))
+                            )
+                            if matched:
+                                img_id = di["id"]
+                                if img_id not in seen:
+                                    seen.add(img_id)
+                                    heading_map.setdefault(h, []).append(img_id)
+                                    image_ids.append(img_id)
+                                break
+                
+                _fb_cur.close()
+            except Exception:
+                pass  # Fallback başarısız olursa sessizce devam et
+            finally:
+                if _fb_conn:
+                    try:
+                        _fb_conn.close()
+                    except Exception:
+                        pass
         
         return image_ids[:max_images], heading_map
     

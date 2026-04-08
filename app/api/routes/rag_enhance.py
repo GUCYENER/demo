@@ -431,6 +431,11 @@ async def upload_enhanced_to_rag(
                     "DELETE FROM rag_chunks WHERE file_id IN (SELECT id FROM uploaded_files WHERE file_name = %s AND is_active = TRUE)",
                     (del_name,)
                 )
+                # v3.4.8: Eski görselleri de temizle
+                cur.execute(
+                    "DELETE FROM document_images WHERE file_id IN (SELECT id FROM uploaded_files WHERE file_name = %s AND is_active = TRUE)",
+                    (del_name,)
+                )
                 cur.execute(
                     "UPDATE uploaded_files SET is_active = FALSE WHERE file_name = %s AND is_active = TRUE",
                     (del_name,)
@@ -602,10 +607,11 @@ async def upload_enhanced_to_rag(
                 chunk_count = _rag.add_chunks_with_embeddings(_fid, chunks, cursor=bg_cur)
                 log_system_event("INFO", f"[BG] {_uname}: {chunk_count} chunk eklendi", "rag_enhance")
                 
-                # 3. Görsel çıkarma + OCR
-                # v3.4.7: skip_ocr=False — background thread asenkron çalışır, OCR yapılmalı
-                # OCR metni chunk metadata'ya injection edilerek BM25'te aranabilir olur
-                # v3.4.5: Orijinal dosya içeriğini disk'ten oku (varsa)
+                # 3. Görsel çıkarma — 2 aşamalı:
+                # Aşama 1: skip_ocr=True ile hızlı çıkarma + DB kayıt + chunk eşleştirme
+                # Aşama 2: OCR ayrı bağlantıda çalışır (uzun sürer, timeout riski yok)
+                # v3.4.8: Önceki yaklaşımda skip_ocr=False tüm görsellerde OCR çalıştırıyordu
+                # 411 görsel için 30+ dakika → connection timeout → SAVEPOINT rollback → 0 görsel
                 _orig_path = _bg_params.get("original_content_path")
                 _orig_content = None
                 if _orig_path and os.path.exists(_orig_path):
@@ -614,25 +620,37 @@ async def upload_enhanced_to_rag(
                             _orig_content = _of.read()
                     except Exception:
                         pass
-                # Orijinal yoksa DB'deki dosyayı kullan
                 if not _orig_content:
                     _orig_content = _fcontent
+                
+                _saved_image_ids = []  # OCR aşaması için
                 if _orig_content:
                     try:
                         from app.services.document_processors.image_extractor import ImageExtractor
                         from app.api.routes.rag_upload import _update_chunk_image_refs
                         
+                        bg_cur.execute("SAVEPOINT sp_images")
+                        
                         img_ext = ImageExtractor()
                         _oext = _bg_params.get("original_file_type", _uext)
                         if not _oext.startswith('.'):
                             _oext = f".{_oext}"
-                        extracted_images = img_ext.extract(_orig_content, _oext, skip_ocr=False)
+                        
+                        # Aşama 1: Hızlı çıkarma (OCR yok, ~30sn)
+                        extracted_images = img_ext.extract(_orig_content, _oext, skip_ocr=True)
                         if extracted_images:
                             image_ids, saved_images = img_ext.save_to_db(extracted_images, _fid, cursor=bg_cur)
                             if image_ids:
                                 _update_chunk_image_refs(bg_cur, _fid, saved_images, image_ids)
+                                _saved_image_ids = list(image_ids)
                             log_system_event("INFO", f"[BG] {len(extracted_images)} görsel çıkarıldı (file_id={_fid})", "rag_enhance")
+                        
+                        bg_cur.execute("RELEASE SAVEPOINT sp_images")
                     except Exception as img_err:
+                        try:
+                            bg_cur.execute("ROLLBACK TO SAVEPOINT sp_images")
+                        except Exception:
+                            pass
                         log_system_event("WARNING", f"[BG] Görsel çıkarma hatası: {img_err}", "rag_enhance")
                 
                 # 4. Status → completed + maturity + chunk_count güncelle
@@ -649,6 +667,55 @@ async def upload_enhanced_to_rag(
                         log_system_event("INFO", f"[BG] {_uname}: {topic_count} topic çıkarıldı", "rag_enhance")
                 except Exception:
                     pass
+                
+                # 5b. OCR Aşama 2: Görseller kaydedildikten sonra OCR çalıştır
+                # Ayrı bağlantı kullanır — uzun sürse bile ana transaction etkilenmez
+                if _saved_image_ids:
+                    ocr_conn = None
+                    try:
+                        from app.services.document_processors.image_extractor import ImageExtractor
+                        ocr_conn = _get_db()
+                        ocr_cur = ocr_conn.cursor()
+                        
+                        # Kaydedilmiş görselleri oku
+                        _ph = ','.join(['%s'] * len(_saved_image_ids))
+                        ocr_cur.execute(
+                            f"SELECT id, image_data, image_format FROM document_images WHERE id IN ({_ph})",
+                            _saved_image_ids
+                        )
+                        ocr_rows = ocr_cur.fetchall()
+                        
+                        if ocr_rows:
+                            _ocr_ext = ImageExtractor()
+                            ocr_count = 0
+                            for orow in ocr_rows:
+                                try:
+                                    ocr_text = _ocr_ext._run_ocr_single(
+                                        bytes(orow["image_data"]),
+                                        orow["image_format"]
+                                    )
+                                    if ocr_text and ocr_text.strip():
+                                        ocr_cur.execute(
+                                            "UPDATE document_images SET ocr_text = %s WHERE id = %s",
+                                            (ocr_text, orow["id"])
+                                        )
+                                        ocr_count += 1
+                                except Exception:
+                                    pass  # Tek görsel OCR hatası diğerlerini etkilemez
+                            
+                            ocr_conn.commit()
+                            if ocr_count > 0:
+                                log_system_event("INFO", f"[BG] {ocr_count}/{len(ocr_rows)} görselde OCR tamamlandı (file_id={_fid})", "rag_enhance")
+                        
+                        ocr_cur.close()
+                    except Exception as ocr_err:
+                        log_system_event("WARNING", f"[BG] OCR aşaması hatası: {ocr_err}", "rag_enhance")
+                    finally:
+                        if ocr_conn:
+                            try:
+                                ocr_conn.close()
+                            except Exception:
+                                pass
                 
                 # 6. Enhancement history güncelle
                 try:

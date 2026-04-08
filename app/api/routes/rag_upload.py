@@ -731,6 +731,21 @@ def _update_chunk_image_refs(cursor, file_id: int, images, image_ids: list):
                                 best_chunk_id = chunks_list[0]["id"]
         
         # ═══════════════════════════════════════════════
+        # v3.4.8 Strateji B2: Context Heading → Chunk Text İçinde Ara
+        # Enhanced upload'da heading metadata yanlış olabilir ama chunk
+        # text'inde başlık satırı hala mevcut olabilir
+        # ═══════════════════════════════════════════════
+        if best_chunk_id is None:
+            img_heading = getattr(img, "context_heading", "") or ""
+            if img_heading and len(img_heading) >= 5:
+                img_h_lower = img_heading.strip().lower()
+                for cr in chunk_rows:
+                    chunk_preview = (cr.get("chunk_text_preview", "") or "").lower()
+                    if img_h_lower in chunk_preview:
+                        best_chunk_id = cr["id"]
+                        break
+        
+        # ═══════════════════════════════════════════════
         # v3.4.7 Strateji C: Nearby Text Keyword Overlap (Sorun 6)
         # A ve B başarısız olursa, nearby_text ile chunk metni karşılaştır
         # ═══════════════════════════════════════════════

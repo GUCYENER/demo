@@ -27,6 +27,7 @@ class ExtractedImage:
     alt_text: str = ""
     ocr_text: str = ""      # EasyOCR ile çıkarılan metin
     nearby_text: str = ""   # v3.4.5: Görselin yakın çevresindeki metin (chunk eşleştirme için)
+    next_heading: str = ""   # v3.4.8: Sonraki başlık (heading_before + heading_after matrisi)
     paragraph_index: int = -1    # Görselin orijinal dosyadaki paragraf sırası (0-indexed)
     page_y_position: float = -1  # PDF: sayfa içi Y koordinatı (mm)
     page_number: int = -1        # v3.4.6: Sayfa/slayt no (1-indexed, chunk metadata.page ile uyumlu)
@@ -285,6 +286,13 @@ class ImageExtractor:
                             best_heading = h_text
                             break
                     
+                    # v3.4.8: Görselin hemen sonrasındaki heading'i bul (next_heading)
+                    next_heading = ""
+                    for h_y, h_text in sorted(headings_on_page, key=lambda x: x[0]):
+                        if h_y > y_pos:
+                            next_heading = h_text
+                            break
+                    
                     # v3.4.5: Nearby text — görselin Y pozisyonuna yakın ±5 satırlık metin
                     nearby = ""
                     if page_lines and y_pos > 0:
@@ -310,12 +318,13 @@ class ImageExtractor:
                         width=width,
                         height=height,
                         context_heading=best_heading,
-                        context_chunk_index=-1,  # v3.4.5: Sayfa no ≠ chunk index, fallback kaldırıldı
+                        next_heading=next_heading,
+                        context_chunk_index=-1,
                         alt_text=f"PDF Sayfa {page_num + 1} - Görsel {img_idx + 1}",
                         nearby_text=nearby,
                         paragraph_index=para_idx,
                         page_y_position=y_pos,
-                        page_number=page_num + 1  # 1-indexed (chunk metadata.page ile uyumlu)
+                        page_number=page_num + 1
                     ))
                 except Exception as e:
                     log_error(f"PDF görsel çıkarma hatası (sayfa {page_num}): {e}", "image_extractor")
@@ -545,19 +554,25 @@ class ImageExtractor:
         successful_images = []
         for idx, img in enumerate(images):
             try:
+                # v3.4.7: SAVEPOINT — tek bir görseldeki hata tüm batch'i bozmasın
+                cursor.execute(f"SAVEPOINT sp_img_{idx}")
                 cursor.execute(
                     """
                     INSERT INTO document_images 
                     (file_id, image_index, image_data, image_format, 
                      width_px, height_px, file_size_bytes, 
-                     context_heading, context_chunk_index, alt_text, ocr_text)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     context_heading, next_heading, page_number,
+                     context_chunk_index, alt_text, ocr_text)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
                     (
                         file_id, idx, img.image_data, img.image_format,
                         img.width, img.height, len(img.image_data),
-                        img.context_heading, img.context_chunk_index, img.alt_text,
+                        img.context_heading, 
+                        getattr(img, 'next_heading', '') or '',
+                        getattr(img, 'page_number', -1),
+                        img.context_chunk_index, img.alt_text,
                         img.ocr_text
                     )
                 )
@@ -565,7 +580,12 @@ class ImageExtractor:
                 if row:
                     image_ids.append(row["id"])
                     successful_images.append(img)
+                cursor.execute(f"RELEASE SAVEPOINT sp_img_{idx}")
             except Exception as e:
+                try:
+                    cursor.execute(f"ROLLBACK TO SAVEPOINT sp_img_{idx}")
+                except Exception:
+                    pass
                 log_error(f"Görsel DB kayıt hatası (index {idx}): {e}", "image_extractor")
 
         log_system_event("INFO", f"Dosya {file_id} için {len(image_ids)} görsel kaydedildi", "image_extractor")
