@@ -178,7 +178,7 @@ function renderConversationThread(messages) {
         let imageHtml = '';
         if (!isUser && msg.metadata && msg.metadata.image_ids && msg.metadata.image_ids.length > 0) {
             const imgTags = msg.metadata.image_ids.map(imgId =>
-                `<img class="rag-inline-image" src="${apiBase}/api/rag/images/${imgId}" alt="Doküman görseli" data-image-id="${imgId}" />`
+                `<img class="rag-inline-image" src="${apiBase}/api/rag/images/${imgId}" alt="Doküman görseli" data-image-id="${imgId}" loading="lazy" />`
             ).join(' ');
             imageHtml = `
                 <div class="thread-images-section">

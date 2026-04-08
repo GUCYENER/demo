@@ -313,6 +313,37 @@ class DocumentEnhancer:
 
     def to_dict(self, result: EnhancementResult) -> Dict[str, Any]:
         """EnhancementResult'ı JSON-serializable dict'e çevir"""
+        
+        # v3.4.7 Issue 12: Görsel metadata'ını topla (enhancement modal'da görünsün)
+        image_count = 0
+        image_headings = set()
+        try:
+            from app.core.db import get_db_conn
+            # Session'daki dosya adından görselleri say
+            conn = get_db_conn()
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT COUNT(*) as cnt, 
+                           array_agg(DISTINCT context_heading) as headings
+                    FROM document_images di
+                    JOIN uploaded_files uf ON uf.id = di.file_id
+                    WHERE uf.file_name = %s AND uf.is_active = TRUE
+                    """,
+                    (result.file_name,)
+                )
+                row = cur.fetchone()
+                if row:
+                    image_count = row["cnt"] if isinstance(row, dict) else row[0]
+                    raw_headings = row["headings"] if isinstance(row, dict) else row[1]
+                    if raw_headings and isinstance(raw_headings, list):
+                        image_headings = {h for h in raw_headings if h}
+            finally:
+                conn.close()
+        except Exception:
+            pass  # Görsel bilgisi opsiyonel, hata ana akışı bozmasın
+        
         return {
             "file_name": result.file_name,
             "file_type": result.file_type,
@@ -321,6 +352,8 @@ class DocumentEnhancer:
             "session_id": result.session_id,
             "error": result.error,
             "catboost_summary": result.catboost_summary,
+            "image_count": image_count or 0,
+            "image_headings": list(image_headings)[:20],
             "sections": [
                 {
                     "section_index": s.section_index,

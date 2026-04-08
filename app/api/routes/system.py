@@ -45,6 +45,7 @@ async def reset_system(
     - Çözüm logları (solution_logs)
     - RAG dosyaları ve chunk'ları (uploaded_files, rag_chunks)
     - Doküman görselleri (document_images)
+    - İyileştirme geçmişi (enhancement_history)
     - RAG feedback'leri (user_feedback)
     - Dinamik topic'ler (document_topics)
     - ML modelleri ve eğitim (ml_models, ml_training_jobs, ml_training_samples, ml_training_schedules)
@@ -150,6 +151,11 @@ async def reset_system(
             cur.execute("SELECT COUNT(*) as cnt FROM document_images")
             deleted_counts["document_images"] = cur.fetchone()["cnt"]
             cur.execute("DELETE FROM document_images")
+        
+        # 8️⃣.6 İyileştirme geçmişini sil (v3.4.5)
+        cur.execute("SELECT COUNT(*) as cnt FROM enhancement_history")
+        deleted_counts["enhancement_history"] = cur.fetchone()["cnt"]
+        cur.execute("DELETE FROM enhancement_history")
         
         # 9️⃣ Yüklenen dosyaları sil
         if company_id is not None:
@@ -346,6 +352,9 @@ async def get_system_info(
         cur.execute("SELECT COUNT(*) as cnt FROM sql_audit_log")
         info["sql_audit_log"] = cur.fetchone()["cnt"]
         
+        cur.execute("SELECT COUNT(*) as cnt FROM enhancement_history")
+        info["enhancement_history"] = cur.fetchone()["cnt"]
+        
         # Korunan: Veri kaynağı tanımları
         cur.execute("SELECT COUNT(*) as cnt FROM data_sources")
         info["data_sources"] = cur.fetchone()["cnt"]
@@ -374,6 +383,7 @@ async def get_system_info(
                 "ds_db_objects": info["ds_db_objects"],
                 "ds_discovery_jobs": info["ds_discovery_jobs"],
                 "sql_audit_log": info["sql_audit_log"],
+                "enhancement_history": info.get("enhancement_history", 0),
                 "system_logs": info["system_logs"]
             }
         }

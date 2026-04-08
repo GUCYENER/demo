@@ -827,7 +827,25 @@ class RAGService:
         semantic_scores = scoring.cosine_similarity_batch(query_embedding, all_embeddings)
         
         # BM25 skorları
-        all_texts = [r["chunk_text"] for r in valid_rows]
+        # v3.4.7 Issue 10: OCR metni chunk text'e ekleyerek BM25'te aranabilir kıl
+        all_texts = []
+        for r in valid_rows:
+            text = r["chunk_text"]
+            meta = r.get("metadata")
+            if isinstance(meta, dict):
+                ocr = meta.get("ocr_texts", "")
+                if ocr and isinstance(ocr, str) and len(ocr) > 5:
+                    text = text + " " + ocr
+            elif isinstance(meta, str):
+                try:
+                    import json as _jmeta
+                    _parsed_meta = _jmeta.loads(meta)
+                    ocr = _parsed_meta.get("ocr_texts", "")
+                    if ocr and isinstance(ocr, str) and len(ocr) > 5:
+                        text = text + " " + ocr
+                except (ValueError, TypeError):
+                    pass
+            all_texts.append(text)
         bm25_scores_list = [scoring.bm25_score(query, text) for text in all_texts]
         
         timings["scoring"] = time.time() - t1

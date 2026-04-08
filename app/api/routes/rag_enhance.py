@@ -558,9 +558,10 @@ async def upload_enhanced_to_rag(
                 log_system_event("INFO", f"[BG] Enhanced processing başladı: {_uname} (file_id={_fid})", "rag_enhance")
                 
                 # 1. Chunk oluştur — iyileştirilmiş bölümlerden combined_text
-                # v3.4.5: TÜM dosya türleri için aynı yaklaşım (XLSX gibi)
-                # Enhancement yapıldığında _sections'da onaylı/orijinal bölüm metinleri hazırdır
-                # Binary parse gereksizdir ve format uyumsuzluğu riski taşır
+                # v3.4.7 Issue 5: Heading'leri Markdown heading formatında yaz
+                # TXT processor heading'leri parse edip chunk metadata'ya aktarır
+                # Bu sayede orijinal dosyanın heading'leri ile enhanced chunk heading'leri
+                # tutarlı olur → görsel-chunk eşleştirmesi iyileşir
                 chunks = []
                 combined_text = ""
                 for s in _sections:
@@ -568,7 +569,8 @@ async def upload_enhanced_to_rag(
                     s_heading = s.heading or f"Bölüm {s_idx + 1}"
                     section_text = s.enhanced_text if s_idx in _approvals else s.original_text
                     if section_text and section_text.strip():
-                        combined_text += f"\n\n{s_heading}\n{'=' * len(s_heading)}\n{section_text}"
+                        # v3.4.7: Heading'i ## format ile yaz (TXT processor heading tespit eder)
+                        combined_text += f"\n\n## {s_heading}\n\n{section_text}"
                 
                 if combined_text.strip():
                     from app.services.document_processors.txt_processor import TXTProcessor
@@ -600,7 +602,9 @@ async def upload_enhanced_to_rag(
                 chunk_count = _rag.add_chunks_with_embeddings(_fid, chunks, cursor=bg_cur)
                 log_system_event("INFO", f"[BG] {_uname}: {chunk_count} chunk eklendi", "rag_enhance")
                 
-                # 3. Görsel çıkarma (skip_ocr=True)
+                # 3. Görsel çıkarma + OCR
+                # v3.4.7: skip_ocr=False — background thread asenkron çalışır, OCR yapılmalı
+                # OCR metni chunk metadata'ya injection edilerek BM25'te aranabilir olur
                 # v3.4.5: Orijinal dosya içeriğini disk'ten oku (varsa)
                 _orig_path = _bg_params.get("original_content_path")
                 _orig_content = None
@@ -622,11 +626,11 @@ async def upload_enhanced_to_rag(
                         _oext = _bg_params.get("original_file_type", _uext)
                         if not _oext.startswith('.'):
                             _oext = f".{_oext}"
-                        extracted_images = img_ext.extract(_orig_content, _oext, skip_ocr=True)
+                        extracted_images = img_ext.extract(_orig_content, _oext, skip_ocr=False)
                         if extracted_images:
-                            image_ids = img_ext.save_to_db(extracted_images, _fid, cursor=bg_cur)
+                            image_ids, saved_images = img_ext.save_to_db(extracted_images, _fid, cursor=bg_cur)
                             if image_ids:
-                                _update_chunk_image_refs(bg_cur, _fid, extracted_images, image_ids)
+                                _update_chunk_image_refs(bg_cur, _fid, saved_images, image_ids)
                             log_system_event("INFO", f"[BG] {len(extracted_images)} görsel çıkarıldı (file_id={_fid})", "rag_enhance")
                     except Exception as img_err:
                         log_system_event("WARNING", f"[BG] Görsel çıkarma hatası: {img_err}", "rag_enhance")

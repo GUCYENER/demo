@@ -86,9 +86,7 @@ def map_images_to_sections(
                             best_overlap = overlap
                             best_section = sec
             
-            # Son fallback: chunk_index geçerliyse kullan
-            if best_section is None and chunk_idx >= 0 and chunk_idx < len(sections):
-                best_section = sections[chunk_idx]
+            # chunk_index fallback kaldırıldı (v3.4.6) — yanlış eşleşme yerine eksik tercih edilir
 
         if best_section is None:
             continue

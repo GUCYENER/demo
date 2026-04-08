@@ -29,7 +29,7 @@ class ExtractedImage:
     nearby_text: str = ""   # v3.4.5: Görselin yakın çevresindeki metin (chunk eşleştirme için)
     paragraph_index: int = -1    # Görselin orijinal dosyadaki paragraf sırası (0-indexed)
     page_y_position: float = -1  # PDF: sayfa içi Y koordinatı (mm)
-    page_number: int = -1        # v3.4.5: PDF sayfa no (0-indexed, eşleştirme için değil referans)
+    page_number: int = -1        # v3.4.6: Sayfa/slayt no (1-indexed, chunk metadata.page ile uyumlu)
 
 
 # Singleton OCR reader (lazy load — model yüklemesi ~20sn sadece ilk kez)
@@ -44,7 +44,7 @@ class ImageExtractor:
         extractor = ImageExtractor()
         images = extractor.extract(file_content, ".docx")
         if images:
-            image_ids = extractor.save_to_db(images, file_id, cursor)
+            image_ids, saved_images = extractor.save_to_db(images, file_id, cursor)
     """
 
     # Desteklenen görsel formatları
@@ -113,19 +113,27 @@ class ImageExtractor:
                 if len(recent_paragraphs) > 5:
                     recent_paragraphs.pop(0)
 
-            # InlineShape (gömülü resimler) kontrolü
+            # v3.4.7: InlineShape VE Anchor (floating) görselleri kontrol et
+            WP_NS = '{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}'
+            A_NS = '{http://schemas.openxmlformats.org/drawingml/2006/main}'
+            R_NS = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}'
+            
             for run in para.runs:
-                inline_shapes = run._element.findall(
-                    './/{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}inline'
-                )
-                for inline in inline_shapes:
-                    blip = inline.find(
-                        './/{http://schemas.openxmlformats.org/drawingml/2006/main}blip'
-                    )
+                # Issue 1: Hem inline hem anchor (floating) görselleri tara
+                drawing_elements = []
+                
+                # InlineShape (gömülü resimler)
+                inlines = run._element.findall(f'.//{WP_NS}inline')
+                drawing_elements.extend(inlines)
+                
+                # Anchor (floating, sağa/sola hizalanmış resimler)
+                anchors = run._element.findall(f'.//{WP_NS}anchor')
+                drawing_elements.extend(anchors)
+                
+                for drawing_el in drawing_elements:
+                    blip = drawing_el.find(f'.//{A_NS}blip')
                     if blip is not None:
-                        embed_id = blip.get(
-                            '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed'
-                        )
+                        embed_id = blip.get(f'{R_NS}embed')
                         if embed_id:
                             nearby = " ".join(recent_paragraphs)[:300]
                             img = self._get_docx_image_from_rel(
@@ -134,7 +142,7 @@ class ImageExtractor:
                             if img:
                                 images.append(img)
 
-        log_system_event("INFO", f"DOCX'ten {len(images)} görsel çıkarıldı", "image_extractor")
+        log_system_event("INFO", f"DOCX'ten {len(images)} görsel çıkarıldı (inline+anchor)", "image_extractor")
         return images
 
     def _get_docx_image_from_rel(self, doc, embed_id: str, heading: str, para_idx: int = -1, nearby_text: str = "") -> Optional[ExtractedImage]:
@@ -215,17 +223,22 @@ class ImageExtractor:
                         if not spans:
                             continue
                         line_text = "".join(s.get("text", "") for s in spans).strip()
-                        if not line_text or len(line_text) > 80 or len(line_text) < 3:
+                        if not line_text or len(line_text) > 120 or len(line_text) < 3:
                             continue
-                        # Font size ve bold kontrolü → heading olabilir
+                        # v3.4.7: Heading tespiti iyileştirildi
                         avg_size = sum(s.get("size", 11) for s in spans) / len(spans)
                         is_bold = any(s.get("flags", 0) & 2**4 for s in spans)
                         y_pos = line_info["bbox"][1]  # Top Y
                         
-                        if avg_size >= 12 or is_bold:
-                            if (line_text[0].isupper() and
-                                not line_text.endswith('.') and
-                                not line_text.endswith(',') and
+                        # Font size >= 12, bold, veya font size >= 14 (başlık formatı)
+                        if avg_size >= 12 or is_bold or avg_size >= 14:
+                            # Heading olabilecek metin kontrolü:
+                            # - Sayfa numarası değil, cümle ortası değil
+                            # - Numara ile başlayabilir (1.2 Giriş gibi)
+                            is_page_num = re.match(r'^\d+$', line_text.strip())
+                            ends_with_sentence = line_text.rstrip().endswith(('.', ',', ';'))
+                            if (not is_page_num and
+                                not ends_with_sentence and
                                 re.match(r'^[\d\.\s]*[A-ZÇĞİÖŞÜa-zçğıöşü]', line_text)):
                                 headings_on_page.append((y_pos, line_text))
             except Exception:
@@ -302,7 +315,7 @@ class ImageExtractor:
                         nearby_text=nearby,
                         paragraph_index=para_idx,
                         page_y_position=y_pos,
-                        page_number=page_num
+                        page_number=page_num + 1  # 1-indexed (chunk metadata.page ile uyumlu)
                     ))
                 except Exception as e:
                     log_error(f"PDF görsel çıkarma hatası (sayfa {page_num}): {e}", "image_extractor")
@@ -367,7 +380,8 @@ class ImageExtractor:
                             context_heading=(slide_title or f"Slayt {slide_idx + 1}")[:500],
                             context_chunk_index=-1,  # v3.4.5: Metin bazlı eşleştirme kullanılacak
                             alt_text=f"Slayt {slide_idx + 1} - {slide_title[:100]}",
-                            nearby_text=slide_nearby
+                            nearby_text=slide_nearby,
+                            page_number=slide_idx + 1  # Slayt no (1-indexed)
                         ))
                     except Exception as e:
                         log_error(f"PPTX görsel çıkarma hatası (slayt {slide_idx}): {e}", "image_extractor")
@@ -394,13 +408,27 @@ class ImageExtractor:
         return ct_map.get(content_type.lower(), None)
 
     def _get_image_dimensions(self, image_data: bytes, fmt: str) -> tuple:
-        """Görsel boyutlarını Pillow ile hesapla"""
+        """Görsel boyutlarını Pillow ile hesapla. EMF/WMF için fallback boyut döner."""
+        # v3.4.7 Issue 2: EMF/WMF Pillow tarafından açılamayabilir — makul varsayılan döndür
+        if fmt and fmt.lower() in ('emf', 'wmf'):
+            # Vektörel format — Pillow genelde başarısız olur
+            # Varsayılan boyut: 300x200 (ortalama diagram boyutu)
+            try:
+                from PIL import Image
+                img = Image.open(io.BytesIO(image_data))
+                w, h = img.size
+                if w > 0 and h > 0:
+                    return (w, h)
+            except Exception:
+                pass
+            return (300, 200)
+        
         try:
             from PIL import Image
             img = Image.open(io.BytesIO(image_data))
             return img.size  # (width, height)
         except Exception as e:
-            log_error(f"Image boyut okuma hatası: {e}", "image_extractor")
+            log_error(f"Image boyut okuma hatası ({fmt}): {e}", "image_extractor")
             return (0, 0)
 
     # ─────────────────────────────────────────
@@ -497,7 +525,7 @@ class ImageExtractor:
         elif len(images) > 0:
             log_system_event("WARNING", f"0/{len(images)} görselden OCR metin çıkarılamadı", "image_extractor")
 
-    def save_to_db(self, images: List[ExtractedImage], file_id: int, cursor) -> List[int]:
+    def save_to_db(self, images: List[ExtractedImage], file_id: int, cursor) -> tuple:
         """
         Görselleri document_images tablosuna kaydet.
         
@@ -507,12 +535,14 @@ class ImageExtractor:
             cursor: DB cursor (dışarıdan geçirilir, commit yapılmaz)
         
         Returns:
-            Eklenen görsel ID'lerinin listesi
+            Tuple[List[int], List[ExtractedImage]]: (image_ids, başarıyla kaydedilen görseller)
+            v3.4.6: Hata alan görseller hariç tutulur — zip hizalama güvenliği.
         """
         if not images:
-            return []
+            return [], []
 
         image_ids = []
+        successful_images = []
         for idx, img in enumerate(images):
             try:
                 cursor.execute(
@@ -534,8 +564,9 @@ class ImageExtractor:
                 row = cursor.fetchone()
                 if row:
                     image_ids.append(row["id"])
+                    successful_images.append(img)
             except Exception as e:
                 log_error(f"Görsel DB kayıt hatası (index {idx}): {e}", "image_extractor")
 
         log_system_event("INFO", f"Dosya {file_id} için {len(image_ids)} görsel kaydedildi", "image_extractor")
-        return image_ids
+        return image_ids, successful_images

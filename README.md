@@ -49,6 +49,30 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.4.7 (2026-04-08) - Görsel RAG Pipeline Kapsamlı İyileştirme (16 Madde)
+
+**📸 Görsel Çıkarma (ImageExtractor):**
+- ✅ **Floating (anchor) görseller** DOCX'te artık yakalanıyor (InlineShape + Anchor)
+- ✅ **EMF/WMF fallback:** Pillow boyut hatası için 300x200 varsayılan boyut
+- ✅ **PDF heading tespiti** genişletildi (font boyutu + regex kriterleri)
+
+**🔗 Eşleştirme (rag_upload.py):**
+- ✅ **3-Tier Strateji:** Sayfa Bazlı → Heading Bazlı → Nearby Text Overlap (%30+)
+- ✅ **OCR Injection:** Görsel OCR metinleri chunk metadata'ya `ocr_texts` olarak ekleniyor
+- ✅ **Cascade Delete:** Re-upload'da eski `document_images` kayıtları temizleniyor
+- ✅ **Regex fix:** Heading normalizasyonundaki double-escape hatası düzeltildi
+
+**🔍 Arama & Render:**
+- ✅ **Top-3 dosya görsel toplama** (sadece primary değil, en yüksek skorlu 3 dosya)
+- ✅ **Fuzzy heading matching** (%60+ keyword overlap ile LLM cevap↔orijinal başlık)
+- ✅ **BM25 OCR arama:** Chunk metadata'daki OCR metni BM25'te aranabilir
+- ✅ **Lazy loading:** Tüm `rag-inline-image` tag'lerine `loading="lazy"` eklendi
+
+**🏗️ Enhanced Upload Pipeline:**
+- ✅ **skip_ocr=False:** Background thread'de OCR artık çalışıyor (asenkron, performans sorunsuz)
+- ✅ **Markdown heading formatı** (`## Heading`) ile TXT processor uyumu sağlandı
+- ✅ **Dead code temizliği:** document_enhancer.py'deki gereksiz görsel çıkarma kaldırıldı
+
 ### 🆕 v3.4.5 (2026-04-06) - Görsel-Chunk Akıllı Eşleştirme (Metin Bazlı)
 
 **🐛 Kritik Bug Fix — Yanlış Görsel Eşleştirme:**

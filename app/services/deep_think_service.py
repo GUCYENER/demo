@@ -948,8 +948,11 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
     
     def _collect_images_from_rag(self, rag_results: list, max_images: int = 8) -> tuple:
         """
-        v3.4.0: RAG chunk metadata'sından görselleri toplar.
+        v3.4.7: RAG chunk metadata'sından görselleri toplar.
         DRY helper — CatBoost BYPASS, Hybrid, LLM Sentez akışlarında ortak kullanılır.
+        
+        v3.4.7 Issue 8: Sadece primary_source değil, en yüksek skorlu top 3 dosyadan
+        görsel toplar — birden fazla dosyadan sonuç geldiğinde görseller kaybolmaz.
         
         Returns:
             (image_ids: list, heading_image_map: dict)
@@ -957,17 +960,21 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
         heading_map = {}
         image_ids = []
         seen = set()
-        primary_source = None
-        best_score = 0.0
         
+        # v3.4.7: Top 3 dosyayı belirle (skor bazlı)
+        source_best_score = {}  # source_file → best_score
         for r in rag_results:
             s = r.get("score", 0)
-            if s > best_score:
-                best_score = s
-                primary_source = r.get("source_file", "")
+            src = r.get("source_file", "")
+            if src and s > source_best_score.get(src, 0):
+                source_best_score[src] = s
+        
+        # En yüksek skorlu top 3 dosya
+        top_sources = sorted(source_best_score.keys(), key=lambda x: source_best_score[x], reverse=True)[:3]
+        top_sources_set = set(top_sources)
         
         for r in rag_results:
-            if r.get("source_file", "") != primary_source:
+            if r.get("source_file", "") not in top_sources_set:
                 continue
             meta = r.get("metadata")
             if isinstance(meta, str):

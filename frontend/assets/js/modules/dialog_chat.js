@@ -1955,7 +1955,7 @@ window.DialogChatModule = (function () {
                         if (imageIds.length > 0) {
                             const apiBase = window.API_BASE_URL || 'http://localhost:8002';
                             const imgTags = imageIds.map(imgId =>
-                                `<img class="rag-inline-image" src="${apiBase}/api/rag/images/${imgId}" alt="Doküman görseli" data-image-id="${imgId}" />`
+                                `<img class="rag-inline-image" src="${apiBase}/api/rag/images/${imgId}" alt="Doküman görseli" data-image-id="${imgId}" loading="lazy" />`
                             ).join(' ');
                             enhancedHtml += `
                                 <div class="thread-images-section">

@@ -58,7 +58,7 @@ def _insert_images_by_heading(
     def _make_image_tags(img_ids: List[int]) -> str:
         tags = " ".join(
             f'<img class="rag-inline-image" src="/api/rag/images/{img_id}" '
-            f'alt="Doküman görseli" data-image-id="{img_id}" />'
+            f'alt="Doküman görseli" data-image-id="{img_id}" loading="lazy" />'
             for img_id in img_ids[:4]  # Her başlık altında max 4 görsel
         )
         return f"\n\n📷 **İlgili Görseller:**\n\n{tags}\n"
@@ -117,22 +117,35 @@ def _insert_images_by_heading(
         if norm_line and len(norm_line) > 5 and is_heading_line:
             # heading_images'deki key'lerle fuzzy eşleştir
             best_match = None
+            best_overlap = 0.0
             for norm_heading, img_ids in normalized_map.items():
                 if norm_heading in matched_headings:
                     continue
                 # Minimum uzunluk kontrolü (false positive önleme)
                 if len(norm_heading) < 5:
                     continue
-                # Substring eşleşme (her iki yönde)
+                # 1. Substring eşleşme (her iki yönde) — en güçlü
                 if norm_heading in norm_line or norm_line in norm_heading:
                     best_match = (norm_heading, img_ids)
                     break
-                # İlk 3+ kelime eşleşme
+                # 2. İlk 3+ kelime eşleşme
                 h_words = norm_heading.split()[:3]
                 l_words = norm_line.split()[:3]
                 if len(h_words) >= 2 and h_words == l_words:
                     best_match = (norm_heading, img_ids)
                     break
+                # 3. v3.4.7 Issue 9: Keyword overlap fallback (%60+ eşleşme)
+                h_word_set = set(norm_heading.split())
+                l_word_set = set(norm_line.split())
+                if h_word_set and l_word_set:
+                    # Sadece 3+ karakter kelimeler (bağlaçları filtrele)
+                    h_sig = {w for w in h_word_set if len(w) >= 3}
+                    l_sig = {w for w in l_word_set if len(w) >= 3}
+                    if h_sig and l_sig:
+                        overlap = len(h_sig & l_sig) / max(len(h_sig), 1)
+                        if overlap >= 0.6 and overlap > best_overlap:
+                            best_overlap = overlap
+                            best_match = (norm_heading, img_ids)
             
             if best_match:
                 norm_heading, img_ids = best_match
@@ -420,7 +433,7 @@ def process_user_message(
                 # Fallback: heading bilgisi yoksa eski davranış (sona ekle)
                 image_tags = " ".join(
                     f'<img class="rag-inline-image" src="/api/rag/images/{img_id}" '
-                    f'alt="Doküman görseli" data-image-id="{img_id}" />'
+                    f'alt="Doküman görseli" data-image-id="{img_id}" loading="lazy" />'
                     for img_id in _image_ids[:8]
                 )
                 assistant_content += f"\n\n📷 **İlgili Görseller:**\n\n{image_tags}\n"
@@ -512,7 +525,6 @@ def process_user_message_stream(
     Yields:
         dict: {"type": ..., "data": ...} SSE eventleri
     """
-    import json
     
     start_total = time.time()
     
@@ -631,7 +643,7 @@ def process_user_message_stream(
                 elif _i_ids:
                     img_tags = " ".join(
                         f'<img class="rag-inline-image" src="/api/rag/images/{img_id}" '
-                        f'alt="Doküman görseli" data-image-id="{img_id}" />'
+                        f'alt="Doküman görseli" data-image-id="{img_id}" loading="lazy" />'
                         for img_id in _i_ids[:8]
                     )
                     final_content += f"\n\n📷 **İlgili Görseller:**\n\n{img_tags}\n"

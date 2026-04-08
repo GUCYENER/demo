@@ -326,17 +326,24 @@ def _process_single_file_sync(
         try:
             from app.services.document_processors.image_extractor import ImageExtractor
             img_extractor = ImageExtractor()
+            
+            # v3.4.7 Issue 15: Eski görselleri temizle (re-upload durumunda)
+            cur.execute(
+                "DELETE FROM document_images WHERE file_id = %s",
+                (file_info["file_id"],)
+            )
+            
             extracted_images = img_extractor.extract(
                 file_content, file_info["file_type"]
             )
             if extracted_images:
-                image_ids = img_extractor.save_to_db(
+                image_ids, saved_images = img_extractor.save_to_db(
                     extracted_images, file_info["file_id"], cursor=cur
                 )
                 if image_ids:
                     _update_chunk_image_refs(
                         cur, file_info["file_id"],
-                        extracted_images, image_ids
+                        saved_images, image_ids
                     )
         except Exception as img_err:
             log_system_event(
@@ -552,13 +559,24 @@ async def _process_files_background(
 
 def _update_chunk_image_refs(cursor, file_id: int, images, image_ids: list):
     """
-    v3.4.5: Chunk metadata'larını image_ids ile günceller.
+    v3.4.7: Chunk metadata'larını image_ids ile günceller.
     
-    Metin bazlı akıllı eşleştirme — 4 adımlı:
-    1. Heading tam eşleşme (normalize)
-    2. Heading keyword overlap (≥%50)
-    3. Nearby_text → chunk_text keyword overlap (≥%40)
-    4. Eşleşmeyenler → atanmaz (yanlış eşleşme yerine eksik tercih edilir)
+    Üç katmanlı eşleştirme (tüm dosya türlerini destekler):
+    
+    Strateji A — Sayfa Bazlı (PDF):
+      1. Görselin page_number = Chunk metadata.page → aynı sayfadaki chunk'a ata
+      2. Aynı sayfada birden fazla chunk varsa heading eşleşmesi + Y pozisyonu ile seçim (v3.4.7)
+    
+    Strateji B — Heading Bazlı (DOCX/PPTX — sayfa bilgisi yoksa):
+      1. Görselin context_heading = Chunk metadata.heading → heading eşleşmesi
+      2. Tam eşleşme > substring eşleşme öncelikli
+    
+    Strateji C — Nearby Text Keyword Overlap (v3.4.7, Sorun 6):
+      A ve B başarısız olursa nearby_text ile chunk metin benzerliği hesaplanır
+    
+    Eşleşme yoksa → atanmaz (yanlış eşleşme yerine eksik tercih edilir)
+    
+    Ek: OCR metni eşleşen chunk'ların metadata'sına injection edilir (Sorun 10)
     """
     from app.services.logging_service import log_system_event as _log
     import re
@@ -566,36 +584,33 @@ def _update_chunk_image_refs(cursor, file_id: int, images, image_ids: list):
     if not image_ids:
         return
 
-    # --- Yardımcı: Heading/metin normalizasyonu ---
+    # --- Yardımcı: Heading normalizasyonu ---
     def _normalize(text: str) -> str:
-        """Küçük harf, fazla boşluk temizle, sayfa/bölüm prefix kaldır"""
         t = (text or "").strip().lower()
-        t = re.sub(r'^(sayfa\s*\d+\s*[-–:]*\s*)', '', t)  # "Sayfa 54 - " prefix kaldır
-        t = re.sub(r'^(\d+[\.\)]\s*)', '', t)  # "1. " veya "1) " prefix kaldır
+        t = re.sub(r'^(sayfa\s*\d+\s*[-–:]*\s*)', '', t)
+        t = re.sub(r'^(\d+[.)]\s*)', '', t)
         t = re.sub(r'\s+', ' ', t).strip()
         return t
     
-    def _extract_keywords(text: str, min_len: int = 3) -> set:
-        """Anlamlı kelimeleri çıkar (≥min_len karakter)"""
-        words = re.findall(r'[a-zçğıöşüA-ZÇĞİÖŞÜ]{' + str(min_len) + r',}', _normalize(text))
-        # Türkçe stop words
-        stop = {'bir', 'ile', 'olan', 'için', 'gibi', 'daha', 'çok', 'veya',
-                'ise', 'hem', 'her', 'ama', 'fakat', 'ancak', 'kadar', 'and', 'the'}
-        return {w.lower() for w in words if w.lower() not in stop}
-    
-    def _keyword_overlap(kw1: set, kw2: set) -> float:
-        """İki kelime kümesi arasındaki örtüşme oranı (Jaccard-benzeri)"""
-        if not kw1 or not kw2:
+    # --- Yardımcı: Keyword overlap hesapla ---
+    def _keyword_overlap(text_a: str, text_b: str) -> float:
+        """v3.4.7: İki metin arasında keyword overlap oranı hesapla (0.0-1.0)"""
+        if not text_a or not text_b:
             return 0.0
-        common = kw1 & kw2
-        smaller = min(len(kw1), len(kw2))
-        return len(common) / smaller if smaller > 0 else 0.0
-    
-    # --- Tüm chunk heading'lerini ve text'lerini ön-yükle ---
+        words_a = set(w.lower() for w in text_a.split() if len(w) >= 3)
+        words_b = set(w.lower() for w in text_b.split() if len(w) >= 3)
+        if not words_a or not words_b:
+            return 0.0
+        return len(words_a & words_b) / max(len(words_a), 1)
+
+    # --- Tüm chunk'ları ön-yükle ---
+    # v3.4.7: chunk_text de alınıyor (Strateji C için)
     cursor.execute(
         """
-        SELECT id, chunk_index, metadata->>'heading' as heading, 
-               LEFT(chunk_text, 300) as chunk_text_preview
+        SELECT id, chunk_index, 
+               metadata->>'heading' as heading, 
+               COALESCE(metadata->>'page', metadata->>'slide') as page,
+               LEFT(chunk_text, 500) as chunk_text_preview
         FROM rag_chunks 
         WHERE file_id = %s 
         ORDER BY chunk_index
@@ -608,80 +623,192 @@ def _update_chunk_image_refs(cursor, file_id: int, images, image_ids: list):
         _log("WARNING", f"Dosya {file_id}: Chunk bulunamadı, görsel eşleştirme atlandı", "rag_upload")
         return
     
-    # Chunk bilgileri: {chunk_id: {heading, heading_kw, text_kw, chunk_index}}
-    chunk_info = {}
+    # Sayfa → chunk listesi mapping (PDF)
+    page_to_chunks = {}
+    # Heading → chunk listesi mapping (DOCX/PPTX fallback)
+    heading_to_chunks = {}
+    has_page_data = False
+    
     for cr in chunk_rows:
-        heading = cr["heading"] or ""
-        text_preview = cr["chunk_text_preview"] or ""
-        chunk_info[cr["id"]] = {
+        heading_norm = _normalize(cr["heading"] or "")
+        entry = {
+            "id": cr["id"],
             "chunk_index": cr["chunk_index"],
-            "heading_norm": _normalize(heading),
-            "heading_kw": _extract_keywords(heading),
-            "text_kw": _extract_keywords(text_preview),
+            "heading_norm": heading_norm,
+            "chunk_text_preview": cr.get("chunk_text_preview", "") or "",
         }
+        
+        # Sayfa bilgisi varsa page mapping'e ekle
+        page = cr["page"]
+        if page is not None:
+            try:
+                page_num = int(page)
+                page_to_chunks.setdefault(page_num, []).append(entry)
+                has_page_data = True
+            except (ValueError, TypeError):
+                pass
+        
+        # Heading mapping'e her zaman ekle (DOCX/PPTX fallback)
+        if heading_norm:
+            heading_to_chunks.setdefault(heading_norm, []).append(entry)
     
     matched_count = 0
+    # v3.4.7 Issue 10: OCR text injection için image_id → chunk_id mapping'i tut
+    chunk_image_ocr_map = {}  # chunk_id → [ocr_text_1, ocr_text_2, ...]
     
     for img, img_id in zip(images, image_ids):
-        img_heading = getattr(img, "context_heading", "") or ""
-        img_nearby = getattr(img, "nearby_text", "") or ""
+        best_chunk_id = None
         
-        if not img_heading and not img_nearby:
+        # ═══════════════════════════════════════════════
+        # Strateji A: Sayfa Bazlı Eşleştirme (PDF)
+        # ═══════════════════════════════════════════════
+        if has_page_data:
+            img_page = getattr(img, "page_number", -1)
+            if img_page < 0:
+                alt = getattr(img, "alt_text", "") or ""
+                m = re.search(r'Sayfa\s+(\d+)', alt)
+                if m:
+                    img_page = int(m.group(1))
+            
+            if img_page >= 0:
+                candidates = page_to_chunks.get(img_page, [])
+                if candidates:
+                    if len(candidates) == 1:
+                        best_chunk_id = candidates[0]["id"]
+                    else:
+                        # Birden fazla chunk aynı sayfada → heading eşleşmesi ile seç
+                        img_heading_norm = _normalize(getattr(img, "context_heading", "") or "")
+                        
+                        if img_heading_norm:
+                            best_match_score = 0
+                            for c in candidates:
+                                if c["heading_norm"]:
+                                    if img_heading_norm == c["heading_norm"]:
+                                        best_chunk_id = c["id"]
+                                        break
+                                    elif (img_heading_norm in c["heading_norm"] or 
+                                          c["heading_norm"] in img_heading_norm):
+                                        if 0.8 > best_match_score:
+                                            best_match_score = 0.8
+                                            best_chunk_id = c["id"]
+                        
+                        # v3.4.7 Issue 7: Heading eşleşmesi başarısız → chunk_index ile
+                        # en yakın chunk'a ata (Y pozisyonu proxy olarak chunk_index kullan)
+                        if best_chunk_id is None and candidates:
+                            # nearby_text overlap ile en iyi eşleşmeyi bul
+                            img_nearby = getattr(img, "nearby_text", "") or ""
+                            if img_nearby:
+                                best_overlap = 0.0
+                                for c in candidates:
+                                    ov = _keyword_overlap(img_nearby, c["chunk_text_preview"])
+                                    if ov > best_overlap:
+                                        best_overlap = ov
+                                        best_chunk_id = c["id"]
+                            # Hala None ise → chunk_index bazlı (ortadaki chunk)
+                            if best_chunk_id is None:
+                                mid_idx = len(candidates) // 2
+                                best_chunk_id = candidates[mid_idx]["id"]
+        
+        # ═══════════════════════════════════════════════
+        # Strateji B: Heading Bazlı Eşleştirme (DOCX/PPTX)
+        # Sayfa eşleşmesi bulunamadıysa heading ile dene
+        # ═══════════════════════════════════════════════
+        if best_chunk_id is None:
+            img_heading = getattr(img, "context_heading", "") or ""
+            img_heading_norm = _normalize(img_heading)
+            
+            if img_heading_norm:
+                # 1. Tam eşleşme
+                if img_heading_norm in heading_to_chunks:
+                    best_chunk_id = heading_to_chunks[img_heading_norm][0]["id"]
+                else:
+                    # 2. Substring eşleşme (en kısa heading — en spesifik)
+                    best_match_len = float('inf')
+                    for h_norm, chunks_list in heading_to_chunks.items():
+                        if (img_heading_norm in h_norm or h_norm in img_heading_norm):
+                            if len(h_norm) < best_match_len:
+                                best_match_len = len(h_norm)
+                                best_chunk_id = chunks_list[0]["id"]
+        
+        # ═══════════════════════════════════════════════
+        # v3.4.7 Strateji C: Nearby Text Keyword Overlap (Sorun 6)
+        # A ve B başarısız olursa, nearby_text ile chunk metni karşılaştır
+        # ═══════════════════════════════════════════════
+        if best_chunk_id is None:
+            img_nearby = getattr(img, "nearby_text", "") or ""
+            if img_nearby and len(img_nearby) >= 10:
+                best_overlap = 0.0
+                best_overlap_id = None
+                for cr in chunk_rows:
+                    ov = _keyword_overlap(img_nearby, cr.get("chunk_text_preview", ""))
+                    if ov >= 0.3 and ov > best_overlap:  # Min %30 overlap
+                        best_overlap = ov
+                        best_overlap_id = cr["id"]
+                if best_overlap_id is not None:
+                    best_chunk_id = best_overlap_id
+                    _log("DEBUG", f"Dosya {file_id}: Görsel {img_id} Strateji C ile eşleşti (overlap={best_overlap:.2f})", "rag_upload")
+        
+        # Eşleşme bulunamadıysa → atanmaz
+        if best_chunk_id is None:
             continue
         
-        img_heading_norm = _normalize(img_heading)
-        img_heading_kw = _extract_keywords(img_heading)
-        img_nearby_kw = _extract_keywords(img_nearby) if img_nearby else set()
+        # Chunk'a image_id ekle
+        cursor.execute(
+            """
+            UPDATE rag_chunks
+            SET metadata = jsonb_set(
+                COALESCE(metadata, '{}'::jsonb),
+                '{image_ids}',
+                (COALESCE(metadata->'image_ids', '[]'::jsonb) || %s::jsonb)
+            )
+            WHERE id = %s
+              AND (metadata->'image_ids' IS NULL OR NOT metadata->'image_ids' @> %s::jsonb)
+            """,
+            (f'[{img_id}]', best_chunk_id, f'[{img_id}]')
+        )
+        matched_count += 1
         
-        best_chunk_id = None
-        best_score = 0.0
-        
-        for c_id, c_info in chunk_info.items():
-            score = 0.0
-            
-            # Adım 1: Heading tam eşleşme (normalize)
-            if img_heading_norm and c_info["heading_norm"]:
-                if img_heading_norm == c_info["heading_norm"]:
-                    score = 1.0
-                elif img_heading_norm in c_info["heading_norm"] or c_info["heading_norm"] in img_heading_norm:
-                    score = 0.85
-            
-            # Adım 2: Heading keyword overlap
-            if score < 0.85 and img_heading_kw and c_info["heading_kw"]:
-                h_overlap = _keyword_overlap(img_heading_kw, c_info["heading_kw"])
-                if h_overlap >= 0.5:
-                    score = max(score, 0.5 + h_overlap * 0.3)
-            
-            # Adım 3: Nearby text → chunk text overlap
-            if score < 0.5 and img_nearby_kw and c_info["text_kw"]:
-                t_overlap = _keyword_overlap(img_nearby_kw, c_info["text_kw"])
-                if t_overlap >= 0.4:
-                    score = max(score, 0.3 + t_overlap * 0.3)
-            
-            if score > best_score:
-                best_score = score
-                best_chunk_id = c_id
-        
-        # Eşleşme eşiği: ≥0.3 (çok düşük benzerlikli eşleşmeleri engelle)
-        if best_chunk_id and best_score >= 0.3:
+        # v3.4.7 Issue 10: OCR text'i topla (sonra chunk metadata'ya injection)
+        ocr_text = getattr(img, "ocr_text", "") or ""
+        if not ocr_text:
+            # DB'den OCR text'i çek (save_to_db sonrası doldurulmuş olabilir)
+            try:
+                cursor.execute("SELECT ocr_text FROM document_images WHERE id = %s", (img_id,))
+                ocr_row = cursor.fetchone()
+                if ocr_row and ocr_row.get("ocr_text"):
+                    ocr_text = ocr_row["ocr_text"].strip()
+            except Exception:
+                pass
+        if ocr_text and len(ocr_text.strip()) > 5:
+            chunk_image_ocr_map.setdefault(best_chunk_id, []).append(ocr_text.strip())
+    
+    # v3.4.7 Issue 10: OCR text injection — eşleşen chunk'ların metadata'sına ocr_texts ekle
+    # BM25 aramalarda görsel içindeki metin de aranabilir olur
+    ocr_injected = 0
+    for chunk_id, ocr_texts in chunk_image_ocr_map.items():
+        combined_ocr = " | ".join(ocr_texts)[:1000]  # Max 1000 char
+        try:
             cursor.execute(
                 """
                 UPDATE rag_chunks
                 SET metadata = jsonb_set(
                     COALESCE(metadata, '{}'::jsonb),
-                    '{image_ids}',
-                    (COALESCE(metadata->'image_ids', '[]'::jsonb) || %s::jsonb)
+                    '{ocr_texts}',
+                    %s::jsonb
                 )
                 WHERE id = %s
-                  AND (metadata->'image_ids' IS NULL OR NOT metadata->'image_ids' @> %s::jsonb)
                 """,
-                (f'[{img_id}]', best_chunk_id, f'[{img_id}]')
+                (f'"{combined_ocr}"', chunk_id)
             )
-            matched_count += 1
+            ocr_injected += 1
+        except Exception:
+            pass
     
     _log(
         "INFO", 
-        f"Dosya {file_id}: {matched_count}/{len(image_ids)} görsel chunk'a eşleştirildi (metin bazlı)", 
+        f"Dosya {file_id}: {matched_count}/{len(image_ids)} görsel chunk'a eşleştirildi "
+        f"({'sayfa' if has_page_data else 'heading'} bazlı)"
+        f"{f', {ocr_injected} chunk OCR zenginleştirildi' if ocr_injected else ''}", 
         "rag_upload"
     )
 
