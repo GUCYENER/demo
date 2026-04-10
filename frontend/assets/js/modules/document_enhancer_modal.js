@@ -415,8 +415,20 @@ const DocumentEnhancerModal = (function () {
             .then(res => {
                 clearTimeout(timeoutId);
                 if (!res.ok) {
-                    return res.json().then(err => {
-                        throw new Error(err.detail || `HTTP ${res.status}`);
+                    // v3.4.8: HTML error page (504 vb.) gelirse json() patlar — text ile güvenli oku
+                    return res.text().then(txt => {
+                        let detail = `HTTP ${res.status}`;
+                        try {
+                            const parsed = JSON.parse(txt);
+                            detail = parsed.detail || detail;
+                        } catch (_) {
+                            if (res.status === 504) {
+                                detail = 'İşlem zaman aşımına uğradı (504). Daha küçük dosya deneyin veya tekrar edin.';
+                            } else {
+                                detail = `Sunucu hatası (HTTP ${res.status}). Lütfen tekrar deneyin.`;
+                            }
+                        }
+                        throw new Error(detail);
                     });
                 }
                 return res.json();
@@ -562,7 +574,19 @@ const DocumentEnhancerModal = (function () {
             headers: _authHeaders()
         })
             .then(res => {
-                if (!res.ok) return res.json().then(d => { throw new Error(d.detail || `HTTP ${res.status}`); });
+                if (!res.ok) {
+                    // v3.4.8: HTML error page (504 vb.) gelirse json() patlar — text ile güvenli oku
+                    return res.text().then(txt => {
+                        let detail = `HTTP ${res.status}`;
+                        try {
+                            const parsed = JSON.parse(txt);
+                            detail = parsed.detail || detail;
+                        } catch (_) {
+                            detail = `Sunucu hatası (HTTP ${res.status}). Lütfen tekrar deneyin.`;
+                        }
+                        throw new Error(detail);
+                    });
+                }
                 return res.json();
             })
             .then(data => {

@@ -1,6 +1,6 @@
 """v3.4.4 — RAG Pipeline Optimizasyonu: Versiyon güncelleme
 
-Revision ID: 005_v344_rag_pipeline_optimization
+Revision ID: 005_v344_rag_opt
 Revises: 004_ds_enrichment_tables
 Create Date: 2026-04-06
 """
@@ -8,7 +8,7 @@ from typing import Sequence, Union
 from alembic import op
 
 # revision identifiers
-revision: str = "005_v344_rag_pipeline_optimization"
+revision: str = "005_v344_rag_opt"
 down_revision: Union[str, None] = "004_ds_enrichment_tables"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

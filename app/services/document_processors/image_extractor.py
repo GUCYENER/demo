@@ -495,44 +495,43 @@ class ImageExtractor:
     def _run_ocr_batch(self, images: List[ExtractedImage]):
         """
         Tüm görseller için OCR çalıştır ve ocr_text alanını doldur.
-        ThreadPoolExecutor ile paralel çalışır (max 4 thread).
-        """
-        from concurrent.futures import ThreadPoolExecutor, as_completed
         
+        v3.4.8: Sıralı (sequential) çalışma — nested ThreadPoolExecutor deadlock 
+        sorununu önler. Bu fonksiyon zaten _file_processing_executor (ThreadPoolExecutor) 
+        içinden çağrıldığı için iç içe thread pool kullanmak deadlock yaratıyordu.
+        """
         if not images:
             return
         
-        # İlk çağrıda model yüklenmesini sağla (thread-safe init)
+        # İlk çağrıda model yüklenmesini sağla
         if self._get_ocr_reader() is None:
             log_system_event("WARNING", "OCR reader yüklenemedi, batch atlanıyor", "image_extractor")
             return
         
-        max_workers = min(4, len(images))
-        
-        def _ocr_task(img):
-            try:
-                return self._run_ocr_single(img.image_data, img.image_format)
-            except Exception as e:
-                log_error(f"OCR task hatası ({img.image_format}): {e}", "image_extractor")
-                return ""
+        # OCR desteklenen formatları filtrele
+        ocr_candidates = [img for img in images if img.image_format in self.OCR_FORMATS]
+        if not ocr_candidates:
+            log_system_event("INFO", f"0/{len(images)} görsel OCR formatında değil (desteklenen: {self.OCR_FORMATS})", "image_extractor")
+            return
         
         ocr_count = 0
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_img = {executor.submit(_ocr_task, img): img for img in images}
-            for future in as_completed(future_to_img):
-                img = future_to_img[future]
-                try:
-                    text = future.result()
-                    if text:
-                        img.ocr_text = text
-                        ocr_count += 1
-                except Exception as e:
-                    log_error(f"OCR future hatası ({img.image_format}): {e}", "image_extractor")
+        ocr_errors = 0
+        for idx, img in enumerate(ocr_candidates):
+            try:
+                text = self._run_ocr_single(img.image_data, img.image_format)
+                if text and text.strip():
+                    img.ocr_text = text.strip()
+                    ocr_count += 1
+            except Exception as e:
+                ocr_errors += 1
+                log_error(f"OCR hatası (görsel {idx+1}/{len(ocr_candidates)}, {img.image_format}): {e}", "image_extractor")
         
-        if ocr_count > 0:
-            log_system_event("INFO", f"{ocr_count}/{len(images)} görselden OCR metin çıkarıldı (paralel)", "image_extractor")
-        elif len(images) > 0:
-            log_system_event("WARNING", f"0/{len(images)} görselden OCR metin çıkarılamadı", "image_extractor")
+        log_system_event(
+            "INFO" if ocr_count > 0 else "WARNING",
+            f"OCR sonuç: {ocr_count}/{len(ocr_candidates)} başarılı, {ocr_errors} hata "
+            f"(toplam {len(images)} görsel, {len(ocr_candidates)} OCR formatında)",
+            "image_extractor"
+        )
 
     def save_to_db(self, images: List[ExtractedImage], file_id: int, cursor) -> tuple:
         """

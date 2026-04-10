@@ -687,25 +687,41 @@ async def upload_enhanced_to_rag(
                         
                         if ocr_rows:
                             _ocr_ext = ImageExtractor()
-                            ocr_count = 0
-                            for orow in ocr_rows:
-                                try:
-                                    ocr_text = _ocr_ext._run_ocr_single(
-                                        bytes(orow["image_data"]),
-                                        orow["image_format"]
-                                    )
-                                    if ocr_text and ocr_text.strip():
-                                        ocr_cur.execute(
-                                            "UPDATE document_images SET ocr_text = %s WHERE id = %s",
-                                            (ocr_text, orow["id"])
+                            # v3.4.8: OCR reader'ı önce yükle — yüklenemezse atla
+                            if _ocr_ext._get_ocr_reader() is None:
+                                log_system_event("WARNING", f"[BG] OCR reader yüklenemedi, OCR aşaması atlanıyor (file_id={_fid})", "rag_enhance")
+                            else:
+                                ocr_count = 0
+                                ocr_skipped = 0
+                                ocr_errors = 0
+                                for orow in ocr_rows:
+                                    fmt = orow["image_format"]
+                                    # v3.4.8: OCR desteklenmeyen formatları atla (emf, wmf)
+                                    if fmt not in ImageExtractor.OCR_FORMATS:
+                                        ocr_skipped += 1
+                                        continue
+                                    try:
+                                        ocr_text = _ocr_ext._run_ocr_single(
+                                            bytes(orow["image_data"]),
+                                            fmt
                                         )
-                                        ocr_count += 1
-                                except Exception:
-                                    pass  # Tek görsel OCR hatası diğerlerini etkilemez
-                            
-                            ocr_conn.commit()
-                            if ocr_count > 0:
-                                log_system_event("INFO", f"[BG] {ocr_count}/{len(ocr_rows)} görselde OCR tamamlandı (file_id={_fid})", "rag_enhance")
+                                        if ocr_text and ocr_text.strip():
+                                            ocr_cur.execute(
+                                                "UPDATE document_images SET ocr_text = %s WHERE id = %s",
+                                                (ocr_text.strip(), orow["id"])
+                                            )
+                                            ocr_count += 1
+                                    except Exception as single_ocr_err:
+                                        ocr_errors += 1
+                                        log_system_event("WARNING", f"[BG] OCR tekil hata (img_id={orow['id']}, fmt={fmt}): {single_ocr_err}", "rag_enhance")
+                                
+                                ocr_conn.commit()
+                                log_system_event(
+                                    "INFO" if ocr_count > 0 else "WARNING",
+                                    f"[BG] OCR Aşama 2: {ocr_count}/{len(ocr_rows)} başarılı, "
+                                    f"{ocr_skipped} format dışı, {ocr_errors} hata (file_id={_fid})",
+                                    "rag_enhance"
+                                )
                         
                         ocr_cur.close()
                     except Exception as ocr_err:

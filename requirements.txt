@@ -36,6 +36,18 @@ fpdf2>=2.7.0
 easyocr
 pdf2image
 
+# --- PDF Processing (PyMuPDF) ---
+PyMuPDF>=1.24.0
+
+# --- ONNX Runtime (Embedding Optimizasyonu) ---
+onnxruntime>=1.17.0
+
+# --- Redis Cache ---
+redis>=5.0.0
+
+# --- XLSX Output ---
+xlsxwriter>=3.1.0
+
 # --- Networking ---
 requests
 

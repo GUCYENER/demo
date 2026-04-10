@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.4.8"  # Heading matrisi (before+after), runtime image fallback, OCR 2-phase
+    APP_VERSION: str = "3.4.9"  # OCR deadlock fix, Nginx ip_hash, error handling, alembic ID fix
 
     # Frontend & API prefix
     api_prefix: str = "/api"

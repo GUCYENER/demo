@@ -49,6 +49,28 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.4.9 (2026-04-10) - Canlı Ortam Stabilizasyon & OCR Düzeltme
+
+**🐛 OCR Metin Çıkarma (Kritik Düzeltme):**
+- ✅ **Nested ThreadPoolExecutor deadlock** sorunu çözüldü — `_run_ocr_batch` artık sıralı (sequential) çalışıyor
+- ✅ OCR desteklenmeyen formatlar (EMF/WMF) artık otomatik atlanıyor
+- ✅ OCR Aşama 2 (enhanced upload) hatalar artık loglanıyor (sessiz `except: pass` kaldırıldı)
+- ✅ OCR reader yükleme kontrolü enhanced upload'a eklendi
+- ✅ OCR backfill script eklendi (`Gecici_Dosyalar_Sil/ocr_backfill.py`)
+
+**🌐 Nginx & Multi-Worker Stabilizasyonu:**
+- ✅ **`ip_hash` eklendi** — WebSocket + HTTP istekleri aynı worker'a yönlendiriliyor
+- ✅ `upload-enhanced` ve `download-enhanced` için 300s timeout location bloğu eklendi
+- ✅ `deploy/nginx/vyra.conf` template'i güncellendi (bat ile uyumlu)
+
+**🔧 Frontend Hata Yakalama:**
+- ✅ `document_enhancer_modal.js` — HTML error page (504 vb.) artık güvenli yakalanıyor
+- ✅ `enhance-document` fetch — timeout hata mesajı iyileştirildi
+- ✅ Upload ve enhance response parsing güvenli `res.text()` → `JSON.parse()` yaklaşımına geçirildi
+
+**📦 Alembic Migration:**
+- ✅ Revision ID kısaltıldı (`005_v344_rag_opt`) — varchar(32) uyumu sağlandı
+
 ### 🆕 v3.4.7 (2026-04-08) - Görsel RAG Pipeline Kapsamlı İyileştirme (16 Madde)
 
 **📸 Görsel Çıkarma (ImageExtractor):**
