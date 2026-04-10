@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.5.0"  # DS Enrichment RAG integration, auto-approve disable & system reset fix
+    APP_VERSION: str = "3.5.1"  # Data Source Enrichment UX Fixes & Pagination
 
     # Frontend & API prefix
     api_prefix: str = "/api"

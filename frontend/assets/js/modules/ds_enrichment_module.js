@@ -16,6 +16,12 @@ const DSEnrichmentModule = (() => {
     let _currentSourceId = null;
     let _pendingData = [];
     let _editingId = null;
+    
+    // Pagination State
+    let _filteredData = [];
+    let _currentPage = 1;
+    let _pageSize = 50;
+    let _searchQuery = '';
 
     // ============================================
     // Panel Aç/Kapat
@@ -55,6 +61,7 @@ const DSEnrichmentModule = (() => {
         const overlay = document.createElement('div');
         overlay.id = 'dsEnrichOverlay';
         overlay.className = 'ds-enrich-overlay';
+        overlay.style.zIndex = '99999'; // FORCE en üstte olması için
         overlay.innerHTML = `
             <div class="ds-enrich-modal">
                 <div class="ds-enrich-header">
@@ -62,9 +69,14 @@ const DSEnrichmentModule = (() => {
                         <i class="fa-solid fa-tags"></i>
                         <span>Tablo Etiketleme & Onay Paneli</span>
                     </div>
-                    <button class="ds-enrich-close" id="dsEnrichCloseBtn" title="Kapat (ESC)">
-                        <i class="fa-solid fa-xmark"></i>
-                    </button>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <button class="ds-enrich-close" id="dsEnrichRefreshBtn" title="Verileri Yenile">
+                            <i class="fa-solid fa-sync"></i>
+                        </button>
+                        <button class="ds-enrich-close" id="dsEnrichCloseBtn" title="Kapat (ESC)">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
                 </div>
                 <div id="dsEnrichStatsBar" class="ds-enrich-stats">
                     <div class="ds-enrich-loading">
@@ -88,15 +100,17 @@ const DSEnrichmentModule = (() => {
 
         // Event listeners
         document.getElementById('dsEnrichCloseBtn').addEventListener('click', closePanel);
+        document.getElementById('dsEnrichRefreshBtn').addEventListener('click', _loadData);
 
         // ESC tuşu
         const escHandler = (e) => {
             if (e.key === 'Escape') {
+                e.stopImmediatePropagation();
                 closePanel();
                 document.removeEventListener('keydown', escHandler);
             }
         };
-        document.addEventListener('keydown', escHandler);
+        document.addEventListener('keydown', escHandler, true); // true for capturing phase
     }
 
     // ============================================
@@ -118,9 +132,11 @@ const DSEnrichmentModule = (() => {
             const pending = await pendingRes.json();
 
             _pendingData = pending.pending || [];
+            _filteredData = [..._pendingData];
+            _currentPage = 1;
 
             _renderStats(stats);
-            _renderTable(_pendingData);
+            _renderTable();
 
         } catch (err) {
             console.error('[DSEnrich] Veri yükleme hatası:', err);
@@ -171,23 +187,94 @@ const DSEnrichmentModule = (() => {
     // Tablo Render
     // ============================================
 
-    function _renderTable(items) {
+    function _renderTable() {
         const body = document.getElementById('dsEnrichBody');
         if (!body) return;
 
-        if (!items || items.length === 0) {
-            body.innerHTML = `
-                <div class="ds-enrich-empty">
-                    <i class="fa-solid fa-circle-check"></i>
-                    <h4>Onay Bekleyen Tablo Yok</h4>
-                    <p>Tüm tablolar onaylanmış veya henüz enrichment çalıştırılmamış.</p>
-                </div>
-            `;
+        if (!_pendingData || _pendingData.length === 0) {
+            const total = parseInt(document.querySelector('.ds-enrich-stat-num')?.textContent || "0");
+            if (total === 0) {
+                body.innerHTML = `
+                    <div class="ds-enrich-empty">
+                        <i class="fa-solid fa-database"></i>
+                        <h4>Enrichment Bekleniyor</h4>
+                        <p>Bu veri kaynağı için henüz AI Tablo Öğrenimi (Enrichment) çalıştırılmamış. Lütfen veri kaynağı ayarlarından 'Öğrenmeyi Başlat' butonuna tıklayın.</p>
+                    </div>
+                `;
+            } else {
+                body.innerHTML = `
+                    <div class="ds-enrich-empty">
+                        <i class="fa-solid fa-circle-check" style="color: #4cd964;"></i>
+                        <h4>Onay Bekleyen Tablo Yok</h4>
+                        <p>Harika! Tespit edilen tüm tablolar incelendi ve onaylandı.</p>
+                    </div>
+                `;
+            }
             return;
         }
 
+        body.innerHTML = `
+            <div class="ds-enrich-filter-bar" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:10px;">
+                <div style="flex:1; max-width:400px; display:flex; gap:0.5rem;">
+                    <div style="position:relative; flex:1;">
+                        <i class="fa-solid fa-search" style="position:absolute; left:12px; top:10px; color:#888;"></i>
+                        <input type="text" id="dsTableSearch" placeholder="Tablo veya iş adı ara..." value="${_searchQuery}"
+                            style="width:100%; padding:8px 32px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.2); color:#fff; outline:none;" 
+                            onkeyup="DSEnrichmentModule.filterTables(this.value)">
+                    </div>
+                    <button onclick="document.getElementById('dsTableSearch').value=''; DSEnrichmentModule.filterTables('');"
+                        style="padding:8px 16px; border-radius:6px; border:none; background:rgba(255,255,255,0.1); color:#fff; cursor:pointer;" title="Aramayı Temizle">
+                        <i class="fa-solid fa-eraser"></i>
+                    </button>
+                </div>
+                <div style="display:flex; align-items:center; gap:1rem;">
+                    <button id="dsBulkApproveBtn" onclick="DSEnrichmentModule.bulkApprove()" 
+                            style="display:none; padding:8px 16px; border-radius:6px; border:none; background:var(--primary-color, #4f46e5); color:#fff; cursor:pointer; font-weight:600;">
+                        <i class="fa-solid fa-check-double mr-2"></i> <span id="dsBulkApproveCount">0</span> Kaydı Onayla
+                    </button>
+                </div>
+            </div>
+            <div class="ds-enrich-table-wrap" id="dsMainTableWrap">
+                <table class="ds-enrich-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 40px; text-align: center;">
+                                <input type="checkbox" id="dsSelectAllChk" onchange="DSEnrichmentModule.toggleAllBulk(this.checked)" class="cursor-pointer" title="Filtrelenmiş tümünü seç">
+                            </th>
+                            <th>Tablo</th>
+                            <th>İş Adı (TR)</th>
+                            <th>Kategori</th>
+                            <th>Skor</th>
+                            <th>Açıklama</th>
+                            <th>İşlem</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dsEnrichTableBody">
+                    </tbody>
+                </table>
+            </div>
+            <div id="dsEnrichPagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:1rem; color:var(--text-secondary, #94a3b8); font-size:0.9rem;">
+            </div>
+        `;
+        
+        _renderRows();
+    }
+
+    function _renderRows() {
+        const tbody = document.getElementById('dsEnrichTableBody');
+        const pagination = document.getElementById('dsEnrichPagination');
+        if (!tbody || !pagination) return;
+        
+        const totalItems = _filteredData.length;
+        const totalPages = Math.ceil(totalItems / _pageSize) || 1;
+        if (_currentPage > totalPages) _currentPage = totalPages;
+        
+        const startIdx = (_currentPage - 1) * _pageSize;
+        const endIdx = startIdx + _pageSize;
+        const pageItems = _filteredData.slice(startIdx, endIdx);
+
         let rows = '';
-        for (const item of items) {
+        for (const item of pageItems) {
             const scoreClass = item.enrichment_score >= 0.7 ? 'high' :
                                item.enrichment_score >= 0.4 ? 'medium' : 'low';
             const catClass = item.category || 'other';
@@ -238,49 +325,54 @@ const DSEnrichmentModule = (() => {
                 </tr>
             `;
         }
+        
+        if (pageItems.length === 0) {
+            rows = `<tr><td colspan="7" style="text-align:center; padding:1.5rem;">Arama sonucu bulunamadı.</td></tr>`;
+        }
 
-        body.innerHTML = `
-            <div class="ds-enrich-filter-bar" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:10px;">
-                <div style="flex:1; max-width:400px; display:flex; gap:0.5rem;">
-                    <div style="position:relative; flex:1;">
-                        <i class="fa-solid fa-search" style="position:absolute; left:12px; top:10px; color:#888;"></i>
-                        <input type="text" id="dsTableSearch" placeholder="Tablo veya iş adı ara..." 
-                            style="width:100%; padding:8px 32px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.2); color:#fff; outline:none;" 
-                            onkeyup="DSEnrichmentModule.filterTables(this.value)">
-                    </div>
-                    <button onclick="document.getElementById('dsTableSearch').value=''; DSEnrichmentModule.filterTables('');"
-                        style="padding:8px 16px; border-radius:6px; border:none; background:rgba(255,255,255,0.1); color:#fff; cursor:pointer;" title="Aramayı Temizle">
-                        <i class="fa-solid fa-eraser"></i>
-                    </button>
-                </div>
-                <div style="display:flex; align-items:center; gap:1rem;">
-                    <button id="dsBulkApproveBtn" onclick="DSEnrichmentModule.bulkApprove()" 
-                            style="display:none; padding:8px 16px; border-radius:6px; border:none; background:var(--primary-color, #4f46e5); color:#fff; cursor:pointer; font-weight:600;">
-                        <i class="fa-solid fa-check-double mr-2"></i> <span id="dsBulkApproveCount">0</span> Kaydı Onayla
-                    </button>
-                </div>
+        tbody.innerHTML = rows;
+
+        // Render Pagination Controls
+        pagination.innerHTML = `
+            <div>
+                Gösterilen: <strong>${totalItems === 0 ? 0 : startIdx + 1}-${Math.min(endIdx, totalItems)}</strong> / Toplam: <strong>${totalItems}</strong> kayıt
+                <span style="margin-left:1rem;">Sayfa Boyutu: 
+                    <select onchange="DSEnrichmentModule.changePageSize(this.value)" style="background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); color:#fff; border-radius:4px; padding:2px 4px; outline:none; font-size:13px;">
+                        <option value="20" ${_pageSize == 20 ? 'selected' : ''}>20</option>
+                        <option value="50" ${_pageSize == 50 ? 'selected' : ''}>50</option>
+                        <option value="100" ${_pageSize == 100 ? 'selected' : ''}>100</option>
+                        <option value="500" ${_pageSize == 500 ? 'selected' : ''}>500</option>
+                    </select>
+                </span>
             </div>
-            <div class="ds-enrich-table-wrap" id="dsMainTableWrap">
-                <table class="ds-enrich-table">
-                    <thead>
-                        <tr>
-                            <th style="width: 40px; text-align: center;">
-                                <input type="checkbox" id="dsSelectAllChk" onchange="DSEnrichmentModule.toggleAllBulk(this.checked)" class="cursor-pointer" title="Filtrelenmiş tümünü seç">
-                            </th>
-                            <th>Tablo</th>
-                            <th>İş Adı (TR)</th>
-                            <th>Kategori</th>
-                            <th>Skor</th>
-                            <th>Açıklama</th>
-                            <th>İşlem</th>
-                        </tr>
-                    </thead>
-                    <tbody id="dsEnrichTableBody">
-                        ${rows}
-                    </tbody>
-                </table>
+            <div style="display:flex; gap:0.5rem; align-items:center;">
+                <button onclick="DSEnrichmentModule.changePage(${_currentPage - 1})" ${_currentPage <= 1 ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : 'style="cursor:pointer;"'} class="ds-wizard-btn secondary" style="padding:4px 10px; min-width:80px;">
+                    <i class="fa-solid fa-chevron-left"></i> Önceki
+                </button>
+                <div style="padding:4px 12px; background:var(--surface-secondary, rgba(255,255,255,0.05)); border:1px solid rgba(255,255,255,0.1); border-radius:6px; font-weight:600;">Sayfa ${_currentPage} / ${totalPages}</div>
+                <button onclick="DSEnrichmentModule.changePage(${_currentPage + 1})" ${_currentPage >= totalPages ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : 'style="cursor:pointer;"'} class="ds-wizard-btn secondary" style="padding:4px 10px; min-width:80px;">
+                    Sonraki <i class="fa-solid fa-chevron-right"></i>
+                </button>
             </div>
         `;
+        
+        // Tabloyu render ettikten sonra scroll'u tepeye çek
+        const tableWrap = document.getElementById('dsMainTableWrap');
+        if (tableWrap) tableWrap.scrollTop = 0;
+        
+        updateBulkCount();
+    }
+    
+    function changePage(newPage) {
+        if (newPage < 1) newPage = 1;
+        _currentPage = newPage;
+        _renderRows();
+    }
+    
+    function changePageSize(newSize) {
+        _pageSize = parseInt(newSize);
+        _currentPage = 1;
+        _renderRows();
     }
 
     // ============================================
@@ -304,8 +396,10 @@ const DSEnrichmentModule = (() => {
             const data = await res.json();
 
             if (data.success) {
-                // Satırı listeden kaldır
+                // Filtrelenmiş veri havuzundan ve asıl veriden temizle
                 _pendingData = _pendingData.filter(p => p.id !== enrichmentId);
+                _filteredData = _filteredData.filter(p => p.id !== enrichmentId);
+                
                 const row = document.querySelector(`tr[data-id="${enrichmentId}"]`);
                 if (row) {
                     row.style.transition = 'opacity 0.3s, transform 0.3s';
@@ -314,6 +408,7 @@ const DSEnrichmentModule = (() => {
                     setTimeout(() => {
                         row.remove();
                         _updateStatsAfterApprove();
+                        _renderRows(); // Paginated listeyi tekrar onar
                     }, 300);
                 }
                 _showToast('Tablo onaylandı', 'success');
@@ -529,31 +624,21 @@ const DSEnrichmentModule = (() => {
     // ============================================
 
     function filterTables(query) {
-        query = query.toLowerCase().trim();
-        const rows = document.querySelectorAll('.ds-enrich-data-row');
-        let visibleCount = 0;
+        _searchQuery = query.toLowerCase().trim();
         
-        rows.forEach(row => {
-            if (!query) {
-                row.style.display = '';
-                visibleCount++;
-                return;
-            }
-            
-            let match = false;
-            const cells = row.querySelectorAll('.ds-searchable-cell');
-            cells.forEach(cell => {
-                if (cell.dataset.search && cell.dataset.search.includes(query)) {
-                    match = true;
-                }
+        if (!_searchQuery) {
+            _filteredData = [..._pendingData];
+        } else {
+            _filteredData = _pendingData.filter(item => {
+                const tableName = (item.schema_name ? `${item.schema_name}.${item.table_name}` : item.table_name).toLowerCase();
+                const businessName = (item.business_name_tr || '').toLowerCase();
+                const desc = (item.description_tr || '').toLowerCase();
+                return tableName.includes(_searchQuery) || businessName.includes(_searchQuery) || desc.includes(_searchQuery);
             });
-            
-            row.style.display = match ? '' : 'none';
-            if (match) visibleCount++;
-        });
-
-        // Tümü seç tıklandığında sadece görünenleri etkilemesi için state güncelle 
-        updateBulkCount();
+        }
+        
+        _currentPage = 1;
+        _renderRows();
     }
 
     function toggleAllBulk(checked) {
@@ -621,6 +706,7 @@ const DSEnrichmentModule = (() => {
             
             if (successIds.length > 0) {
                 _pendingData = _pendingData.filter(p => !successIds.includes(p.id.toString()) && !successIds.includes(parseInt(p.id)));
+                _filteredData = _filteredData.filter(p => !successIds.includes(p.id.toString()) && !successIds.includes(parseInt(p.id)));
                 
                 successIds.forEach(id => {
                     const row = document.querySelector(`tr[data-id="${id}"]`);
@@ -634,7 +720,7 @@ const DSEnrichmentModule = (() => {
                 
                 setTimeout(() => {
                     _updateStatsAfterApprove();
-                    updateBulkCount();
+                    _renderRows(); // Pagination sayfasını (öğe sayısını ve html'i) dengele
                 }, 350);
                 
                 _showToast(`${successIds.length} tablo onaylandı`, 'success');
@@ -667,16 +753,7 @@ const DSEnrichmentModule = (() => {
         .catch(() => {});
 
         if (_pendingData.length === 0) {
-            const body = document.getElementById('dsEnrichBody');
-            if (body) {
-                body.innerHTML = `
-                    <div class="ds-enrich-empty">
-                        <i class="fa-solid fa-circle-check"></i>
-                        <h4>Tüm Tablolar Onaylandı!</h4>
-                        <p>Artık tüm tablolar etiketlenmiş ve kullanıma hazır.</p>
-                    </div>
-                `;
-            }
+            _renderTable(); // Boş durumu otomatik yakalayacaktır
         }
     }
 
@@ -702,7 +779,9 @@ const DSEnrichmentModule = (() => {
         filterTables,
         toggleAllBulk,
         updateBulkCount,
-        bulkApprove
+        bulkApprove,
+        changePage,
+        changePageSize
     };
 })();
 

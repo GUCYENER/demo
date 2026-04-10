@@ -5,6 +5,13 @@ Format: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [v3.5.1] — 2026-04-10
+
+### 🔧 UI/UX İyileştirmeleri & Düzeltmeler
+- **Enrichment Paneli (Tablo Etiketleme):** Panel içerisine istemci taraflı sayfalama (Pagination) mantığı ile Yenile (Refresh) butonu eklendi.
+- **Enrichment Paneli (Arama Optimizasyonu):** Artık DOM tabanlı değil veri odaklı çalışan ve pagination'ı ezmeyen dinamik arama mantığı kodlandı.
+- **Süreç Korumaları (Learning & Discovery):** Arka plan işlerinin çoklu tıklamaya karşı spam edilmesini engelleyen ve süreç bitene kadar onay butonlarını devredışı bırakan güvenli kilit mekanizmaları güçlendirildi.
+
 ## [v3.5.0] — 2026-04-10
 
 ### ✨ Yeni Eklenenler

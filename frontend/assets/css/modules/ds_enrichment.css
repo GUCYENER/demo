@@ -9,7 +9,7 @@
 .ds-enrich-overlay {
     position: fixed;
     inset: 0;
-    z-index: 9999;
+    z-index: 10005;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -122,11 +122,16 @@
    ============================================ */
 .ds-enrich-body {
     flex: 1;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     padding: 1.25rem 1.5rem;
+    gap: 1rem;
 }
 .ds-enrich-table-wrap {
-    overflow-x: auto;
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
     border-radius: 10px;
     border: 1px solid var(--border-color, rgba(255,255,255,0.06));
 }

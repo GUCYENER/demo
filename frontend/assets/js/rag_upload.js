@@ -959,30 +959,8 @@ const RAGUpload = {
                 
                 if (wrap) {
                     if (data.success && data.approved && data.approved.length > 0) {
-                        let html = '';
-                        data.approved.forEach(tbl => {
-                            const nameHtml = tbl.admin_label_tr || tbl.business_name_tr;
-                            const descHtml = tbl.description_tr || 'Açıklama girilmemiş.';
-                            const catHtml = tbl.category || 'other';
-                            const dbNameHtml = tbl.schema_name ? (tbl.schema_name+'.'+tbl.table_name) : tbl.table_name;
-                            html += `
-                                <div style="display:flex;flex-direction:column;gap:4px;padding:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-card);transition:all 0.2s;">
-                                    <div style="display:flex;justify-content:space-between;align-items:center;">
-                                        <div style="font-size:13px;font-weight:600;color:var(--text-1);">
-                                            <i class="fa-solid fa-table" style="color:var(--accent);margin-right:6px;"></i>
-                                            ${nameHtml}
-                                        </div>
-                                        <span class="badge badge-green" style="font-size:10px;">
-                                            <i class="fa-solid fa-check"></i> Onaylı
-                                        </span>
-                                    </div>
-                                    <div style="font-size:11.5px;color:var(--text-3);margin-top:2px;">
-                                       <span style="font-family:'IBM Plex Mono',monospace;color:var(--text-2);background:var(--bg-chip);padding:2px 4px;border-radius:3px;">${dbNameHtml}</span> &nbsp; ${descHtml}
-                                    </div>
-                                </div>
-                            `;
-                        });
-                        wrap.innerHTML = html;
+                        RAGUpload._approvedTablesFull = data.approved;
+                        RAGUpload._renderApprovedTablesPage(1);
                     } else {
                         wrap.innerHTML = `
                             <div style="text-align:center;padding:30px 20px;color:var(--text-3);background:var(--bg-chip);border-radius:8px;">
@@ -998,6 +976,67 @@ const RAGUpload = {
                 if (wrap) wrap.innerHTML = `<div style="padding:15px;color:var(--red);font-size:12px;text-align:center;">Veri çekilirken hata oluştu.</div>`;
             }
         }
+    },
+
+    _renderApprovedTablesPage(page) {
+        const wrap = document.getElementById('rag-approved-tables-wrap');
+        if (!wrap || !RAGUpload._approvedTablesFull) return;
+
+        const limit = 5; // Sayfa basina 5 tablo goster (Ekran temiz kalsin)
+        const total = RAGUpload._approvedTablesFull.length;
+        const totalPages = Math.ceil(total / limit);
+        
+        if (page < 1) page = 1;
+        if (page > totalPages) page = totalPages;
+        
+        const start = (page - 1) * limit;
+        const end = start + limit;
+        const items = RAGUpload._approvedTablesFull.slice(start, end);
+
+        let html = '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">';
+        items.forEach(tbl => {
+            const nameHtml = tbl.admin_label_tr || tbl.business_name_tr || tbl.table_name;
+            const descHtml = tbl.description_tr || 'Açıklama girilmemiş.';
+            const catHtml = tbl.category || 'other';
+            const dbNameHtml = tbl.schema_name ? (tbl.schema_name+'.'+tbl.table_name) : tbl.table_name;
+            html += `
+                <div style="display:flex;flex-direction:column;gap:4px;padding:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-card);transition:all 0.2s;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <div style="font-size:13px;font-weight:600;color:var(--text-1);">
+                            <i class="fa-solid fa-table" style="color:var(--accent);margin-right:6px;"></i>
+                            ${nameHtml}
+                        </div>
+                        <span class="badge badge-green" style="font-size:10px;">
+                            <i class="fa-solid fa-check"></i> Onaylı
+                        </span>
+                    </div>
+                    <div style="font-size:11.5px;color:var(--text-3);margin-top:2px;">
+                        <span style="font-family:'IBM Plex Mono',monospace;color:var(--text-2);background:var(--bg-chip);padding:2px 4px;border-radius:3px;">${dbNameHtml}</span> &nbsp; ${descHtml}
+                    </div>
+                </div>
+            `;
+        });
+        html += '</div>';
+
+        // Paging UI
+        if (totalPages > 1) {
+            html += `
+                <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border-light); padding-top:10px;">
+                    <div style="font-size:11px; color:var(--text-3);">
+                        Toplam: <strong>${total}</strong> | Sayfa: <strong>${page}/${totalPages}</strong>
+                    </div>
+                    <div style="display:flex; gap:5px;">
+                        <button class="btn btn-sm btn-outline" style="padding:4px 8px; font-size:11px;" onclick="RAGUpload._renderApprovedTablesPage(${page - 1})" ${page === 1 ? 'disabled' : ''}>
+                            <i class="fa-solid fa-chevron-left"></i> Önceki
+                        </button>
+                        <button class="btn btn-sm btn-outline" style="padding:4px 8px; font-size:11px;" onclick="RAGUpload._renderApprovedTablesPage(${page + 1})" ${page === totalPages ? 'disabled' : ''}>
+                            Sonraki <i class="fa-solid fa-chevron-right"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+        wrap.innerHTML = html;
     },
 
     /**
