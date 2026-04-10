@@ -653,9 +653,9 @@ async def upload_enhanced_to_rag(
                             pass
                         log_system_event("WARNING", f"[BG] Görsel çıkarma hatası: {img_err}", "rag_enhance")
                 
-                # 4. Status → completed + maturity + chunk_count güncelle
+                # 4. Status → processing (Tüm işlemler bitene kadar completed yapmıyoruz) + maturity + chunk_count güncelle
                 bg_cur.execute(
-                    "UPDATE uploaded_files SET status = 'completed', chunk_count = %s, maturity_score = %s WHERE id = %s",
+                    "UPDATE uploaded_files SET status = 'processing', chunk_count = %s, maturity_score = %s WHERE id = %s",
                     (chunk_count, _m, _fid)
                 )
                 bg_conn.commit()
@@ -711,10 +711,16 @@ async def upload_enhanced_to_rag(
                                                 (ocr_text.strip(), orow["id"])
                                             )
                                             ocr_count += 1
+                                            
+                                        # Hızlandırılmış UX: 5 başarılı OCR'da bir ara kayıt yap
+                                        if ocr_count > 0 and (ocr_count % 5) == 0:
+                                            ocr_conn.commit()
+                                            
                                     except Exception as single_ocr_err:
                                         ocr_errors += 1
                                         log_system_event("WARNING", f"[BG] OCR tekil hata (img_id={orow['id']}, fmt={fmt}): {single_ocr_err}", "rag_enhance")
                                 
+                                # Kalanları kaydet
                                 ocr_conn.commit()
                                 log_system_event(
                                     "INFO" if ocr_count > 0 else "WARNING",
@@ -755,6 +761,15 @@ async def upload_enhanced_to_rag(
                     "rag_enhance",
                     user_id=_bg_params["user_id"]
                 )
+                
+                # 6.5 Her şey (OCR dahil) bittiğinde UI için status'u tamamlandı olarak işaretle
+                try:
+                    f_cur = bg_conn.cursor()
+                    f_cur.execute("UPDATE uploaded_files SET status = 'completed' WHERE id = %s", (_fid,))
+                    bg_conn.commit()
+                    f_cur.close()
+                except Exception as status_err:
+                    log_system_event("WARNING", f"[BG] Status güncellenemedi: {status_err}", "rag_enhance")
                 
                 # 7. WebSocket bildirimi — "Yükleme tamamlandı"
                 # v3.4.4: run_coroutine_threadsafe ile ana event loop'a gönder

@@ -79,7 +79,10 @@ class ImageExtractor:
             
             # v3.4.2: Enhancement preview'da OCR gereksiz — skip_ocr ile atlanabilir
             if images and not skip_ocr:
+                log_system_event("INFO", f"OCR başlatılıyor: {len(images)} görsel, skip_ocr={skip_ocr}, file_type={ext}", "image_extractor")
                 self._run_ocr_batch(images)
+            elif images and skip_ocr:
+                log_system_event("INFO", f"OCR atlandı: {len(images)} görsel, skip_ocr=True, file_type={ext}", "image_extractor")
             
             return images
         except Exception as e:
@@ -472,6 +475,7 @@ class ImageExtractor:
         
         reader = self._get_ocr_reader()
         if reader is None:
+            log_system_event("WARNING", f"OCR reader None döndü (fmt={fmt})", "image_extractor")
             return ""
         
         try:
@@ -484,9 +488,11 @@ class ImageExtractor:
                 img = img.convert('RGB')
             
             img_array = np.array(img)
+            log_system_event("DEBUG", f"OCR readtext başlıyor: shape={img_array.shape} fmt={fmt}", "image_extractor")
             results = reader.readtext(img_array, detail=0, paragraph=True)
             
             text = "\n".join(results).strip()
+            log_system_event("DEBUG", f"OCR readtext sonuç: {len(results)} parça, text_len={len(text)}", "image_extractor")
             return text
         except Exception as e:
             log_error(f"OCR hatası: {e}", "image_extractor")
@@ -503,6 +509,8 @@ class ImageExtractor:
         if not images:
             return
         
+        log_system_event("INFO", f"OCR batch başlıyor: {len(images)} görsel", "image_extractor")
+        
         # İlk çağrıda model yüklenmesini sağla
         if self._get_ocr_reader() is None:
             log_system_event("WARNING", "OCR reader yüklenemedi, batch atlanıyor", "image_extractor")
@@ -514,6 +522,8 @@ class ImageExtractor:
             log_system_event("INFO", f"0/{len(images)} görsel OCR formatında değil (desteklenen: {self.OCR_FORMATS})", "image_extractor")
             return
         
+        log_system_event("INFO", f"OCR adayları: {len(ocr_candidates)}/{len(images)} (formatlar: {set(img.image_format for img in ocr_candidates)})", "image_extractor")
+        
         ocr_count = 0
         ocr_errors = 0
         for idx, img in enumerate(ocr_candidates):
@@ -522,6 +532,9 @@ class ImageExtractor:
                 if text and text.strip():
                     img.ocr_text = text.strip()
                     ocr_count += 1
+                    log_system_event("DEBUG", f"OCR [{idx+1}/{len(ocr_candidates)}] başarılı: {len(img.ocr_text)} karakter", "image_extractor")
+                else:
+                    log_system_event("DEBUG", f"OCR [{idx+1}/{len(ocr_candidates)}] boş sonuç (fmt={img.image_format}, data_len={len(img.image_data)})", "image_extractor")
             except Exception as e:
                 ocr_errors += 1
                 log_error(f"OCR hatası (görsel {idx+1}/{len(ocr_candidates)}, {img.image_format}): {e}", "image_extractor")

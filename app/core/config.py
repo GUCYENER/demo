@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.4.9"  # OCR deadlock fix, Nginx ip_hash, error handling, alembic ID fix
+    APP_VERSION: str = "3.4.10"  # OCR UX fix, delay completed status until Phase 2 is done
 
     # Frontend & API prefix
     api_prefix: str = "/api"

@@ -5,9 +5,15 @@ Format: [Semantic Versioning](https://semver.org/)
 
 ---
 
-## [v3.3.0] — 2026-04-03
+## [v3.4.10] — 2026-04-10
 
-### 🆕 Eklenen
+### 🔧 Düzeltilen
+- **rag_enhance (Gelişmiş Yükleme API):** OCR sürecinin UI üzerindeki reaksiyonları hatalı okumalara neden oluyordu. Dosya yüklenirken önce "İşleniyor", yalnızca Phase 2 arka plan OCR görevleri tamamlandıktan sonra "Tamamlandı" işaretlenmesi sağlandı.
+- **rag_enhance:** Toplu (örn. 400+) görselli PDF belgelerinde OCR extraction işlemleri arka planda devam ederken, verilerin veritabanına periyodik (5 iterasyonda bir) commitlenerek anlık olarak arama motoruna dahil edilmesi sağlandı. WebSocket (WS) mesaj optimizasyonu yapıldı.
+
+---
+
+## [v3.3.0] — 2026-04-03
 - **C5: Enhancement Progress WebSocket:** LLM iyileştirme sırasında bölüm bazlı gerçek zamanlı ilerleme (WebSocket)
 - **A4: Dosya Versiyonlama:** `uploaded_files` tablosuna `file_version`, `is_active`, `file_hash` sütunları — soft-delete ile versiyon takibi
 - **A8: pgvector Migration:** `FLOAT[]` → `vector(384)` güvenli migration (extension yoksa atlanır) + IVFFlat index
