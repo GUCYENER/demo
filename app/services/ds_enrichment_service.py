@@ -81,7 +81,8 @@ def enrich_table(vyra_conn, source_id: int, company_id: int,
 
     # Bileşik skor hesapla
     enrichment_score = _compute_enrichment_score(llm_result, columns, sample_data)
-    admin_required = enrichment_score < CONFIDENCE_THRESHOLD
+    # GÜNCELLEME: Tüm tablolar RAG pipeline'ına aktarılmadan önce admin onayından geçmelidir.
+    admin_required = True
 
     # DB'ye kaydet/güncelle
     enrichment_id = _upsert_table_enrichment(
@@ -243,7 +244,7 @@ def _call_llm_for_table_analysis(table_name: str, columns: list,
         rel_lines = []
         for r in relationships[:10]:
             rel_lines.append(f"  {r.get('from_table', '?')}.{r.get('from_column', '?')} → {r.get('to_table', '?')}.{r.get('to_column', '?')}")
-        rel_block = f"\n\nForeign Key İlişkileri:\n" + "\n".join(rel_lines)
+        rel_block = "\n\nForeign Key İlişkileri:\n" + "\n".join(rel_lines)
 
     prompt = f"""Aşağıdaki veritabanı tablosunu analiz et ve iş anlamını çıkar.
 
@@ -577,6 +578,36 @@ def get_pending_approvals(vyra_conn, source_id: int = None,
     return [dict(r) if hasattr(r, 'keys') else r for r in rows]
 
 
+def get_approved_enrichments(vyra_conn, source_id: int = None, company_id: int = None) -> list:
+    """Admin onayı verilmiş (RAG için aktif) tabloları döner."""
+    cur = vyra_conn.cursor()
+
+    query = """
+        SELECT te.id, te.source_id, te.schema_name, te.table_name,
+               te.business_name_tr, te.description_tr, te.category,
+               te.admin_label_tr, te.admin_approved,
+               ds.name AS source_name
+        FROM ds_table_enrichments te
+        LEFT JOIN data_sources ds ON ds.id = te.source_id
+        WHERE te.admin_approved = TRUE
+          AND te.is_active = TRUE
+    """
+    params = []
+
+    if source_id:
+        query += " AND te.source_id = %s"
+        params.append(source_id)
+    if company_id:
+        query += " AND te.company_id = %s"
+        params.append(company_id)
+
+    query += " ORDER BY te.table_name ASC"
+
+    cur.execute(query, params)
+    rows = cur.fetchall()
+    return [dict(r) if hasattr(r, 'keys') else r for r in rows]
+
+
 def approve_enrichment(vyra_conn, enrichment_id: int, user_id: int,
                        admin_label_tr: str = None,
                        admin_notes: str = None) -> bool:
@@ -617,13 +648,13 @@ def get_enrichment_stats(vyra_conn, source_id: int) -> dict:
             SELECT
                 COUNT(*) AS total,
                 COUNT(*) FILTER (WHERE admin_approved = TRUE) AS approved,
-                COUNT(*) FILTER (WHERE admin_approved = FALSE AND enrichment_score < %s) AS pending_review,
-                COUNT(*) FILTER (WHERE admin_approved = FALSE AND enrichment_score >= %s) AS auto_approved,
+                COUNT(*) FILTER (WHERE admin_approved = FALSE) AS pending_review,
+                0 AS auto_approved,
                 COALESCE(AVG(enrichment_score), 0) AS avg_score,
                 MAX(last_enriched_at) AS last_enriched
             FROM ds_table_enrichments
             WHERE source_id = %s AND is_active = TRUE
-        """, (CONFIDENCE_THRESHOLD, CONFIDENCE_THRESHOLD, source_id))
+        """, (source_id,))
 
         row = cur.fetchone()
         if not row:

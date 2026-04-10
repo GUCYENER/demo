@@ -99,11 +99,23 @@
         </div>
     </div>
 
-    <!-- Kaynak Tipi Placeholder (DB/FileServer seçildiğinde görünür) -->
-    <div id="rag-source-placeholder" class="rag-source-placeholder hidden">
-        <i class="fa-solid fa-plug-circle-exclamation"></i>
-        <h4>Bu kaynak tipi yakında aktif olacak</h4>
-        <p>Seçilen veri kaynağı entegrasyonu şu an geliştirme aşamasındadır.</p>
+    <!-- Kaynak Tipi (DB Seçildiğinde Görünür) -->
+    <div id="rag-source-placeholder" class="card hidden" style="margin-bottom:16px;">
+        <div class="sec-head">
+            <div class="sec-title">
+                <i class="fa-solid fa-check-double" style="color:var(--green);font-size:13px"></i>
+                Öğrenilmiş (Onaylı) Tablolar
+            </div>
+            <span style="font-size:11.5px;color:var(--text-3)">Bu panoda veri kaynağından sizin onayladığınız ve yapay zekaya öğretilen bilgiler görünür.</span>
+        </div>
+        <div style="padding:16px 18px;">
+            <div id="rag-approved-tables-wrap" style="display:flex;flex-direction:column;gap:8px;">
+                <div style="text-align:center;padding:20px;color:var(--text-3);font-size:12px;">
+                    <i class="fa-solid fa-spinner fa-spin" style="margin-bottom:8px;font-size:16px;"></i><br>
+                    Veriler Yükleniyor...
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Drop zone -->

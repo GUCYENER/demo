@@ -837,6 +837,22 @@ def get_pending_enrichments(
         return {"success": False, "pending": [], "count": 0}
 
 
+@router.get("/{source_id}/enrichment-approved")
+def get_approved_enrichments(
+    source_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Admin onayı almış ve RAG sistemine dahil edilmiş tabloları döner."""
+    try:
+        from app.services import ds_enrichment_service
+        with get_db_context() as conn:
+            approved = ds_enrichment_service.get_approved_enrichments(conn, source_id)
+            return {"success": True, "approved": approved, "count": len(approved)}
+    except Exception as e:
+        logger.error("[DataSources] Approved enrichments hatası: %s", type(e).__name__)
+        return {"success": False, "approved": [], "count": 0}
+
+
 class EnrichmentApproveRequest(BaseModel):
     admin_label_tr: Optional[str] = None
     admin_notes: Optional[str] = None

@@ -209,6 +209,15 @@ async def reset_system(
         cur.execute("SELECT COUNT(*) as cnt FROM ds_db_samples")
         deleted_counts["ds_db_samples"] = cur.fetchone()["cnt"]
         cur.execute("DELETE FROM ds_db_samples")
+
+        # DS Kolon ve Tablo Zenginleştirmeleri (Enrichments)
+        cur.execute("SELECT COUNT(*) as cnt FROM ds_column_enrichments")
+        deleted_counts["ds_column_enrichments"] = cur.fetchone()["cnt"]
+        cur.execute("DELETE FROM ds_column_enrichments")
+
+        cur.execute("SELECT COUNT(*) as cnt FROM ds_table_enrichments")
+        deleted_counts["ds_table_enrichments"] = cur.fetchone()["cnt"]
+        cur.execute("DELETE FROM ds_table_enrichments")
         
         # DS FK İlişkileri
         cur.execute("SELECT COUNT(*) as cnt FROM ds_db_relationships")
@@ -343,6 +352,12 @@ async def get_system_info(
         cur.execute("SELECT COUNT(*) as cnt FROM ds_learning_results")
         info["ds_learning_results"] = cur.fetchone()["cnt"]
         
+        cur.execute("SELECT COUNT(*) as cnt FROM ds_column_enrichments")
+        info["ds_column_enrichments"] = cur.fetchone()["cnt"]
+        
+        cur.execute("SELECT COUNT(*) as cnt FROM ds_table_enrichments")
+        info["ds_table_enrichments"] = cur.fetchone()["cnt"]
+        
         cur.execute("SELECT COUNT(*) as cnt FROM ds_db_objects")
         info["ds_db_objects"] = cur.fetchone()["cnt"]
         
@@ -380,6 +395,8 @@ async def get_system_info(
                 "ml_training_samples": info["ml_training_samples"],
                 "learned_answers": info["learned_answers"],
                 "ds_learning_results": info["ds_learning_results"],
+                "ds_column_enrichments": info["ds_column_enrichments"],
+                "ds_table_enrichments": info["ds_table_enrichments"],
                 "ds_db_objects": info["ds_db_objects"],
                 "ds_discovery_jobs": info["ds_discovery_jobs"],
                 "sql_audit_log": info["sql_audit_log"],

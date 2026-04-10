@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.4.10"  # OCR UX fix, delay completed status until Phase 2 is done
+    APP_VERSION: str = "3.5.0"  # DS Enrichment RAG integration, auto-approve disable & system reset fix
 
     # Frontend & API prefix
     api_prefix: str = "/api"

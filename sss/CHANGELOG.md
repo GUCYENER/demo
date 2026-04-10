@@ -5,6 +5,15 @@ Format: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [v3.5.0] — 2026-04-10
+
+### ✨ Yeni Eklenenler
+- **Data Source Öğrenme Entegrasyonu:** Öğrenilen tabloların RAG arayüzünde "Öğrenilmiş (Onaylı) Tablolar" liste kutucuğu ile dinamik listelenmesi sağlandı.
+- **Güvenli Auto-Approve:** Zenginleştirilmiş tablolar için "Zeka skoru yüksekse otomatik onayla (auto-approve)" mantığı iptal edildi ve mutemet/admin onayına ("admin_required") bağlandı.
+
+### 🔧 Düzeltilen
+- **Sistem Reset Eksiği:** Fabrika moduna (Factory Reset) alma senaryosunda eski DB kaynaklarından öğrenilen `ds_column_enrichments` ve `ds_table_enrichments` şemalarının da silineceklere başarıyla dahil edilmesi sağlandı.
+
 ## [v3.4.10] — 2026-04-10
 
 ### 🔧 Düzeltilen

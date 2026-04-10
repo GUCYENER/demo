@@ -44,13 +44,13 @@ def generate_enriched_qa(source_id: int, vyra_conn) -> dict:
         logger.error("[DSQAGen] EmbeddingManager yüklenemedi")
         return {"success": False, "error": "Embedding modeli yüklenemedi"}
 
-    # Enrichment verileri
+    # Enrichment verileri (Sadece admin onaylı olanları çek !!!)
     cur.execute("""
         SELECT te.id, te.schema_name, te.table_name, te.object_type,
                te.business_name_tr, te.description_tr, te.category,
                te.sample_questions, te.enrichment_score, te.admin_label_tr
         FROM ds_table_enrichments te
-        WHERE te.source_id = %s AND te.is_active = TRUE
+        WHERE te.source_id = %s AND te.is_active = TRUE AND te.admin_approved = TRUE
         ORDER BY te.table_name
     """, (source_id,))
     enrichments = cur.fetchall()

@@ -194,11 +194,16 @@ const DSEnrichmentModule = (() => {
             const tableName = item.schema_name ? `${item.schema_name}.${item.table_name}` : item.table_name;
 
             rows += `
-                <tr data-id="${item.id}">
-                    <td>
+                <tr data-id="${item.id}" class="ds-enrich-data-row">
+                    <td style="width: 40px; text-align: center;">
+                        <input type="checkbox" class="ds-bulk-chk cursor-pointer" value="${item.id}" onchange="DSEnrichmentModule.updateBulkCount()">
+                    </td>
+                    <td class="ds-searchable-cell" data-search="${tableName.toLowerCase()}">
                         <strong>${tableName}</strong>
                     </td>
-                    <td>${item.business_name_tr || '<em class="ds-enrich-no-label">—</em>'}</td>
+                    <td class="ds-searchable-cell" data-search="${(item.business_name_tr || '').toLowerCase()}">
+                        ${item.business_name_tr || '<em class="ds-enrich-no-label">—</em>'}
+                    </td>
                     <td>
                         <span class="ds-cat-badge ${catClass}">${catClass}</span>
                     </td>
@@ -208,7 +213,7 @@ const DSEnrichmentModule = (() => {
                             ${(item.enrichment_score || 0).toFixed(2)}
                         </span>
                     </td>
-                    <td title="${item.description_tr || ''}">
+                    <td title="${item.description_tr || ''}" class="ds-searchable-cell" data-search="${(item.description_tr || '').toLowerCase()}">
                         ${(item.description_tr || '').substring(0, 60)}${(item.description_tr || '').length > 60 ? '...' : ''}
                     </td>
                     <td>
@@ -235,10 +240,33 @@ const DSEnrichmentModule = (() => {
         }
 
         body.innerHTML = `
-            <div class="ds-enrich-table-wrap">
+            <div class="ds-enrich-filter-bar" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:10px;">
+                <div style="flex:1; max-width:400px; display:flex; gap:0.5rem;">
+                    <div style="position:relative; flex:1;">
+                        <i class="fa-solid fa-search" style="position:absolute; left:12px; top:10px; color:#888;"></i>
+                        <input type="text" id="dsTableSearch" placeholder="Tablo veya iş adı ara..." 
+                            style="width:100%; padding:8px 32px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.2); color:#fff; outline:none;" 
+                            onkeyup="DSEnrichmentModule.filterTables(this.value)">
+                    </div>
+                    <button onclick="document.getElementById('dsTableSearch').value=''; DSEnrichmentModule.filterTables('');"
+                        style="padding:8px 16px; border-radius:6px; border:none; background:rgba(255,255,255,0.1); color:#fff; cursor:pointer;" title="Aramayı Temizle">
+                        <i class="fa-solid fa-eraser"></i>
+                    </button>
+                </div>
+                <div style="display:flex; align-items:center; gap:1rem;">
+                    <button id="dsBulkApproveBtn" onclick="DSEnrichmentModule.bulkApprove()" 
+                            style="display:none; padding:8px 16px; border-radius:6px; border:none; background:var(--primary-color, #4f46e5); color:#fff; cursor:pointer; font-weight:600;">
+                        <i class="fa-solid fa-check-double mr-2"></i> <span id="dsBulkApproveCount">0</span> Kaydı Onayla
+                    </button>
+                </div>
+            </div>
+            <div class="ds-enrich-table-wrap" id="dsMainTableWrap">
                 <table class="ds-enrich-table">
                     <thead>
                         <tr>
+                            <th style="width: 40px; text-align: center;">
+                                <input type="checkbox" id="dsSelectAllChk" onchange="DSEnrichmentModule.toggleAllBulk(this.checked)" class="cursor-pointer" title="Filtrelenmiş tümünü seç">
+                            </th>
                             <th>Tablo</th>
                             <th>İş Adı (TR)</th>
                             <th>Kategori</th>
@@ -452,11 +480,19 @@ const DSEnrichmentModule = (() => {
             const colSection = document.createElement('div');
             colSection.id = 'dsColumnDetail';
             colSection.innerHTML = `
-                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
-                    <button class="ds-enrich-btn edit" onclick="document.getElementById('dsColumnDetail').remove()">
-                        <i class="fa-solid fa-arrow-left"></i> Geri
-                    </button>
-                    <span style="font-weight: 600; color: var(--text-primary);">${tableName} — Sütun Detayları</span>
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <button class="ds-enrich-btn edit" onclick="
+                            const p=document.getElementById('dsColumnDetail'); if(p)p.remove(); 
+                            const w=document.getElementById('dsMainTableWrap'); if(w)w.style.display='';
+                            const b=document.querySelector('.ds-enrich-filter-bar'); if(b)b.style.display='flex';
+                        " style="padding:4px 10px;">
+                            <i class="fa-solid fa-arrow-left"></i> Geri Dön
+                        </button>
+                        <span style="font-weight: 600; color: var(--text-primary); font-size:1.1rem; margin-left:10px;">
+                            <i class="fa-solid fa-table"></i> ${tableName} — Sütun Etiketleri
+                        </span>
+                    </div>
                 </div>
                 <div class="ds-enrich-table-wrap">
                     <table class="ds-enrich-table">
@@ -475,8 +511,10 @@ const DSEnrichmentModule = (() => {
             `;
 
             // Mevcut tabloyu gizle, sütun detaylarını göster
-            const wrap = body.querySelector('.ds-enrich-table-wrap');
+            const wrap = document.getElementById('dsMainTableWrap');
+            const filterBar = body.querySelector('.ds-enrich-filter-bar');
             if (wrap) wrap.style.display = 'none';
+            if (filterBar) filterBar.style.display = 'none';
 
             body.appendChild(colSection);
 
@@ -487,11 +525,139 @@ const DSEnrichmentModule = (() => {
     }
 
     // ============================================
+    // Bulk Operations & Filter
+    // ============================================
+
+    function filterTables(query) {
+        query = query.toLowerCase().trim();
+        const rows = document.querySelectorAll('.ds-enrich-data-row');
+        let visibleCount = 0;
+        
+        rows.forEach(row => {
+            if (!query) {
+                row.style.display = '';
+                visibleCount++;
+                return;
+            }
+            
+            let match = false;
+            const cells = row.querySelectorAll('.ds-searchable-cell');
+            cells.forEach(cell => {
+                if (cell.dataset.search && cell.dataset.search.includes(query)) {
+                    match = true;
+                }
+            });
+            
+            row.style.display = match ? '' : 'none';
+            if (match) visibleCount++;
+        });
+
+        // Tümü seç tıklandığında sadece görünenleri etkilemesi için state güncelle 
+        updateBulkCount();
+    }
+
+    function toggleAllBulk(checked) {
+        const rows = document.querySelectorAll('.ds-enrich-data-row');
+        rows.forEach(row => {
+            if (row.style.display !== 'none') {
+                const chk = row.querySelector('.ds-bulk-chk');
+                if (chk) chk.checked = checked;
+            }
+        });
+        updateBulkCount();
+    }
+
+    function updateBulkCount() {
+        const checked = document.querySelectorAll('.ds-bulk-chk:checked').length;
+        const btn = document.getElementById('dsBulkApproveBtn');
+        const countSpan = document.getElementById('dsBulkApproveCount');
+        
+        if (btn && countSpan) {
+            countSpan.textContent = checked;
+            btn.style.display = checked > 0 ? 'inline-block' : 'none';
+        }
+        
+        const allVisibleRows = Array.from(document.querySelectorAll('.ds-enrich-data-row')).filter(r => r.style.display !== 'none');
+        const allVisibleChecked = allVisibleRows.filter(r => {
+            const c = r.querySelector('.ds-bulk-chk');
+            return c && c.checked;
+        });
+        
+        const mainChk = document.getElementById('dsSelectAllChk');
+        if (mainChk) {
+            mainChk.checked = allVisibleRows.length > 0 && allVisibleRows.length === allVisibleChecked.length;
+        }
+    }
+
+    async function bulkApprove() {
+        const checkedBoxes = Array.from(document.querySelectorAll('.ds-bulk-chk:checked'));
+        if (checkedBoxes.length === 0) return;
+        
+        const btn = document.getElementById('dsBulkApproveBtn');
+        if(btn) {
+           btn.disabled=true; 
+           btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Onaylanıyor...';
+        }
+
+        try {
+            const token = localStorage.getItem('access_token');
+            const promises = checkedBoxes.map(chk => {
+                const enrichmentId = chk.value;
+                return fetch(
+                    `/api/data-sources/${_currentSourceId}/enrichment-approve/${enrichmentId}`,
+                    {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({})
+                    }
+                ).then(res => res.json()).then(data => ({id: enrichmentId, success: data.success}));
+            });
+
+            const results = await Promise.all([...promises]);
+            const successIds = results.filter(r => r.success).map(r => r.id);
+            
+            if (successIds.length > 0) {
+                _pendingData = _pendingData.filter(p => !successIds.includes(p.id.toString()) && !successIds.includes(parseInt(p.id)));
+                
+                successIds.forEach(id => {
+                    const row = document.querySelector(`tr[data-id="${id}"]`);
+                    if (row) {
+                        row.style.transition = 'opacity 0.3s, transform 0.3s';
+                        row.style.opacity = '0';
+                        row.style.transform = 'translateX(30px)';
+                        setTimeout(() => row.remove(), 300);
+                    }
+                });
+                
+                setTimeout(() => {
+                    _updateStatsAfterApprove();
+                    updateBulkCount();
+                }, 350);
+                
+                _showToast(`${successIds.length} tablo onaylandı`, 'success');
+            } else {
+                _showToast('Toplu onay başarısız', 'error');
+            }
+        } catch (err) {
+            console.error('[DSEnrich] Toplu onay hatası:', err);
+            _showToast('Onay sırasında hata oluştu', 'error');
+        } finally {
+            if(btn) {
+                btn.disabled=false; 
+                btn.innerHTML = '<i class="fa-solid fa-check-double mr-2"></i> <span id="dsBulkApproveCount">0</span> Kaydı Onayla';
+                updateBulkCount();
+            }
+        }
+    }
+
+    // ============================================
     // Helpers
     // ============================================
 
     function _updateStatsAfterApprove() {
-        // Stats'ı tekrar yükle
         const token = localStorage.getItem('access_token');
         fetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`, {
             headers: { 'Authorization': `Bearer ${token}` }
@@ -500,7 +666,6 @@ const DSEnrichmentModule = (() => {
         .then(stats => _renderStats(stats))
         .catch(() => {});
 
-        // Tablo boşsa empty state göster
         if (_pendingData.length === 0) {
             const body = document.getElementById('dsEnrichBody');
             if (body) {
@@ -516,12 +681,10 @@ const DSEnrichmentModule = (() => {
     }
 
     function _showToast(message, type) {
-        // Mevcut toast sistemi varsa onu kullan
         if (typeof showToast === 'function') {
             showToast(message, type);
             return;
         }
-        // Basit fallback
         console.log(`[Toast:${type}] ${message}`);
     }
 
@@ -535,7 +698,11 @@ const DSEnrichmentModule = (() => {
         quickApprove,
         toggleEdit,
         saveEdit,
-        showColumns
+        showColumns,
+        filterTables,
+        toggleAllBulk,
+        updateBulkCount,
+        bulkApprove
     };
 })();
 
