@@ -122,7 +122,10 @@
    ============================================ */
 .ds-enrich-body {
     flex: 1;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;  /* tablo-wrap içi scroll eder, body değil */
+    min-height: 0;
     padding: 1.25rem 1.5rem;
 }
 .ds-enrich-table-wrap {

@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.5.10"  # UI/UX fixes: DB Learning chunked list view & specific partial discovery logic, fixed missing modal exports
+    APP_VERSION: str = "3.5.12"  # UI: pending approval flow fix - sort, yellow label, filter button, togglePendingApprovalFilter
 
     # Frontend & API prefix
     api_prefix: str = "/api"
