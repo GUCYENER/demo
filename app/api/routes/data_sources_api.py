@@ -530,6 +530,12 @@ def discover_technology(
             if source.get("source_type") != "database":
                 raise HTTPException(status_code=400, detail="Bu kaynak tipi keşif desteklemiyor.")
 
+            # Çalışan iş kontrolü
+            running_check = ds_learning_service.check_running_job(conn, source_id)
+            if running_check["has_running"]:
+                rj = running_check["job"]
+                return {"success": False, "message": f"Bu kaynak için zaten çalışan bir iş var: {rj['job_type']}", "running_job": rj}
+
             # Job oluştur
             job_id = ds_learning_service.create_job(conn, source_id, source["company_id"], "technology", current_user.get("id"))
 
@@ -576,6 +582,12 @@ def detect_objects(
             if source.get("source_type") != "database":
                 raise HTTPException(status_code=400, detail="Bu kaynak tipi keşif desteklemiyor.")
 
+            # Çalışan iş kontrolü
+            running_check = ds_learning_service.check_running_job(conn, source_id)
+            if running_check["has_running"]:
+                rj = running_check["job"]
+                return {"success": False, "message": f"Bu kaynak için zaten çalışan bir iş var: {rj['job_type']}", "running_job": rj}
+
             job_id = ds_learning_service.create_job(conn, source_id, source["company_id"], "objects", current_user.get("id"))
             result = ds_learning_service.detect_objects(source, conn)
             ds_learning_service.complete_job(conn, job_id, result)
@@ -617,6 +629,12 @@ def collect_samples(
             if source.get("source_type") != "database":
                 raise HTTPException(status_code=400, detail="Bu kaynak tipi keşif desteklemiyor.")
 
+            # Çalışan iş kontrolü
+            running_check = ds_learning_service.check_running_job(conn, source_id)
+            if running_check["has_running"]:
+                rj = running_check["job"]
+                return {"success": False, "message": f"Bu kaynak için zaten çalışan bir iş var: {rj['job_type']}", "running_job": rj}
+
             job_id = ds_learning_service.create_job(conn, source_id, source["company_id"], "samples", current_user.get("id"))
             result = ds_learning_service.collect_samples(source, conn)
             ds_learning_service.complete_job(conn, job_id, result)
@@ -632,6 +650,21 @@ def collect_samples(
         logger.error("[DataSources] Örnek veri toplama sırasında hata oluştu")
         logger.debug("[DataSources] collect_samples detay: %s", type(e).__name__)
         return {"success": False, "message": f"Veri toplama sırasında hata: {type(e).__name__}"}
+
+
+@router.get("/{source_id}/check-running-job")
+def check_running_job(
+    source_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Bu kaynak için çalışan bir iş var mı kontrol eder (frontend guard için)."""
+    try:
+        with get_db_context() as conn:
+            result = ds_learning_service.check_running_job(conn, source_id)
+            return {"success": True, **result}
+    except Exception as e:
+        logger.error("[DataSources] Running job kontrolü sırasında hata: %s", type(e).__name__)
+        return {"success": True, "has_running": False, "job": None}
 
 
 @router.get("/{source_id}/discovery-status")
@@ -760,6 +793,12 @@ def run_full_learning(
             source = dict(source)
             current_user_id = current_user.get("id")
 
+            # Çalışan iş kontrolü
+            running_check = ds_learning_service.check_running_job(conn, source_id)
+            if running_check["has_running"]:
+                rj = running_check["job"]
+                return {"success": False, "message": f"Bu kaynak için zaten çalışan bir iş var: {rj['job_type']}", "running_job": rj}
+
         # Background thread
         def _bg_full_learning():
             bg_conn = None
@@ -868,9 +907,16 @@ def approve_enrichment(
     """Bir tablo enrichment'ını admin olarak onaylar."""
     try:
         from app.services import ds_enrichment_service
+        from app.services import ds_learning_service
         label = body.admin_label_tr if body else None
         notes = body.admin_notes if body else None
         with get_db_context() as conn:
+            # Çalışan iş kontrolü
+            running_check = ds_learning_service.check_running_job(conn, source_id)
+            if running_check["has_running"]:
+                rj = running_check["job"]
+                return {"success": False, "message": f"Bu kaynak için şu anda çalışan bir iş var ({rj['job_type']}). Onay işlemi yapmak için tamamlanmasını bekleyin."}
+
             success = ds_enrichment_service.approve_enrichment(
                 conn, enrichment_id,
                 current_user.get("id"),

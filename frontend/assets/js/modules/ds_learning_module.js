@@ -18,6 +18,7 @@ window.DSLearningModule = (function () {
     let _currentSourceName = '';
     let _wizardStep = 0;  // 0: idle, 1: technology, 2: objects, 3: samples, 4: qa_generation
     let _stepResults = {};
+    let _wizardTimer = null;
 
     // Toast helper
     function toast(type, message) {
@@ -143,51 +144,26 @@ window.DSLearningModule = (function () {
 
         document.body.appendChild(modal);
 
-        const startBtn = document.getElementById('dsWizardStartBtn');
-        const closeBtn = document.getElementById('dsWizardClose');
-
-        // Mevcut durumu kontrol et
-        const checkStatus = async () => {
-            startBtn.disabled = true;
-            startBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Durum Kontrol Ediliyor...';
-            try {
-                const statusRes = await apiCall(`/${sourceId}/discovery-status`);
-                let isRunning = false;
-                if (statusRes && !statusRes.error) {
-                    if (statusRes.technology?.status === 'running' || 
-                        statusRes.objects?.status === 'running' || 
-                        statusRes.samples?.status === 'running') {
-                        isRunning = true;
-                    }
-                }
-                
-                if (isRunning) {
-                    startBtn.innerHTML = '<i class="fa-solid fa-ban"></i> Mevcut Keşif Sürüyor...';
-                    startBtn.disabled = true;
-                    startBtn.style.background = '#475569';
-                    startBtn.style.cursor = 'not-allowed';
-                    toast('warning', 'Şu anda arka planda devam eden bir keşif veya öğrenme işlemi var.');
-                } else {
-                    startBtn.innerHTML = '<i class="fa-solid fa-rocket"></i> Keşfi Başlat';
-                    startBtn.disabled = false;
-                }
-            } catch (err) {
-                startBtn.innerHTML = '<i class="fa-solid fa-rocket"></i> Keşfi Başlat';
-                startBtn.disabled = false;
-            }
-        };
-
         // Events
-        closeBtn.addEventListener('click', closeWizard);
-        startBtn.addEventListener('click', () => {
-            if (!startBtn.disabled) runStep(1);
+        document.getElementById('dsWizardClose').addEventListener('click', closeWizard);
+        const startBtn = document.getElementById('dsWizardStartBtn');
+        startBtn.addEventListener('click', async function() {
+            if (this.disabled) return;
+            this.disabled = true;
+            this.classList.add('ds-btn-disabled'); // Optional visual indicator
+            this.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Başlatılıyor...';
+            await runStep(1);
         });
 
-        // Hızlıca durumu check et
-        checkStatus();
-
-        // ESC desteği
-        modal._escHandler = (e) => { if (e.key === 'Escape') closeWizard(); };
+        // ESC desteği — sadece üstte başka modal yoksa çalışır
+        modal._escHandler = (e) => {
+            if (e.key === 'Escape') {
+                // Wizard üstünde başka bir modal varsa ESC'ye müdahale etme
+                const topModals = document.querySelectorAll('.ds-wizard-overlay.active');
+                const wizardIsTop = topModals.length <= 1;
+                if (wizardIsTop) closeWizard();
+            }
+        };
         document.addEventListener('keydown', modal._escHandler);
 
         // Animasyon
@@ -195,6 +171,10 @@ window.DSLearningModule = (function () {
     }
 
     function closeWizard() {
+        if (_wizardTimer) {
+            clearInterval(_wizardTimer);
+            _wizardTimer = null;
+        }
         const modal = document.getElementById('dsLearningWizardModal');
         if (modal) {
             if (modal._escHandler) document.removeEventListener('keydown', modal._escHandler);
@@ -208,6 +188,36 @@ window.DSLearningModule = (function () {
     // ============================================
 
     async function runStep(step) {
+        // Adım 1'de (ilk başlatma) çalışan iş kontrolü yap
+        if (step === 1) {
+            try {
+                const check = await apiCall(`/${_currentSourceId}/check-running-job`);
+                if (check.has_running && check.job) {
+                    const jobLabels = {
+                        'technology': 'Teknoloji Keşfi',
+                        'objects': 'Obje Tespiti',
+                        'samples': 'Veri Toplama',
+                        'learning': 'Öğrenme',
+                        'qa_generation': 'QA Üretimi',
+                        'full_learning': 'Tam Pipeline'
+                    };
+                    const label = jobLabels[check.job.job_type] || check.job.job_type;
+                    toast('warning', `⚠️ Bu kaynak için "${label}" işi hâlâ çalışıyor. Tamamlanmaları beklemelisiniz.`);
+                    // Butonu geri aç
+                    const startBtn = document.getElementById('dsWizardStartBtn');
+                    if (startBtn) {
+                        startBtn.disabled = false;
+                        startBtn.classList.remove('ds-btn-disabled');
+                        startBtn.innerHTML = '<i class="fa-solid fa-rocket"></i> Keşfi Başlat';
+                    }
+                    return; // İşlemi engelle
+                }
+            } catch (e) {
+                console.warn('[DSLearning] Running job kontrolü yapılamadı:', e);
+                // Kontrol başarısız olursa devam et (backend guard yakalar)
+            }
+        }
+
         _wizardStep = step;
         _updateStepIndicator(step, 'running');
         _showStepLoading(step);
@@ -240,8 +250,12 @@ window.DSLearningModule = (function () {
                 }
             } else {
                 _updateStepIndicator(step, 'failed');
-                _showStepError(step, result.message || 'Bilinmeyen hata');
-                toast('error', `${stepNames[step]} başarısız`);
+                // Backend guard mesajını göster (running_job varsa)
+                const msg = result.running_job
+                    ? `Bu kaynak için "${result.running_job.job_type}" işi hâlâ çalışıyor!`
+                    : (result.message || 'Bilinmeyen hata');
+                _showStepError(step, msg);
+                toast('error', `${stepNames[step]} başarısız: ${msg}`);
             }
         } catch (err) {
             _updateStepIndicator(step, 'failed');
@@ -418,15 +432,31 @@ window.DSLearningModule = (function () {
             </div>
         `;
 
-        document.getElementById('dsAutoNextBtn').addEventListener('click', () => runStep(nextStep));
+        document.getElementById('dsAutoNextBtn').addEventListener('click', () => {
+            if (_wizardTimer) clearInterval(_wizardTimer);
+            runStep(nextStep);
+        });
 
-        // 2 saniye sonra otomatik başlat
-        setTimeout(() => {
-            const btn = document.getElementById('dsAutoNextBtn');
-            if (btn && _wizardStep === step) {
+        // 10 saniye sonra otomatik başlat (geriye sayımlı)
+        let countdown = 10;
+        const btn = document.getElementById('dsAutoNextBtn');
+        btn.innerHTML = `<i class="fa-solid fa-arrow-right"></i> ${nextNames[nextStep]} Başlat (${countdown}s)`;
+
+        _wizardTimer = setInterval(() => {
+            countdown--;
+            const currentBtn = document.getElementById('dsAutoNextBtn');
+            if (!currentBtn || _wizardStep !== step) {
+                clearInterval(_wizardTimer);
+                return;
+            }
+            
+            if (countdown > 0) {
+                currentBtn.innerHTML = `<i class="fa-solid fa-arrow-right"></i> ${nextNames[nextStep]} Başlat (${countdown}s)`;
+            } else {
+                clearInterval(_wizardTimer);
                 runStep(nextStep);
             }
-        }, 2000);
+        }, 1000);
     }
 
     function _showFinalResults() {
@@ -438,13 +468,13 @@ window.DSLearningModule = (function () {
                     <i class="fa-solid fa-trophy"></i>
                 </div>
                 <h3>Keşif Tamamlandı!</h3>
-                <p>Tüm adımlar başarıyla tamamlandı. Detayları görüntüleyebilir veya yapay zeka ile <b>Tam Öğrenme (Enrichment)</b> sürecini başlatarak tabloları RAG sistemine hazırlayabilirsiniz.</p>
-                <div class="ds-wizard-final-actions" style="flex-wrap: wrap; justify-content: center; gap: 8px;">
-                    <button class="ds-wizard-btn primary" id="dsRunFullLearningBtn" style="background: var(--accent); color: white;">
-                        <i class="fa-solid fa-brain"></i> Tam Öğrenme Başlat
+                <p>Tüm adımlar başarıyla tamamlandı. Aşağıdan AI Tablo Öğrenimi'ni başlatabilir, tabloları etiketleyebilir veya detayları görüntüleyebilirsiniz.</p>
+                <div class="ds-wizard-final-actions">
+                    <button class="ds-wizard-btn primary" id="dsWizardRunFullBtn" style="background-color: var(--accent-primary);">
+                        <i class="fa-solid fa-brain"></i> Öğrenmeyi Başlat
                     </button>
                     <button class="ds-wizard-btn secondary" id="dsEnrichBtn">
-                        <i class="fa-solid fa-tags"></i> Tablo Onay Paneli
+                        <i class="fa-solid fa-tags"></i> Tablo Etiketle
                     </button>
                     <button class="ds-wizard-btn secondary" id="dsViewDetailsBtn">
                         <i class="fa-solid fa-table-list"></i> Detayları Görüntüle
@@ -459,26 +489,22 @@ window.DSLearningModule = (function () {
             </div>
         `;
 
-        document.getElementById('dsRunFullLearningBtn').addEventListener('click', async (e) => {
-            const btn = e.currentTarget;
-            btn.disabled = true;
-            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Başlatılıyor...';
-            try {
-                await runFullLearning(_currentSourceId, _currentSourceName || 'Veri Kaynağı');
-            } catch (err) { }
-            
-            // Arka planda çalışmaya devam edeceği için butonu kapalı tutup kullanıcıya bilgi veriyoruz
-            setTimeout(() => {
-                btn.innerHTML = '<i class="fa-solid fa-clock"></i> Arka Planda Çalışıyor...';
-                btn.style.background = '#475569'; // Gri renk yapalım ki aktif olmadığı belli olsun
-                btn.style.cursor = 'not-allowed';
-                // btn.disabled = false; -> İptal edildi, tekrar tıklanması engellendi.
-            }, 2000);
+        document.getElementById('dsWizardRunFullBtn').addEventListener('click', () => {
+            // Öğrenme Başlat Fonksiyonunu çağır (Global veya private wrapper üzerinden)
+            if (typeof runFullLearning === 'function') {
+                runFullLearning(_currentSourceId);
+            } else if (window.DSLearningModule && typeof window.DSLearningModule.runFullLearning === 'function') {
+                window.DSLearningModule.runFullLearning(_currentSourceId);
+            }
         });
 
         document.getElementById('dsEnrichBtn').addEventListener('click', () => {
+            const wizardModal = document.getElementById('dsLearningWizardModal');
+            if (wizardModal) wizardModal.style.display = 'none';
             if (window.DSEnrichmentModule) {
-                DSEnrichmentModule.openPanel(_currentSourceId);
+                DSEnrichmentModule.openPanel(_currentSourceId, () => {
+                    if (wizardModal) wizardModal.style.display = '';
+                });
             }
         });
         document.getElementById('dsViewDetailsBtn').addEventListener('click', () => showDiscoveryDetails(_currentSourceId));
@@ -494,6 +520,10 @@ window.DSLearningModule = (function () {
     // ============================================
 
     async function showDiscoveryDetails(sourceId) {
+        // Wizard'ı gizle (silme), alt modal kapanınca geri gösterilecek
+        const wizardModal = document.getElementById('dsLearningWizardModal');
+        if (wizardModal) wizardModal.style.display = 'none';
+
         try {
             const data = await apiCall(`/${sourceId}/discovery-details`);
             const status = await apiCall(`/${sourceId}/discovery-status`);
@@ -599,17 +629,21 @@ window.DSLearningModule = (function () {
             `;
 
             document.body.appendChild(modal);
-            document.getElementById('dsDetailsClose').addEventListener('click', () => {
+            const closeDetailsModal = () => {
                 modal.classList.remove('active');
-                setTimeout(() => modal.remove(), 300);
-            });
-            document.addEventListener('keydown', function escHandler(e) {
-                if (e.key === 'Escape') {
-                    modal.classList.remove('active');
-                    setTimeout(() => modal.remove(), 300);
-                    document.removeEventListener('keydown', escHandler);
-                }
-            });
+                setTimeout(() => {
+                    modal.remove();
+                    // Wizard'ı geri göster
+                    const wiz = document.getElementById('dsLearningWizardModal');
+                    if (wiz) wiz.style.display = '';
+                }, 300);
+                document.removeEventListener('keydown', detailsEscHandler);
+            };
+            document.getElementById('dsDetailsClose').addEventListener('click', closeDetailsModal);
+            function detailsEscHandler(e) {
+                if (e.key === 'Escape') closeDetailsModal();
+            }
+            document.addEventListener('keydown', detailsEscHandler);
             requestAnimationFrame(() => modal.classList.add('active'));
 
         } catch (err) {
@@ -1123,11 +1157,38 @@ window.DSLearningModule = (function () {
     async function runFullLearning(sourceId, sourceName) {
         _currentSourceId = sourceId;
         _currentSourceName = sourceName;
+
+        // Çalışan iş kontrolü (frontend guard)
+        try {
+            const check = await apiCall(`/${sourceId}/check-running-job`);
+            if (check.has_running && check.job) {
+                const jobLabels = {
+                    'technology': 'Teknoloji Keşfi', 'objects': 'Obje Tespiti',
+                    'samples': 'Veri Toplama', 'learning': 'Öğrenme',
+                    'qa_generation': 'QA Üretimi', 'full_learning': 'Tam Pipeline'
+                };
+                const label = jobLabels[check.job.job_type] || check.job.job_type;
+                toast('warning', `⚠️ Bu kaynak için "${label}" işi hâlâ çalışıyor. Tamamlanmasını beklemelisiniz.`);
+                
+                // Tam pipeline butonunu geri aç (eğer history modalı açıksa)
+                const fullBtn = document.getElementById('dsHistoryRunFull');
+                if (fullBtn) {
+                    fullBtn.disabled = false;
+                    fullBtn.classList.remove('ds-btn-disabled');
+                    fullBtn.innerHTML = '<i class="fa-solid fa-rocket"></i> Tam Pipeline Başlat';
+                }
+                return;
+            }
+        } catch (e) {
+            console.warn('[DSLearning] Running job kontrolü yapılamadı:', e);
+        }
+
         try {
             const result = await apiCall(`/${sourceId}/run-full-learning`, 'POST');
             if (result.success) {
                 toast('success', result.message || 'Tam öğrenme pipeline başlatıldı');
             } else {
+                // Backend guard mesajını göster
                 toast('error', 'Pipeline başlatılamadı: ' + (result.message || ''));
             }
         } catch (err) {
@@ -1141,6 +1202,9 @@ window.DSLearningModule = (function () {
 
     async function showScheduleModal(sourceId) {
         _currentSourceId = sourceId;
+        // Wizard'ı gizle (silme), schedule kapanınca geri gösterilecek
+        const wizardModal = document.getElementById('dsLearningWizardModal');
+        if (wizardModal) wizardModal.style.display = 'none';
 
         // Mevcut schedule bilgisini al
         let scheduleData = { exists: false };
@@ -1211,12 +1275,22 @@ window.DSLearningModule = (function () {
         requestAnimationFrame(() => modal.classList.add('active'));
 
         // Events
-        const closeSchedule = () => { modal.classList.remove('active'); setTimeout(() => modal.remove(), 300); };
+        const closeSchedule = () => {
+            modal.classList.remove('active');
+            setTimeout(() => {
+                modal.remove();
+                // Wizard'ı geri göster
+                const wiz = document.getElementById('dsLearningWizardModal');
+                if (wiz) wiz.style.display = '';
+            }, 300);
+            document.removeEventListener('keydown', scheduleEscHandler);
+        };
         document.getElementById('dsScheduleClose').addEventListener('click', closeSchedule);
         document.getElementById('dsScheduleCancel').addEventListener('click', closeSchedule);
-        document.addEventListener('keydown', function escH(e) {
-            if (e.key === 'Escape') { closeSchedule(); document.removeEventListener('keydown', escH); }
-        });
+        function scheduleEscHandler(e) {
+            if (e.key === 'Escape') closeSchedule();
+        }
+        document.addEventListener('keydown', scheduleEscHandler);
 
         // Interval alanı visibility
         document.getElementById('dsScheduleType').addEventListener('change', (e) => {
@@ -1319,16 +1393,11 @@ window.DSLearningModule = (function () {
         fullBtn.addEventListener('click', async () => {
             fullBtn.disabled = true;
             fullBtn.classList.add('ds-btn-disabled');
-            fullBtn.style.background = '#475569';
-            fullBtn.style.cursor = 'not-allowed';
             fullBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Başlatılıyor...';
             try {
                 await runFullLearning(sourceId, sourceName);
             } catch (e) { toast('error', e.message); }
-            setTimeout(() => {
-                fullBtn.innerHTML = '<i class="fa-solid fa-clock"></i> Arka Planda Çalışıyor...';
-                loadHistory(sourceId);
-            }, 2000);
+            setTimeout(() => loadHistory(sourceId), 2000);
         });
 
         document.getElementById('dsHistorySchedule').addEventListener('click', () => showScheduleModal(sourceId));

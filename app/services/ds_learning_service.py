@@ -706,6 +706,57 @@ def _serialize_value(val):
 # Job Yönetimi
 # =====================================================
 
+def check_running_job(vyra_conn, source_id: int) -> dict:
+    """
+    Bu kaynak için çalışan (running) bir iş var mı kontrol eder.
+    30 dakikadan eski stuck job'ları otomatik 'failed' olarak işaretler.
+    
+    Returns:
+        dict: {"has_running": bool, "job": {...} or None}
+    """
+    cur = vyra_conn.cursor()
+
+    # 1) Stuck job temizliği: 30 dakikadan eski running job'ları failed yap
+    cur.execute("""
+        UPDATE ds_discovery_jobs
+        SET status = 'failed',
+            error_message = 'Zaman aşımı: İş 30 dakikadan uzun sürdüğü için otomatik iptal edildi.',
+            completed_at = NOW()
+        WHERE source_id = %s
+          AND status = 'running'
+          AND started_at < NOW() - INTERVAL '30 minutes'
+    """, (source_id,))
+    cleaned = cur.rowcount
+    if cleaned > 0:
+        vyra_conn.commit()
+        logger.warning("[DSLearning] %d stuck job temizlendi (source_id=%s)", cleaned, source_id)
+
+    # 2) Hâlâ running olan iş var mı?
+    cur.execute("""
+        SELECT id, job_type, started_at
+        FROM ds_discovery_jobs
+        WHERE source_id = %s AND status = 'running'
+        ORDER BY started_at DESC
+        LIMIT 1
+    """, (source_id,))
+    row = cur.fetchone()
+
+    if row:
+        job_type = row["job_type"] if isinstance(row, dict) else row[1]
+        started = row["started_at"] if isinstance(row, dict) else row[2]
+        job_id = row["id"] if isinstance(row, dict) else row[0]
+        return {
+            "has_running": True,
+            "job": {
+                "id": job_id,
+                "job_type": job_type,
+                "started_at": started.isoformat() if started else None
+            }
+        }
+
+    return {"has_running": False, "job": None}
+
+
 def create_job(vyra_conn, source_id: int, company_id: int, job_type: str, user_id: int = None) -> int:
     """Yeni keşif job kaydı oluşturur, ID döner."""
     cur = vyra_conn.cursor()

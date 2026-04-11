@@ -318,7 +318,8 @@ def call_llm_api(messages: list) -> str:
         "model": config['model_name'],
         "messages": messages,
         "temperature": config['temperature'],
-        "top_p": config['top_p']
+        "top_p": config['top_p'],
+        "max_tokens": config.get('max_tokens', 4096)
     }
 
     try:
@@ -379,6 +380,7 @@ def call_llm_api_with_config(messages: list, config: dict) -> str:
         "messages": messages,
         "temperature": config.get('temperature', 0.7),
         "top_p": config.get('top_p', 1.0),
+        "max_tokens": config.get('max_tokens', 4096)
     }
 
     try:
@@ -410,6 +412,7 @@ def call_llm_api_stream_with_config(messages: list, config: dict):
         "messages": messages,
         "temperature": config.get('temperature', 0.7),
         "top_p": config.get('top_p', 1.0),
+        "max_tokens": config.get('max_tokens', 4096),
         "stream": True,
     }
 
@@ -473,6 +476,7 @@ def call_llm_api_stream(messages: list):
         "messages": messages,
         "temperature": config['temperature'],
         "top_p": config['top_p'],
+        "max_tokens": config.get('max_tokens', 4096),
         "stream": True  # ← Streaming aktif
     }
 

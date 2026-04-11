@@ -49,6 +49,32 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.5.4 (2026-04-11) - JS Export Fixes & Discovery UX
+- ✅ **JS Export Modül Dizaynı:** `applyFilterAndRender` gibi iç closure metodları IIFE dışına `export` edilerek TypeError hataları önlendi, Frontend başarılı şekilde bundle edildi.
+- ✅ **Discovery Tam Öğrenme Yönlendirmesi:** "DB Keşif" wizard'ının 3. Adımı bitiminden hemen sonra çıkılan Final Karşılama Ekranına eksik olan **"Öğrenmeyi Başlat Kullanıcı Butonu"** (Run Full Learning) eklendi ve pipeline akışı kusursuzlaştırıldı.
+
+### 🆕 v3.5.3 (2026-04-11) - Enrichment Table UI/UX & Pagination
+- ✅ **Table Pagination:** Onay bekleyen tablolar için client-side sayfalama altyapısı yazıldı (Sayfa bazında 10 kayıt gösterimi).
+- **Dynamic Bulk Operations:** Seçili tabloların (`_selectedIds` Set objesiyle) pagination geçişleri sırasında hafızasında tutulması ve toplu olarak onaylanabilmesi altyapısı tasarlandı.
+- ✅ **Arama ve Filtreleme UI:** Arama kutusunun yanına düşük skorlu AI kararlarını veya isimsiz eşleşmeyenleri filtreleyebilen Checkbox eklendi. Listeyi API'dan tazeleyen Yenile butonu dahil edildi.
+- ✅ **Table CSS Layout:** `ds_enrichment_module.js` modal bileşenleri genişletildi (`1400px`) ve satırların sığmadığı durumlarda isim ve açıklama sütunlarının `word-wrap` yapması garanti altına alındı.
+
+### 🆕 v3.5.2 (2026-04-11) - LLM Resiliency & Token Override
+- ✅ **LLM Max Token Çözümü:** Azure OpenAI çağrılarında json truncation hatasını (`Expecting ',' delimiter`) ortadan kaldırmak için global `call_llm_api` servislerine `max_tokens: 4096` eklendi.
+- ✅ **Dynamic Context Shrinking (Oto-Kurtarma):** Dev tablolar analiz edilirken `500 Server Error` veya benzeri API hataları alınırsa, backend'in otomatik olarak verileri daraltıp (mini-prompt) 2. defa analiz denemesi yapması (retry logic) sağlandı.
+
+### 🆕 v3.5.1 (2026-04-11) - Concurrent Job Prevention & Modal Stacks
+- ✅ **Backend Job Guard:** DB keşfi ve tam pipeline çalışırken `ds_discovery_jobs` durumunu kontrol eden merkezi frontend/backend guard eklendi.
+- ✅ **Stuck Job Temizliği:** 30 dakikadan uzun süre çalışan ve takılı kalan discovery işlerinin otomatik olarak iptal edilmesi (`failed`) mekanizması eklendi.
+- ✅ **Modal Stacking Bug Fix:** `ds_learning_module` altındaki modallar kapatıldığında ana wizard'ın kapanması (sıfırlanması) hatası çözüldü, z-index mantığına geçildi.
+- ✅ **Frontend Koruması:** Admin onay bekleyen enrichment ekranında ve keşif ekranında double-click ile aynı anda iş başlatma sorunları `disable` ile engellendi.
+
+### 🆕 v3.5.0 (2026-04-10) - DS Enrichment RAG Integration & System Fixes
+- ✅ Data Sources enrichment modülü RAG arama entegrasyonuna bağlandı.
+- ✅ Otomatik onay (`auto-approve`) varsayılan davranışı kapatılıp güvenli onay yapısına geçildi.
+- ✅ Öğrenme işleri sırasında kaynak sıfırlama (system reset) davranışlarındaki UI feedback düzeltildi.
+- ✅ `rag_upload.js` üzerinde client-side pagination ile onaylı tablolar listesinin hızlandırılması sağlandı.
+
 ### 🆕 v3.4.9 (2026-04-10) - Canlı Ortam Stabilizasyon & OCR Düzeltme
 
 **🐛 OCR Metin Çıkarma (Kritik Düzeltme):**

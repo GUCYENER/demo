@@ -286,14 +286,54 @@ KURALLAR:
 
     try:
         response = call_llm_api(messages)
-        if not response:
-            return None
-
-        return _parse_llm_analysis(response)
+        if response:
+            parsed = _parse_llm_analysis(response)
+            if parsed:
+                return parsed
     except Exception as e:
-        logger.error("[DSEnrich] LLM analiz hatası: %s — %s",
+        logger.warning("[DSEnrich] İlk LLM denemesi başarısız, daraltılmış prompt ile tekrar deneniyor. Hata: %s", type(e).__name__)
+
+    # Fallback / Retry (Eğer yukarıdaki başarılı olmazsa)
+    logger.info("[DSEnrich] %s için küçültülmüş bağlam ile ikinci deneme yapılıyor", table_name)
+    import time
+    time.sleep(1) # Azure Rate Limit veya geçici hatalara karşı kısa bir bekleme
+    
+    # Küçültülmüş prompt: Sadece tablo adı ve sütun adları, sample/relation YOK.
+    col_names = []
+    for c in columns[:30]:
+        col_names.append(f"  - {c.get('name', '?')}")
+    mini_columns_block = "\n".join(col_names) if col_names else "  (sütun bilgisi yok)"
+    
+    mini_prompt = f"""Aşağıdaki veritabanı tablosunu analiz et ve iş anlamını çıkar.
+Tablo Adı: {table_name}
+Sütunlar:
+{mini_columns_block}
+
+GÖREV: Bu tablonun ne işe yaradığını, Türkçe iş ismini ve kategorisini belirle.
+
+YANIT FORMATI (KESİNLİKLE bu JSON formatında cevap ver):
+{{
+  "business_name_tr": "Tablonun Türkçe iş adı",
+  "business_name_en": "Business name in English",
+  "description_tr": "Tablonun ne işe yaradığının Türkçe açıklaması (1 cümle)",
+  "category": "Kategori (finance, hr, crm, inventory, system, log, config, auth, other)",
+  "confidence": 0.5,
+  "sample_questions": ["Örnek soru"],
+  "columns": {{}} 
+}}
+Sadece JSON döndür."""
+
+    messages[1]["content"] = mini_prompt
+    
+    try:
+        response2 = call_llm_api(messages)
+        if response2:
+            return _parse_llm_analysis(response2)
+    except Exception as e:
+        logger.error("[DSEnrich] LLM analiz hatası (2. Deneme): %s — %s",
                      type(e).__name__, str(e)[:200])
         return None
+    return None
 
 
 def _parse_llm_analysis(response: str) -> dict:
@@ -312,15 +352,19 @@ def _parse_llm_analysis(response: str) -> dict:
     try:
         data = json.loads(text)
 
+        raw_columns = data.get("columns", {})
+        if not isinstance(raw_columns, dict):
+            raw_columns = {}
+
         # Zorunlu alanları kontrol et
         result = {
             "business_name_tr": data.get("business_name_tr", ""),
             "business_name_en": data.get("business_name_en", ""),
             "description_tr": data.get("description_tr", ""),
             "category": data.get("category", "other"),
-            "llm_confidence": float(data.get("confidence", 0.5)),
+            "llm_confidence": float(data.get("confidence", 0.5) if str(data.get("confidence", "")).replace(".","").isdigit() else 0.5),
             "sample_questions": data.get("sample_questions", []),
-            "columns": data.get("columns", {})
+            "columns": raw_columns
         }
 
         # Geçerli kategori kontrolü
@@ -500,7 +544,11 @@ def _enrich_columns(vyra_conn, source_id: int, table_enrichment_id: int,
         if not col_name:
             continue
 
-        col_info = llm_columns.get(col_name, {})
+        raw_llm_columns = llm_columns if isinstance(llm_columns, dict) else {}
+        col_info = raw_llm_columns.get(col_name, {})
+        if not isinstance(col_info, dict):
+            col_info = {}
+
         col_hash = hashlib.md5(
             json.dumps({"name": col_name, "type": col.get("data_type", "")}, sort_keys=True).encode()
         ).hexdigest()[:16]

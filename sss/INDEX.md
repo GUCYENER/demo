@@ -2,8 +2,8 @@
 
 | Bilgi | Değer |
 |-------|-------|
-| **Platform Versiyonu** | v3.5.1 |
-| **Son Güncelleme** | 2026-04-10 |
+| **Platform Versiyonu** | v3.5.4 |
+| **Son Güncelleme** | 2026-04-11 |
 | **Durum** | ✅ Güncel |
 
 ---

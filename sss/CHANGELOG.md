@@ -5,12 +5,43 @@ Format: [Semantic Versioning](https://semver.org/)
 
 ---
 
-## [v3.5.1] — 2026-04-10
+## [v3.5.4] — 2026-04-11
 
-### 🔧 UI/UX İyileştirmeleri & Düzeltmeler
-- **Enrichment Paneli (Tablo Etiketleme):** Panel içerisine istemci taraflı sayfalama (Pagination) mantığı ile Yenile (Refresh) butonu eklendi.
-- **Enrichment Paneli (Arama Optimizasyonu):** Artık DOM tabanlı değil veri odaklı çalışan ve pagination'ı ezmeyen dinamik arama mantığı kodlandı.
-- **Süreç Korumaları (Learning & Discovery):** Arka plan işlerinin çoklu tıklamaya karşı spam edilmesini engelleyen ve süreç bitene kadar onay butonlarını devredışı bırakan güvenli kilit mekanizmaları güçlendirildi.
+### ✨ Yeni Eklenenler
+- **DB Keşif Entegrasyonu:** Adım 3 (Veri Toplama) sonrasındaki tamamlama ekranına `Öğrenmeyi Başlat` (Run Full Learning) butonu eklendi, böylece tek tıklama ile Enrichment pipeline'ı tetiklenebilir hâle getirildi.
+
+### 🔧 Düzeltilen
+- **Frontend Export Hatası:** Enrichment modülünde `applyFilterAndRender`, `toggleCheckbox` gibi metodların Module Scope'u dışına export edilmemesi sebebiyle oluşan TypeError (sayfalamanın yüklenememesi) sorunu çözüldü. Javascript bundle yeniden derlenerek canlıya yansıtıldı.
+
+
+## [v3.5.3] — 2026-04-11
+
+### ✨ Yeni Eklenenler
+- **Enrichment Table Pagination:** Tablo etiketleme ekranına client-side tabanlı 10'lu sayfalama ve toplu onaylama senkronizasyonu eklendi.
+- **Dynamic Bulk Operations:** Seçili tabloların (`_selectedIds`) sayfa geçişlerinden bağımsız State-based olarak havuzda tutulup toplu onaylanabilmesi altyapısı yazıldı.
+- **UI/UX Filtreleme:** Arama çubuğunun yanına "Düşük Skor / İsimsizleri Göster" togglesı ve verileri anlık Refresh etme yeteneği eklendi.
+- **Responsive Table Layout:** Enrichment onayı modal penceresi genişletildi (`1400px`) ve çok uzun DB tablolarının İşlem sütununu dışarı itmemesi için `word-wrap: break-word` destekli CSS grid'leri sağlandı.
+
+
+### 🔧 Düzeltilen
+- **LLM Token Hallucination Crash Fix:** JSON parse sonrası `columns` objesi içerisinde string parse hatalarına karşı `.get()` methodlarının çökmesine (`str object has no attribute get`) mani olan tam Type-Safe katman (Type Checking) geliştirildi.
+
+## [v3.5.2] — 2026-04-11
+
+### ✨ Yeni Eklenenler
+- **LLM Max Token Override:** Core LLM katmanına Azure OpenAI timeout'larını ve Json yarıda kesilme hatalarını (Truncation / Expecting ',' delimiter error) engelleyen `max_tokens: 4096` parametresi eklendi.
+- **Enrichment Oto-Kurtarma (Self-Healing):** `ds_enrichment_service` içindeki LLM analizlerinde devasa tablolar (50+ sütun) API limitlerine/hatalarına takıldığında, promptu daraltıp 1 saniye bekledikten sonra tekrar şans veren (retry) tolerans altyapısı yazıldı.
+
+## [v3.5.1] — 2026-04-11
+
+### ✨ Yeni Eklenenler
+- **Backend Job Guard:** DB keşfi ve tam pipeline çalışırken asenkron süreçlerin eşzamanlı çakışması `check_running_job` fonksiyonu ile tamamen engellendi. (Veri bozulması riski sıfırlandı)
+- **Stuck Job Otomatik İptali:** `ds_discovery_jobs` veritabanındaki 30 dakikadan uzun açık kalmış sahipsiz işleri otomatik temizleme/failed statüsüne çekme kuralı eklendi.
+
+### 🔧 Düzeltilen
+- **UI Modal Stacking:** Açılır menüler (Details, Schedule, vb.) altında açık olan ana Discover Wizard penceresinin kendini imha edip boş ekranda kalma (`remove()`) bug'ı düzeltilip gizleme (`display: none`) mantığına dönüştürüldü.
+- **Frontend Buton UI Glitch:** Double-click ya da "running job" (çalışan job bulunduğu) uyarı durumlarında butonların `disabled` kalma hatası düzeltilip akış kesildiğinde butonların eski yeteneklerine geri dönmesi sağlandı.
+
 
 ## [v3.5.0] — 2026-04-10
 
