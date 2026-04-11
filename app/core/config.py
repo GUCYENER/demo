@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.5.15"  # UI/API: Add "Onaylıları Öğren" (Run Approved Learning) feature
+    APP_VERSION: str = "3.5.16"  # UI/Fix: Change sort order when 'Onaylıları Göster' is checked to show them at top
 
     # Frontend & API prefix
     api_prefix: str = "/api"

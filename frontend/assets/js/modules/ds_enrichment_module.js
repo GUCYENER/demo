@@ -311,14 +311,23 @@ const DSEnrichmentModule = (() => {
             _filteredData = _filteredData.filter(item => item.enrichment_id && !item.is_approved);
         }
 
-        // Siralama: Onay bekleyenler once, sonra kesif bekleyenler, sonra onaylilar
+        // Siralama: Onay bekleyenler once, (eğer seciliyse onaylılar), sonra kesif bekleyenler
         _filteredData.sort((a, b) => {
             const rank = x => {
                 if (x.enrichment_id && !x.is_approved) return 0;
-                if (!x.enrichment_id) return 1;
-                return 2;
+                if (x.is_approved) return _showApproved ? 1 : 2;
+                if (!x.enrichment_id) return _showApproved ? 2 : 1;
+                return 3;
             };
-            return rank(a) - rank(b);
+            if (rank(a) !== rank(b)) return rank(a) - rank(b);
+            // Sonra skora gore (buyukten kucuge)
+            if ((b.enrichment_score || 0) !== (a.enrichment_score || 0)) {
+                return (b.enrichment_score || 0) - (a.enrichment_score || 0);
+            }
+            // Sonra isme gore
+            const nameA = a.table_name || '';
+            const nameB = b.table_name || '';
+            return nameA.localeCompare(nameB);
         });
 
         // Sayfalama hesaplamaları
