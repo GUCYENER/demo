@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 import logging
+import json
 from typing import Dict, Any, Optional, List
 
 from app.services.logging_service import log_system_event, log_warning
@@ -67,7 +68,7 @@ def build_text_to_sql_prompt(
     Returns:
         LLM messages listesi
     """
-    from app.services.hybrid_router import format_schema_for_llm
+    
 
     dialect = schema_context.get("dialect", "postgresql").lower()
     schema_text = format_schema_for_llm(schema_context)
@@ -313,3 +314,180 @@ def _extract_explanation(llm_response: str) -> str:
         if before:
             return before[:500]
     return ""
+
+
+# =====================================================
+# Schema Context Builder
+# =====================================================
+
+def get_schema_context(source_id: int) -> Dict[str, Any]:
+    """
+    DS Learning'den öğrenilmiş schema bilgilerini context olarak hazırlar.
+
+    Bu context LLM'e tablo yapısını anlatır ve SQL üretiminde kullanılır.
+
+    Args:
+        source_id: Veri kaynağı ID
+
+    Returns:
+        {
+            "tables": [...],
+            "relationships": [...],
+            "dialect": "postgresql",
+            "source_name": "...",
+        }
+    """
+    try:
+        from app.core.db import get_db_conn
+
+        conn = get_db_conn()
+        cur = conn.cursor()
+
+        # Kaynak bilgisi
+        cur.execute(
+            "SELECT name, db_type FROM data_sources WHERE id = %s",
+            (source_id,)
+        )
+        source_row = cur.fetchone()
+        if not source_row:
+            conn.close()
+            return {}
+
+        source_name = source_row["name"]
+        dialect = source_row["db_type"]
+
+        # 🆕 v3.1.0: Tablolar + Enrichment bilgileri (LEFT JOIN)
+        cur.execute("""
+            SELECT o.schema_name, o.object_name, o.object_type, o.column_count,
+                   o.row_count_estimate, o.columns_json,
+                   e.business_name_tr, e.admin_label_tr,
+                   e.category, e.description_tr
+            FROM ds_db_objects o
+            LEFT JOIN ds_table_enrichments e
+                ON e.source_id = o.source_id
+                AND e.table_name = o.object_name
+                AND COALESCE(e.schema_name, '') = COALESCE(o.schema_name, '')
+                AND e.is_active = TRUE
+            WHERE o.source_id = %s AND o.object_type = 'table'
+            ORDER BY o.object_name
+        """, (source_id,))
+
+        tables = []
+        for row in cur.fetchall():
+            columns_json = row["columns_json"]
+            if columns_json is None:
+                columns_json = []
+            elif isinstance(columns_json, str):
+                try:
+                    columns_json = json.loads(columns_json)
+                except (json.JSONDecodeError, TypeError):
+                    columns_json = []
+            elif not isinstance(columns_json, list):
+                columns_json = []
+
+            tables.append({
+                "schema": row["schema_name"],
+                "name": row["object_name"],
+                "type": row["object_type"],
+                "columns": columns_json,
+                "column_count": row["column_count"],
+                "row_estimate": row["row_count_estimate"],
+                # 🆕 v3.1.0: Enrichment bilgileri
+                "business_name_tr": row.get("business_name_tr", "") or "",
+                "admin_label_tr": row.get("admin_label_tr", "") or "",
+                "category": row.get("category", "") or "",
+                "description_tr": row.get("description_tr", "") or "",
+            })
+
+        # İlişkiler
+        cur.execute("""
+            SELECT from_schema, from_table, from_column,
+                   to_schema, to_table, to_column, constraint_name
+            FROM ds_db_relationships
+            WHERE source_id = %s
+        """, (source_id,))
+
+        relationships = []
+        for row in cur.fetchall():
+            relationships.append({
+                "from": f"{row['from_schema']}.{row['from_table']}.{row['from_column']}",
+                "to": f"{row['to_schema']}.{row['to_table']}.{row['to_column']}",
+                "constraint": row["constraint_name"],
+            })
+
+        conn.close()
+
+        return {
+            "tables": tables,
+            "relationships": relationships,
+            "dialect": dialect,
+            "source_name": source_name,
+            "source_id": source_id,
+        }
+
+    except Exception as e:
+        log_warning(f"Schema context alınamadı: {e}", "hybrid_router")
+        return {}
+
+
+def format_schema_for_llm(schema_context: Dict[str, Any]) -> str:
+    """
+    Schema bilgilerini LLM'e gönderilebilecek context formatına çevirir.
+
+    Args:
+        schema_context: get_schema_context() çıktısı
+
+    Returns:
+        LLM'e gönderilecek schema açıklaması
+    """
+    if not schema_context or not schema_context.get("tables"):
+        return ""
+
+    parts = [f"Veritabanı: {schema_context.get('source_name', 'Bilinmeyen')}"]
+    parts.append(f"Dialect: {schema_context.get('dialect', 'postgresql')}")
+    parts.append(f"Tablo sayısı: {len(schema_context['tables'])}")
+    parts.append("")
+
+    for t in schema_context["tables"][:30]:  # Max 30 tablo context'e alınır
+        cols = t.get("columns", [])
+        col_names = []
+        pk_cols = []
+        date_cols = []
+
+        for c in cols:
+            col_names.append(f"{c['name']} ({c['data_type']})")
+            if c.get("is_pk"):
+                pk_cols.append(c["name"])
+            if c.get("data_type", "").lower() in (
+                "timestamp", "timestamptz", "datetime", "date",
+                "timestamp without time zone", "timestamp with time zone"
+            ):
+                date_cols.append(c["name"])
+
+        # 🆕 v3.1.0: Enrichment bilgilerini LLM context'e dahil et
+        bname = t.get("admin_label_tr") or t.get("business_name_tr") or ""
+        desc = t.get("description_tr", "")
+        label = f"📋 {t.get('schema', '')}.{t['name']}"
+        if bname:
+            label += f" [{bname}]"
+        label += f" (~{t.get('row_estimate', 0)} satır)"
+        parts.append(label)
+        if desc:
+            parts.append(f"   Açıklama: {desc}")
+        if pk_cols:
+            parts.append(f"   PK: {', '.join(pk_cols)}")
+        parts.append(f"   Sütunlar: {', '.join(col_names[:20])}")
+        if date_cols:
+            parts.append(f"   Tarih sütunları: {', '.join(date_cols)}")
+        parts.append("")
+
+    # İlişkiler
+    rels = schema_context.get("relationships", [])
+    if rels:
+        parts.append("İlişkiler:")
+        for r in rels[:20]:  # Max 20 ilişki
+            parts.append(f"  {r['from']} → {r['to']}")
+        parts.append("")
+
+    return "\n".join(parts)
+

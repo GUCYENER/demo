@@ -179,20 +179,6 @@ class DeepThinkService(DeepThinkFormattingMixin, DeepThinkFallbackMixin):
                 reasoning="Tekil cevap talebi tespit edildi"
             )
         
-        # 🆕 v2.57.0: Veritabanı sorgusu kontrolü (Hybrid Router)
-        try:
-            from app.services.hybrid_router import detect_db_intent
-            db_intent_type = detect_db_intent(query)
-            if db_intent_type is not None:
-                return IntentResult(
-                    intent_type=db_intent_type,
-                    confidence=0.7,
-                    suggested_n_results=10,
-                    reasoning="Veritabanı sorgusu intent'i tespit edildi"
-                )
-        except ImportError:
-            pass  # Hybrid router henüz yüklenmemişse atla
-        
         # Genel sorgu
         return IntentResult(
             intent_type=IntentType.GENERAL,
@@ -1230,86 +1216,6 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
             "deep_think"
         )
         
-        # 🆕 v2.57.0: Hybrid Router — DB intent gelirse template SQL çalıştır
-        # 🆕 v2.58.0: HYBRID intent → DB + RAG merge desteği
-        if intent.intent_type in (IntentType.DATABASE_QUERY, IntentType.HYBRID) and category_index is None:
-            try:
-                from app.services.hybrid_router import HybridRouter
-                router = HybridRouter()
-                hybrid_result = router.route(query, user_id, intent)
-                
-                if hybrid_result and hybrid_result.db_results:
-                    if intent.intent_type == IntentType.HYBRID:
-                        # 🆕 v2.58.0: HYBRID — DB + RAG birleştir
-                        rag_results = self.expanded_retrieval(query, intent, user_id)
-                        synthesized = self._merge_hybrid_answer(
-                            query, hybrid_result, rag_results, intent
-                        )
-                        sources = list(set(
-                            [hybrid_result.source_db or ""] +
-                            [r.get("source_file", "") for r in rag_results if r.get("source_file")]
-                        ))
-                        sources = [s for s in sources if s]  # Boşları kaldır
-                    else:
-                        # DATABASE_QUERY — sadece DB sentezle
-                        synthesized = self._synthesize_hybrid(query, hybrid_result, intent)
-                        sources = [hybrid_result.source_db] if hybrid_result.source_db else []
-                    
-                    elapsed_ms = (time.time() - start_time) * 1000
-                    
-                    # v3.4.0: HYBRID modda RAG sonuçlarından görselleri topla
-                    _hybrid_img_ids, _hybrid_h_map = [], {}
-                    if intent.intent_type == IntentType.HYBRID and rag_results:
-                        _hybrid_img_ids, _hybrid_h_map = self._collect_images_from_rag(rag_results)
-                    
-                    result = DeepThinkResult(
-                        synthesized_response=synthesized,
-                        sources=sources,
-                        intent=intent,
-                        rag_result_count=len(hybrid_result.db_results),
-                        processing_time_ms=elapsed_ms,
-                        best_score=0.9,
-                        image_ids=_hybrid_img_ids,
-                        heading_images=_hybrid_h_map
-                    )
-                    
-                    if cache_key is not None:
-                        cache_service.deep_think.set(cache_key, result)
-                    
-                    log_system_event(
-                        "INFO",
-                        f"Hybrid Router: {intent.intent_type.value} başarılı — {len(hybrid_result.db_results)} satır, "
-                        f"{elapsed_ms:.0f}ms | SQL: {hybrid_result.sql_executed[:80] if hybrid_result.sql_executed else ''}",
-                        "deep_think"
-                    )
-                    
-                    # 🆕 v2.58.0: SQL Audit Log
-                    try:
-                        from app.services.sql_audit_log import log_sql_execution
-                        log_sql_execution(
-                            user_id=user_id,
-                            source_id=0,
-                            source_name=hybrid_result.source_db or "",
-                            sql_text=hybrid_result.sql_executed or "",
-                            dialect="",
-                            status="success" if not hybrid_result.db_error else "error",
-                            row_count=len(hybrid_result.db_results),
-                            elapsed_ms=hybrid_result.elapsed_ms,
-                            error_msg=hybrid_result.db_error,
-                        )
-                    except Exception:
-                        pass  # Audit log hatası ana akışı engellememeli
-                    
-                    return result
-                else:
-                    log_system_event(
-                        "INFO",
-                        "Hybrid Router: DB sonucu yok, RAG fallback",
-                        "deep_think"
-                    )
-            except Exception as hybrid_err:
-                log_warning(f"Hybrid Router hatası, RAG fallback: {hybrid_err}", "deep_think")
-        
         # 2. Expanded Retrieval
         rag_results = self.expanded_retrieval(query, intent, user_id)
         
@@ -2105,7 +2011,7 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             # ── 3. Schema context'i al ────────────────────────────────────
             # yield {"type": "status", "data": "📋 Veritabanı şeması yükleniyor..."}
 
-            from app.services.hybrid_router import get_schema_context
+            from app.services.text_to_sql import get_schema_context
             schema_ctx = None
             source = None
             for s in sources:
