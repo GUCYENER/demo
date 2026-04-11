@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.6.3"  # Text-to-SQL Quoting & DB Struct Learningı
+    APP_VERSION: str = "3.6.4"  # SaaS UX DB Stream & Dialect Automation
 
     # Frontend & API prefix
     api_prefix: str = "/api"

@@ -2068,7 +2068,7 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 yield {"type": "done", "data": {"content": msg, "metadata": {"db_only": True}}}
                 return
 
-            yield {"type": "status", "data": "ML ogrenmis sema aranıyor..."}
+            # yield {"type": "status", "data": "ML ogrenmis sema aranıyor..."}
 
             # ── 2. ML öğrenilmiş şema bilgisini getir (schema_record) ──────
             ml_context = ""
@@ -2103,7 +2103,7 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
 
 
             # ── 3. Schema context'i al ────────────────────────────────────
-            yield {"type": "status", "data": "📋 Veritabanı şeması yükleniyor..."}
+            # yield {"type": "status", "data": "📋 Veritabanı şeması yükleniyor..."}
 
             from app.services.hybrid_router import get_schema_context
             schema_ctx = None
@@ -2126,7 +2126,7 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 return
 
             # ── 4. LLM Text-to-SQL üret (ML bağlamı + şema) ─────────────
-            yield {"type": "status", "data": "SQL sorgusu olusturuluyor..."}
+            # yield {"type": "status", "data": "SQL sorgusu olusturuluyor..."}
 
             from app.services.text_to_sql import generate_sql
             from app.services.safe_sql_executor import SafeSQLExecutor
@@ -2162,7 +2162,7 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             sql = sql_result["sql"]
 
             # ── 5. SQL'i guvenli calistir ────────────────────────────────
-            yield {"type": "status", "data": "Veritabani sorgusu calistiriliyor..."}
+            # yield {"type": "status", "data": "Veritabani sorgusu calistiriliyor..."}
 
             exec_result = executor.execute(
                 sql=sql,
@@ -2202,60 +2202,55 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 }}
                 return
 
-            # ── 6. Sonuçları formatla ve Stream Et ───────────────────────
+            # ── 6. Sonuçları LLM ile Sentezle ve Stream Et ───────────────────────
             db_data = exec_result.data or []
             sql_executed = exec_result.sql_executed or sql
             source_name = schema_ctx.get("source_name", source["name"])
 
-            if not db_data:
-                content = (
-                    f"🎯 Kriterlerinize göre **{source_name}** üzerinde bir inceleme yaptım ancak eşleşen bir kayıt bulamadım.\n\n"
-                    f"<br/><small>*(🔍 Çalıştırılan SQL: `{sql_executed}`)*</small>"
-                )
-            elif len(db_data) == 1 and len(db_data[0]) <= 3:
-                # Tek satır/az sütun — sade format
-                greeting = f"İşte aradığınız sonuç! **{source_name}** üzerinden elde ettiğim bilgi:\n\n"
-                row = db_data[0]
-                parts = [f"✨ **{col}**: `{val}`" for col, val in row.items()]
-                content = (
-                    greeting
-                    + "\n".join(parts)
-                    + f"\n\n<br/><small>*(🔍 Çalıştırılan SQL: `{sql_executed}`)*</small>"
-                )
-            else:
-                # Markdown tablo
-                greeting = f"İşte aradığınız veriler! **{source_name}** üzerinde yaptığım incelemede eşleşen **{len(db_data)}** kaydı sizin için aşağıda listeledim:\n\n"
-                columns = list(db_data[0].keys())
-                header = "| " + " | ".join(str(c) for c in columns) + " |"
-                separator = "| " + " | ".join("---" for _ in columns) + " |"
-                rows_md = []
-                for row in db_data:
-                    row_vals = []
-                    for c in columns:
-                        val = row.get(c, "")
-                        val_str = str(val) if val is not None else "-"
-                        if len(val_str) > 60:
-                            val_str = val_str[:57] + "..."
-                        # Değerleri daha modern göstermek için markdown ile düzenle
-                        row_vals.append(val_str.replace("|", r"\|"))
-                    rows_md.append("| " + " | ".join(row_vals) + " |")
+            import json
+            data_json = json.dumps(db_data, ensure_ascii=False, default=str)
+            
+            system_prompt = (
+                "Sen kıdemli bir veri asistanı ve raporlama uzmanısın. Kullanıcının sorusuna, veritabanından dönen aşağıdaki JSON sonuçlarına göre doğal, profesyonel ve modern (SaaS hissi veren UX) bir formatta yanıt vereceksin.\n\n"
+                "KURALLAR:\n"
+                "1. Çok önemli: Veri boşsa ([]), sonucun bulunamadığını kibarca belirt ve tahmin yürütme.\n"
+                "2. Yanıtına RAG tarzı hoş bir girişle başla (Örn: 'İşte aradığınız veriler:', 'Sorgunuza ait sonuçları aşağıda listeledim:' vb.).\n"
+                "3. Veriler tek veya az ise maddeler halinde vurgulayarak (Kalın metinler, emojiler) sun.\n"
+                "4. Veri çoksa (3'ten fazla satır), okunabilir temiz bir Markdown tablosu ( | Sütun | ) oluştur.\n"
+                "5. Yalnızca seninle paylaşılan SQL JSON sonucundaki verileri kullan.\n\n"
+                f"Sorgulanan Kaynak: {source_name}\n"
+                f"Veritabanı SQL Sonucu: {data_json}"
+            )
 
-                table_md = "\n".join([header, separator] + rows_md)
-                content = (
-                    f"{greeting}"
-                    f"{table_md}\n\n"
-                    f"<br/><small>*(🔍 Çalıştırılan SQL: `{sql_executed}`)*</small>"
-                )
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": query}
+            ]
 
-            # RAG gibi Stream efekti ile Frontend'e aktar
-            import asyncio
-            chunk_size = 20
-            for i in range(0, len(content), chunk_size):
-                chunk = content[i:i+chunk_size]
-                yield {"type": "token", "data": chunk}
-                await asyncio.sleep(0.01)
+            full_content = ""
+            try:
+                from app.core.llm import call_llm_api_stream
+                stream_gen = call_llm_api_stream(messages)
+                
+                # RAG ile birebir aynı tokenleştirme ve animasyon aktarımı
+                for token in stream_gen:
+                    full_content += token
+                    yield {"type": "token", "data": token}
+                
+                # Teknik SQL izi (transparency)
+                sql_footer = f"\n\n<br/><small>*(🔍 Çalıştırılan SQL: `{sql_executed}`)*</small>"
+                full_content += sql_footer
+                
+                # Footer'ı da usulca stream et
+                for char in sql_footer:
+                    yield {"type": "token", "data": char}
+                    
+            except Exception as llm_err:
+                log_warning(f"DB-Only Yanıt Sentezi Hatası: {llm_err}", "deep_think")
+                full_content = f"Tablo sonuçları başarıyla çekildi ({len(db_data)} kayıt) ancak formatlanırken hata oluştu.\nSQL: `{sql_executed}`"
+                yield {"type": "token", "data": full_content}
 
-            yield {"type": "done", "data": {"content": content, "metadata": {"db_only": True, "sql": sql_executed}}}
+            yield {"type": "done", "data": {"content": full_content, "metadata": {"db_only": True, "sql": sql_executed}}}
 
             log_system_event(
                 "INFO",

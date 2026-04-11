@@ -38,10 +38,11 @@ KRİTİK KURALLAR:
 1. SADECE SELECT sorguları yaz. INSERT, UPDATE, DELETE, DROP, ALTER gibi komutlar KESİNLİKLE YASAK.
 2. Yalnızca açıklamasında ve iş adında kullanıcının hedefine en uygun olan TEK BİR ANA tabloyu seç. Yanlış tablo seçme.
 3. Yalnızca verilen şemadaki gerçek tablo ve sütunları kullan. Hayali sütun uydurma! (Örn: "aktif" istendiğinde tabloda Active yoksa IsLocked, Status, WorkStatus gibi GERÇEK sütunlara bak).
-4. LIMIT ekle (max 100 satır).
-5. {quoting_rule}
-6. SQL'i ```sql ... ``` bloğu içinde yaz.
-7. SQL'den önce hangi tabloyu neden seçtiğini ("İş Adı"na atıf yaparak) 1 cümle ile açıkla.
+4. Sütunlardaki kelime veya metin aramalarında KESİNLİKLE eşittir (=) KULLANMA! Bunun yerine büyük/küçük harf duyarsız olan `LOWER("Column") LIKE LOWER('%kelime%')` yapısını veya PostgreSQL kullanıcısı isen `ILIKE` operatörünü kullan.
+5. Kullanıcı isim ve soyisim (örn: "hakan tütüncü") arıyorsa; eğer tabloda Ad (Name) ve Soyad (Surname) kolonları AYRI tutuluyorsa, SADECE Name sütununda TÜM kelimeyi arama! Adı ve Soyadı sütunlarını birleştirerek (CONCAT) veya iki kelimeyi bölüp her iki sütunda AND ile ara.
+6. {dialect_rules}
+7. SQL'i ```sql ... ``` bloğu içinde yaz.
+8. SQL'den önce hangi tabloyu neden seçtiğini ("İş Adı"na atıf yaparak) 1 cümle ile açıkla.
 
 DİALECT: {dialect}
 """
@@ -71,19 +72,31 @@ def build_text_to_sql_prompt(
     dialect = schema_context.get("dialect", "postgresql").lower()
     schema_text = format_schema_for_llm(schema_context)
     
-    # Tüm veritabanları için özel tırnaklama (quoting) kuralları
+    # Tüm veritabanları için özel kurallar (Best Practices)
     if dialect == "postgresql":
-        quoting_rule = 'PostgreSQL kuralı: Büyük/küçük harf duyarlılığını sağlamak için ŞEMA, TABLO ve SÜTUN adlarını DAİMA çift tırnak (") içine al. Örn: SELECT * FROM "elysion"."T_ORG_USER"'
+        dialect_rules = '''PostgreSQL Özel Kuralları:
+  - Büyük/küçük harf duyarlılığını sağlamak için ŞEMA, TABLO ve SÜTUN adlarını DAİMA çift tırnak (") içine al. (Örn: SELECT * FROM "elysion"."T_ORG_USER")
+  - Sorguya DAİMA "LIMIT 100" ekle.
+  - Tarih işlemleri için CURRENT_DATE veya NOW() kullan.'''
     elif dialect == "mssql":
-        quoting_rule = "MSSQL kuralı: Şema, tablo ve sütun adlarını köşeli parantez ([]) içine al. Örn: SELECT * FROM [elysion].[T_ORG_USER]"
+        dialect_rules = '''MSSQL Özel Kuralları:
+  - Şema, tablo ve sütun adlarını köşeli parantez ([]) içine al. (Örn: SELECT * FROM [elysion].[T_ORG_USER])
+  - MSSQL desteklemediği için KESİNLİKLE "LIMIT" anahtar kelimesini KULLANMA! Bunun yerine her sorgunun başına "SELECT TOP(100) ..." ekle.
+  - Tarih işlemleri için GETDATE() veya CAST(GETDATE() AS DATE) kullan.'''
     elif dialect == "mysql":
-        quoting_rule = "MySQL kuralı: Şema, tablo ve sütun adlarını ters tırnak (`) içine al. LIMIT N syntax'ı kullan."
+        dialect_rules = '''MySQL Özel Kuralları:
+  - Şema, tablo ve sütun adlarını ters tırnak (`) içine al.
+  - Sorguya DAİMA "LIMIT 100" ekle.
+  - Tarih işlemleri için CURDATE() veya NOW() kullan ve metin birleştirirken CONCAT() kullan.'''
     elif dialect == "oracle":
-        quoting_rule = 'Oracle kuralı: Anahtar kelimeleri ve tanımlayıcıları korumak için çift tırnak (") kullan. FETCH FIRST N ROWS ONLY syntax\'ı kullan (LIMIT yerine).'
+        dialect_rules = '''Oracle Özel Kuralları:
+  - Anahtar kelimeleri korumak için çift tırnak (") kullan.
+  - Oracle "LIMIT" desteklemez. Bunun yerine tam cümlenin sonuna "FETCH FIRST 100 ROWS ONLY" ekle.
+  - Tarih işlemleri için SYSDATE kullan.'''
     else:
-        quoting_rule = "Tablo ve sütun adlarını veritabanının diline uygun şekilde quote et."
+        dialect_rules = "Sorguya maksimum 100 satır sınırı ekle (LIMIT veya TOP) ve sütun adlarını veritabanının diline uygun quote et."
 
-    system = TEXT_TO_SQL_SYSTEM_PROMPT.format(dialect=dialect, quoting_rule=quoting_rule)
+    system = TEXT_TO_SQL_SYSTEM_PROMPT.format(dialect=dialect, dialect_rules=dialect_rules)
 
     # ML öğrenme bilgisi varsa şema öncesine ekle
     extra_ctx = schema_context.get("extra_context", "")
