@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.5.13"  # Fix: bulkApprove id mapping, polling toast+page reset, id-based change detection
+    APP_VERSION: str = "3.5.14"  # CodeReview fix: _filterPendingApproval declare+reset, rowHighlight, sort in applyFilterAndRender
 
     # Frontend & API prefix
     api_prefix: str = "/api"

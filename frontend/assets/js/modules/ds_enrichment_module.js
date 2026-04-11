@@ -27,6 +27,7 @@ const DSEnrichmentModule = (() => {
     let _selectedIds = new Set();
     let _pollingTimer = null;
     let _isPolling = false;
+    let _filterPendingApproval = false;
 
     // ============================================
     // Panel Aç/Kapat
@@ -41,6 +42,9 @@ const DSEnrichmentModule = (() => {
         _editingId = null;
         _currentPage = 1;
         _searchQuery = '';
+        _filterLowScore = false;
+        _showApproved = false;
+        _filterPendingApproval = false;
         _selectedIds.clear();
         _onCloseCallback = onCloseCallback || null;
 
@@ -302,6 +306,21 @@ const DSEnrichmentModule = (() => {
             return textMatch && scoreMatch && approvalMatch;
         });
 
+        // Onay bekleyen filtresi (sadece kesfedilmis ama onayla beklenenler)
+        if (_filterPendingApproval) {
+            _filteredData = _filteredData.filter(item => item.enrichment_id && !item.is_approved);
+        }
+
+        // Siralama: Onay bekleyenler once, sonra kesif bekleyenler, sonra onaylilar
+        _filteredData.sort((a, b) => {
+            const rank = x => {
+                if (x.enrichment_id && !x.is_approved) return 0;
+                if (!x.enrichment_id) return 1;
+                return 2;
+            };
+            return rank(a) - rank(b);
+        });
+
         // Sayfalama hesaplamaları
         const totalItems = _filteredData.length;
         const totalPages = Math.ceil(totalItems / _pageSize) || 1;
@@ -359,9 +378,10 @@ const DSEnrichmentModule = (() => {
                 const isChecked = _selectedIds.has(item.id.toString()) ? 'checked' : '';
                 const approvedAttr = item.is_approved ? 'disabled title="Zaten onaylandı"' : '';
                 const rowOpacity = item.is_approved ? 'opacity: 0.7;' : '';
+                const rowHighlight = (item.enrichment_id && !item.is_approved) ? 'background:rgba(245,158,11,0.05);border-left:3px solid rgba(245,158,11,0.4);' : '';
 
                 rows += `
-                    <tr data-id="${item.id}" class="ds-enrich-data-row" style="${rowOpacity}">
+                    <tr data-id="${item.id}" class="ds-enrich-data-row" style="${rowOpacity}${rowHighlight}">
                         <td style="text-align: center;">
                             <input type="checkbox" class="ds-bulk-chk ${item.is_approved ? '' : 'cursor-pointer'}" value="${item.id}" ${isChecked} ${approvedAttr} onchange="DSEnrichmentModule.toggleCheckbox(this)">
                         </td>
