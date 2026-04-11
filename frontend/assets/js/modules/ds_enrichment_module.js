@@ -185,27 +185,46 @@ const DSEnrichmentModule = (() => {
                 ...x, id: x.object_id, is_approved: !!x.admin_approved
             }));
             
-            // Sadece skor ve onay bilgisi güncellendiyse listeyi yenile.
+            // Sadece anlamlı alan değişikliği varsa listeyi yenile (performans)
+            // Karşılaştırma: enrichment_id, is_approved, enrichment_score
             let changed = false;
-            if (newPending.length !== _pendingData.length) changed = true;
-            else {
-                for (let i=0; i<newPending.length; i++) {
-                    if (newPending[i].enrichment_id !== _pendingData[i].enrichment_id || 
-                        newPending[i].is_approved !== _pendingData[i].is_approved || 
-                        newPending[i].enrichment_score !== _pendingData[i].enrichment_score) {
+            if (newPending.length !== _pendingData.length) {
+                changed = true;
+            } else {
+                // İndeks yerine id bazlı karşılaştır (sıra değişmiş olabilir)
+                const prevMap = new Map(_pendingData.map(x => [x.id, x]));
+                for (const newItem of newPending) {
+                    const prev = prevMap.get(newItem.id);
+                    if (!prev ||
+                        newItem.enrichment_id !== prev.enrichment_id ||
+                        newItem.is_approved !== prev.is_approved ||
+                        (newItem.enrichment_score || 0).toFixed(4) !== (prev.enrichment_score || 0).toFixed(4)) {
                         changed = true;
                         break;
                     }
                 }
             }
             if(changed) {
+                // Yeni keşfedilen tabloları tespit et (enrichment_id yeni eklendiyse)
+                const prevDiscoveredIds = new Set(_pendingData.filter(x => x.enrichment_id).map(x => x.id));
+                const newlyDiscovered = newPending.filter(x => x.enrichment_id && !prevDiscoveredIds.has(x.id));
+
                 _pendingData = newPending;
                 _renderStats(stats);
-                applyFilterAndRender();
+
+                // Yeni keşfedilen tablo varsa sayfa 1'e dön + toast göster
+                if (newlyDiscovered.length > 0) {
+                    _currentPage = 1;
+                    applyFilterAndRender();
+                    _showToast(`${newlyDiscovered.length} tablo keşfedildi. Onay Bekliyor durumuna geçti!`, 'success');
+                } else {
+                    // Sayfa ve arama korunarak sadece render güncellenir
+                    applyFilterAndRender();
+                }
             } else {
-                _renderStats(stats); // Maybe top bar counts changed
+                _renderStats(stats); // İstatistikler güncellendi, liste aynı
             }
-        } catch(e) {}
+        } catch(e) { console.warn('[DSEnrich] Polling hatası:', e); }
         finally { _isPolling = false; }
     }
 
@@ -915,12 +934,28 @@ const DSEnrichmentModule = (() => {
            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Onaylanıyor...';
         }
 
+        // object_id -> enrichment_id map: _selectedIds stores object_ids
+        const objectToEnrichMap = {};
+        for (const objectId of checkedBoxes) {
+            const row = _pendingData.find(x => String(x.id) === String(objectId));
+            if (row && row.enrichment_id) {
+                objectToEnrichMap[objectId] = row.enrichment_id;
+            }
+        }
+        const approvableIds = Object.keys(objectToEnrichMap);
+        if (approvableIds.length === 0) {
+            _showToast('Seçili tablolar henüz keşfedilmemiş, onaylanacak kayıt yok.', 'warning');
+            if(btn) { btn.disabled=false; btn.innerHTML = '<i class="fa-solid fa-check-double mr-2"></i> Seçilenleri Onayla'; }
+            return;
+        }
+
         try {
             const token = localStorage.getItem('access_token');
             const results = [];
             
-            // Send requests sequentially to avoid DB lock / concurrent API limit
-            for (const enrichmentId of checkedBoxes) {
+            // Send requests sequentially using enrichment_id (not object_id)
+            for (const objectId of approvableIds) {
+                const enrichmentId = objectToEnrichMap[objectId];
                 try {
                     const res = await fetch(
                         `/api/data-sources/${_currentSourceId}/enrichment-approve/${enrichmentId}`,
@@ -934,31 +969,31 @@ const DSEnrichmentModule = (() => {
                         }
                     );
                     const data = await res.json();
-                    results.push({id: enrichmentId, success: data.success});
+                    results.push({objectId, enrichmentId, success: data.success});
                 } catch(err) {
-                    console.error("Hata id:", enrichmentId, err);
-                    results.push({id: enrichmentId, success: false});
+                    console.error("[DSEnrich] Onay hatası id:", objectId, err);
+                    results.push({objectId, enrichmentId, success: false});
                 }
             }
 
-            const successIds = results.filter(r => r.success).map(r => r.id.toString());
+            const successObjectIds = results.filter(r => r.success).map(r => String(r.objectId));
             
-            if (successIds.length > 0) {
+            if (successObjectIds.length > 0) {
                 // Başarılı olanları is_approved = true yap
                 _pendingData.forEach(p => {
-                    if (successIds.includes(p.id.toString())) {
+                    if (successObjectIds.includes(String(p.id))) {
                         p.is_approved = true;
                     }
                 });
                 
                 // Seçilenler listesinden kaldır
-                successIds.forEach(id => _selectedIds.delete(id));
+                successObjectIds.forEach(id => _selectedIds.delete(id));
                 
                 // UI Güncelle
                 applyFilterAndRender();
                 setTimeout(() => _updateStatsAfterApprove(), 350);
                 
-                _showToast(`${successIds.length} tablo onaylandı`, 'success');
+                _showToast(`${successObjectIds.length} tablo onaylandı`, 'success');
             } else {
                 _showToast('Toplu onay başarısız', 'error');
             }

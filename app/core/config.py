@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.5.12"  # UI: pending approval flow fix - sort, yellow label, filter button, togglePendingApprovalFilter
+    APP_VERSION: str = "3.5.13"  # Fix: bulkApprove id mapping, polling toast+page reset, id-based change detection
 
     # Frontend & API prefix
     api_prefix: str = "/api"
