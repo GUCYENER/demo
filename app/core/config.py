@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.6.4"  # SaaS UX DB Stream & Dialect Automation
+    APP_VERSION: str = "3.6.5"  # Hybrid Router Removal & DB Isolation
 
     # Frontend & API prefix
     api_prefix: str = "/api"
