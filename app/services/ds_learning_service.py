@@ -1550,9 +1550,11 @@ def run_approved_qa_learning(source: dict, vyra_conn, user_id: int = None) -> di
         
         total_ms = sum(s.get("data", {}).get("elapsed_ms", 0) for s in results["steps"] if s.get("data"))
         results["total_elapsed_ms"] = total_ms
-        results["success"] = True
+        results["success"] = r1.get("success", False)
+        if not results["success"]:
+            results["error"] = r1.get("error", "Bilinmeyen QA hatası")
 
-        complete_job(vyra_conn, job_id, {"success": True, "data": {"elapsed_ms": total_ms, **results}})
+        complete_job(vyra_conn, job_id, {"success": results["success"], "error": results.get("error"), "data": {"elapsed_ms": total_ms, **results}})
         return results
     except Exception as e:
         logger.error("[DSLearning] QA_learning sırasında hata oluştu: %s", str(e))
