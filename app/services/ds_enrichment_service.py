@@ -592,6 +592,48 @@ def _enrich_columns(vyra_conn, source_id: int, table_enrichment_id: int,
 # Admin Onay API Yardımcıları
 # =====================================================
 
+def get_all_tables_status(vyra_conn, source_id: int) -> list:
+    """Tüm tabloların keşif/zenginleştirme (enrichment) durumlarını beraber döner."""
+    cur = vyra_conn.cursor()
+    cur.execute("""
+        SELECT 
+            o.id as object_id,
+            o.schema_name,
+            o.object_name as table_name,
+            o.object_type,
+            te.id as enrichment_id,
+            te.business_name_tr,
+            te.description_tr,
+            te.category,
+            te.enrichment_score,
+            te.llm_confidence,
+            te.admin_approved,
+            te.admin_label_tr,
+            te.admin_notes,
+            te.last_enriched_at,
+            te.version
+        FROM ds_db_objects o
+        LEFT JOIN ds_table_enrichments te 
+          ON o.source_id = te.source_id 
+         AND COALESCE(o.schema_name, '') = COALESCE(te.schema_name, '') 
+         AND o.object_name = te.table_name
+        WHERE o.source_id = %s AND o.object_type IN ('table', 'view')
+        ORDER BY 
+            CASE WHEN te.id IS NULL THEN 0 ELSE 1 END,
+            te.enrichment_score ASC,
+            o.object_name
+    """, (source_id,))
+    
+    rows = cur.fetchall()
+    results = []
+    for row in rows:
+        d = dict(row) if hasattr(row, 'keys') else dict(zip([c[0] for c in cur.description], row))
+        if d.get("last_enriched_at"):
+            d["last_enriched_at"] = d["last_enriched_at"].isoformat()
+        d["is_approved"] = bool(d.get("admin_approved"))
+        results.append(d)
+    return results
+
 def get_pending_approvals(vyra_conn, source_id: int = None,
                           company_id: int = None,
                           score_threshold: float = CONFIDENCE_THRESHOLD) -> list:
@@ -693,32 +735,46 @@ def get_enrichment_stats(vyra_conn, source_id: int) -> dict:
     cur = vyra_conn.cursor()
     try:
         cur.execute("""
-            SELECT
-                COUNT(*) AS total,
-                COUNT(*) FILTER (WHERE admin_approved = TRUE) AS approved,
-                COUNT(*) FILTER (WHERE admin_approved = FALSE) AS pending_review,
-                0 AS auto_approved,
-                COALESCE(AVG(enrichment_score), 0) AS avg_score,
-                MAX(last_enriched_at) AS last_enriched
-            FROM ds_table_enrichments
-            WHERE source_id = %s AND is_active = TRUE
-        """, (source_id,))
+            WITH ObjectStats AS (
+                SELECT COUNT(*) as total_db_tables
+                FROM ds_db_objects
+                WHERE source_id = %s AND object_type IN ('table', 'view')
+            ),
+            EnrichmentStats AS (
+                SELECT
+                    COUNT(*) AS total,
+                    COUNT(*) FILTER (WHERE admin_approved = TRUE) AS approved,
+                    COUNT(*) FILTER (WHERE admin_approved = FALSE) AS pending_review,
+                    0 AS auto_approved,
+                    COALESCE(AVG(enrichment_score), 0) AS avg_score,
+                    MAX(last_enriched_at) AS last_enriched
+                FROM ds_table_enrichments
+                WHERE source_id = %s AND is_active = TRUE
+            )
+            SELECT e.total, e.approved, e.pending_review, e.auto_approved, e.avg_score, e.last_enriched, o.total_db_tables
+            FROM EnrichmentStats e CROSS JOIN ObjectStats o
+        """, (source_id, source_id))
 
         row = cur.fetchone()
         if not row:
-            return {"total": 0}
+            return {"total": 0, "unprocessed": 0}
+
+        total_enrich = row[0] if not isinstance(row, dict) else row["total"]
+        total_db = row[6] if not isinstance(row, dict) else row["total_db_tables"]
+        unprocessed = max(0, total_db - total_enrich)
 
         return {
-            "total": row[0] if not isinstance(row, dict) else row["total"],
+            "total": total_enrich,
             "approved": row[1] if not isinstance(row, dict) else row["approved"],
             "pending_review": row[2] if not isinstance(row, dict) else row["pending_review"],
             "auto_approved": row[3] if not isinstance(row, dict) else row["auto_approved"],
             "avg_score": round(float(row[4] if not isinstance(row, dict) else row["avg_score"]), 2),
-            "last_enriched": (row[5] if not isinstance(row, dict) else row["last_enriched"]).isoformat() if (row[5] if not isinstance(row, dict) else row.get("last_enriched")) else None
+            "last_enriched": (row[5] if not isinstance(row, dict) else row["last_enriched"]).isoformat() if (row[5] if not isinstance(row, dict) else row.get("last_enriched")) else None,
+            "unprocessed": unprocessed
         }
     except Exception as e:
         logger.error("[DSEnrich] Stats hatası: %s", type(e).__name__)
-        return {"total": 0, "error": str(e)[:100]}
+        return {"total": 0, "unprocessed": 0, "error": str(e)[:100]}
 
 
 def get_column_enrichments(vyra_conn, table_enrichment_id: int) -> list:

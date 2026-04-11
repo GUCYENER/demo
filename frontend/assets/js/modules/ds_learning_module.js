@@ -1005,7 +1005,12 @@ window.DSLearningModule = (function () {
         document.body.appendChild(modal);
         requestAnimationFrame(() => modal.classList.add('active'));
 
-        const closeLr = () => { modal.classList.remove('active'); setTimeout(() => modal.remove(), 300); };
+        let _pollInterval = null;
+        const closeLr = () => { 
+            if (_pollInterval) clearInterval(_pollInterval);
+            modal.classList.remove('active'); 
+            setTimeout(() => modal.remove(), 300); 
+        };
         document.getElementById('dsLrClose').addEventListener('click', closeLr);
         document.addEventListener('keydown', function escLr(e) {
             if (e.key === 'Escape') { closeLr(); document.removeEventListener('keydown', escLr); }
@@ -1044,16 +1049,35 @@ window.DSLearningModule = (function () {
             _loadLearningResults(sourceId, tab.dataset.type || null, jobId);
         });
 
-        // İlk yükleme
-        await _loadLearningResults(sourceId, null, null);
+        // Auto Refresh (Polling)
+        async function fetchInitialAndPoll() {
+            await _loadLearningResults(sourceId, null, null);
+            try {
+                // Eğer bir job çalışıyorsa, tablo bazlı akışı görebilmek için 5 saniyede bir paneli yenile
+                const check = await apiCall(`/${sourceId}/check-running-job`);
+                if (check.has_running) {
+                    _pollInterval = setInterval(() => {
+                        const activeTab = document.querySelector('.ds-lr-tab.active');
+                        // Sade Tümü veya bir filtre açıkken periyodik tazele
+                        const contentType = activeTab ? activeTab.dataset.type || null : null;
+                        const jobId = document.getElementById('dsLrJobSelect').value || null;
+                        _loadLearningResults(sourceId, contentType, jobId, true);
+                    }, 5000);
+                }
+            } catch(e) {}
+        }
+
+        fetchInitialAndPoll();
     }
 
-    async function _loadLearningResults(sourceId, contentType, jobId) {
+    async function _loadLearningResults(sourceId, contentType, jobId, isPolling=false) {
         const body = document.getElementById('dsLrBody');
         const summary = document.getElementById('dsLrSummary');
         if (!body) return;
 
-        body.innerHTML = '<div class="ds-lr-loading"><i class="fa-solid fa-spinner fa-spin"></i> Yükleniyor...</div>';
+        if (!isPolling) {
+            body.innerHTML = '<div class="ds-lr-loading"><i class="fa-solid fa-spinner fa-spin"></i> Yükleniyor...</div>';
+        }
 
         try {
             let url = `/${sourceId}/learning-results?limit=100`;

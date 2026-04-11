@@ -1008,24 +1008,17 @@ def get_job_result_stats(vyra_conn, source_id: int) -> list:
 def generate_synthetic_qa(source_id: int, vyra_conn) -> dict:
     """
     Keşfedilen DB verilerinden template-based sentetik QA çiftleri üretir.
-    Her QA çifti embedding'lenir ve ds_learning_results tablosuna yazılır.
-
-    Üretilen içerik tipleri:
-    - schema_description: Tablo yapısı açıklaması
-    - relationship_map: Tablo ilişkileri
-    - sample_insight: Örnek veri bilgisi
-    - aggregate_query: SQL sorgu önerileri
+    Modüler olarak düzenlendi, hash kontrolü ile gereksiz oluşturmaları atlar (erken dedup) ve 
+    batch komitleri ile UI'ın anlık beslenmesini sağlar.
     """
     start = time.time()
     cur = vyra_conn.cursor()
     logger.info("[DSLearning] QA üretimi başlatıldı: source_id=%s", source_id)
 
-    # company_id'yi al (ds_learning_results için NOT NULL)
     cur.execute("SELECT company_id FROM data_sources WHERE id = %s", (source_id,))
     source_row = cur.fetchone()
     company_id = source_row["company_id"] if source_row else 1
 
-    # Embedding manager'ı al
     try:
         from app.services.rag.embedding import EmbeddingManager
         emb_mgr = EmbeddingManager()
@@ -1033,7 +1026,6 @@ def generate_synthetic_qa(source_id: int, vyra_conn) -> dict:
         logger.error("[DSLearning] EmbeddingManager yüklenemedi")
         return {"success": False, "error": "Embedding modeli yüklenemedi"}
 
-    # Keşfedilmiş objeleri al
     cur.execute("""
         SELECT id, schema_name, object_name, object_type, column_count,
                row_count_estimate, columns_json
@@ -1045,14 +1037,12 @@ def generate_synthetic_qa(source_id: int, vyra_conn) -> dict:
     if not objects:
         return {"success": False, "error": "Önce obje tespiti yapılmalı"}
 
-    # İlişkileri al
     cur.execute("""
         SELECT from_schema, from_table, from_column, to_schema, to_table, to_column
         FROM ds_db_relationships WHERE source_id = %s
     """, (source_id,))
     all_rels = cur.fetchall()
 
-    # Sample verileri al
     cur.execute("""
         SELECT s.object_id, s.sample_data, s.row_count, o.object_name
         FROM ds_db_samples s
@@ -1061,7 +1051,6 @@ def generate_synthetic_qa(source_id: int, vyra_conn) -> dict:
     """, (source_id,))
     all_samples = {row["object_id"]: row for row in cur.fetchall()}
 
-    # Dedup: Mevcut soru hash'lerini al (aynı soruları tekrar üretme)
     cur.execute("""
         SELECT md5(metadata->>'question') as q_hash
         FROM ds_learning_results
@@ -1070,7 +1059,6 @@ def generate_synthetic_qa(source_id: int, vyra_conn) -> dict:
     existing_hashes = {row["q_hash"] for row in cur.fetchall()}
     logger.info("[DSLearning] Mevcut %d unique QA hash bulundu", len(existing_hashes))
 
-    # Mevcut job_id al (create_job ile oluşturulmuş olabilir)
     cur.execute("""
         SELECT id FROM ds_discovery_jobs
         WHERE source_id = %s AND job_type = 'qa_generation' AND status = 'running'
@@ -1079,32 +1067,73 @@ def generate_synthetic_qa(source_id: int, vyra_conn) -> dict:
     job_row = cur.fetchone()
     current_job_id = job_row["id"] if job_row else None
 
-    qa_count = 0
-    skipped_count = 0
-    total_pairs = []
+    state = {
+        "qa_count": 0,
+        "skipped_count": 0,
+        "type_counts": {"schema_description": 0, "relationship_map": 0, "sample_insight": 0, "aggregate_query": 0}
+    }
+    batch_pairs = []
 
-    # 1) Schema Description QA'ları
+    def commit_batch():
+        if not batch_pairs:
+            return
+        
+        all_texts = [f"{p['question_text']} {p['content_text']}" for p in batch_pairs]
+        embeddings = emb_mgr.get_embeddings_batch(all_texts)
+        
+        for pair, embedding in zip(batch_pairs, embeddings):
+            cur.execute("""
+                INSERT INTO ds_learning_results
+                    (source_id, company_id, job_id, content_type, content_text, embedding, metadata, score)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                source_id, company_id, current_job_id,
+                pair["content_type"], pair["content_text"], embedding,
+                json.dumps({"question": pair["question_text"], "table_name": pair["object_name"]}),
+                1.0
+            ))
+            state["qa_count"] += 1
+            state["type_counts"][pair["content_type"]] = state["type_counts"].get(pair["content_type"], 0) + 1
+            
+        vyra_conn.commit()
+        batch_pairs.clear()
+
+    def add_qa_pair(content_type, content_text, question_text, object_name):
+        q_hash = hashlib.md5(question_text.encode()).hexdigest()
+        if q_hash in existing_hashes:
+            state["skipped_count"] += 1
+            return
+        
+        batch_pairs.append({
+            "content_type": content_type, "content_text": content_text,
+            "question_text": question_text, "object_name": object_name
+        })
+        existing_hashes.add(q_hash)
+        
+        if len(batch_pairs) >= 20: 
+            commit_batch()
+
+    # Tabloları İşle
     for obj in objects:
+        obj_id = obj["id"]
         obj_name = obj["object_name"]
         obj_type = obj["object_type"]
         schema = obj["schema_name"] or "public"
         col_count = obj["column_count"]
         row_est = obj["row_count_estimate"] or 0
-
-        # Sütunları parse et
         cols_raw = obj["columns_json"]
+
+        cols = []
         if isinstance(cols_raw, str):
             try:
                 cols = json.loads(cols_raw)
             except Exception:
-                cols = []
+                pass
         else:
             cols = cols_raw or []
 
-        # Sütun açıklamalarını oluştur
-        col_descriptions = []
-        pk_cols = []
-        for c in cols[:20]:  # Max 20 sütun
+        col_descriptions, pk_cols = [], []
+        for c in cols[:20]:
             desc = f"{c['name']} ({c['data_type']})"
             if c.get("is_pk"):
                 desc += " [PK]"
@@ -1113,196 +1142,73 @@ def generate_synthetic_qa(source_id: int, vyra_conn) -> dict:
 
         col_text = ", ".join(col_descriptions)
 
-        # QA Pair 1: Tablo yapısı
-        question = f"{obj_name} tablosu ne içerir? {obj_name} tablosunun yapısı nedir?"
-        answer = (
-            f"{schema}.{obj_name} ({obj_type}): "
-            f"{col_count} sütun, yaklaşık {row_est} kayıt. "
-            f"Sütunlar: {col_text}."
-        )
-        if pk_cols:
-            answer += f" Primary Key: {', '.join(pk_cols)}."
+        # 1) Schema QA
+        q1 = f"{obj_name} tablosu ne içerir? {obj_name} tablosunun yapısı nedir?"
+        a1 = f"{schema}.{obj_name} ({obj_type}): {col_count} sütun, yaklaşık {row_est} kayıt. Sütunlar: {col_text}."
+        if pk_cols: a1 += f" Primary Key: {', '.join(pk_cols)}."
+        add_qa_pair("schema_description", a1, q1, obj_name)
 
-        total_pairs.append({
-            "content_type": "schema_description",
-            "content_text": answer,
-            "question_text": question,
-            "object_name": obj_name
-        })
+        q2 = f"{obj_name} tablosunda kaç sütun var? {obj_name} kaç alana sahip?"
+        a2 = f"{obj_name} tablosunda {col_count} sütun bulunmaktadır: {col_text}."
+        add_qa_pair("schema_description", a2, q2, obj_name)
 
-        # QA Pair 2: Sütun sayısı
-        question2 = f"{obj_name} tablosunda kaç sütun var? {obj_name} kaç alana sahip?"
-        answer2 = f"{obj_name} tablosunda {col_count} sütun bulunmaktadır: {col_text}."
-        total_pairs.append({
-            "content_type": "schema_description",
-            "content_text": answer2,
-            "question_text": question2,
-            "object_name": obj_name
-        })
-
-        # QA Pair 3: Kayıt sayısı
         if row_est > 0:
-            question3 = f"{obj_name} tablosunda kaç kayıt var? {obj_name} ne kadar veri içeriyor?"
-            answer3 = f"{obj_name} tablosunda yaklaşık {row_est} kayıt bulunmaktadır."
-            total_pairs.append({
-                "content_type": "schema_description",
-                "content_text": answer3,
-                "question_text": question3,
-                "object_name": obj_name
-            })
+            q3 = f"{obj_name} tablosunda kaç kayıt var? {obj_name} ne kadar veri içeriyor?"
+            a3 = f"{obj_name} tablosunda yaklaşık {row_est} kayıt bulunmaktadır."
+            add_qa_pair("schema_description", a3, q3, obj_name)
 
-    # 2) İlişki QA'ları
+        # 2) Aggregate Query
+        if obj_type == "table":
+            q_agg = f"{obj_name} tablosunda kaç kayıt var? {obj_name} toplam satır sayısı nedir?"
+            a_agg = f"{obj_name} tablosundaki kayıt sayısını bulmak için: SELECT COUNT(*) FROM {schema}.{obj_name}; Tahmini kayıt: {row_est}."
+            add_qa_pair("aggregate_query", a_agg, q_agg, obj_name)
+
+        # 3) Sample Insight
+        sample = all_samples.get(obj_id)
+        if sample and sample.get("sample_data"):
+            s_data = sample["sample_data"]
+            if isinstance(s_data, str):
+                try:
+                    s_data = json.loads(s_data)
+                except Exception:
+                    s_data = []
+                    
+            if s_data and isinstance(s_data, list) and len(s_data) > 0:
+                s_text = "\\n".join([f"  Satır {i+1}: " + ", ".join([f"{k}={v}" for k,v in list(r.items())[:8]]) for i, r in enumerate(s_data[:3])])
+                q_s = f"{obj_name} tablosunda ne tür veriler var? {obj_name} örnek veriler nelerdir?"
+                a_s = f"{obj_name} tablosundan örnek veriler ({sample.get('row_count', 0)} satır örneklendi):\\n{s_text}"
+                add_qa_pair("sample_insight", a_s, q_s, obj_name)
+
+    # 4) İlişki QA
     if all_rels:
-        # Genel ilişki sorusu
-        rel_descriptions = []
-        for rel in all_rels[:30]:  # Max 30 ilişki
-            rel_descriptions.append(
-                f"{rel['from_table']}.{rel['from_column']} → {rel['to_table']}.{rel['to_column']}"
-            )
+        rel_descriptions = [f"{r['from_table']}.{r['from_column']} → {r['to_table']}.{r['to_column']}" for r in all_rels[:30]]
+        add_qa_pair("relationship_map", f"Veritabanında {len(all_rels)} FK ilişkisi bulunmaktadır: " + "; ".join(rel_descriptions) + ".",
+                    "Tablolar arası ilişkiler nelerdir? Hangi tablolar birbiriyle bağlantılı?", "_relationships")
 
-        question_rel = "Tablolar arası ilişkiler nelerdir? Hangi tablolar birbiriyle bağlantılı?"
-        answer_rel = f"Veritabanında {len(all_rels)} Foreign Key ilişkisi bulunmaktadır: " + "; ".join(rel_descriptions) + "."
-        total_pairs.append({
-            "content_type": "relationship_map",
-            "content_text": answer_rel,
-            "question_text": question_rel,
-            "object_name": "_relationships"
-        })
-
-        # Tablo bazlı ilişki soruları
         rel_by_table = {}
         for rel in all_rels:
             rel_by_table.setdefault(rel["from_table"], []).append(rel)
             rel_by_table.setdefault(rel["to_table"], []).append(rel)
 
-        for table_name, rels in rel_by_table.items():
+        for t_name, rels in rel_by_table.items():
             if len(rels) > 0:
-                rel_text = "; ".join([
-                    f"{r['from_table']}.{r['from_column']} → {r['to_table']}.{r['to_column']}"
-                    for r in rels[:10]
-                ])
-                q = f"{table_name} tablosu hangi tablolarla ilişkili? {table_name} FK ilişkileri nelerdir?"
-                a = f"{table_name} tablosu şu tablolarla ilişkilidir: {rel_text}."
-                total_pairs.append({
-                    "content_type": "relationship_map",
-                    "content_text": a,
-                    "question_text": q,
-                    "object_name": table_name
-                })
+                r_text = "; ".join([f"{r['from_table']}.{r['from_column']} → {r['to_table']}.{r['to_column']}" for r in rels[:10]])
+                add_qa_pair("relationship_map", f"{t_name} tablosu şu tablolarla ilişkilidir: {r_text}.",
+                            f"{t_name} tablosu hangi tablolarla ilişkili? {t_name} FK ilişkileri nelerdir?", t_name)
 
-    # 3) Sample Insight QA'ları
-    for obj in objects:
-        obj_id = obj["id"]
-        obj_name = obj["object_name"]
-        sample = all_samples.get(obj_id)
-        if not sample or not sample["sample_data"]:
-            continue
-
-        sample_data = sample["sample_data"]
-        if isinstance(sample_data, str):
-            try:
-                sample_data = json.loads(sample_data)
-            except Exception:
-                continue
-
-        if not sample_data or len(sample_data) == 0:
-            continue
-
-        # İlk 3 satırı göster
-        sample_rows = sample_data[:3]
-        sample_text_parts = []
-        for i, row in enumerate(sample_rows):
-            row_vals = ", ".join([f"{k}={v}" for k, v in list(row.items())[:8]])
-            sample_text_parts.append(f"  Satır {i+1}: {row_vals}")
-
-        sample_text = "\n".join(sample_text_parts)
-
-        question_s = f"{obj_name} tablosunda ne tür veriler var? {obj_name} örnek veriler nelerdir?"
-        answer_s = (
-            f"{obj_name} tablosundan örnek veriler ({sample['row_count']} satır örneklendi):\n"
-            f"{sample_text}"
-        )
-        total_pairs.append({
-            "content_type": "sample_insight",
-            "content_text": answer_s,
-            "question_text": question_s,
-            "object_name": obj_name
-        })
-
-    # 4) Aggregate Query önerileri
-    for obj in objects:
-        if obj["object_type"] != "table":
-            continue
-        obj_name = obj["object_name"]
-        row_est = obj["row_count_estimate"] or 0
-        schema = obj["schema_name"] or "public"
-
-        question_agg = f"{obj_name} tablosunda kaç kayıt var? {obj_name} toplam satır sayısı nedir?"
-        answer_agg = (
-            f"{obj_name} tablosundaki kayıt sayısını bulmak için: "
-            f"SELECT COUNT(*) FROM {schema}.{obj_name}; "
-            f"Tahmini mevcut kayıt sayısı: {row_est}."
-        )
-        total_pairs.append({
-            "content_type": "aggregate_query",
-            "content_text": answer_agg,
-            "question_text": question_agg,
-            "object_name": obj_name
-        })
-
-    # Embedding üret ve DB'ye yaz
-    if total_pairs:
-        # Batch embedding
-        all_texts = [f"{p['question_text']} {p['content_text']}" for p in total_pairs]
-        batch_size = 50
-
-        all_embeddings = []
-        for i in range(0, len(all_texts), batch_size):
-            batch = all_texts[i:i + batch_size]
-            batch_embs = emb_mgr.get_embeddings_batch(batch)
-            all_embeddings.extend(batch_embs)
-
-        # DB'ye yaz (dedup hash kontrolü ile)
-        for pair, embedding in zip(total_pairs, all_embeddings):
-            # Hash kontrolü
-            q_hash = hashlib.md5(pair["question_text"].encode()).hexdigest()
-            if q_hash in existing_hashes:
-                skipped_count += 1
-                continue
-
-            cur.execute("""
-                INSERT INTO ds_learning_results
-                    (source_id, company_id, job_id, content_type, content_text, embedding, metadata, score)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                source_id,
-                company_id,
-                current_job_id,
-                pair["content_type"],
-                pair["content_text"],
-                embedding,
-                json.dumps({
-                    "question": pair["question_text"],
-                    "table_name": pair["object_name"]
-                }),
-                1.0  # Pre-computed, yüksek güvenilirlik
-            ))
-            existing_hashes.add(q_hash)  # Batch içi dedup
-            qa_count += 1
-
-        vyra_conn.commit()
+    commit_batch()
 
     elapsed = int((time.time() - start) * 1000)
-    logger.info("[DSLearning] Sentetik QA üretimi: %d yeni, %d atlandı (dedup), %dms", qa_count, skipped_count, elapsed)
+    logger.info("[DSLearning] Sentetik QA üretimi: %d yeni, %d atlandı, %dms", state["qa_count"], state["skipped_count"], elapsed)
 
     return {
         "success": True,
         "data": {
-            "qa_pairs_generated": qa_count,
-            "schema_descriptions": sum(1 for p in total_pairs if p["content_type"] == "schema_description"),
-            "relationship_maps": sum(1 for p in total_pairs if p["content_type"] == "relationship_map"),
-            "sample_insights": sum(1 for p in total_pairs if p["content_type"] == "sample_insight"),
-            "aggregate_queries": sum(1 for p in total_pairs if p["content_type"] == "aggregate_query"),
+            "qa_pairs_generated": state["qa_count"],
+            "schema_descriptions": state["type_counts"].get("schema_description", 0),
+            "relationship_maps": state["type_counts"].get("relationship_map", 0),
+            "sample_insights": state["type_counts"].get("sample_insight", 0),
+            "aggregate_queries": state["type_counts"].get("aggregate_query", 0),
             "elapsed_ms": elapsed
         }
     }
@@ -1406,8 +1312,83 @@ def search_db_knowledge(query: str, company_id: int = None, min_score: float = 0
 
 
 # =====================================================
-# Faz 2: Tam Pipeline Çalıştırma
+# Faz 2: Kısmi ve Tam Pipeline Çalıştırma
 # =====================================================
+
+def run_partial_enrichment(source: dict, object_ids: list, vyra_conn, user_id: int = None) -> dict:
+    source_id = source["id"]
+    company_id = source.get("company_id", 1)
+    
+    job_id = create_job(vyra_conn, source_id, company_id, "partial_enrichment", user_id)
+    if not job_id:
+        return {"success": False, "error": "Job oluşturulamadı."}
+
+    results = {"steps": []}
+    try:
+        from app.services import ds_enrichment_service
+        cur = vyra_conn.cursor()
+        format_strings = ','.join(['%s'] * len(object_ids))
+        cur.execute(f"""
+            SELECT id, schema_name, object_name, object_type,
+                   column_count, row_count_estimate, columns_json
+            FROM ds_db_objects 
+            WHERE source_id = %s AND id IN ({format_strings})
+        """, [source_id] + object_ids)
+        objects = [dict(row) if hasattr(row, 'keys') else dict(zip([c[0] for c in cur.description], row)) for row in cur.fetchall()]
+        
+        cur.execute(f"""
+            SELECT object_id, sample_data
+            FROM ds_db_samples
+            WHERE source_id = %s AND object_id IN ({format_strings})
+        """, [source_id] + object_ids)
+        samples_map = {}
+        for row in cur.fetchall():
+            obj_id = row["object_id"] if hasattr(row, 'keys') else row[0]
+            s_data = row["sample_data"] if hasattr(row, 'keys') else row[1]
+            if isinstance(s_data, str):
+                try:
+                    s_data = json.loads(s_data)
+                except Exception:
+                    s_data = []
+            samples_map[obj_id] = s_data if isinstance(s_data, list) else []
+            
+        cur.execute("""
+            SELECT from_schema, from_table, from_column,
+                   to_schema, to_table, to_column, constraint_name
+            FROM ds_db_relationships WHERE source_id = %s
+        """, (source_id,))
+        relationships = [dict(row) if hasattr(row, 'keys') else dict(zip([c[0] for c in cur.description], row)) for row in cur.fetchall()]
+        
+        enrichment_result = ds_enrichment_service.enrich_tables_batch(
+            vyra_conn, source_id, company_id,
+            objects, samples_map, relationships
+        )
+        
+        results["steps"].append({
+            "step": "partial_enrichment",
+            "success": True,
+            "data": {
+                "total": enrichment_result.get("total", 0),
+                "enriched": enrichment_result.get("enriched", 0),
+                "skipped": enrichment_result.get("skipped", 0),
+                "admin_required": enrichment_result.get("admin_required", 0),
+                "errors": enrichment_result.get("errors", 0),
+                "elapsed_ms": enrichment_result.get("elapsed_ms", 0)
+            }
+        })
+        
+        total_ms = enrichment_result.get("elapsed_ms", 0)
+        results["total_elapsed_ms"] = total_ms
+        results["success"] = True
+        
+        complete_job(vyra_conn, job_id, {
+            "success": True, "data": {"elapsed_ms": total_ms, **results}
+        })
+        return {"success": True}
+    except Exception as e:
+        logger.error("[DSLearning] Partial enrichment hatası: %s", str(e))
+        complete_job(vyra_conn, job_id, {"success": False, "error": str(e)})
+        return {"success": False, "error": str(e)}
 
 def run_full_learning(source: dict, vyra_conn, user_id: int = None) -> dict:
     """

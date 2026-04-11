@@ -892,6 +892,73 @@ def get_approved_enrichments(
         return {"success": False, "approved": [], "count": 0}
 
 
+@router.get("/{source_id}/enrichment-all")
+def get_all_enrichments(
+    source_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Tüm tabloların keşif durumlarını beraber döner."""
+    try:
+        from app.services import ds_enrichment_service
+        with get_db_context() as conn:
+            all_tables = ds_enrichment_service.get_all_tables_status(conn, source_id)
+            return {"success": True, "tables": all_tables, "count": len(all_tables)}
+    except Exception as e:
+        logger.error("[DataSources] All enrichments hatası: %s", type(e).__name__)
+        return {"success": False, "tables": [], "count": 0}
+
+
+class PartialEnrichmentRequest(BaseModel):
+    object_ids: list[int]
+
+
+@router.post("/{source_id}/enrich-selected")
+def enrich_selected_tables(
+    source_id: int,
+    body: PartialEnrichmentRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    if not body.object_ids:
+        return {"success": False, "message": "Seçili tablo yok."}
+    try:
+        from app.services import ds_learning_service
+        with get_db_context() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM data_sources WHERE id = %s", (source_id,))
+            source = cur.fetchone()
+            if not source:
+                return {"success": False, "message": "Kaynak bulunamadı"}
+            source = dict(source) if hasattr(source, 'keys') else dict(zip([c[0] for c in cur.description], source))
+            current_user_id = current_user.get("id")
+
+            running_check = ds_learning_service.check_running_job(conn, source_id)
+            if running_check["has_running"]:
+                rj = running_check["job"]
+                return {"success": False, "message": f"Devam eden bir işlem var ({rj['job_type']})."}
+                
+        def _bg_partial_enrich():
+            bg_conn = None
+            try:
+                from app.core.db import get_db_conn
+                bg_conn = get_db_conn()
+                ds_learning_service.run_partial_enrichment(source, body.object_ids, bg_conn, current_user_id)
+            except Exception as e:
+                logger.error("[DataSources] BG Partial Enrichment hatası: %s", str(e))
+            finally:
+                if bg_conn:
+                    try:
+                        bg_conn.close()
+                    except Exception:
+                        pass
+
+        import threading
+        threading.Thread(target=_bg_partial_enrich, daemon=True).start()
+        return {"success": True, "message": "Seçili tablolar için keşif başlatıldı"}
+    except Exception as e:
+        logger.error("[DataSources] enrich-selected hatası: %s", type(e).__name__)
+        return {"success": False, "message": f"Hata: {type(e).__name__}"}
+
+
 class EnrichmentApproveRequest(BaseModel):
     admin_label_tr: Optional[str] = None
     admin_notes: Optional[str] = None
