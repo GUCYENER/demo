@@ -535,7 +535,6 @@ window.DialogChatModule = (function () {
             }
 
             // SSE stream okuma
-            hideTypingIndicator();
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let streamingEl = null;
@@ -545,10 +544,17 @@ window.DialogChatModule = (function () {
             let finalContent = null;
             let finalMetadata = null;
             let buffer = '';
+            let firstChunkReceived = false;
 
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
+
+                // Backend ilk veriyi gönderdi, uçan daktilo bekleme modunu kapat!
+                if (!firstChunkReceived) {
+                    hideTypingIndicator();
+                    firstChunkReceived = true;
+                }
 
                 buffer += decoder.decode(value, { stream: true });
                 const lines = buffer.split('\n');
