@@ -101,6 +101,9 @@ def generate_enriched_qa(source_id: int, vyra_conn) -> dict:
     skipped_count = 0
     total_pairs = []
 
+    # Sadece onaylı tabloların listesi (Samples ve Rels filtresi için)
+    approved_table_names = {enr["table_name"] for enr in enrichments}
+
     # Enrichment bazlı QA üretimi
     for enr in enrichments:
         table_name = enr["table_name"]
@@ -202,22 +205,27 @@ def generate_enriched_qa(source_id: int, vyra_conn) -> dict:
     # ─── İlişki QA'ları ───
     if all_rels:
         rel_descriptions = []
-        for rel in all_rels[:30]:
-            rel_descriptions.append(
-                f"{rel['from_table']}.{rel['from_column']} → {rel['to_table']}.{rel['to_column']}"
-            )
+        for rel in all_rels:
+            if rel['from_table'] in approved_table_names and rel['to_table'] in approved_table_names:
+                rel_descriptions.append(
+                    f"{rel['from_table']}.{rel['from_column']} → {rel['to_table']}.{rel['to_column']}"
+                )
 
-        q_rel = "Tablolar arası ilişkiler nelerdir? Hangi tablolar birbiriyle bağlantılı?"
-        a_rel = f"Veritabanında {len(all_rels)} Foreign Key ilişkisi bulunmaktadır: " + "; ".join(rel_descriptions) + "."
-        total_pairs.append({
-            "content_type": "relationship_map",
-            "content_text": a_rel,
-            "question_text": q_rel,
-            "object_name": "_relationships"
-        })
+        if rel_descriptions:
+            q_rel = "Tablolar arası ilişkiler nelerdir? Hangi tablolar birbiriyle bağlantılı?"
+            a_rel = f"Onaylı veritabanı tablolarında {len(rel_descriptions)} Foreign Key ilişkisi bulunmaktadır: " + "; ".join(rel_descriptions[:30]) + "."
+            total_pairs.append({
+                "content_type": "relationship_map",
+                "content_text": a_rel,
+                "question_text": q_rel,
+                "object_name": "_relationships"
+            })
 
     # ─── Sample Insight QA'ları ───
     for table_name, sample in all_samples.items():
+        if table_name not in approved_table_names:
+            continue
+
         if not sample["sample_data"]:
             continue
 
