@@ -734,6 +734,18 @@ window.DSLearningModule = (function () {
                 }
             }
 
+            const approvedBtn = document.getElementById('dsHistoryRunApproved');
+            if (approvedBtn) {
+                approvedBtn.disabled = hasRunningJob;
+                if (hasRunningJob) {
+                    approvedBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Çalışıyor...';
+                    approvedBtn.classList.add('ds-btn-disabled');
+                } else {
+                    approvedBtn.innerHTML = '<i class="fa-solid fa-brain"></i> Onaylıları Öğren';
+                    approvedBtn.classList.remove('ds-btn-disabled');
+                }
+            }
+
             // Auto-refresh eğer running job varsa
             if (hasRunningJob) {
                 setTimeout(() => loadHistory(sourceId), 3000);
@@ -1451,10 +1463,9 @@ window.DSLearningModule = (function () {
                     }
                 } catch (e) {
                      if (typeof showToast === 'function') showToast('Hata: ' + e.message, 'error');
-                } finally {
-                    approvedBtn.innerHTML = oldHtml;
-                    approvedBtn.disabled = false;
-                    approvedBtn.classList.remove('ds-btn-disabled');
+                     approvedBtn.innerHTML = oldHtml;
+                     approvedBtn.disabled = false;
+                     approvedBtn.classList.remove('ds-btn-disabled');
                 }
             });
         }

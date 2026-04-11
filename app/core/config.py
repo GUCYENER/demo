@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.5.18"  # Chores: Rebuild and cache-bust for QA generation testing
+    APP_VERSION: str = "3.5.19"  # UI/Fix: Prevent re-clicking 'Onaylıları Öğren' while job is running
 
     # Frontend & API prefix
     api_prefix: str = "/api"
