@@ -741,17 +741,17 @@ def test_get_all_tables_status(mock_get_db_conn):
     cur_mock = MagicMock()
     conn_mock.cursor.return_value = cur_mock
     cur_mock.fetchall.return_value = [
-        (1, \'public\', \'users\', \'table\', 100, \'Kullanıcılar\', \'Desc\', \'core\', 0.9, 0.95, True, \'Etiket\', \'\', None, 1),
-        (2, \'public\', \'orders\', \'table\', None, None, None, None, None, None, None, None, None, None, None)
+        (1, 'public', 'users', 'table', 100, 'Kullanıcılar', 'Desc', 'core', 0.9, 0.95, True, 'Etiket', '', None, 1),
+        (2, 'public', 'orders', 'table', None, None, None, None, None, None, None, None, None, None, None)
     ]
     cur_mock.description = [
-        (\'object_id\',), (\'schema_name\',), (\'table_name\',), (\'object_type\',),
-        (\'enrichment_id\',), (\'business_name_tr\',), (\'description_tr\',), (\'category\',),
-        (\'enrichment_score\',), (\'llm_confidence\',), (\'admin_approved\',), (\'admin_label_tr\',),
-        (\'admin_notes\',), (\'last_enriched_at\',), (\'version\',)
+        ('object_id',), ('schema_name',), ('table_name',), ('object_type',),
+        ('enrichment_id',), ('business_name_tr',), ('description_tr',), ('category',),
+        ('enrichment_score',), ('llm_confidence',), ('admin_approved',), ('admin_label_tr',),
+        ('admin_notes',), ('last_enriched_at',), ('version',)
     ]
     from app.services.ds_enrichment_service import get_all_tables_status
     results = get_all_tables_status(conn_mock, 1)
     assert len(results) == 2
-    assert results[0][\'is_approved\'] is True
-    assert results[1][\'is_approved\'] is False
+    assert results[0]['is_approved'] is True
+    assert results[1]['is_approved'] is False

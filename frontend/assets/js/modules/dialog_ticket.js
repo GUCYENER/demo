@@ -1,7 +1,7 @@
 /* ─────────────────────────────────────────────
-   NGSSAI — Dialog Ticket & Corpix Module
-   v2.30.1 · dialog_chat.js'den ayrıştırıldı
-   Ticket Summary, Corpix Fallback, Chat Mode
+   NGSSAI — Dialog Ticket & LLM Module
+   v3.6.0 · dialog_chat.js'den ayrıştırıldı
+   Ticket Summary, LLM Fallback, Chat Mode
    ───────────────────────────────────────────── */
 
 window.DialogTicketModule = (function () {
@@ -205,13 +205,13 @@ window.DialogTicketModule = (function () {
     }
 
     /**
-     * v2.24.5: Corpix fallback aksiyonlarını yönet
+     * v3.6.0: LLM fallback aksiyonlarını yönet
      */
-    async function handleCorpixAction(action, query = '') {
+    async function handleLlmAction(action, query = '') {
         const parent = getParent();
         const currentDialogId = parent?._getDialogId?.();
 
-        if (action === 'ask_corpix') {
+        if (action === 'ask_llm' || action === 'ask_corpix') {
             if (!currentDialogId || !query) {
                 showToast('warning', 'Soru gönderilemedi');
                 return;
@@ -238,15 +238,15 @@ window.DialogTicketModule = (function () {
                     if (parent?.addAssistantMessage) parent.addAssistantMessage(data);
                 } else {
                     const errorData = await response.json().catch(() => ({}));
-                    console.error('[DialogChat] Corpix hatası:', errorData);
-                    if (parent?.addSystemMessage) parent.addSystemMessage('❌ Corpix yanıt veremedi.');
+                    console.error('[DialogChat] LLM hatası:', errorData);
+                    if (parent?.addSystemMessage) parent.addSystemMessage('❌ LLM yanıt veremedi.');
                 }
             } catch (error) {
                 if (parent?.hideTypingIndicator) parent.hideTypingIndicator();
-                console.error('[DialogChat] Corpix bağlantı hatası:', error);
-                if (parent?.addSystemMessage) parent.addSystemMessage('❌ Corpix yanıt veremedi.');
+                console.error('[DialogChat] LLM bağlantı hatası:', error);
+                if (parent?.addSystemMessage) parent.addSystemMessage('❌ LLM yanıt veremedi.');
             }
-        } else if (action === 'no_corpix') {
+        } else if (action === 'no_corpix' || action === 'no_llm') {
             // Hayır seçildi
             if (parent?.addSystemMessage) parent.addSystemMessage('👍 Anladım. Başka bir konuda yardımcı olabilir miyim?');
         }
@@ -255,9 +255,9 @@ window.DialogTicketModule = (function () {
     // escapeHtml → DialogChatUtils'ten delegasyon (dosya başında tanımlandı)
 
     /**
-     * v2.26.0: Corpix modunda mesaj gönder (RAG araması yapılmaz)
+     * v3.6.0: LLM modunda mesaj gönder (RAG araması yapılmaz)
      */
-    async function sendCorpixMessage(content) {
+    async function sendLlmMessage(content) {
         const parent = getParent();
 
         try {
@@ -281,7 +281,7 @@ window.DialogTicketModule = (function () {
                 }
             }
 
-            // Corpix API'ye gönder
+            // LLM API'ye gönder (eski ask-corpix endpoint’i)
             const startTime = performance.now();
             const response = await fetch(`${API_BASE}/dialogs/${currentDialogId}/ask-corpix`, {
                 method: 'POST',
@@ -300,18 +300,18 @@ window.DialogTicketModule = (function () {
                 if (parent?.addAssistantMessage) parent.addAssistantMessage(data, null, true, responseTime);
             } else {
                 const errorData = await response.json().catch(() => ({}));
-                console.error('[DialogChat] Corpix hatası:', errorData);
+                console.error('[DialogChat] LLM hatası:', errorData);
 
                 // VPN hatası kontrolü
                 if (window.isVPNNetworkError && window.isVPNNetworkError(errorData?.detail || '')) {
                     if (window.showVPNErrorPopup) window.showVPNErrorPopup();
                 } else {
-                    if (parent?.addSystemMessage) parent.addSystemMessage('❌ Corpix şu anda yanıt veremedi. Lütfen tekrar deneyin.');
+                    if (parent?.addSystemMessage) parent.addSystemMessage('❌ LLM şu anda yanıt veremedi. Lütfen tekrar deneyin.');
                 }
             }
         } catch (error) {
             if (parent?.hideTypingIndicator) parent.hideTypingIndicator();
-            console.error('[DialogChat] Corpix bağlantı hatası:', error);
+            console.error('[DialogChat] LLM bağlantı hatası:', error);
             if (parent?.addSystemMessage) parent.addSystemMessage('❌ Bağlantı hatası. VPN bağlantınızı kontrol edin.');
         }
     }
@@ -331,10 +331,11 @@ window.DialogTicketModule = (function () {
             ragToggle.classList.toggle('active', chatMode === 'rag');
         }
         if (corpixToggle) {
-            corpixToggle.classList.toggle('active', chatMode === 'corpix');
+            corpixToggle.classList.toggle('active', chatMode === 'llm');
         }
         if (modeBadge) {
-            modeBadge.textContent = chatMode === 'rag' ? '🔍 RAG' : '💬 Corpix';
+            const labels = { 'rag': '🔍 RAG', 'db': '🗄️ DB', 'llm': '💬 LLM' };
+            modeBadge.textContent = labels[chatMode] || '🔍 RAG';
             modeBadge.className = `chat-mode-badge mode-${chatMode}`;
         }
     }
@@ -372,8 +373,12 @@ window.DialogTicketModule = (function () {
         handleOpenTicketSummary,
         closeTicketModal,
         copyTicketSummary,
-        handleCorpixAction,
-        sendCorpixMessage,
+        handleLlmAction,
+        // Backward compat alias
+        handleCorpixAction: function(action, query) { return handleLlmAction(action, query); },
+        sendLlmMessage,
+        // Backward compat alias
+        sendCorpixMessage: function(content) { return sendLlmMessage(content); },
         updateChatModeUI,
         updateHeaderModeBtn
     };

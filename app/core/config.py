@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.5.19"  # UI/Fix: Prevent re-clicking 'Onaylıları Öğren' while job is running
+    APP_VERSION: str = "3.6.0"  # DB Search Modülü & Pipeline Ayrıştırması
 
     # Frontend & API prefix
     api_prefix: str = "/api"

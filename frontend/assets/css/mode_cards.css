@@ -1,0 +1,117 @@
+/* ─────────────────────────────────────────────
+   VYRA — Mode Cards CSS Module
+   v3.6.0 · Modern SaaS Design
+   Bilgi Tabanı / Veritabanı / LLM Sohbet mode kartları
+   ───────────────────────────────────────────── */
+
+/* ── Base Mode Card Overrides ────────────────── */
+.mode-cards {
+    display: flex;
+    gap: 8px;
+}
+
+/* ── DB Mode Card Gradient & Colors ──────────── */
+.mode-card.db::before {
+    background: linear-gradient(90deg, #10B981, #06B6D4);
+    opacity: .5;
+}
+
+.mode-card.db .mc-icon {
+    background: rgba(16, 185, 129, .12);
+    color: #10B981;
+}
+
+.mode-card.db.selected {
+    border-color: #10B981;
+    background: rgba(16, 185, 129, .06);
+}
+
+.mode-card.db.selected::before {
+    opacity: 1;
+}
+
+.mode-card.db.selected .mc-icon {
+    background: linear-gradient(135deg, #10B981, #06B6D4);
+    color: #fff;
+}
+
+.mode-card.db.selected .mc-icon svg {
+    stroke: #fff;
+}
+
+.mode-card.db:hover {
+    border-color: #10B981;
+    box-shadow: 0 4px 16px rgba(16, 185, 129, .10);
+}
+
+.mode-card.db:hover::before {
+    opacity: 1;
+}
+
+/* ── LLM/Chat Card — Gradient Alignment ─────── */
+.mode-card.llm::before {
+    background: linear-gradient(90deg, #7C3AED, #34D399);
+    opacity: .5;
+}
+
+.mode-card.llm .mc-icon {
+    background: rgba(124, 58, 237, .12);
+    color: #A78BFA;
+}
+
+.mode-card.llm.selected {
+    border-color: #7C3AED;
+    background: rgba(124, 58, 237, .06);
+}
+
+.mode-card.llm.selected::before {
+    opacity: 1;
+}
+
+.mode-card.llm.selected .mc-icon {
+    background: #7C3AED;
+    color: #fff;
+}
+
+.mode-card.llm.selected .mc-icon svg {
+    stroke: #fff;
+}
+
+.mode-card.llm:hover {
+    border-color: #7C3AED;
+    box-shadow: 0 4px 16px rgba(124, 58, 237, .10);
+}
+
+.mode-card.llm:hover::before {
+    opacity: 1;
+}
+
+/* ── Responsive: 3 kart → mobilde dikey ─────── */
+@media (max-width: 640px) {
+    .mode-cards {
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .mode-card {
+        flex: none;
+    }
+}
+
+/* ── Micro-animation: Seçim geçiş efekti ───── */
+.mode-card .mc-icon {
+    transition: background .22s ease, color .22s ease, transform .18s ease;
+}
+
+.mode-card.selected .mc-icon {
+    transform: scale(1.05);
+}
+
+.mode-card .mc-title {
+    transition: color .18s ease;
+}
+
+.mode-card.selected .mc-title {
+    color: var(--text-1);
+    font-weight: 600;
+}

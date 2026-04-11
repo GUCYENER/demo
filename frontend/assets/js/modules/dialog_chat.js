@@ -34,7 +34,7 @@ window.DialogChatModule = (function () {
     let lastAddedMessageId = null; // Son eklenen mesaj ID (duplicate önleme)
     let isWaitingForResponse = false; // HTTP response bekliyor mu?
     let selectedCardIds = []; // Çoklu kart seçimi için
-    let chatMode = 'rag'; // v2.26.0: 'rag' veya 'corpix' - sohbet modu
+    let chatMode = 'rag'; // v3.6.0: 'rag', 'db' veya 'llm' - sohbet modu
 
     const API_BASE = (window.API_BASE_URL || 'http://localhost:8002') + '/api';
 
@@ -470,9 +470,9 @@ window.DialogChatModule = (function () {
         // Typing indicator göster
         showTypingIndicator();
 
-        // v2.26.0: Mod kontrolü - Corpix modunda direkt LLM'e git
-        if (chatMode === 'corpix') {
-            await sendCorpixMessage(content);
+        // v3.6.0: Mod kontrolü - LLM modunda direkt LLM'e git
+        if (chatMode === 'llm') {
+            await sendLlmMessage(content);
             return;
         }
 
@@ -511,7 +511,8 @@ window.DialogChatModule = (function () {
                 },
                 body: JSON.stringify({
                     content: content || '[Görsel]',
-                    images: pendingImages.map(img => img.base64)
+                    images: pendingImages.map(img => img.base64),
+                    source_type: chatMode === 'db' ? 'db' : 'rag'
                 })
             });
 
@@ -1330,14 +1331,14 @@ window.DialogChatModule = (function () {
                 </div>` : ''}
             `;
         } else if (quickReply && quickReply.type === 'corpix_fallback') {
-            // v2.26.0: Corpix fallback - RAG sonuç bulamadı, Corpix sohbet modu öner
+            // v3.6.0: LLM fallback - RAG sonuç bulamadı, LLM sohbet modu öner
             quickReplyHtml = `
                 <div class="quick-reply-container corpix-fallback">
-                    <button class="quick-reply-btn corpix-yes corpix-mode-switch" onclick="DialogChatModule.switchToCorpixMode()">
-                        <i class="fa-solid fa-comments"></i> Corpix Sohbete Geç
+                    <button class="quick-reply-btn corpix-yes corpix-mode-switch" onclick="DialogChatModule.switchToLlmMode()">
+                        <i class="fa-solid fa-comments"></i> Sohbete Geç
                     </button>
-                    <button class="quick-reply-btn corpix-retry" onclick="DialogChatModule.handleCorpixAction('ask_corpix', '${escapeHtml(message.metadata?.original_query || '')}')">
-                        <i class="fa-solid fa-robot"></i> Bu Soruyu Corpix'e Sor
+                    <button class="quick-reply-btn corpix-retry" onclick="DialogChatModule.handleLlmAction('ask_llm', '${escapeHtml(message.metadata?.original_query || '')}')">
+                        <i class="fa-solid fa-robot"></i> Bu Soruyu LLM'e Sor
                     </button>
                 </div>
             `;
@@ -1498,9 +1499,9 @@ window.DialogChatModule = (function () {
 
         // 🆕 v2.52.1: İlgisiz sonuç — "Vyra ile Sohbet Et" butonu
         const noRelevantResult = message.metadata?.no_relevant_result === true;
-        const corpixChatBtn = noRelevantResult ? `
+        const llmChatBtn = noRelevantResult ? `
             <div class="vyra-corpix-container">
-                <button class="vyra-corpix-btn" onclick="DialogChatModule.switchToCorpixMode()">
+                <button class="vyra-corpix-btn" onclick="DialogChatModule.switchToLlmMode()">
                     <i class="fa-solid fa-comments"></i> ${_appName()} ile Sohbet Et
                 </button>
             </div>
@@ -1518,7 +1519,7 @@ window.DialogChatModule = (function () {
                     <div class="message-content">${cleanedContent}</div>
                     ${quickReplyHtml}
                     ${enhanceBtn}
-                    ${corpixChatBtn}
+                    ${llmChatBtn}
                     ${finalFeedbackHtml}
                     ${askMoreHtml}
                     <div class="message-meta">
@@ -1884,7 +1885,7 @@ window.DialogChatModule = (function () {
         }
     }
     // =========================================================================
-    // TICKET/CORPIX → dialog_ticket.js modülüne taşındı (v2.30.1)
+    // TICKET/LLM → dialog_ticket.js modülüne taşındı (v2.30.1)
     // Delegation: window.DialogTicketModule
     // =========================================================================
 
@@ -2030,28 +2031,30 @@ window.DialogChatModule = (function () {
         // Dosya indirme
         downloadFile,
         deactivate,
-        // v2.24.5: Corpix fallback
-        handleCorpixAction,
+        // v3.6.0: LLM fallback
+        handleLlmAction,
         // v2.24.6: Notification'dan dialog yükleme
         loadDialogById,
         // v2.51.0: Vyra önerisi
         handleEnhance,
-        // v2.26.0: Corpix sohbet modu
+        // v3.6.0: Chat mode yönetimi (rag / db / llm)
         getChatMode: () => chatMode,
         setChatMode: (mode) => {
-            if (mode === 'rag' || mode === 'corpix') {
+            if (mode === 'rag' || mode === 'db' || mode === 'llm') {
                 chatMode = mode;
                 updateChatModeUI();
                 console.log(`[DialogChat] Mod değişti: ${mode}`);
             }
         },
-        switchToCorpixMode: () => {
-            chatMode = 'corpix';
+        switchToLlmMode: () => {
+            chatMode = 'llm';
             updateChatModeUI();
             updateHeaderModeBtn();
             const mkb = document.getElementById('modeKb');
+            const mdb = document.getElementById('modeDb');
             const mch = document.getElementById('modeChat');
             if (mkb) mkb.classList.remove('selected');
+            if (mdb) mdb.classList.remove('selected');
             if (mch) mch.classList.add('selected');
             showToast('info', '💬 ' + _appName() + ' sohbet modu aktif');
             addSystemMessage('💬 ' + _appName() + ' ile sohbet moduna geçildi.');
@@ -2061,15 +2064,30 @@ window.DialogChatModule = (function () {
             updateChatModeUI();
             updateHeaderModeBtn();
             const mkb = document.getElementById('modeKb');
+            const mdb = document.getElementById('modeDb');
             const mch = document.getElementById('modeChat');
             if (mkb) mkb.classList.add('selected');
+            if (mdb) mdb.classList.remove('selected');
             if (mch) mch.classList.remove('selected');
             showToast('info', '📚 Bilgi tabanında arama modu aktif');
             addSystemMessage('📚 Bilgi tabanında arama modu aktif.');
         },
+        switchToDbMode: () => {
+            chatMode = 'db';
+            updateChatModeUI();
+            updateHeaderModeBtn();
+            const mkb = document.getElementById('modeKb');
+            const mdb = document.getElementById('modeDb');
+            const mch = document.getElementById('modeChat');
+            if (mkb) mkb.classList.remove('selected');
+            if (mdb) mdb.classList.add('selected');
+            if (mch) mch.classList.remove('selected');
+            showToast('info', '🗄️ Veritabanında arama modu aktif');
+            addSystemMessage('🗄️ Veritabanında arama moduna geçildi. Tablolardaki verilere doğrudan sorgu atabilirsiniz.');
+        },
         toggleChatMode: () => {
             if (chatMode === 'rag') {
-                DialogChatModule.switchToCorpixMode();
+                DialogChatModule.switchToLlmMode();
             } else {
                 DialogChatModule.switchToRagMode();
             }

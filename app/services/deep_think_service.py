@@ -15,7 +15,7 @@ v3.1.0: Sorgu zamanı halüsinasyon doğrulaması eklendi
 
 from __future__ import annotations
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Generator
 import re
 
 from app.core.db import get_db_conn
@@ -209,7 +209,8 @@ class DeepThinkService(DeepThinkFormattingMixin, DeepThinkFallbackMixin):
         self, 
         query: str, 
         intent: IntentResult, 
-        user_id: int
+        user_id: int,
+        skip_db_knowledge: bool = False
     ) -> List[Dict[str, Any]]:
         """
         Intent'e göre genişletilmiş RAG araması yapar.
@@ -251,18 +252,51 @@ class DeepThinkService(DeepThinkFormattingMixin, DeepThinkFallbackMixin):
             max_per_file=max_per_file
         )
         
-        if not rag_response.has_results:
-            return []
-        
-        # Sonuçları dict listesine çevir
         results = []
-        for r in rag_response.results:
-            results.append({
-                "content": r.content,
-                "source_file": r.source_file,
-                "score": r.score,
-                "metadata": r.metadata  # 🆕 v2.29.2: Sheet name vb.
-            })
+        if rag_response.has_results:
+            # Sonuçları dict listesine çevir
+            for r in rag_response.results:
+                results.append({
+                    "content": r.content,
+                    "source_file": r.source_file,
+                    "score": r.score,
+                    "metadata": r.metadata  # 🆕 v2.29.2: Sheet name vb.
+                })
+                
+        # 🆕 DB Knowledge (Table ML) Araması
+        # Sadece dökümanlardan değil, öğrenilen tablolardan da sonuç getirmesi için.
+        # v3.6.0: RAG-only modunda buralar atlanır
+        if not skip_db_knowledge:
+            try:
+                from app.services.ds_learning_service import search_db_knowledge
+                db_knowledge_results = search_db_knowledge(query, min_score=max(0.35, min_score - 0.05), max_results=3)
+                
+                if db_knowledge_results:
+                    for db_res in db_knowledge_results:
+                        results.append({
+                            "content": f"[Veritabanı / Tablo: {db_res['source_name']}]\n{db_res['content']}",
+                            "source_file": db_res["source_name"],
+                            "score": float(db_res["score"]),
+                            "metadata": {"type": "db_knowledge", "content_type": db_res.get("content_type", "")}
+                        })
+                    log_system_event(
+                        "INFO", 
+                        f"Deep Think: DB Knowledge üzerinden {len(db_knowledge_results)} sonuç eklendi.", 
+                        "deep_think"
+                    )
+            except Exception as e:
+                from app.services.logging_service import log_warning
+                log_warning(f"Deep Think DB Knowledge arama hatası: {e}", "deep_think")
+            
+            
+        if not results:
+            return []
+            
+        # Skorlara göre sırala (rag ve db_knowledge karışık)
+        results.sort(key=lambda x: x["score"], reverse=True)
+        
+        # Limit the combined results
+        results = results[:n_results]
         
         # Liste talebi ise aynı dosyadan gelen sonuçları grupla
         if intent.intent_type == IntentType.LIST_REQUEST:
@@ -270,7 +304,7 @@ class DeepThinkService(DeepThinkFormattingMixin, DeepThinkFallbackMixin):
         
         log_system_event(
             "INFO", 
-            f"Deep Think: {len(results)} sonuç bulundu", 
+            f"Deep Think: Toplam {len(results)} karma sonuç bulundu", 
             "deep_think"
         )
         
@@ -1851,9 +1885,174 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             }
         }}
 
+    # ========================================
+    # 6. Mimariler Arası Yönlendirme
+    # ========================================
+    
+    def process_stream_rag_only(self, query: str, user_id: int) -> Generator[Dict[str, Any], None, None]:
+        """Sadece RAG pipeline çalıştırır, DB araması yapılmaz."""
+        import time
+        start_time = time.time()
+        
+        # 1. Intent Detection
+        # Bilgi tabanında arama olduğu için IntentType.DATABASE_QUERY harici algılama yapılır
+        intent = self.analyze_intent(query)
+        # Eğer bir şekilde DATABASE_QUERY geldiyse GENERAL maskesi yap
+        if intent.intent_type.value == "DATABASE_QUERY":
+             intent = IntentResult(intent_type=IntentType.GENERAL, confidence=0.7, suggested_n_results=10, reasoning="RAG only mod - DB yönlendirmesi engellendi")
+             
+        log_system_event("INFO", f"Deep Think (RAG Only): {intent.intent_type.value} | Puan: {intent.confidence}", "deep_think")
+        
+        # 2. Expanded Retrieval
+        # skip_db_knowledge parametresi ile ds_learning araması atlanır
+        rag_results = self.expanded_retrieval(query, intent, user_id, skip_db_knowledge=True)
+        
+        yield {"type": "rag_complete", "data": {
+            "intent": intent.intent_type.value,
+            "result_count": len(rag_results),
+            "elapsed_ms": (time.time() - start_time) * 1000
+        }}
+
+        if not rag_results:
+             _no_result_msg = (
+                 "🤔 Bu konuda bilgi tabanında ilgili bir kayıt bulunamadı.\n\n"
+                 "Farklı anahtar kelimeler kullanarak tekrar deneyebilir veya "
+                 "VYRA ile sohbet modunda sorabilirsiniz."
+             )
+             yield {"type": "done", "data": {
+                "content": _no_result_msg,
+                "metadata": {"rag_result_count": 0, "best_score": 0, "deep_think": True}
+             }}
+             return
+
+        # 3. LLM Synthesis
+        context = self._prepare_context(rag_results, intent)
+        format_instruction = self._get_format_instruction(intent)
+        system_prompt = self.synthesis_prompt
+        
+        user_message = f"""SORU:
+{query}
+
+---
+BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
+{context}
+---
+
+{format_instruction}"""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message}
+        ]
+
+        full_response = ""
+        try:
+             from app.core.llm import call_llm_api_stream
+             
+             _token_buffer = []
+             _buffer_limit = 15
+             _buffer_flushed = False
+             
+             stream_gen = call_llm_api_stream(messages)
+             for token in stream_gen:
+                 full_response += token
+                 if not _buffer_flushed:
+                     _token_buffer.append(token)
+                     buffered_text = "".join(_token_buffer)
+                     
+                     if "[NO_MATCH]" in buffered_text:
+                         for remaining in stream_gen:
+                             full_response += remaining
+                         break
+                     
+                     if len(_token_buffer) >= _buffer_limit:
+                         for t in _token_buffer:
+                             yield {"type": "token", "data": t}
+                         _token_buffer = []
+                         _buffer_flushed = True
+                 else:
+                     yield {"type": "token", "data": token}
+             
+             # Post-process
+             cleaned = self._clean_prompt_leak(full_response.strip())
+             cleaned = self._postprocess_llm_response(cleaned, intent)
+             
+             # No Match check
+             if "[NO_MATCH]" in cleaned:
+                  from app.services.dialog.response_builder import get_dialog_response_builder
+                  return get_dialog_response_builder().generate_no_result_response(query)
+                
+             # İmaj vs.
+             sources = list(set(r.get("source_file", "") for r in rag_results if r.get("source_file")))
+             bypass_image_ids, bypass_heading_map = self._collect_images_from_rag(rag_results)
+             
+             yield {"type": "done", "data": {
+                 "content": cleaned,
+                 "metadata": {
+                     "rag_result_count": len(rag_results),
+                     "best_score":  rag_results[0].get("score", 0) if rag_results else 0,
+                     "deep_think": True,
+                     "original_query": query,
+                     "sources": sources,
+                     "image_ids": bypass_image_ids,
+                     "heading_images": bypass_heading_map
+                 }
+             }}
+        except Exception as e:
+            log_error(f"RAG Only stream hatası: {e}", "deep_think")
+            yield {"type": "done", "data": {
+                "content": self._fallback_response(rag_results, intent),
+                "metadata": {"deep_think": True, "error": True}
+            }}
 
 
-# ============================================
+    def process_stream_db_only(self, query: str, user_id: int) -> Generator[Dict[str, Any], None, None]:
+        """Sadece DB pipeline çalıştırır, RAG aranmaz."""
+        try:
+             from app.services.hybrid_router import get_hybrid_router
+             router = get_hybrid_router()
+             
+             sources = router._get_user_db_sources(user_id)
+             if not sources:
+                 from app.services.user_service import get_user_by_id
+                 user = get_user_by_id(user_id)
+                 if user and user.get("role") == "admin":
+                     msg = "📊 Henüz tanımlı bir veritabanı kaynağı yok. Parametreler → Kaynaklar sekmesinden bir veritabanı bağlantısı ekleyin."
+                 else:
+                     msg = "📊 Bu özellik henüz kullanımda değildir."
+                     
+                 yield {"type": "done", "data": {
+                     "content": msg,
+                     "metadata": {"db_only": True}
+                 }}
+                 return
+                 
+             yield {"type": "status", "data": "Veritabanında uygun tablolar aranıyor..."}
+             
+             db_response, db_meta = router.route(query, user_id)
+             
+             if db_response:
+                 yield {"type": "done", "data": {
+                     "content": db_response,
+                     "metadata": {
+                         **db_meta,
+                         "deep_think": True,
+                         "db_routing": True
+                     }
+                 }}
+             else:
+                 yield {"type": "done", "data": {
+                     "content": "Veritabanında buna uygun bir veri bulunamadı.",
+                     "metadata": {"db_only": True}
+                 }}
+                 
+        except Exception as e:
+            log_error(f"DB Only stream hatası: {e}", "deep_think")
+            yield {"type": "done", "data": {
+                "content": "Sorgu çalıştırılırken bir hata oluştu.",
+                "metadata": {"db_only": True, "error": True}
+            }}
+
 # Fallback Prompt
 # ============================================
 
@@ -1881,8 +2080,6 @@ KURALLAR:
 
 📚 KAYNAKLAR
 • [Dosya adı] - [Kısa açıklama]"""
-
-
 # ============================================
 # Singleton Instance
 # ============================================

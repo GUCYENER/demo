@@ -61,6 +61,7 @@ class MessageRequest(BaseModel):
     """Yeni mesaj gönderme."""
     content: str = Field(..., min_length=1, max_length=5000)
     images: Optional[List[str]] = None  # Base64 encoded images
+    source_type: Optional[str] = Field(None, description="'rag', 'db' veya None — frontend mod seçimi")
 
 
 class MessageResponse(BaseModel):
@@ -344,6 +345,7 @@ async def send_message_stream(
                 content=request.content,
                 images=images,
                 widget_config=stream_widget_config,
+                source_type=request.source_type,
             ):
                 event_type = event.get("type", "token")
                 event_data = event.get("data", "")

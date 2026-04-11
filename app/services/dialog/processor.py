@@ -512,14 +512,19 @@ def process_user_message_stream(
     content: str,
     images: Optional[List[bytes]] = None,
     widget_config: dict = None,  # v2.61.0: Widget veri kaynağı override
+    source_type: str = None,  # v3.6.0: 'rag', 'db' veya None — frontend mod seçimi
 ):
     """
     🆕 v2.50.0: Streaming mesaj işleme orchestrator'ı.
+    🆕 v3.6.0: source_type parametresi ile mod bazlı yönlendirme.
     
     Akış:
     1. Kullanıcı mesajını kaydet
     2. OCR (görsel varsa)
-    3. Deep Think streaming pipeline'ını çalıştır
+    3. source_type'a göre pipeline seç:
+       - 'db'  → DB-only pipeline (HybridRouter)
+       - 'rag' → RAG-only pipeline (intent yok)
+       - None  → Legacy pipeline (otomatik orkestrasyon)
     4. Done event'inde DB'ye kaydet + Quick Reply oluştur
     
     Yields:
@@ -533,6 +538,8 @@ def process_user_message_stream(
     if images:
         user_metadata["has_images"] = True
         user_metadata["image_count"] = len(images)
+    if source_type:
+        user_metadata["source_type"] = source_type
     
     add_message(dialog_id, "user", content, "text", user_metadata if user_metadata else None)
     
@@ -573,34 +580,6 @@ def process_user_message_stream(
         return
 
     # 4. Deep Think Streaming Pipeline
-    # 🆕 v2.53.1: Kısa/anlamsız sorgu koruması (Deep Think'e gitmeden ÖNCE)
-    _sq = search_query.strip().rstrip('.?!,;:')
-    _sq_words = [w for w in _sq.split() if len(w) >= 2]
-    _sq_total = sum(len(w) for w in _sq_words)
-    # Kesik kelime kontrolü: "bilg.", "yet." gibi
-    _sq_orig_words = search_query.strip().split()
-    _sq_truncated = any(
-        w.endswith('.') and 2 <= len(w.rstrip('.?!,;:')) <= 5 and w.rstrip('.?!,;:').isalpha()
-        and w.rstrip('.?!,;:').lower() not in {'vb', 'vs', 'dr', 'mr', 'ms', 'st', 'ave', 'inc'}
-        for w in _sq_orig_words
-    )
-    _is_meaningless = len(_sq_words) < 2 or _sq_total < 10 or _sq_truncated
-    
-    if _is_meaningless:
-        log_system_event("INFO", f"Dialog: Kısa/anlamsız sorgu reddedildi: '{search_query}'", "dialog", user_id)
-        _no_result_msg = (
-            "🤔 Bu konuda bilgi tabanında ilgili bir kayıt bulunamadı.\n\n"
-            "Farklı anahtar kelimeler kullanarak tekrar deneyebilir veya "
-            "Vyra ile sohbet modunda sorabilirsiniz."
-        )
-        msg_id = add_message(dialog_id, "assistant", _no_result_msg, "text",
-                             {"deep_think": True, "short_query_rejected": True, "rag_result_count": 0})
-        yield {"type": "done", "data": {
-            "content": _no_result_msg,
-            "message_id": msg_id,
-            "metadata": {"rag_result_count": 0, "best_score": 0, "deep_think": True, "short_query_rejected": True}
-        }}
-        return
     
     try:
         from app.services.deep_think_service import get_deep_think_service
@@ -609,7 +588,15 @@ def process_user_message_stream(
         final_content = None
         final_metadata = None
         
-        for event in deep_think.process_stream(search_query, user_id):
+        # 🆕 v3.6.0: source_type bazlı pipeline seçimi
+        if source_type == 'db':
+            stream_gen = deep_think.process_stream_db_only(search_query, user_id)
+        elif source_type == 'rag':
+            stream_gen = deep_think.process_stream_rag_only(search_query, user_id)
+        else:
+            stream_gen = deep_think.process_stream(search_query, user_id)
+        
+        for event in stream_gen:
             event_type = event.get("type")
             
             if event_type == "cached":

@@ -204,7 +204,7 @@ body::before{
 }
 .mode-card::before{content:'';position:absolute;top:0;left:0;right:0;height:1.5px;border-radius:10px 10px 0 0;transition:opacity .18s}
 .mode-card.kb::before{background:linear-gradient(90deg,#4D99FF,#7C3AED);opacity:.5}
-.mode-card.chat::before{background:linear-gradient(90deg,#7C3AED,#34D399);opacity:.5}
+.mode-card.chat::before,.mode-card.llm::before{background:linear-gradient(90deg,#7C3AED,#34D399);opacity:.5}
 .mode-card:hover{border-color:var(--border-accent);box-shadow:0 4px 16px rgba(77,153,255,.08)}
 .mode-card:hover::before{opacity:1}
 .mode-card.selected{border-color:var(--accent);background:var(--accent-subtle)}
@@ -212,9 +212,9 @@ body::before{
 .mc-icon{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .mc-icon svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.7}
 .mode-card.kb .mc-icon{background:rgba(77,153,255,.12);color:var(--accent)}
-.mode-card.chat .mc-icon{background:rgba(124,58,237,.12);color:#A78BFA}
+.mode-card.chat .mc-icon,.mode-card.llm .mc-icon{background:rgba(124,58,237,.12);color:#A78BFA}
 .mode-card.kb.selected .mc-icon{background:var(--accent);color:#fff}
-.mode-card.chat.selected .mc-icon{background:#7C3AED;color:#fff}
+.mode-card.chat.selected .mc-icon,.mode-card.llm.selected .mc-icon{background:#7C3AED;color:#fff}
 .mode-card.selected .mc-icon svg{stroke:#fff}
 .mc-body{flex:1;min-width:0}
 .mc-title{font-size:12.5px;font-weight:500;color:var(--text-1);letter-spacing:-.01em}
@@ -606,7 +606,8 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
 
 @media(max-width:660px){.n-sidebar{display:none}}
 </style>
-<link rel="stylesheet" href="dist/bundle.min.css?v=3.5.19" />
+<link rel="stylesheet" href="assets/css/mode_cards.css?v=3.6.0" />
+<link rel="stylesheet" href="dist/bundle.min.css?v=3.6.0" />
 </head>
 <body>
 
@@ -736,7 +737,16 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
             <div class="mc-desc">Dokümanlar, prosedürler ve makaleler</div>
           </div>
         </div>
-        <div class="mode-card chat" id="modeChat" onclick="window.selectChatMode('chat')">
+        <div class="mode-card db" id="modeDb" onclick="window.selectChatMode('db')">
+          <div class="mc-icon">
+            <svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+          </div>
+          <div class="mc-body">
+            <div class="mc-title">Veritabanında Ara</div>
+            <div class="mc-desc">Tablo ve verilerde akıllı sorgulama</div>
+          </div>
+        </div>
+        <div class="mode-card llm" id="modeChat" onclick="window.selectChatMode('llm')">
           <div class="mc-icon">
             <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
           </div>
@@ -824,18 +834,26 @@ document.getElementById('themeToggleBtn').addEventListener('click', function(e) 
 
 window.selectChatMode = function(mode) {
   var kb = document.getElementById('modeKb');
+  var db = document.getElementById('modeDb');
   var ch = document.getElementById('modeChat');
+  // Tüm kartlardan selected kaldır
+  if (kb) kb.classList.remove('selected');
+  if (db) db.classList.remove('selected');
+  if (ch) ch.classList.remove('selected');
   if (mode === 'kb') {
-    kb.classList.add('selected');
-    ch.classList.remove('selected');
+    if (kb) kb.classList.add('selected');
     if (window.DialogChatModule && window.DialogChatModule.switchToRagMode) {
       window.DialogChatModule.switchToRagMode();
     }
-  } else {
-    ch.classList.add('selected');
-    kb.classList.remove('selected');
-    if (window.DialogChatModule && window.DialogChatModule.switchToCorpixMode) {
-      window.DialogChatModule.switchToCorpixMode();
+  } else if (mode === 'db') {
+    if (db) db.classList.add('selected');
+    if (window.DialogChatModule && window.DialogChatModule.switchToDbMode) {
+      window.DialogChatModule.switchToDbMode();
+    }
+  } else if (mode === 'llm') {
+    if (ch) ch.classList.add('selected');
+    if (window.DialogChatModule && window.DialogChatModule.switchToLlmMode) {
+      window.DialogChatModule.switchToLlmMode();
     }
   }
 };
