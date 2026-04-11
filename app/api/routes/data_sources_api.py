@@ -823,6 +823,47 @@ def run_full_learning(
         logger.debug("[DataSources] run-full-learning detay: %s", type(e).__name__)
         return {"success": False, "message": f"Pipeline başlatılamadı: {type(e).__name__}"}
 
+@router.post("/{source_id}/run-approved-learning")
+def run_approved_learning(
+    source_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Sadece onaylı tablolar için QA üretimini çalıştırır."""
+    try:
+        with get_db_context() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM data_sources WHERE id = %s", (source_id,))
+            source = cur.fetchone()
+            if not source:
+                raise HTTPException(status_code=404, detail="Data source not found")
+            source = dict(source) if hasattr(source, 'keys') else source
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("[DataSources] Error validating source: %s", str(e))
+        raise HTTPException(status_code=500, detail="Database validation error")
+
+    user_id = getattr(current_user, "id", None) or current_user.get("id")
+
+    def run_pipeline():
+        bg_conn = None
+        try:
+            from app.core.db import get_db_conn
+            bg_conn = get_db_conn()
+            ds_learning_service.run_approved_qa_learning(source, bg_conn, user_id=user_id)
+        except Exception as e:
+            logger.error("[DataSources] Onaylı Öğrenme arka plan hatası: %s", str(e))
+        finally:
+            if bg_conn:
+                try:
+                    bg_conn.close()
+                except Exception:
+                    pass
+
+    import threading
+    threading.Thread(target=run_pipeline, daemon=True).start()
+    return {"success": True, "message": "Onaylı tablolar için öğrenme süreci ('QA Generation') arka planda başlatıldı."}
+
 
 @router.get("/{source_id}/schedule")
 def get_schedule(
