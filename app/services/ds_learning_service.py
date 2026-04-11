@@ -1533,6 +1533,34 @@ def run_full_learning(source: dict, vyra_conn, user_id: int = None) -> dict:
         return results
 
 
+
+def run_approved_qa_learning(source: dict, vyra_conn, user_id: int = None) -> dict:
+    """Sadece onaylı tablolar için (adım 5) QA üretim sürecini çalıştırır."""
+    source_id = source["id"]
+    company_id = source.get("company_id", 1)
+    results = {"steps": []}
+
+    job_id = create_job(vyra_conn, source_id, company_id, "qa_generation", user_id)
+
+    try:
+        logger.info("[DSLearning] Approved QA learning for source %s", source_id)
+        from app.services import ds_qa_generator
+        r1 = ds_qa_generator.generate_enriched_qa(source_id, vyra_conn)
+        results["steps"].append({"step": "qa_generation", "success": r1.get("success"), "data": r1.get("data")})
+        
+        total_ms = sum(s.get("data", {}).get("elapsed_ms", 0) for s in results["steps"] if s.get("data"))
+        results["total_elapsed_ms"] = total_ms
+        results["success"] = True
+
+        complete_job(vyra_conn, job_id, {"success": True, "data": {"elapsed_ms": total_ms, **results}})
+        return results
+    except Exception as e:
+        logger.error("[DSLearning] QA_learning sırasında hata oluştu: %s", str(e))
+        results["success"] = False
+        results["error"] = str(e)
+        complete_job(vyra_conn, job_id, {"success": False, "error": str(e)})
+        return results
+
 # =====================================================
 # Faz 2: Schedule Yönetimi
 # =====================================================

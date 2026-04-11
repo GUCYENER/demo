@@ -1388,8 +1388,11 @@ window.DSLearningModule = (function () {
                 </div>
                 <div class="ds-wizard-body ds-details-body">
                     <div class="ds-wizard-final-actions" style="margin-bottom: 1rem;">
-                        <button class="ds-wizard-btn success" id="dsHistoryRunFull">
+                        <button class="ds-wizard-btn success" id="dsHistoryRunFull" title="Baştan Sona Tüm Aşamaları Çalıştırır">
                             <i class="fa-solid fa-rocket"></i> Tam Pipeline Başlat
+                        </button>
+                        <button class="ds-wizard-btn" id="dsHistoryRunApproved" style="background:#8b5cf6;" title="Sadece Onaylı Tabloları Öğrenir">
+                            <i class="fa-solid fa-brain"></i> Onaylıları Öğren
                         </button>
                         <button class="ds-wizard-btn secondary" id="dsHistorySchedule">
                             <i class="fa-solid fa-clock"></i> Zamanlama

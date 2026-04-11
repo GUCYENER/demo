@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.5.14"  # CodeReview fix: _filterPendingApproval declare+reset, rowHighlight, sort in applyFilterAndRender
+    APP_VERSION: str = "3.5.15"  # UI/API: Add "Onaylıları Öğren" (Run Approved Learning) feature
 
     # Frontend & API prefix
     api_prefix: str = "/api"
