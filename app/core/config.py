@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.5.16"  # UI/Fix: Change sort order when 'Onaylıları Göster' is checked to show them at top
+    APP_VERSION: str = "3.5.17"  # Fix: Add missing JS event listener for dsHistoryRunApproved button
 
     # Frontend & API prefix
     api_prefix: str = "/api"

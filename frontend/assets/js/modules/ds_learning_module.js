@@ -1428,6 +1428,37 @@ window.DSLearningModule = (function () {
         });
 
         // Aksiyon butonları
+        const approvedBtn = document.getElementById('dsHistoryRunApproved');
+        if (approvedBtn) {
+            approvedBtn.addEventListener('click', async () => {
+                const oldHtml = approvedBtn.innerHTML;
+                approvedBtn.disabled = true;
+                approvedBtn.classList.add('ds-btn-disabled');
+                approvedBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Başlatılıyor...';
+
+                try {
+                    const token = localStorage.getItem('access_token');
+                    const res = await fetch(`/api/data-sources/${sourceId}/run-approved-learning`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        if (typeof showToast === 'function') showToast(data.message || 'Onaylıları öğrenme başlatıldı!', 'success');
+                        setTimeout(() => loadHistory(sourceId), 2000);
+                    } else {
+                        if (typeof showToast === 'function') showToast(data.message || 'Başlatılamadı.', 'error');
+                    }
+                } catch (e) {
+                     if (typeof showToast === 'function') showToast('Hata: ' + e.message, 'error');
+                } finally {
+                    approvedBtn.innerHTML = oldHtml;
+                    approvedBtn.disabled = false;
+                    approvedBtn.classList.remove('ds-btn-disabled');
+                }
+            });
+        }
+
         const fullBtn = document.getElementById('dsHistoryRunFull');
 
         fullBtn.addEventListener('click', async () => {
