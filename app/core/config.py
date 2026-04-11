@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.5.17"  # Fix: Add missing JS event listener for dsHistoryRunApproved button
+    APP_VERSION: str = "3.5.18"  # Chores: Rebuild and cache-bust for QA generation testing
 
     # Frontend & API prefix
     api_prefix: str = "/api"
