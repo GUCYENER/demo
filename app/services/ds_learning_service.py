@@ -1306,8 +1306,13 @@ def search_db_knowledge(query: str, company_id: int = None, min_score: float = 0
         results.sort(key=lambda x: x["score"], reverse=True)
         return results[:max_results]
 
-    except Exception:
-        logger.error("[DSLearning] DB knowledge search sırasında hata oluştu")
+    except Exception as _sdb_err:
+        import traceback as _tb
+        logger.error(
+            "[DSLearning] DB knowledge search hatasi: %s | %s",
+            type(_sdb_err).__name__, str(_sdb_err)[:200]
+        )
+        logger.debug("[DSLearning] Traceback: %s", _tb.format_exc())
         return []
 
 

@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.6.0"  # DB Search Modülü & Pipeline Ayrıştırması
+    APP_VERSION: str = "3.6.3"  # Text-to-SQL Quoting & DB Struct Learningı
 
     # Frontend & API prefix
     api_prefix: str = "/api"

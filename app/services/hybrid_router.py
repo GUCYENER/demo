@@ -550,7 +550,7 @@ class HybridRouter:
                        ds.db_name, ds.db_user, ds.db_password_encrypted
                 FROM data_sources ds
                 WHERE ds.source_type = 'database'
-                  AND ds.status = 'active'
+                  AND ds.is_active = TRUE
                   AND EXISTS (
                       SELECT 1 FROM ds_db_objects dbo
                       WHERE dbo.source_id = ds.id

@@ -36,13 +36,12 @@ TEXT_TO_SQL_SYSTEM_PROMPT = """Sen bir SQL uzmanısın. Kullanıcının doğal d
 
 KRİTİK KURALLAR:
 1. SADECE SELECT sorguları yaz. INSERT, UPDATE, DELETE, DROP, ALTER gibi komutlar KESİNLİKLE YASAK.
-2. Yalnızca verilen tablolar ve sütunları kullan. Olmayan tablo/sütun kullanma.
-3. LIMIT ekle (max 100 satır).
-4. WHERE filtresi uygunsa ekle.
-5. Tarih filtreleri için dialect'e uygun tarih fonksiyonları kullan.
-6. Tablo ve sütun adlarını gerektiğinde quote et.
-7. SQL'i ```sql ... ``` bloğu içinde yaz.
-8. SQL'den önce kısa bir açıklama yaz.
+2. Yalnızca açıklamasında ve iş adında kullanıcının hedefine en uygun olan TEK BİR ANA tabloyu seç. Yanlış tablo seçme.
+3. Yalnızca verilen şemadaki gerçek tablo ve sütunları kullan. Hayali sütun uydurma! (Örn: "aktif" istendiğinde tabloda Active yoksa IsLocked, Status, WorkStatus gibi GERÇEK sütunlara bak).
+4. LIMIT ekle (max 100 satır).
+5. {quoting_rule}
+6. SQL'i ```sql ... ``` bloğu içinde yaz.
+7. SQL'den önce hangi tabloyu neden seçtiğini ("İş Adı"na atıf yaparak) 1 cümle ile açıkla.
 
 DİALECT: {dialect}
 """
@@ -62,19 +61,39 @@ def build_text_to_sql_prompt(
     Args:
         query: Kullanıcı sorusu
         schema_context: Schema bilgisi (get_schema_context() çıktısı)
+            extra_context anahtarı varsa (örn. ML öğrenme bilgisi) prompt başına eklenir.
 
     Returns:
         LLM messages listesi
     """
     from app.services.hybrid_router import format_schema_for_llm
 
-    dialect = schema_context.get("dialect", "postgresql")
+    dialect = schema_context.get("dialect", "postgresql").lower()
     schema_text = format_schema_for_llm(schema_context)
+    
+    # Tüm veritabanları için özel tırnaklama (quoting) kuralları
+    if dialect == "postgresql":
+        quoting_rule = 'PostgreSQL kuralı: Büyük/küçük harf duyarlılığını sağlamak için ŞEMA, TABLO ve SÜTUN adlarını DAİMA çift tırnak (") içine al. Örn: SELECT * FROM "elysion"."T_ORG_USER"'
+    elif dialect == "mssql":
+        quoting_rule = "MSSQL kuralı: Şema, tablo ve sütun adlarını köşeli parantez ([]) içine al. Örn: SELECT * FROM [elysion].[T_ORG_USER]"
+    elif dialect == "mysql":
+        quoting_rule = "MySQL kuralı: Şema, tablo ve sütun adlarını ters tırnak (`) içine al. LIMIT N syntax'ı kullan."
+    elif dialect == "oracle":
+        quoting_rule = 'Oracle kuralı: Anahtar kelimeleri ve tanımlayıcıları korumak için çift tırnak (") kullan. FETCH FIRST N ROWS ONLY syntax\'ı kullan (LIMIT yerine).'
+    else:
+        quoting_rule = "Tablo ve sütun adlarını veritabanının diline uygun şekilde quote et."
 
-    system = TEXT_TO_SQL_SYSTEM_PROMPT.format(dialect=dialect)
+    system = TEXT_TO_SQL_SYSTEM_PROMPT.format(dialect=dialect, quoting_rule=quoting_rule)
+
+    # ML öğrenme bilgisi varsa şema öncesine ekle
+    extra_ctx = schema_context.get("extra_context", "")
+    if extra_ctx:
+        schema_block = f"{extra_ctx}\n\n{schema_text}"
+    else:
+        schema_block = schema_text
 
     user_msg = f"""VERİTABANI ŞEMASI:
-{schema_text}
+{schema_block}
 
 KULLANICI SORUSU:
 {query}

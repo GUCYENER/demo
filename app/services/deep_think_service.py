@@ -2007,50 +2007,287 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
 
 
     def process_stream_db_only(self, query: str, user_id: int) -> Generator[Dict[str, Any], None, None]:
-        """Sadece DB pipeline çalıştırır, RAG aranmaz."""
+        """
+        v3.6.1: DB-only pipeline — HybridRouter kaldırıldı.
+
+        Akış:
+        1. Kullanıcının DB kaynaklarını bul
+        2. ML öğrenme verisiyle (search_db_knowledge) ilgili tabloyu tespit et
+        3. Schema context'i al (get_schema_context)
+        4. ML bağlamı + şema ile LLM Text-to-SQL üret
+        5. SafeSQLExecutor ile güvenli çalıştır
+        6. Sonuçları markdown tablo olarak formatla
+        """
+        import time
+        start_time = time.time()
+
         try:
-             from app.services.hybrid_router import get_hybrid_router
-             router = get_hybrid_router()
-             
-             sources = router._get_user_db_sources(user_id)
-             if not sources:
-                 from app.services.user_service import get_user_by_id
-                 user = get_user_by_id(user_id)
-                 if user and user.get("role") == "admin":
-                     msg = "📊 Henüz tanımlı bir veritabanı kaynağı yok. Parametreler → Kaynaklar sekmesinden bir veritabanı bağlantısı ekleyin."
-                 else:
-                     msg = "📊 Bu özellik henüz kullanımda değildir."
-                     
-                 yield {"type": "done", "data": {
-                     "content": msg,
-                     "metadata": {"db_only": True}
-                 }}
-                 return
-                 
-             yield {"type": "status", "data": "Veritabanında uygun tablolar aranıyor..."}
-             
-             db_response, db_meta = router.route(query, user_id)
-             
-             if db_response:
-                 yield {"type": "done", "data": {
-                     "content": db_response,
-                     "metadata": {
-                         **db_meta,
-                         "deep_think": True,
-                         "db_routing": True
-                     }
-                 }}
-             else:
-                 yield {"type": "done", "data": {
-                     "content": "Veritabanında buna uygun bir veri bulunamadı.",
-                     "metadata": {"db_only": True}
-                 }}
-                 
-        except Exception as e:
-            log_error(f"DB Only stream hatası: {e}", "deep_think")
+            # ── 1. Kullanıcının DB kaynaklarını bul ─────────────────────────
+            from app.core.db import get_db_conn
+            sources = []
+            conn = get_db_conn()
+            try:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT ds.id, ds.name, ds.db_type, ds.host, ds.port,
+                           ds.db_name, ds.db_user, ds.db_password_encrypted
+                    FROM data_sources ds
+                    WHERE ds.source_type = 'database'
+                      AND ds.is_active = TRUE
+                      AND EXISTS (
+                          SELECT 1 FROM ds_db_objects dbo
+                          WHERE dbo.source_id = ds.id
+                      )
+                    ORDER BY ds.name
+                    LIMIT 5
+                """)
+                for row in cur.fetchall():
+                    sources.append({
+                        "id": row["id"], "name": row["name"],
+                        "db_type": row["db_type"], "host": row["host"],
+                        "port": row["port"], "db_name": row["db_name"],
+                        "db_user": row["db_user"],
+                        "db_password_encrypted": row["db_password_encrypted"],
+                    })
+            finally:
+                conn.close()
+
+            if not sources:
+                try:
+                    from app.services.user_service import get_user_by_id
+                    user = get_user_by_id(user_id)
+                    is_admin = user and user.get("role") == "admin"
+                except Exception:
+                    is_admin = False
+                msg = (
+                    "📊 Henüz tanımlı bir veritabanı kaynağı yok. "
+                    "Parametreler → Kaynaklar sekmesinden bir veritabanı bağlantısı ekleyin."
+                    if is_admin else
+                    "📊 Bu özellik henüz kullanımda değildir."
+                )
+                yield {"type": "done", "data": {"content": msg, "metadata": {"db_only": True}}}
+                return
+
+            yield {"type": "status", "data": "ML ogrenmis sema aranıyor..."}
+
+            # ── 2. ML öğrenilmiş şema bilgisini getir (schema_record) ──────
+            ml_context = ""
+            ml_matched_tables = []
+            try:
+                from app.services.ds_learning_service import search_db_knowledge
+                ml_results = search_db_knowledge(query, min_score=0.25, max_results=3)
+                if ml_results:
+                    schema_parts = []
+                    for r in ml_results:
+                        content = r.get("content", "")
+                        meta = r.get("metadata") or {}
+                        full_table = meta.get("full_table") or meta.get("table_name", "")
+                        if full_table:
+                            ml_matched_tables.append(full_table)
+                        # schema_record içeriği zaten yapılandırılmış şema metni
+                        schema_parts.append(content)
+
+                    ml_context = "\n\n---\n\n".join(schema_parts)
+                    log_system_event(
+                        "INFO",
+                        f"DB-Only: {len(ml_results)} schema_record bulundu: {ml_matched_tables}",
+                        "deep_think", user_id
+                    )
+                else:
+                    log_warning(
+                        "DB-Only: ML'de eslesme bulunamadi (min_score=0.25)",
+                        "deep_think"
+                    )
+            except Exception as ml_err:
+                log_warning(f"DB-Only ML arama hatasi: {ml_err}", "deep_think")
+
+
+            # ── 3. Schema context'i al ────────────────────────────────────
+            yield {"type": "status", "data": "📋 Veritabanı şeması yükleniyor..."}
+
+            from app.services.hybrid_router import get_schema_context
+            schema_ctx = None
+            source = None
+            for s in sources:
+                try:
+                    ctx = get_schema_context(s["id"])
+                    if ctx and ctx.get("tables"):
+                        schema_ctx = ctx
+                        source = s
+                        break
+                except Exception as schema_err:
+                    log_warning(f"DB-Only: Kaynak '{s['name']}' şema yüklenemedi: {schema_err}", "deep_think")
+
+            if not schema_ctx:
+                yield {"type": "done", "data": {
+                    "content": "⚠️ Veritabanı şeması yüklenemedi. Lütfen veri kaynağının aktif olduğunu kontrol edin.",
+                    "metadata": {"db_only": True, "error": True}
+                }}
+                return
+
+            # ── 4. LLM Text-to-SQL üret (ML bağlamı + şema) ─────────────
+            yield {"type": "status", "data": "SQL sorgusu olusturuluyor..."}
+
+            from app.services.text_to_sql import generate_sql
+            from app.services.safe_sql_executor import SafeSQLExecutor
+
+            # ML bağlamını schema_context'e göm — generate_sql bunu prompt'a alır
+            schema_ctx_with_ml = dict(schema_ctx)
+            if ml_context:
+                schema_ctx_with_ml["extra_context"] = ml_context
+
+            dialect = schema_ctx.get("dialect", "mssql")
+
+            executor = SafeSQLExecutor()
+            allowed_tables = executor.get_allowed_tables(source["id"])
+
+            sql_result = generate_sql(
+                query=query,
+                schema_context=schema_ctx_with_ml,
+                allowed_tables=allowed_tables,
+            )
+
+            if not sql_result.get("success"):
+                _sql_err = sql_result.get("error", "Bilinmeyen SQL hatasi")
+                log_warning(f"DB-Only: SQL uretimi basarisiz: {_sql_err}", "deep_think")
+                yield {"type": "done", "data": {
+                    "content": (
+                        f"SQL sorgusu olusturulamadi: {_sql_err}\n\n"
+                        "Sorunuzu farkli bir sekilde ifade etmeyi deneyin."
+                    ),
+                    "metadata": {"db_only": True, "error": True, "sql_error": _sql_err}
+                }}
+                return
+
+            sql = sql_result["sql"]
+
+            # ── 5. SQL'i guvenli calistir ────────────────────────────────
+            yield {"type": "status", "data": "Veritabani sorgusu calistiriliyor..."}
+
+            exec_result = executor.execute(
+                sql=sql,
+                source=source,
+                dialect=dialect,
+                allowed_tables=allowed_tables,
+            )
+
+            elapsed_ms = (time.time() - start_time) * 1000
+
+            # SQL Audit Log
+            try:
+                from app.services.sql_audit_log import log_sql_execution
+                log_sql_execution(
+                    user_id=user_id,
+                    source_id=source["id"],
+                    source_name=source["name"],
+                    sql_text=exec_result.sql_executed or sql,
+                    dialect=dialect,
+                    status="success" if exec_result.success else "error",
+                    row_count=exec_result.row_count if exec_result.success else 0,
+                    elapsed_ms=elapsed_ms,
+                    error_msg=exec_result.error if not exec_result.success else None,
+                )
+            except Exception:
+                pass
+
+            if not exec_result.success:
+                log_warning(f"DB-Only: SQL çalıştırma hatası: {exec_result.error}", "deep_think")
+                yield {"type": "done", "data": {
+                    "content": (
+                        f"❌ Sorgu çalıştırılırken hata oluştu:\n\n"
+                        f"`{exec_result.error}`\n\n"
+                        f"Çalıştırılan SQL: `{exec_result.sql_executed or sql}`"
+                    ),
+                    "metadata": {"db_only": True, "error": True, "sql": exec_result.sql_executed}
+                }}
+                return
+
+            # ── 6. Sonuçları formatla ve Stream Et ───────────────────────
+            db_data = exec_result.data or []
+            sql_executed = exec_result.sql_executed or sql
+            source_name = schema_ctx.get("source_name", source["name"])
+
+            if not db_data:
+                content = (
+                    f"🎯 Kriterlerinize göre **{source_name}** üzerinde bir inceleme yaptım ancak eşleşen bir kayıt bulamadım.\n\n"
+                    f"<br/><small>*(🔍 Çalıştırılan SQL: `{sql_executed}`)*</small>"
+                )
+            elif len(db_data) == 1 and len(db_data[0]) <= 3:
+                # Tek satır/az sütun — sade format
+                greeting = f"İşte aradığınız sonuç! **{source_name}** üzerinden elde ettiğim bilgi:\n\n"
+                row = db_data[0]
+                parts = [f"✨ **{col}**: `{val}`" for col, val in row.items()]
+                content = (
+                    greeting
+                    + "\n".join(parts)
+                    + f"\n\n<br/><small>*(🔍 Çalıştırılan SQL: `{sql_executed}`)*</small>"
+                )
+            else:
+                # Markdown tablo
+                greeting = f"İşte aradığınız veriler! **{source_name}** üzerinde yaptığım incelemede eşleşen **{len(db_data)}** kaydı sizin için aşağıda listeledim:\n\n"
+                columns = list(db_data[0].keys())
+                header = "| " + " | ".join(str(c) for c in columns) + " |"
+                separator = "| " + " | ".join("---" for _ in columns) + " |"
+                rows_md = []
+                for row in db_data:
+                    row_vals = []
+                    for c in columns:
+                        val = row.get(c, "")
+                        val_str = str(val) if val is not None else "-"
+                        if len(val_str) > 60:
+                            val_str = val_str[:57] + "..."
+                        # Değerleri daha modern göstermek için markdown ile düzenle
+                        row_vals.append(val_str.replace("|", r"\|"))
+                    rows_md.append("| " + " | ".join(row_vals) + " |")
+
+                table_md = "\n".join([header, separator] + rows_md)
+                content = (
+                    f"{greeting}"
+                    f"{table_md}\n\n"
+                    f"<br/><small>*(🔍 Çalıştırılan SQL: `{sql_executed}`)*</small>"
+                )
+
+            # RAG gibi Stream efekti ile Frontend'e aktar
+            import asyncio
+            chunk_size = 20
+            for i in range(0, len(content), chunk_size):
+                chunk = content[i:i+chunk_size]
+                yield {"type": "token", "data": chunk}
+                await asyncio.sleep(0.01)
+
+            yield {"type": "done", "data": {"content": content, "metadata": {"db_only": True, "sql": sql_executed}}}
+
+            log_system_event(
+                "INFO",
+                f"DB-Only: {len(db_data)} satır, {elapsed_ms:.0f}ms | SQL: {sql_executed[:80]}",
+                "deep_think", user_id
+            )
+
             yield {"type": "done", "data": {
-                "content": "Sorgu çalıştırılırken bir hata oluştu.",
-                "metadata": {"db_only": True, "error": True}
+                "content": content,
+                "metadata": {
+                    "db_only": True,
+                    "deep_think": True,
+                    "db_routing": True,
+                    "sql_executed": sql_executed,
+                    "row_count": len(db_data),
+                    "source_db": source_name,
+                    "ml_context_used": bool(ml_context),
+                    "processing_time_ms": elapsed_ms,
+                }
+            }}
+
+        except Exception as e:
+            import traceback as _tb
+            _detail = _tb.format_exc()
+            log_error(f"DB Only stream hatasi: {e}", "deep_think", error_detail=_detail)
+            yield {"type": "done", "data": {
+                "content": (
+                    f"Sorgu calistirilirken bir hata olustu.\n\n"
+                    f"**Hata:** `{type(e).__name__}: {str(e)[:200]}`\n\n"
+                    f"Lutfen sistem yoneticisine bildirin."
+                ),
+                "metadata": {"db_only": True, "error": True, "error_type": type(e).__name__}
             }}
 
 # Fallback Prompt

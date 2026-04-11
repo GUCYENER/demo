@@ -2031,8 +2031,10 @@ window.DialogChatModule = (function () {
         // Dosya indirme
         downloadFile,
         deactivate,
-        // v3.6.0: LLM fallback
-        handleLlmAction,
+        // v3.6.0: LLM fallback (delegation → DialogTicketModule)
+        handleLlmAction: function(action, query) {
+            return window.DialogTicketModule?.handleLlmAction(action, query);
+        },
         // v2.24.6: Notification'dan dialog yükleme
         loadDialogById,
         // v2.51.0: Vyra önerisi

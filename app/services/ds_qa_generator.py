@@ -1,94 +1,151 @@
 """
-VYRA - DS QA Generator (v3.0.0)
-==================================
-Enrichment verilerini kullanarak sentetik QA çiftleri üretir.
-ds_learning_service.generate_synthetic_qa fonksiyonunun modüler karşılığı.
+VYRA - DS Schema Learner (v4.0.0)
+===================================
+Onaylı tablolar için SADECE şema bilgisi öğrenir.
+Sıntetik QA üretimi YOK — tablo mimarisi ve kolon yapısı öğrenilir.
 
-Enrichment'tan gelen Türkçe iş adları ve açıklamalar QA kalitesini artırır.
+Hedef: LLM doğru SQL üretebilsin diye:
+  - Tablo adı (schema.table)
+  - Kolon listesi (ad, tip, PK mi, nullable mi)
+  - Foreign key ilişkileri
+  - Satır tahmini
 
-Version: 3.0.0
+Her tablo için 1 adet "schema_record" üretilir, embedding'e çevrilir
+ve ds_learning_results'a yazılır.
+
+Version: 4.0.0
 """
 
 import json
-import hashlib
-import logging
 import time
+import logging
 
 logger = logging.getLogger(__name__)
 
 
+def _build_schema_text(table_name: str, schema: str, cols: list,
+                       bname: str, desc: str, row_est: int,
+                       rels_from: list, rels_to: list) -> str:
+    """
+    LLM'in SQL üretmesi için yeterli, sade şema metni üretir.
+    Formatı embedding + doğrudan LLM bağlamı olarak kullanmaya uygundur.
+    """
+    lines = []
+    full_table = f"{schema}.{table_name}" if schema and schema not in ("", "public") else table_name
+
+    lines.append(f"TABLO: {full_table}")
+    if bname and bname != table_name:
+        lines.append(f"İş Adı: {bname}")
+    if desc:
+        lines.append(f"Açıklama: {desc}")
+    if row_est:
+        lines.append(f"Tahmini Kayıt Sayısı: {row_est}")
+
+    if cols:
+        pk_cols = [c["name"] for c in cols if c.get("is_pk")]
+        if pk_cols:
+            lines.append(f"Primary Key: {', '.join(pk_cols)}")
+
+        lines.append("Sütunlar:")
+        for c in cols:
+            nullable = "" if c.get("nullable", True) else " NOT NULL"
+            pk_mark = " [PK]" if c.get("is_pk") else ""
+            lines.append(f"  - {c['name']} ({c['data_type']}){nullable}{pk_mark}")
+
+    if rels_from:
+        lines.append("İlişkiler (FK çıkan):")
+        for r in rels_from:
+            lines.append(f"  - {r['from_column']} → {r['to_schema']}.{r['to_table']}.{r['to_column']}")
+
+    if rels_to:
+        lines.append("İlişkiler (FK gelen):")
+        for r in rels_to:
+            lines.append(f"  - {r['from_schema']}.{r['from_table']}.{r['from_column']} → {r['to_column']}")
+
+    return "\n".join(lines)
+
+
 def generate_enriched_qa(source_id: int, vyra_conn) -> dict:
     """
-    Enrichment verileri ile zenginleştirilmiş sentetik QA çiftleri üretir.
+    Onaylı tablolar için şema bilgisi öğrenir.
 
-    Enrichment'tan gelen business_name_tr, description_tr, category
-    bilgilerini soru/cevap metinlerine dahil eder.
+    Her onaylı tablo için:
+      - Tablo adı, şema, kolon listesi, PK, FK ilişkileri → tek bir 'schema_record'
+      - Bu metin embedding'e çevrilip ds_learning_results'a yazılır
+      - content_type = 'schema_record'
+
+    Sıntetik QA, örnek veri veya doğal dil soru-cevap üretilmez.
 
     Returns:
-        dict: {success, data: {qa_pairs_generated, ...}}
+        dict: {success, data: {learned_tables, elapsed_ms, ...}}
     """
     start = time.time()
     cur = vyra_conn.cursor()
-    logger.info("[DSQAGen] Enriched QA üretimi başlatıldı: source_id=%s", source_id)
+    logger.info("[DSSchemaLearner] Şema öğrenimi başlatıldı: source_id=%s", source_id)
 
     # company_id
     cur.execute("SELECT company_id FROM data_sources WHERE id = %s", (source_id,))
-    source_row = cur.fetchone()
-    company_id = source_row["company_id"] if source_row else 1
+    src_row = cur.fetchone()
+    company_id = src_row["company_id"] if src_row else 1
 
     # Embedding manager
     try:
         from app.services.rag.embedding import EmbeddingManager
         emb_mgr = EmbeddingManager()
-    except Exception:
-        logger.error("[DSQAGen] EmbeddingManager yüklenemedi")
+    except Exception as emb_err:
+        logger.error("[DSSchemaLearner] EmbeddingManager yüklenemedi: %s", emb_err)
         return {"success": False, "error": "Embedding modeli yüklenemedi"}
 
-    # Enrichment verileri (Sadece admin onaylı olanları çek !!!)
+    # Onaylı enrichment'lar (tablo adı, şema, iş adı, açıklama)
     cur.execute("""
-        SELECT te.id, te.schema_name, te.table_name, te.object_type,
-               te.business_name_tr, te.description_tr, te.category,
-               te.sample_questions, te.enrichment_score, te.admin_label_tr
+        SELECT te.schema_name, te.table_name,
+               te.business_name_tr, te.admin_label_tr, te.description_tr
         FROM ds_table_enrichments te
-        WHERE te.source_id = %s AND te.is_active = TRUE AND te.admin_approved = TRUE
+        WHERE te.source_id = %s
+          AND te.is_active = TRUE
+          AND te.admin_approved = TRUE
         ORDER BY te.table_name
     """, (source_id,))
     enrichments = cur.fetchall()
 
-    # Objeleri al (sütun bilgileri için)
-    cur.execute("""
-        SELECT id, schema_name, object_name, object_type, column_count,
-               row_count_estimate, columns_json
-        FROM ds_db_objects WHERE source_id = %s
-        ORDER BY object_name
-    """, (source_id,))
-    objects = {(row["schema_name"] or "", row["object_name"]): row for row in cur.fetchall()}
+    if not enrichments:
+        logger.info("[DSSchemaLearner] Onaylı tablo yok, işlem atlandı.")
+        return {"success": True, "data": {"learned_tables": 0, "elapsed_ms": 0}}
 
-    # İlişkileri al
+    approved_names = {e["table_name"] for e in enrichments}
+
+    # Obje verileri (kolon + satır tahmini)
     cur.execute("""
-        SELECT from_schema, from_table, from_column, to_schema, to_table, to_column
-        FROM ds_db_relationships WHERE source_id = %s
+        SELECT schema_name, object_name, row_count_estimate, columns_json
+        FROM ds_db_objects
+        WHERE source_id = %s AND object_type = 'table'
+    """, (source_id,))
+    objects = {
+        (row["schema_name"] or "", row["object_name"]): row
+        for row in cur.fetchall()
+    }
+
+    # Tüm FK ilişkileri
+    cur.execute("""
+        SELECT from_schema, from_table, from_column,
+               to_schema, to_table, to_column
+        FROM ds_db_relationships
+        WHERE source_id = %s
     """, (source_id,))
     all_rels = cur.fetchall()
 
-    # Sample verileri
-    cur.execute("""
-        SELECT s.object_id, s.sample_data, s.row_count, o.object_name
-        FROM ds_db_samples s
-        JOIN ds_db_objects o ON s.object_id = o.id
-        WHERE s.source_id = %s
-    """, (source_id,))
-    all_samples = {row["object_name"]: row for row in cur.fetchall()}
+    # tablo → [rels_from, rels_to] indeksi
+    rels_from_map: dict = {}
+    rels_to_map: dict = {}
+    for r in all_rels:
+        ft = r["from_table"]
+        tt = r["to_table"]
+        if ft in approved_names:
+            rels_from_map.setdefault(ft, []).append(r)
+        if tt in approved_names:
+            rels_to_map.setdefault(tt, []).append(r)
 
-    # Dedup hash'leri
-    cur.execute("""
-        SELECT md5(metadata->>'question') as q_hash
-        FROM ds_learning_results
-        WHERE source_id = %s AND is_valid = TRUE
-    """, (source_id,))
-    existing_hashes = {row["q_hash"] for row in cur.fetchall()}
-
-    # Job ID
+    # Job ID (çalışan iş varsa bağla)
     cur.execute("""
         SELECT id FROM ds_discovery_jobs
         WHERE source_id = %s AND status = 'running'
@@ -97,38 +154,36 @@ def generate_enriched_qa(source_id: int, vyra_conn) -> dict:
     job_row = cur.fetchone()
     current_job_id = job_row["id"] if job_row else None
 
-    qa_count = 0
-    skipped_count = 0
-    total_pairs = []
+    # Eski schema_record'ları geçersiz kıl
+    cur.execute("""
+        UPDATE ds_learning_results
+        SET is_valid = FALSE, invalidated_at = NOW()
+        WHERE source_id = %s
+          AND content_type = 'schema_record'
+          AND is_valid = TRUE
+    """, (source_id,))
+    invalidated = cur.rowcount
+    if invalidated:
+        logger.info("[DSSchemaLearner] %d eski schema_record invalidated", invalidated)
 
-    # Sadece onaylı tabloların listesi (Samples ve Rels filtresi için)
-    approved_table_names = {enr["table_name"] for enr in enrichments}
-
-    # Enrichment bazlı QA üretimi
+    # Her onaylı tablo için şema metni üret + embedding yaz
+    records = []
     for enr in enrichments:
         table_name = enr["table_name"]
-        schema = enr["schema_name"] or "public"
+        schema = enr["schema_name"] or ""
         bname = enr["admin_label_tr"] or enr["business_name_tr"] or table_name
         desc = enr["description_tr"] or ""
-        category = enr["category"] or "other"
-        sample_qs = enr["sample_questions"]
 
-        if isinstance(sample_qs, str):
-            try:
-                sample_qs = json.loads(sample_qs)
-            except Exception:
-                sample_qs = []
+        # Kolon bilgisi
+        obj = (
+            objects.get((schema, table_name))
+            or objects.get(("", table_name))
+            or objects.get(("public", table_name))
+        )
 
-        obj = objects.get((schema if schema != "public" else "", table_name)) or \
-              objects.get(("", table_name)) or \
-              objects.get(("public", table_name))
-
-        # Sütun bilgileri
         cols = []
-        col_count = 0
         row_est = 0
         if obj:
-            col_count = obj["column_count"] or 0
             row_est = obj["row_count_estimate"] or 0
             cols_raw = obj["columns_json"]
             if isinstance(cols_raw, str):
@@ -136,190 +191,78 @@ def generate_enriched_qa(source_id: int, vyra_conn) -> dict:
                     cols = json.loads(cols_raw)
                 except Exception:
                     cols = []
-            else:
-                cols = cols_raw or []
+            elif isinstance(cols_raw, list):
+                cols = cols_raw
 
-        pk_cols = [c["name"] for c in cols if c.get("is_pk")]
-        col_text = ", ".join([f"{c['name']} ({c['data_type']})" for c in cols[:20]])
-
-        # ─── QA 1: İş anlamı (enrichment bilgisi ile) ───
-        q1 = f"{bname} tablosu ne içerir? {table_name} tablosu ne işe yarar?"
-        a1 = f"{bname} ({schema}.{table_name}): {desc}" if desc else f"{bname} ({schema}.{table_name})"
-        if col_count:
-            a1 += f" {col_count} sütun, yaklaşık {row_est} kayıt."
-        if col_text:
-            a1 += f" Sütunlar: {col_text}."
-        if pk_cols:
-            a1 += f" Primary Key: {', '.join(pk_cols)}."
-
-        total_pairs.append({
-            "content_type": "schema_description",
-            "content_text": a1,
-            "question_text": q1,
-            "object_name": table_name
-        })
-
-        # ─── QA 2: Kategori bilgisi ───
-        cat_labels = {
-            "finance": "finans ve muhasebe", "hr": "insan kaynakları",
-            "crm": "müşteri ilişkileri", "inventory": "stok ve envanter",
-            "auth": "kimlik doğrulama ve yetkilendirme", "system": "sistem",
-            "log": "log ve denetim", "config": "ayar ve konfigürasyon"
-        }
-        cat_label = cat_labels.get(category, category)
-
-        q2 = f"{bname} hangi kategoride? {table_name} ne tür veri tutar?"
-        a2 = f"{bname} ({table_name}) tablosu '{cat_label}' kategorisinde yer alır."
-        if desc:
-            a2 += f" {desc}"
-
-        total_pairs.append({
-            "content_type": "schema_description",
-            "content_text": a2,
-            "question_text": q2,
-            "object_name": table_name
-        })
-
-        # ─── QA 3: LLM sample_questions ───
-        if sample_qs:
-            for sq in sample_qs[:3]:
-                if isinstance(sq, str) and len(sq) >= 5:
-                    total_pairs.append({
-                        "content_type": "schema_description",
-                        "content_text": f"{bname} ({schema}.{table_name}): {desc or 'Detaylı bilgi için tablonun sütunlarını inceleyin.'}",
-                        "question_text": sq,
-                        "object_name": table_name
-                    })
-
-        # ─── QA 4: Sütun sayısı ───
-        if col_count:
-            q4 = f"{bname} tablosunda kaç sütun var? {table_name} kaç alana sahip?"
-            a4 = f"{bname} ({table_name}) tablosunda {col_count} sütun vardır: {col_text}."
-            total_pairs.append({
-                "content_type": "schema_description",
-                "content_text": a4,
-                "question_text": q4,
-                "object_name": table_name
-            })
-
-    # ─── İlişki QA'ları ───
-    if all_rels:
-        rel_descriptions = []
-        for rel in all_rels:
-            if rel['from_table'] in approved_table_names and rel['to_table'] in approved_table_names:
-                rel_descriptions.append(
-                    f"{rel['from_table']}.{rel['from_column']} → {rel['to_table']}.{rel['to_column']}"
-                )
-
-        if rel_descriptions:
-            q_rel = "Tablolar arası ilişkiler nelerdir? Hangi tablolar birbiriyle bağlantılı?"
-            a_rel = f"Onaylı veritabanı tablolarında {len(rel_descriptions)} Foreign Key ilişkisi bulunmaktadır: " + "; ".join(rel_descriptions[:30]) + "."
-            total_pairs.append({
-                "content_type": "relationship_map",
-                "content_text": a_rel,
-                "question_text": q_rel,
-                "object_name": "_relationships"
-            })
-
-    # ─── Sample Insight QA'ları ───
-    for table_name, sample in all_samples.items():
-        if table_name not in approved_table_names:
-            continue
-
-        if not sample["sample_data"]:
-            continue
-
-        sample_data = sample["sample_data"]
-        if isinstance(sample_data, str):
-            try:
-                sample_data = json.loads(sample_data)
-            except Exception:
-                continue
-
-        if not sample_data:
-            continue
-
-        # Enrichment'tan iş adını al
-        enr_match = next(
-            (e for e in enrichments if e["table_name"] == table_name), None
+        schema_text = _build_schema_text(
+            table_name=table_name,
+            schema=schema,
+            cols=cols,
+            bname=bname,
+            desc=desc,
+            row_est=row_est,
+            rels_from=rels_from_map.get(table_name, []),
+            rels_to=rels_to_map.get(table_name, []),
         )
-        bname_s = (enr_match["admin_label_tr"] or enr_match["business_name_tr"]
-                   if enr_match else table_name)
 
-        sample_rows = sample_data[:3]
-        parts = []
-        for i, row in enumerate(sample_rows):
-            vals = ", ".join([f"{k}={v}" for k, v in list(row.items())[:8]])
-            parts.append(f"  Satır {i+1}: {vals}")
-
-        q_s = f"{bname_s} tablosunda ne tür veriler var? {table_name} örnek veriler."
-        a_s = f"{bname_s} ({table_name}) tablosundan örnekler ({sample['row_count']} satır):\n" + "\n".join(parts)
-        total_pairs.append({
-            "content_type": "sample_insight",
-            "content_text": a_s,
-            "question_text": q_s,
-            "object_name": table_name
+        records.append({
+            "table_name": table_name,
+            "schema": schema,
+            "bname": bname,
+            "text": schema_text,
         })
 
-    # ─── Embedding üret ve DB'ye yaz ───
-    if total_pairs:
-        all_texts = [f"{p['question_text']} {p['content_text']}" for p in total_pairs]
-        batch_size = 50
-
-        all_embeddings = []
-        for i in range(0, len(all_texts), batch_size):
-            batch = all_texts[i:i + batch_size]
-            batch_embs = emb_mgr.get_embeddings_batch(batch)
-            all_embeddings.extend(batch_embs)
-
-        # Eski ilgili sonuçları geçersiz kıl (incremental güncellik)
-        cur.execute("""
-            UPDATE ds_learning_results
-            SET is_valid = FALSE, invalidated_at = NOW()
-            WHERE source_id = %s AND is_valid = TRUE
-        """, (source_id,))
-        invalidated = cur.rowcount
-        if invalidated:
-            logger.info("[DSQAGen] %d eski QA sonucu invalidated", invalidated)
-            # Invalidated kayıtların hash'lerini sıfırla (yeniden üretilmeli)
-            existing_hashes.clear()
-
-        for pair, embedding in zip(total_pairs, all_embeddings):
-            q_hash = hashlib.md5(pair["question_text"].encode()).hexdigest()
-            if q_hash in existing_hashes:
-                skipped_count += 1
-                continue
-
-            cur.execute("""
-                INSERT INTO ds_learning_results
-                    (source_id, company_id, job_id, content_type, content_text,
-                     embedding, metadata, score, is_valid, version)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, TRUE, 1)
-            """, (
-                source_id, company_id, current_job_id,
-                pair["content_type"], pair["content_text"],
-                embedding,
-                json.dumps({
-                    "question": pair["question_text"],
-                    "table_name": pair["object_name"]
-                }),
-                1.0
-            ))
-            existing_hashes.add(q_hash)
-            qa_count += 1
-
+    if not records:
         vyra_conn.commit()
+        return {"success": True, "data": {"learned_tables": 0, "elapsed_ms": 0}}
+
+    # Batch embedding
+    texts = [r["text"] for r in records]
+    try:
+        batch_embeddings = emb_mgr.get_embeddings_batch(texts)
+    except Exception as emb_err:
+        logger.error("[DSSchemaLearner] Batch embedding hatasi: %s", emb_err)
+        return {"success": False, "error": f"Embedding hatası: {emb_err}"}
+
+    # DB'ye yaz
+    learned = 0
+    for record, embedding in zip(records, batch_embeddings):
+        full_table = (
+            f"{record['schema']}.{record['table_name']}"
+            if record["schema"] and record["schema"] not in ("", "public")
+            else record["table_name"]
+        )
+        metadata = json.dumps({
+            "table_name": record["table_name"],
+            "schema": record["schema"],
+            "full_table": full_table,
+            "business_name": record["bname"],
+        })
+
+        cur.execute("""
+            INSERT INTO ds_learning_results
+                (source_id, company_id, job_id, content_type, content_text,
+                 embedding, metadata, score, is_valid, version)
+            VALUES (%s, %s, %s, 'schema_record', %s, %s, %s, 1.0, TRUE, 1)
+        """, (
+            source_id, company_id, current_job_id,
+            record["text"], embedding, metadata
+        ))
+        learned += 1
+        logger.info("[DSSchemaLearner] Ogrendi: %s (%d kolon)", full_table, len(
+            [l for l in record["text"].split("\n") if l.startswith("  - ")]
+        ))
+
+    vyra_conn.commit()
 
     elapsed = int((time.time() - start) * 1000)
-    logger.info("[DSQAGen] Enriched QA üretimi: %d yeni, %d atlandı (dedup), %dms",
-                qa_count, skipped_count, elapsed)
+    logger.info("[DSSchemaLearner] Tamamlandi: %d tablo, %dms", learned, elapsed)
 
     return {
         "success": True,
         "data": {
-            "qa_pairs_generated": qa_count,
-            "skipped_dedup": skipped_count,
-            "total_pairs_generated": len(total_pairs),
-            "elapsed_ms": elapsed
+            "learned_tables": learned,
+            "elapsed_ms": elapsed,
+            "tables": [r["table_name"] for r in records],
         }
     }
