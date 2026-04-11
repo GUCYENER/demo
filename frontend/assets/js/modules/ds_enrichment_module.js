@@ -21,7 +21,9 @@ const DSEnrichmentModule = (() => {
     let _currentPage = 1;
     let _pageSize = 10;
     let _searchQuery = '';
+    let _searchTimer = null;
     let _filterLowScore = false;
+    let _showApproved = false;
     let _selectedIds = new Set();
 
     // ============================================
@@ -91,8 +93,8 @@ const DSEnrichmentModule = (() => {
                         <p>İstatistikler yükleniyor...</p>
                     </div>
                 </div>
-                <div class="ds-enrich-body" id="dsEnrichBody">
-                    <div class="ds-enrich-loading">
+                <div class="ds-enrich-body" id="dsEnrichBody" style="display: flex; flex-direction: column; overflow: hidden; height: calc(100vh - 220px); min-height: 400px;">
+                    <div class="ds-enrich-loading" style="margin: auto;">
                         <i class="fa-solid fa-spinner fa-spin"></i>
                         <p>Tablo listesi yükleniyor...</p>
                     </div>
@@ -127,16 +129,20 @@ const DSEnrichmentModule = (() => {
             const token = localStorage.getItem('access_token');
             const headers = { 'Authorization': `Bearer ${token}` };
 
-            // Stats ve pending paralel yükle
-            const [statsRes, pendingRes] = await Promise.all([
+            // Stats, pending ve approved paralel yükle
+            const [statsRes, pendingRes, approvedRes] = await Promise.all([
                 fetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`, { headers }),
-                fetch(`/api/data-sources/${_currentSourceId}/enrichment-pending`, { headers })
+                fetch(`/api/data-sources/${_currentSourceId}/enrichment-pending`, { headers }),
+                fetch(`/api/data-sources/${_currentSourceId}/enrichment-approved`, { headers })
             ]);
 
             const stats = await statsRes.json();
             const pending = await pendingRes.json();
+            const approved = await approvedRes.json();
 
-            _pendingData = pending.pending || [];
+            const pData = (pending.pending || []).map(x => ({...x, is_approved: false}));
+            const aData = (approved.approved || []).map(x => ({...x, is_approved: true}));
+            _pendingData = [...pData, ...aData];
 
             _renderStats(stats);
             applyFilterAndRender();
@@ -213,13 +219,17 @@ const DSEnrichmentModule = (() => {
 
             let scoreMatch = true;
             if (_filterLowScore) {
-                // Eğer düşük skor filtresi aktifse, skoru 0.7'den büyük olan ve iş adı bulunanları gizle
                 if (item.enrichment_score >= 0.7 && item.business_name_tr) {
                     scoreMatch = false;
                 }
             }
+            
+            let approvalMatch = true;
+            if (!_showApproved && item.is_approved) {
+                approvalMatch = false;
+            }
 
-            return textMatch && scoreMatch;
+            return textMatch && scoreMatch && approvalMatch;
         });
 
         // Sayfalama hesaplamaları
@@ -235,26 +245,36 @@ const DSEnrichmentModule = (() => {
     }
 
     function _renderUIPartial(body, items, totalItems, totalPages, startIndex, endIndex) {
-        if (_pendingData.length === 0) {
+        const wasSearchFocused = document.activeElement && document.activeElement.id === 'dsSearchInput';
+
+        if (_filteredData.length === 0 && _searchQuery === '' && !_filterLowScore) {
             const total = parseInt(document.querySelector('.ds-enrich-stat-num')?.textContent || "0");
-            if (total === 0) {
-                body.innerHTML = `
-                    <div class="ds-enrich-empty">
-                        <i class="fa-solid fa-database"></i>
-                        <h4>Enrichment Bekleniyor</h4>
-                        <p>Bu veri kaynağı için henüz AI Tablo Öğrenimi (Enrichment) çalıştırılmamış.</p>
-                    </div>
-                `;
-            } else {
-                body.innerHTML = `
-                    <div class="ds-enrich-empty">
-                        <i class="fa-solid fa-circle-check" style="color: #4cd964;"></i>
-                        <h4>Onay Bekleyen Tablo Yok</h4>
-                        <p>Harika! Tespit edilen tüm tablolar incelendi ve onaylandı.</p>
-                    </div>
-                `;
+            const pendingCount = _pendingData.filter(x => !x.is_approved).length;
+            
+            // Eğer gösterilecek onaylılar yoksa veya _showApproved kapalıysa tam ekran boş durumları göster.
+            if ((pendingCount === 0 && !_showApproved) || (_pendingData.length === 0)) {
+                if (total === 0) {
+                    body.innerHTML = `
+                        <div class="ds-enrich-empty">
+                            <i class="fa-solid fa-database"></i>
+                            <h4>Enrichment Bekleniyor</h4>
+                            <p>Bu veri kaynağı için henüz AI Tablo Öğrenimi (Enrichment) çalıştırılmamış.</p>
+                        </div>
+                    `;
+                } else {
+                    body.innerHTML = `
+                        <div class="ds-enrich-empty">
+                            <i class="fa-solid fa-circle-check" style="color: #4cd964;"></i>
+                            <h4>Onay Bekleyen Tablo Yok</h4>
+                            <p>Harika! Tespit edilen tüm tablolar incelendi ve onaylandı.</p>
+                            <button class="ds-enrich-btn" style="margin-top:20px;width:auto;padding:8px 16px;" onclick="document.querySelector('#dsShowApprovedChk').click()">
+                                Onaylıları Gözden Geçir
+                            </button>
+                        </div>
+                    `;
+                }
+                return;
             }
-            return;
         }
 
         let rows = '';
@@ -267,11 +287,13 @@ const DSEnrichmentModule = (() => {
                 const catClass = item.category || 'other';
                 const tableName = item.schema_name ? `${item.schema_name}.${item.table_name}` : item.table_name;
                 const isChecked = _selectedIds.has(item.id.toString()) ? 'checked' : '';
+                const approvedAttr = item.is_approved ? 'disabled title="Zaten onaylandı"' : '';
+                const rowOpacity = item.is_approved ? 'opacity: 0.7;' : '';
 
                 rows += `
-                    <tr data-id="${item.id}" class="ds-enrich-data-row">
+                    <tr data-id="${item.id}" class="ds-enrich-data-row" style="${rowOpacity}">
                         <td style="text-align: center;">
-                            <input type="checkbox" class="ds-bulk-chk cursor-pointer" value="${item.id}" ${isChecked} onchange="DSEnrichmentModule.toggleCheckbox(this)">
+                            <input type="checkbox" class="ds-bulk-chk ${item.is_approved ? '' : 'cursor-pointer'}" value="${item.id}" ${isChecked} ${approvedAttr} onchange="DSEnrichmentModule.toggleCheckbox(this)">
                         </td>
                         <td class="ds-table-name-cell" title="${tableName}">
                             <strong>${tableName}</strong>
@@ -293,9 +315,11 @@ const DSEnrichmentModule = (() => {
                         </td>
                         <td style="text-align:center;">
                             <div class="ds-enrich-actions" style="justify-content:center;">
+                                ${!item.is_approved ? `
                                 <button class="ds-enrich-btn approve" onclick="DSEnrichmentModule.quickApprove(${item.id})" title="Direkt onayla">
                                     <i class="fa-solid fa-check"></i>
                                 </button>
+                                ` : '<span style="color:#4cd964;font-size:0.9rem;margin-right:10px;"><i class="fa-solid fa-check-double"></i> Onaylı</span>'}
                                 <button class="ds-enrich-btn edit" onclick="DSEnrichmentModule.toggleEdit(${item.id})" title="Düzenle">
                                     <i class="fa-solid fa-pen"></i>
                                 </button>
@@ -326,36 +350,41 @@ const DSEnrichmentModule = (() => {
         }
 
         body.innerHTML = `
-            <div class="ds-enrich-filter-bar" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:10px;">
+            <div class="ds-enrich-filter-bar" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:10px; flex-shrink: 0;">
                 <div style="flex:1; max-width:650px; display:flex; gap:0.5rem; align-items:center;">
                     <button onclick="DSEnrichmentModule.refreshData()" style="padding:8px 14px; border-radius:6px; border:none; background:rgba(255,255,255,0.1); color:#fff; cursor:pointer;" title="Verileri Yenile">
                         <i class="fa-solid fa-sync"></i>
                     </button>
                     <div style="position:relative; flex:1;">
                         <i class="fa-solid fa-search" style="position:absolute; left:12px; top:10px; color:#888;"></i>
-                        <input type="text" value="${_searchQuery}" placeholder="Tablo veya iş adı ara..." 
+                        <input type="text" id="dsSearchInput" value="${_searchQuery}" placeholder="Tablo veya iş adı ara..." 
                             style="width:100%; padding:8px 32px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.2); color:#fff; outline:none;" 
-                            onkeyup="DSEnrichmentModule.filterTables(this.value)">
+                            oninput="DSEnrichmentModule.filterTables(this.value)" autocomplete="off">
                     </div>
                     <label style="display:flex; align-items:center; gap:6px; color:#ddd; font-size:0.85rem; cursor:pointer; white-space:nowrap;">
-                        <input type="checkbox" ${_filterLowScore ? 'checked' : ''} onchange="DSEnrichmentModule.toggleLowScoreFilter(this.checked)"> 
+                        <input type="checkbox" ${_filterLowScore ? 'checked' : ''} onchange="DSEnrichmentModule.toggleLowScoreFilter(this.checked)" style="width: 16px; height: 16px; accent-color: var(--primary-color, #4f46e5);"> 
                         Düşük Skor / İsimsizleri Göster
+                    </label>
+                    <label style="display:flex; align-items:center; gap:6px; color:#ddd; font-size:0.85rem; cursor:pointer; white-space:nowrap;">
+                        <input id="dsShowApprovedChk" type="checkbox" ${_showApproved ? 'checked' : ''} onchange="DSEnrichmentModule.toggleShowApprovedFilter(this.checked)" style="width: 16px; height: 16px; accent-color: #34d399;"> 
+                        Onaylıları Göster
                     </label>
                 </div>
                 <div style="display:flex; align-items:center; gap:1rem;">
                     <button id="dsBulkApproveBtn" onclick="DSEnrichmentModule.bulkApprove()" 
-                            style="display:${_selectedIds.size > 0 ? 'inline-block' : 'none'}; padding:8px 16px; border-radius:6px; border:none; background:var(--primary-color, #4f46e5); color:#fff; cursor:pointer; font-weight:600;">
-                        <i class="fa-solid fa-check-double mr-2"></i> <span id="dsBulkApproveCount">${_selectedIds.size}</span> Kaydı Onayla
+                            ${_selectedIds.size > 0 ? '' : 'disabled'}
+                            style="padding:8px 16px; border-radius:6px; border:none; background:var(--primary-color, #4f46e5); color:#fff; cursor:${_selectedIds.size > 0 ? 'pointer' : 'not-allowed'}; font-weight:600; opacity: ${_selectedIds.size > 0 ? '1' : '0.5'}; transition: all 0.2s;">
+                        <i class="fa-solid fa-check-double mr-2"></i> Seçilenleri Onayla (<span id="dsBulkApproveCount">${_selectedIds.size}</span>)
                     </button>
                 </div>
             </div>
             
-            <div class="ds-enrich-table-wrap" id="dsMainTableWrap">
+            <div class="ds-enrich-table-wrap" id="dsMainTableWrap" style="flex: 1; overflow-y: auto; min-height: 0; padding-right: 4px;">
                 <table class="ds-enrich-table">
-                    <thead>
+                    <thead style="position: sticky; top: 0; z-index: 10; background: var(--bg-card, #1a1e29); box-shadow: 0 2px 5px rgba(0,0,0,0.2);">
                         <tr>
-                            <th>
-                                <input type="checkbox" id="dsSelectAllChk" ${isAllSelected ? "checked" : ""} onchange="DSEnrichmentModule.toggleAllBulk(this.checked)" class="cursor-pointer" title="Bu sayfadaki tümünü seç">
+                            <th style="width: 40px; text-align: center;">
+                                <input type="checkbox" id="dsSelectAllChk" ${isAllSelected ? "checked" : ""} onchange="DSEnrichmentModule.toggleAllBulk(this.checked)" class="cursor-pointer" title="Bu sayfadaki tümünü seç" style="width: 16px; height: 16px; cursor: pointer; accent-color: var(--primary-color, #4f46e5); display: inline-block; visibility: visible; opacity: 1;">
                             </th>
                             <th>Tablo</th>
                             <th>İş Adı (TR)</th>
@@ -371,7 +400,7 @@ const DSEnrichmentModule = (() => {
                 </table>
             </div>
             ${totalItems > 0 ? `
-            <div class="ds-enrich-pagination">
+            <div class="ds-enrich-pagination" style="flex-shrink: 0; margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, 0.05);">
                 <div class="ds-enrich-pagination-info">
                     Toplam <strong>${totalItems}</strong> kayıttan <strong>${startIndex + 1}-${Math.min(endIndex, totalItems)}</strong> arası gösteriliyor.
                 </div>
@@ -382,6 +411,15 @@ const DSEnrichmentModule = (() => {
                 </div>
             </div>` : ''}
         `;
+
+        if (wasSearchFocused) {
+            const searchInput = document.getElementById('dsSearchInput');
+            if (searchInput) {
+                searchInput.focus();
+                const len = searchInput.value.length;
+                searchInput.setSelectionRange(len, len);
+            }
+        }
     }
 
     // ============================================
@@ -405,15 +443,17 @@ const DSEnrichmentModule = (() => {
             const data = await res.json();
 
             if (data.success) {
-                // Satırı listeden kaldır
-                _pendingData = _pendingData.filter(p => p.id !== enrichmentId);
+                const existing = _pendingData.find(p => p.id === enrichmentId);
+                if (existing) existing.is_approved = true;
                 const row = document.querySelector(`tr[data-id="${enrichmentId}"]`);
                 if (row) {
                     row.style.transition = 'opacity 0.3s, transform 0.3s';
                     row.style.opacity = '0';
                     row.style.transform = 'translateX(30px)';
                     setTimeout(() => {
-                        row.remove();
+                        // Soft update states to approved
+                        const existing = _pendingData.find(p => p.id === enrichmentId);
+                        if (existing) existing.is_approved = true;
                         _updateStatsAfterApprove();
                         applyFilterAndRender();
                     }, 300);
@@ -517,7 +557,8 @@ const DSEnrichmentModule = (() => {
             const data = await res.json();
 
             if (data.success) {
-                _pendingData = _pendingData.filter(p => p.id !== enrichmentId);
+                const existing = _pendingData.find(p => p.id === enrichmentId);
+                if(existing) existing.is_approved = true;
                 _editingId = null;
 
                 // Edit satırını ve veri satırını kaldır
@@ -528,7 +569,8 @@ const DSEnrichmentModule = (() => {
                     dataRow.style.transition = 'opacity 0.3s';
                     dataRow.style.opacity = '0';
                     setTimeout(() => {
-                        dataRow.remove();
+                        const existing = _pendingData.find(p => p.id === enrichmentId);
+                        if(existing) existing.is_approved = true;
                         _updateStatsAfterApprove();
                         applyFilterAndRender();
                     }, 300);
@@ -640,6 +682,7 @@ const DSEnrichmentModule = (() => {
     function refreshData() {
         _searchQuery = '';
         _filterLowScore = false;
+        _showApproved = false;
         _selectedIds.clear();
         const body = document.getElementById('dsEnrichBody');
         if(body) body.innerHTML = `<div class="ds-enrich-loading"><i class="fa-solid fa-spinner fa-spin"></i><p>Yükleniyor...</p></div>`;
@@ -649,7 +692,10 @@ const DSEnrichmentModule = (() => {
     function filterTables(query) {
         _searchQuery = query;
         _currentPage = 1;
-        applyFilterAndRender();
+        if (_searchTimer) clearTimeout(_searchTimer);
+        _searchTimer = setTimeout(() => {
+            applyFilterAndRender();
+        }, 300);
     }
 
     function toggleLowScoreFilter(checked) {
@@ -660,6 +706,12 @@ const DSEnrichmentModule = (() => {
 
     function changePage(page) {
         _currentPage = page;
+        applyFilterAndRender();
+    }
+
+    function toggleShowApprovedFilter(checked) {
+        _showApproved = checked;
+        _currentPage = 1;
         applyFilterAndRender();
     }
 
@@ -678,6 +730,7 @@ const DSEnrichmentModule = (() => {
         const pageData = _filteredData.slice(startIndex, endIndex);
 
         pageData.forEach(item => {
+            if (item.is_approved) return;
             if (checked) _selectedIds.add(item.id.toString());
             else _selectedIds.delete(item.id.toString());
         });
@@ -701,26 +754,39 @@ const DSEnrichmentModule = (() => {
 
         try {
             const token = localStorage.getItem('access_token');
-            const promises = checkedBoxes.map(enrichmentId => {
-                return fetch(
-                    `/api/data-sources/${_currentSourceId}/enrichment-approve/${enrichmentId}`,
-                    {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${token}`,
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({})
-                    }
-                ).then(res => res.json()).then(data => ({id: enrichmentId, success: data.success}));
-            });
+            const results = [];
+            
+            // Send requests sequentially to avoid DB lock / concurrent API limit
+            for (const enrichmentId of checkedBoxes) {
+                try {
+                    const res = await fetch(
+                        `/api/data-sources/${_currentSourceId}/enrichment-approve/${enrichmentId}`,
+                        {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${token}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({})
+                        }
+                    );
+                    const data = await res.json();
+                    results.push({id: enrichmentId, success: data.success});
+                } catch(err) {
+                    console.error("Hata id:", enrichmentId, err);
+                    results.push({id: enrichmentId, success: false});
+                }
+            }
 
-            const results = await Promise.all([...promises]);
             const successIds = results.filter(r => r.success).map(r => r.id.toString());
             
             if (successIds.length > 0) {
-                // Başarılı olanları Pending listesinden kaldır
-                _pendingData = _pendingData.filter(p => !successIds.includes(p.id.toString()));
+                // Başarılı olanları is_approved = true yap
+                _pendingData.forEach(p => {
+                    if (successIds.includes(p.id.toString())) {
+                        p.is_approved = true;
+                    }
+                });
                 
                 // Seçilenler listesinden kaldır
                 successIds.forEach(id => _selectedIds.delete(id));
@@ -738,7 +804,7 @@ const DSEnrichmentModule = (() => {
             _showToast('Onay sırasında hata oluştu', 'error');
         } finally {
             if(btn) btn.disabled=false; 
-            DSEnrichmentModule.applyFilterAndRender(); // update button state via render
+            applyFilterAndRender(); // update button state via render
         }
     }
 
@@ -790,6 +856,7 @@ const DSEnrichmentModule = (() => {
         showColumns,
         filterTables,
         toggleLowScoreFilter,
+        toggleShowApprovedFilter,
         changePage,
         toggleCheckbox,
         toggleAllBulk,

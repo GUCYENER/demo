@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.5.4"  # Fix JS Export bugs & add Run Learning btn
+    APP_VERSION: str = "3.5.6"  # UI/UX fixes: DB Lock fix and Show Approved toggle
 
     # Frontend & API prefix
     api_prefix: str = "/api"

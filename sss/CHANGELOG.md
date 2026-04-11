@@ -5,6 +5,20 @@ Format: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [v3.5.6] — 2026-04-11
+
+### 🔧 UI/UX İyileştirmeleri
+- **Toplu Onay (Bulk Approve) DB Kilit Sorunu:** Javascript `Promise.all` tabanlı asenkron patlama mekanizması, sıralı `for...of` döngüsüyle değiştirildi. Bu sayede veritabanına aynı anda yüklenilmesi engellenerek onay işleminin stabilitesi sağlandı.
+- **Onaylıları Listeleme UI Seçeneği:** Onaylanmış tabloların görülmesi için özel filtre (Onaylıları Göster Checkbox) eklendi.
+- **Önlem ve Görsel Geliştirme:** Artık onaylanmış tablolar otomatik olarak `%70` saydamlaştırılarak "Zaten onaylı" şeklinde kilitli kalacak ve ek eylemler kapatıldı.
+
+## [v3.5.5] — 2026-04-11
+
+### 🔧 UI/UX İyileştirmeleri
+- **Arama Reactivity Koruması:** Enrichment tablosundaki canlı arama özelliği, klavye kullanımlarında tablo render edildiğinde odağın (focus) kaybolmasını önlemek adına `oninput` ve `debounce` algoritmalarıyla güncellendi.
+- **Toplu Onay UI Koruması:** Seçili tablolardaki "Kaydı Onayla" (Bulk Approve) butonu, seçim yapılmadığında `disabled` moda geçirilerek erişim akışı düzeltildi.
+- **Çift Tıklama Koruması:** DB Keşif tamamlama ekranındaki `Öğrenmeyi Başlat` butonuna bekleme mekanizması (async spinner kilit) eklendi.
+
 ## [v3.5.4] — 2026-04-11
 
 ### ✨ Yeni Eklenenler

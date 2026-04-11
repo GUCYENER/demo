@@ -92,11 +92,12 @@ def discover_technology(source: dict, vyra_conn) -> dict:
     Veritabanı teknolojisini keşfeder.
     - DB sürümü, şema listesi, genel bilgi
     """
-    password = _decrypt_password(source.get("db_password_encrypted", ""))
-    db_conn, db_dialect = _get_db_connector(source, password)
     start = time.time()
+    db_conn = None
 
     try:
+        password = _decrypt_password(source.get("db_password_encrypted", ""))
+        db_conn, db_dialect = _get_db_connector(source, password)
         cur = db_conn.cursor()
 
         result = {
@@ -173,9 +174,8 @@ def discover_technology(source: dict, vyra_conn) -> dict:
             db_conn.close()
         except Exception:
             pass
-        logger.error("[DSLearning] Teknoloji keşfi sırasında hata oluştu")
-        logger.debug("[DSLearning] Technology discovery detay: %s", type(e).__name__)
-        return {"success": False, "error": f"Veritabanı bağlantısı veya sorgulama hatası: {type(e).__name__}"}
+        logger.error("[DSLearning] Teknoloji keşfi sırasında hata oluştu: %s", str(e))
+        return {"success": False, "error": "Veritabanı bağlantısı veya sorgulama sırasında güvenlik/iletişim hatası oluştu, lütfen logları inceleyin."}
 
 
 # =====================================================
@@ -186,12 +186,13 @@ def detect_objects(source: dict, vyra_conn) -> dict:
     """
     Veritabanındaki tabloları, view'ları, sütunları ve FK ilişkilerini keşfeder.
     """
-    password = _decrypt_password(source.get("db_password_encrypted", ""))
-    db_conn, db_dialect = _get_db_connector(source, password)
     source_id = source["id"]
     start = time.time()
+    db_conn = None
 
     try:
+        password = _decrypt_password(source.get("db_password_encrypted", ""))
+        db_conn, db_dialect = _get_db_connector(source, password)
         cur = db_conn.cursor()
         objects = []
         relationships = []
@@ -567,9 +568,8 @@ def detect_objects(source: dict, vyra_conn) -> dict:
             db_conn.close()
         except Exception:
             pass
-        logger.error("[DSLearning] Obje tespiti sırasında hata oluştu")
-        logger.debug("[DSLearning] Object detection detay: %s", type(e).__name__)
-        return {"success": False, "error": f"Obje tespiti sırasında hata: {type(e).__name__}"}
+        logger.error("[DSLearning] Obje tespiti sırasında hata oluştu: %s", str(e))
+        return {"success": False, "error": "Veritabanı analiz edilirken sistemsel bir hata oluştu, işlem detayları loglandı."}
 
 
 # =====================================================
@@ -580,16 +580,18 @@ def collect_samples(source: dict, vyra_conn, max_rows: int = 10) -> dict:
     """
     Keşfedilen tablolardan örnek SELECT sorguları hazırlayıp çalıştırır.
     """
-    password = _decrypt_password(source.get("db_password_encrypted", ""))
-    db_conn, db_dialect = _get_db_connector(source, password)
     source_id = source["id"]
     start = time.time()
+    db_conn = None
 
     try:
+        password = _decrypt_password(source.get("db_password_encrypted", ""))
+        db_conn, db_dialect = _get_db_connector(source, password)
+        
         # VYRA DB'den keşfedilmiş objeleri al
         vyra_cur = vyra_conn.cursor()
         vyra_cur.execute("""
-            SELECT id, schema_name, object_name, object_type
+            SELECT id, schema_name, object_name, object_type, columns_json
             FROM ds_db_objects
             WHERE source_id = %s AND object_type = 'table'
             ORDER BY object_name
@@ -610,22 +612,41 @@ def collect_samples(source: dict, vyra_conn, max_rows: int = 10) -> dict:
             obj_id = obj_row["id"] if isinstance(obj_row, dict) else obj_row[0]
             schema_name = obj_row["schema_name"] if isinstance(obj_row, dict) else obj_row[1]
             object_name = obj_row["object_name"] if isinstance(obj_row, dict) else obj_row[2]
+            columns_data = obj_row["columns_json"] if isinstance(obj_row, dict) else obj_row[4]
+
+            if isinstance(columns_data, str):
+                columns_data = json.loads(columns_data)
+
+            # Sadece güvenli (binary olmayan) kolonları seç
+            unsafe_types = ["blob", "bytea", "varbinary", "binary", "image", "raw", "bfile"]
+            safe_cols = []
+            for col in (columns_data or []):
+                ctype = col.get("data_type", "").lower()
+                if not any(u in ctype for u in unsafe_types):
+                    safe_cols.append(col.get("name"))
+                    
+            if not safe_cols:
+                safe_cols = ["*"]
 
             # Güvenli tablo adı — sadece alfanümerik ve underscore
             safe_name = object_name.replace("'", "").replace(";", "")
             safe_schema = (schema_name or "").replace("'", "").replace(";", "")
 
             if db_dialect == "postgresql":
+                cols_str = ", ".join([f'"{c}"' for c in safe_cols]) if safe_cols[0] != "*" else "*"
                 fqn = f'"{safe_schema}"."{safe_name}"' if safe_schema else f'"{safe_name}"'
-                query = f"SELECT * FROM {fqn} LIMIT {max_rows}"
+                query = f"SELECT {cols_str} FROM {fqn} LIMIT {max_rows}"
             elif db_dialect == "mssql":
+                cols_str = ", ".join([f'[{c}]' for c in safe_cols]) if safe_cols[0] != "*" else "*"
                 fqn = f"[{safe_schema}].[{safe_name}]" if safe_schema else f"[{safe_name}]"
-                query = f"SELECT TOP {max_rows} * FROM {fqn}"
+                query = f"SELECT TOP {max_rows} {cols_str} FROM {fqn}"
             elif db_dialect == "mysql":
-                query = f"SELECT * FROM `{safe_name}` LIMIT {max_rows}"
+                cols_str = ", ".join([f'`{c}`' for c in safe_cols]) if safe_cols[0] != "*" else "*"
+                query = f"SELECT {cols_str} FROM `{safe_name}` LIMIT {max_rows}"
             elif db_dialect == "oracle":
+                cols_str = ", ".join([f'"{c}"' for c in safe_cols]) if safe_cols[0] != "*" else "*"
                 fqn = f'"{safe_schema}"."{safe_name}"' if safe_schema else f'"{safe_name}"'
-                query = f"SELECT * FROM {fqn} WHERE ROWNUM <= {max_rows}"
+                query = f"SELECT {cols_str} FROM {fqn} WHERE ROWNUM <= {max_rows}"
             else:
                 continue
 
@@ -660,7 +681,8 @@ def collect_samples(source: dict, vyra_conn, max_rows: int = 10) -> dict:
                 total_sampled += 1
 
             except Exception as table_err:
-                failed_tables.append({"table": object_name, "error": str(table_err)[:200]})
+                logger.error("[DSLearning] Tablo veri alma hatası (%s): %s", object_name, str(table_err))
+                failed_tables.append({"table": object_name, "error": "Veri okuma başarısız"})
                 continue
 
         vyra_conn.commit()
@@ -682,9 +704,8 @@ def collect_samples(source: dict, vyra_conn, max_rows: int = 10) -> dict:
             db_conn.close()
         except Exception:
             pass
-        logger.error("[DSLearning] Örnek veri toplama sırasında hata oluştu")
-        logger.debug("[DSLearning] Sample collection detay: %s", type(e).__name__)
-        return {"success": False, "error": f"Veri toplama sırasında hata: {type(e).__name__}"}
+        logger.error("[DSLearning] Örnek veri toplama sırasında hata oluştu: %s", str(e))
+        return {"success": False, "error": "Örnek veri toplama işlemi sırasında sistem hatası oluştu, işlem detayları loglandı."}
 
 
 def _serialize_value(val):

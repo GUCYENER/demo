@@ -30,7 +30,7 @@ set "NGINX_DIR=%PROJECT_ROOT%\nginx"
 set "NGINX_EXE=%NGINX_DIR%\nginx.exe"
 set "NGINX_VERSION=1.27.4"
 set "BACKEND_PORT=8002"
-set "WORKERS=4"
+set "WORKERS=1"
 set /a "BACKEND_PORT_END=%BACKEND_PORT% + %WORKERS% - 1"
 
 echo.

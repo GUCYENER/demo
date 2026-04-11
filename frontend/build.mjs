@@ -179,7 +179,7 @@ async function build() {
     });
 
     // Temp dosyayı sil
-    fs.unlinkSync(jsTempPath);
+    // fs.unlinkSync(jsTempPath);
 
     const jsBundleSize = fs.statSync(path.join(distDir, 'bundle.min.js')).size;
 

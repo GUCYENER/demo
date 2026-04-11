@@ -469,7 +469,7 @@ window.DSLearningModule = (function () {
                 </div>
                 <h3>Keşif Tamamlandı!</h3>
                 <p>Tüm adımlar başarıyla tamamlandı. Aşağıdan AI Tablo Öğrenimi'ni başlatabilir, tabloları etiketleyebilir veya detayları görüntüleyebilirsiniz.</p>
-                <div class="ds-wizard-final-actions">
+                <div class="ds-wizard-final-actions" style="display: flex; flex-wrap: wrap; justify-content: center; gap: 8px;">
                     <button class="ds-wizard-btn primary" id="dsWizardRunFullBtn" style="background-color: var(--accent-primary);">
                         <i class="fa-solid fa-brain"></i> Öğrenmeyi Başlat
                     </button>
@@ -489,12 +489,25 @@ window.DSLearningModule = (function () {
             </div>
         `;
 
-        document.getElementById('dsWizardRunFullBtn').addEventListener('click', () => {
-            // Öğrenme Başlat Fonksiyonunu çağır (Global veya private wrapper üzerinden)
-            if (typeof runFullLearning === 'function') {
-                runFullLearning(_currentSourceId);
-            } else if (window.DSLearningModule && typeof window.DSLearningModule.runFullLearning === 'function') {
-                window.DSLearningModule.runFullLearning(_currentSourceId);
+        const runFullBtn = document.getElementById('dsWizardRunFullBtn');
+        runFullBtn.addEventListener('click', async () => {
+            if (runFullBtn.disabled) return;
+            
+            runFullBtn.disabled = true;
+            runFullBtn.classList.add('ds-btn-disabled');
+            runFullBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Başlatılıyor...';
+            
+            try {
+                if (typeof runFullLearning === 'function') {
+                    await runFullLearning(_currentSourceId);
+                } else if (window.DSLearningModule && typeof window.DSLearningModule.runFullLearning === 'function') {
+                    await window.DSLearningModule.runFullLearning(_currentSourceId);
+                }
+            } catch (e) {
+                console.error('[DSLearning] Öğrenme başlatma hatası:', e);
+                runFullBtn.disabled = false;
+                runFullBtn.classList.remove('ds-btn-disabled');
+                runFullBtn.innerHTML = '<i class="fa-solid fa-brain"></i> Öğrenmeyi Başlat';
             }
         });
 

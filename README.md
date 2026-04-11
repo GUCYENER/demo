@@ -49,6 +49,15 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.5.6 (2026-04-11) - Enrichment UX & Bulk API Fixes
+- ✅ **Bulk API DB Locking Patlaması:** Aynı anda asenkron patlatılan 50 onay ricası sıralı (sequential) hale getirildi ve DB patlaması önlendi.
+- ✅ **Onaylıları Gizleme/Gösterme:** UI ekranına "Onaylıları Göster" checkbox filtresi eklendi.
+- ✅ **Güvenlik Koruma ve Görsel Kilit:** Onaylı işlemlerde buton yerine "Onaylı" damgası getirilerek checkbox kilitlendi (disable mode opacity 0.70).
+
+### 🆕 v3.5.5 (2026-04-11) - Table Enrichment UI/UX & Reactivity Fixes
+- ✅ **Arama Reactivity Koruması:** Enrichment tablosundaki canlı arama özelliği, yazarken odak kaybolması sorununa karşı `oninput` destekli debounce timer algoritmalarıyla tamamen pürüzsüz hale getirildi.
+- ✅ **Spinner ve UI Koruma Kilitleri:** Öğrenmeyi Başlat ve Toplu Onay gibi veritabanı yoran butonlara disable kilitleri eklendi.
+
 ### 🆕 v3.5.4 (2026-04-11) - JS Export Fixes & Discovery UX
 - ✅ **JS Export Modül Dizaynı:** `applyFilterAndRender` gibi iç closure metodları IIFE dışına `export` edilerek TypeError hataları önlendi, Frontend başarılı şekilde bundle edildi.
 - ✅ **Discovery Tam Öğrenme Yönlendirmesi:** "DB Keşif" wizard'ının 3. Adımı bitiminden hemen sonra çıkılan Final Karşılama Ekranına eksik olan **"Öğrenmeyi Başlat Kullanıcı Butonu"** (Run Full Learning) eklendi ve pipeline akışı kusursuzlaştırıldı.
