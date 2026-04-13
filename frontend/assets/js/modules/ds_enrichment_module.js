@@ -482,7 +482,7 @@ const DSEnrichmentModule = (() => {
                 <div style="display:flex; align-items:center; gap:10px;">
                     <button id="dsBulkDiscoverAllBtn" onclick="DSEnrichmentModule.discoverAll()" 
                             style="padding:8px 16px; border-radius:6px; border:none; background:#8b5cf6; color:#fff; cursor:pointer; font-weight:600; transition: all 0.2s;">
-                        <i class="fa-solid fa-magic mr-2"></i> Tümünü Keşfet
+                        <i class="fa-solid fa-brain mr-2"></i> Onaylıları Öğren
                     </button>
                     <button id="dsBulkDiscoverBtn" onclick="DSEnrichmentModule.bulkDiscover()" 
                             ${_selectedIds.size > 0 ? '' : 'disabled'}
@@ -914,9 +914,9 @@ const DSEnrichmentModule = (() => {
     async function discoverAll() {
         if (typeof Swal !== 'undefined') {
             const result = await Swal.fire({
-                title: 'Tümünü Keşfet',
-                text: 'Tüm veri kaynağı için zenginleştirme sürecini başlatmak üzeresiniz. Bu işlem uzun sürebilir.',
-                icon: 'warning',
+                title: 'Onaylıları Öğren',
+                text: 'Sadece admin onaylı tablolar için şema öğrenimi (kolon isimleri, eşanlamlılar, değer örnekleri) başlatılacak.',
+                icon: 'info',
                 showCancelButton: true,
                 confirmButtonText: 'Evet, Başlat',
                 cancelButtonText: 'İptal'
@@ -933,15 +933,19 @@ const DSEnrichmentModule = (() => {
 
         try {
             const token = localStorage.getItem('access_token');
-            const res = await fetch(`/api/data-sources/${_currentSourceId}/run-full-learning`, {
+            const res = await fetch(`/api/data-sources/${_currentSourceId}/run-approved-learning`, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             const data = await res.json();
             if (data.success) {
-                _showToast(data.message || 'Tümünü Keşfet başlatıldı.', 'success');
+                _showToast(data.message || 'Onaylıların şema öğrenimi başlatıldı.', 'success');
             } else {
-                _showToast(data.message || 'Başlatılamadı.', 'error');
+                _showToast(data.message || 'Başlatılamadı.', 'warning');
+                if (btn) {
+                    btn.innerHTML = oldContent;
+                    btn.disabled = false;
+                }
             }
         } catch (err) {
             _showToast('Hata oluştu.', 'error');

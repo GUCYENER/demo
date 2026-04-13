@@ -264,10 +264,12 @@ YANIT FORMATI (KESİNLİKLE bu JSON formatında cevap ver):
   "sample_questions": ["Bu tabloyla sorulabilecek 2-3 Türkçe soru"],
   "columns": {{
     "sütun_adı": {{
-      "business_name_tr": "Sütunun Türkçe adı",
-      "description_tr": "Ne tuttuğunun açıklaması",
+      "business_name_tr": "Sütunun Türkçe iş adı (örn: EMAIL → Elektronik Posta Adresi)",
+      "description_tr": "Bu sütunun ne tuttuğunun kısa açıklaması",
       "is_key": true/false,
-      "semantic_type": "id/name/date/amount/status/code/description/flag/quantity/other"
+      "semantic_type": "id/name/date/amount/status/code/description/flag/quantity/other",
+      "synonyms_tr": ["Bu sütun için alternatif Türkçe isimler, örn: e-posta, mail, elektronik posta"],
+      "is_searchable": true/false
     }}
   }}
 }}
@@ -277,6 +279,8 @@ KURALLAR:
 - confidence: 0-1 arası. Tablo adından anlamı çıkarabiliyorsan 0.8+, çıkaramıyorsan 0.3-0.5
 - Türkçe business name kısa ve anlamlı olsun (1-3 kelime)
 - sample_questions: Bir kullanıcı bu tabloyu sorgularken sorabileceği doğal Türkçe sorular
+- synonyms_tr: Kullanıcıların bu sütuna atıfta bulunurken kullanabileceği ALTERNATİF Türkçe isimler listesi (en az 2-3 eşanlamlı). Örn: EMAIL → ["e-posta", "mail", "elektronik posta", "mail adresi"]
+- is_searchable: Bu sütun metin aramasında kullanılabilir mi? (isim, adres, açıklama gibi alanlar true; ID, FK, tarih gibi alanlar false)
 - Sadece JSON döndür, açıklama/yorum YAZMA"""
 
     messages = [
@@ -536,8 +540,19 @@ def _upsert_table_enrichment(vyra_conn, source_id: int, company_id: int,
 
 def _enrich_columns(vyra_conn, source_id: int, table_enrichment_id: int,
                     columns: list, llm_columns: dict):
-    """Sütun enrichment kayıtlarını oluştur/güncelle."""
+    """Sütun enrichment kayıtlarını oluştur/güncelle. v5.0: synonyms + is_searchable desteği."""
     cur = vyra_conn.cursor()
+
+    # İdempotent schema migration — yeni kolonları ekle (yoksa)
+    try:
+        cur.execute("ALTER TABLE ds_column_enrichments ADD COLUMN IF NOT EXISTS synonyms_json TEXT DEFAULT NULL")
+        cur.execute("ALTER TABLE ds_column_enrichments ADD COLUMN IF NOT EXISTS is_searchable BOOLEAN DEFAULT FALSE")
+        vyra_conn.commit()
+    except Exception:
+        try:
+            vyra_conn.rollback()
+        except Exception:
+            pass
 
     for col in columns:
         col_name = col.get("name", "")
@@ -553,13 +568,29 @@ def _enrich_columns(vyra_conn, source_id: int, table_enrichment_id: int,
             json.dumps({"name": col_name, "type": col.get("data_type", "")}, sort_keys=True).encode()
         ).hexdigest()[:16]
 
+        # Synonyms: LLM'den gelen eşanlamlılar
+        synonyms_raw = col_info.get("synonyms_tr", [])
+        if isinstance(synonyms_raw, list):
+            synonyms_json = json.dumps(synonyms_raw, ensure_ascii=False)
+        else:
+            synonyms_json = None
+
+        # Searchable: LLM'den gelen veya veri tipine göre otomatik tespit
+        is_searchable = col_info.get("is_searchable", False)
+        if not is_searchable:
+            data_type = (col.get("data_type") or "").lower()
+            if any(t in data_type for t in ("char", "text", "string", "varchar", "nvarchar")):
+                sem_type = col_info.get("semantic_type", "")
+                if sem_type in ("name", "description", "email", "address", "phone", "title"):
+                    is_searchable = True
+
         try:
             cur.execute("""
                 INSERT INTO ds_column_enrichments
                     (source_id, table_enrichment_id, column_name, data_type,
                      business_name_tr, description_tr, is_key_column,
-                     semantic_type, column_hash)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     semantic_type, column_hash, synonyms_json, is_searchable)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (table_enrichment_id, column_name)
                 DO UPDATE SET
                     business_name_tr = EXCLUDED.business_name_tr,
@@ -567,6 +598,8 @@ def _enrich_columns(vyra_conn, source_id: int, table_enrichment_id: int,
                     is_key_column = EXCLUDED.is_key_column,
                     semantic_type = EXCLUDED.semantic_type,
                     column_hash = EXCLUDED.column_hash,
+                    synonyms_json = EXCLUDED.synonyms_json,
+                    is_searchable = EXCLUDED.is_searchable,
                     version = ds_column_enrichments.version + 1,
                     updated_at = NOW()
             """, (
@@ -576,7 +609,9 @@ def _enrich_columns(vyra_conn, source_id: int, table_enrichment_id: int,
                 col_info.get("description_tr", ""),
                 col_info.get("is_key", col.get("is_pk", False)),
                 col_info.get("semantic_type", "other"),
-                col_hash
+                col_hash,
+                synonyms_json,
+                is_searchable
             ))
         except Exception as e:
             logger.warning("[DSEnrich] Sütun enrich hatası (%s): %s", col_name, str(e)[:100])

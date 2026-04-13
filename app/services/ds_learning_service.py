@@ -912,7 +912,7 @@ def get_learning_results(vyra_conn, source_id: int, content_type: str = None,
     cur = vyra_conn.cursor()
 
     # Dinamik WHERE builder
-    conditions = ["source_id = %s"]
+    conditions = ["source_id = %s", "is_valid = TRUE"]
     params = [source_id]
 
     if content_type:
@@ -957,7 +957,7 @@ def get_learning_results(vyra_conn, source_id: int, content_type: str = None,
     cur.execute("""
         SELECT content_type, COUNT(*) as cnt
         FROM ds_learning_results
-        WHERE source_id = %s
+        WHERE source_id = %s AND is_valid = TRUE
         GROUP BY content_type
         ORDER BY cnt DESC
     """, (source_id,))
@@ -1250,7 +1250,7 @@ def search_db_knowledge(query: str, company_id: int = None, min_score: float = 0
                            ds.name AS source_name
                     FROM ds_learning_results lr
                     JOIN data_sources ds ON lr.source_id = ds.id
-                    WHERE ds.company_id = %s AND lr.embedding IS NOT NULL
+                    WHERE ds.company_id = %s AND lr.embedding IS NOT NULL AND lr.is_valid = TRUE
                 """, (company_id,))
             else:
                 cur.execute("""
@@ -1258,7 +1258,7 @@ def search_db_knowledge(query: str, company_id: int = None, min_score: float = 0
                            ds.name AS source_name
                     FROM ds_learning_results lr
                     JOIN data_sources ds ON lr.source_id = ds.id
-                    WHERE lr.embedding IS NOT NULL
+                    WHERE lr.embedding IS NOT NULL AND lr.is_valid = TRUE
                 """)
 
             rows = cur.fetchall()
@@ -1433,61 +1433,77 @@ def run_full_learning(source: dict, vyra_conn, user_id: int = None) -> dict:
         if not r3.get("success"):
             raise Exception(f"Sample collection failed: {r3.get('error')}")
 
-        # Adım 4: LLM Enrichment (v3.0)
-        logger.info("[DSLearning] Full pipeline step 4/5: LLM Enrichment for source %s", source_id)
+        # Adım 4: LLM Enrichment (v5.0 — sadece onaylı tablolar)
+        logger.info("[DSLearning] Full pipeline step 4/5: LLM Enrichment (approved only) for source %s", source_id)
         try:
             from app.services import ds_enrichment_service
 
-            # Objeleri al
+            # Sadece onaylı tabloların objelerini al
             cur = vyra_conn.cursor()
             cur.execute("""
-                SELECT id, schema_name, object_name, object_type,
-                       column_count, row_count_estimate, columns_json
-                FROM ds_db_objects WHERE source_id = %s
+                SELECT o.id, o.schema_name, o.object_name, o.object_type,
+                       o.column_count, o.row_count_estimate, o.columns_json
+                FROM ds_db_objects o
+                JOIN ds_table_enrichments te
+                    ON te.source_id = o.source_id
+                    AND te.table_name = o.object_name
+                    AND COALESCE(te.schema_name, '') = COALESCE(o.schema_name, '')
+                    AND te.is_active = TRUE
+                    AND te.admin_approved = TRUE
+                WHERE o.source_id = %s AND o.object_type = 'table'
             """, (source_id,))
             objects = [dict(row) if hasattr(row, 'keys') else row for row in cur.fetchall()]
 
-            # Sample'ları indexle (object_id bazlı)
-            cur.execute("""
-                SELECT object_id, sample_data
-                FROM ds_db_samples WHERE source_id = %s
-            """, (source_id,))
-            samples_map = {}
-            for row in cur.fetchall():
-                obj_id = row["object_id"] if isinstance(row, dict) else row[0]
-                s_data = row["sample_data"] if isinstance(row, dict) else row[1]
-                if isinstance(s_data, str):
-                    try:
-                        s_data = json.loads(s_data)
-                    except Exception:
-                        s_data = []
-                samples_map[obj_id] = s_data if isinstance(s_data, list) else []
+            if not objects:
+                logger.info("[DSLearning] Onaylı tablo yok, enrichment atlanıyor")
+                results["steps"].append({
+                    "step": "enrichment",
+                    "success": True,
+                    "data": {"total": 0, "enriched": 0, "skipped": 0, "message": "Onaylı tablo yok"}
+                })
+            else:
+                # Sample'ları indexle (object_id bazlı)
+                cur.execute("""
+                    SELECT object_id, sample_data
+                    FROM ds_db_samples WHERE source_id = %s
+                """, (source_id,))
+                samples_map = {}
+                for row in cur.fetchall():
+                    obj_id = row["object_id"] if isinstance(row, dict) else row[0]
+                    s_data = row["sample_data"] if isinstance(row, dict) else row[1]
+                    if isinstance(s_data, str):
+                        try:
+                            s_data = json.loads(s_data)
+                        except Exception:
+                            s_data = []
+                    samples_map[obj_id] = s_data if isinstance(s_data, list) else []
 
-            # İlişkileri al
-            cur.execute("""
-                SELECT from_schema, from_table, from_column,
-                       to_schema, to_table, to_column, constraint_name
-                FROM ds_db_relationships WHERE source_id = %s
-            """, (source_id,))
-            relationships = [dict(row) if hasattr(row, 'keys') else row for row in cur.fetchall()]
+                # İlişkileri al
+                cur.execute("""
+                    SELECT from_schema, from_table, from_column,
+                           to_schema, to_table, to_column, constraint_name
+                    FROM ds_db_relationships WHERE source_id = %s
+                """, (source_id,))
+                relationships = [dict(row) if hasattr(row, 'keys') else row for row in cur.fetchall()]
 
-            # Enrichment çalıştır
-            enrichment_result = ds_enrichment_service.enrich_tables_batch(
-                vyra_conn, source_id, company_id,
-                objects, samples_map, relationships
-            )
-            results["steps"].append({
-                "step": "enrichment",
-                "success": True,
-                "data": {
-                    "total": enrichment_result.get("total", 0),
-                    "enriched": enrichment_result.get("enriched", 0),
-                    "skipped": enrichment_result.get("skipped", 0),
-                    "admin_required": enrichment_result.get("admin_required", 0),
-                    "errors": enrichment_result.get("errors", 0),
-                    "elapsed_ms": enrichment_result.get("elapsed_ms", 0)
-                }
-            })
+                # Enrichment çalıştır (sadece onaylı tablolar)
+                logger.info("[DSLearning] Enrichment: %d onaylı tablo işlenecek", len(objects))
+                enrichment_result = ds_enrichment_service.enrich_tables_batch(
+                    vyra_conn, source_id, company_id,
+                    objects, samples_map, relationships
+                )
+                results["steps"].append({
+                    "step": "enrichment",
+                    "success": True,
+                    "data": {
+                        "total": enrichment_result.get("total", 0),
+                        "enriched": enrichment_result.get("enriched", 0),
+                        "skipped": enrichment_result.get("skipped", 0),
+                        "admin_required": enrichment_result.get("admin_required", 0),
+                        "errors": enrichment_result.get("errors", 0),
+                        "elapsed_ms": enrichment_result.get("elapsed_ms", 0)
+                    }
+                })
 
         except Exception as enrich_err:
             logger.error("[DSLearning] Enrichment hatası: %s — %s",
@@ -1499,23 +1515,15 @@ def run_full_learning(source: dict, vyra_conn, user_id: int = None) -> dict:
             })
             # Enrichment başarısız olsa bile QA üretimine devam et
 
-        # Adım 5: Sentetik QA Üretimi (v3.0 — enrichment-aware)
-        logger.info("[DSLearning] Full pipeline step 5/5: Synthetic QA for source %s", source_id)
+        # Adım 5: Şema Öğrenimi (v5.0 — sadece onaylı tablolar için schema_record)
+        logger.info("[DSLearning] Full pipeline step 5/5: Schema Learning for source %s", source_id)
         try:
-            # Enrichment başarılıysa yeni generator'ı kullan
-            enrichment_step = next(
-                (s for s in results["steps"] if s.get("step") == "enrichment"), None
-            )
-            if enrichment_step and enrichment_step.get("success"):
-                from app.services import ds_qa_generator
-                r4 = ds_qa_generator.generate_enriched_qa(source_id, vyra_conn)
-            else:
-                # Fallback: eski template-based QA
-                r4 = generate_synthetic_qa(source_id, vyra_conn)
+            from app.services import ds_qa_generator
+            r4 = ds_qa_generator.generate_enriched_qa(source_id, vyra_conn)
         except Exception as qa_err:
-            logger.warning("[DSLearning] Enriched QA hatası, fallback kullanılıyor: %s", str(qa_err)[:100])
-            r4 = generate_synthetic_qa(source_id, vyra_conn)
-        results["steps"].append({"step": "qa_generation", "success": r4.get("success"), "data": r4.get("data")})
+            logger.warning("[DSLearning] Schema learning hatası: %s", str(qa_err)[:200])
+            r4 = {"success": False, "data": {"error": str(qa_err)[:200]}}
+        results["steps"].append({"step": "schema_learning", "success": r4.get("success"), "data": r4.get("data")})
 
         total_ms = sum(
             s.get("data", {}).get("elapsed_ms", 0)
@@ -1540,15 +1548,16 @@ def run_full_learning(source: dict, vyra_conn, user_id: int = None) -> dict:
 
 
 def run_approved_qa_learning(source: dict, vyra_conn, user_id: int = None) -> dict:
-    """Sadece onaylı tablolar için (adım 5) QA üretim sürecini çalıştırır."""
+    """Sadece onaylı tablolar için şema öğrenimi sürecini çalıştırır (v5.0)."""
     source_id = source["id"]
     company_id = source.get("company_id", 1)
     results = {"steps": []}
 
+    # Job type backward compat için qa_generation kalıyor
     job_id = create_job(vyra_conn, source_id, company_id, "qa_generation", user_id)
 
     try:
-        logger.info("[DSLearning] Approved QA learning for source %s", source_id)
+        logger.info("[DSLearning] Schema learning for approved tables: source %s", source_id)
         from app.services import ds_qa_generator
         r1 = ds_qa_generator.generate_enriched_qa(source_id, vyra_conn)
         results["steps"].append({"step": "qa_generation", "success": r1.get("success"), "data": r1.get("data")})
@@ -1557,7 +1566,7 @@ def run_approved_qa_learning(source: dict, vyra_conn, user_id: int = None) -> di
         results["total_elapsed_ms"] = total_ms
         results["success"] = r1.get("success", False)
         if not results["success"]:
-            results["error"] = r1.get("error", "Bilinmeyen QA hatası")
+            results["error"] = r1.get("error", "Şema öğrenimi başarısız")
 
         complete_job(vyra_conn, job_id, {"success": results["success"], "error": results.get("error"), "data": {"elapsed_ms": total_ms, **results}})
         return results

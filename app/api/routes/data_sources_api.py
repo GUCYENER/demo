@@ -828,7 +828,7 @@ def run_approved_learning(
     source_id: int,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
-    """Sadece onaylı tablolar için QA üretimini çalıştırır."""
+    """Sadece onaylı tablolar için şema öğrenimini çalıştırır (v5.0)."""
     try:
         with get_db_context() as conn:
             cur = conn.cursor()
@@ -837,6 +837,20 @@ def run_approved_learning(
             if not source:
                 raise HTTPException(status_code=404, detail="Data source not found")
             source = dict(source) if hasattr(source, 'keys') else source
+
+            # Running job guard — aynı kaynak için çalışan iş varsa reddet
+            cur.execute("""
+                SELECT id, job_type, started_at
+                FROM ds_discovery_jobs
+                WHERE source_id = %s AND status = 'running'
+                ORDER BY started_at DESC LIMIT 1
+            """, (source_id,))
+            running = cur.fetchone()
+            if running:
+                return {
+                    "success": False,
+                    "message": f"Bu kaynak için zaten bir '{running['job_type']}' işi çalışıyor. Lütfen tamamlanmasını bekleyin."
+                }
     except HTTPException:
         raise
     except Exception as e:
@@ -862,7 +876,7 @@ def run_approved_learning(
 
     import threading
     threading.Thread(target=run_pipeline, daemon=True).start()
-    return {"success": True, "message": "Onaylı tablolar için öğrenme süreci ('QA Generation') arka planda başlatıldı."}
+    return {"success": True, "message": "Onaylı tablolar için şema öğrenimi arka planda başlatıldı."}
 
 
 @router.get("/{source_id}/schedule")

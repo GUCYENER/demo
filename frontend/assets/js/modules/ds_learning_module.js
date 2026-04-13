@@ -197,8 +197,9 @@ window.DSLearningModule = (function () {
                         'technology': 'Teknoloji Keşfi',
                         'objects': 'Obje Tespiti',
                         'samples': 'Veri Toplama',
-                        'learning': 'Öğrenme',
-                        'qa_generation': 'QA Üretimi',
+                        'learning': 'Şema Öğrenimi',
+                        'qa_generation': 'Şema Öğrenimi',
+                        'schema_learning': 'Şema Öğrenimi',
                         'full_learning': 'Tam Pipeline'
                     };
                     const label = jobLabels[check.job.job_type] || check.job.job_type;
@@ -468,7 +469,7 @@ window.DSLearningModule = (function () {
                     <i class="fa-solid fa-trophy"></i>
                 </div>
                 <h3>Keşif Tamamlandı!</h3>
-                <p>Tüm adımlar başarıyla tamamlandı. Aşağıdan AI Tablo Öğrenimi'ni başlatabilir, tabloları etiketleyebilir veya detayları görüntüleyebilirsiniz.</p>
+                <p>Tüm adımlar başarıyla tamamlandı. Aşağıdan onaylı tabloların şema öğrenimini başlatabilir, tabloları etiketleyebilir veya detayları görüntüleyebilirsiniz.</p>
                 <div class="ds-wizard-final-actions" style="display: flex; flex-wrap: wrap; justify-content: center; gap: 8px;">
                     <button class="ds-wizard-btn primary" id="dsWizardRunFullBtn" style="background-color: var(--accent-primary);">
                         <i class="fa-solid fa-brain"></i> Öğrenmeyi Başlat
@@ -498,10 +499,19 @@ window.DSLearningModule = (function () {
             runFullBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Başlatılıyor...';
             
             try {
-                if (typeof runFullLearning === 'function') {
-                    await runFullLearning(_currentSourceId);
-                } else if (window.DSLearningModule && typeof window.DSLearningModule.runFullLearning === 'function') {
-                    await window.DSLearningModule.runFullLearning(_currentSourceId);
+                const token = localStorage.getItem('access_token');
+                const res = await fetch(`/api/data-sources/${_currentSourceId}/run-approved-learning`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const data = await res.json();
+                if (data.success) {
+                    if (typeof showToast === 'function') showToast(data.message || 'Onaylıları öğrenme başlatıldı!', 'success');
+                } else {
+                    if (typeof showToast === 'function') showToast(data.message || 'Başlatılamadı.', 'warning');
+                    runFullBtn.disabled = false;
+                    runFullBtn.classList.remove('ds-btn-disabled');
+                    runFullBtn.innerHTML = '<i class="fa-solid fa-brain"></i> Öğrenmeyi Başlat';
                 }
             } catch (e) {
                 console.error('[DSLearning] Öğrenme başlatma hatası:', e);
@@ -757,8 +767,9 @@ window.DSLearningModule = (function () {
                     'technology': 'Teknoloji',
                     'objects': 'Obje Tespiti',
                     'samples': 'Veri Toplama',
-                    'learning': 'Öğrenme',
-                    'qa_generation': 'QA Üretimi',
+                    'learning': 'Şema Öğrenimi',
+                    'qa_generation': 'Şema Öğrenimi',
+                    'schema_learning': 'Şema Öğrenimi',
                     'full_learning': 'Tam Pipeline'
                 };
                 const typeLabel = typeLabels[job.job_type] || job.job_type;
@@ -827,44 +838,31 @@ window.DSLearningModule = (function () {
             'technology': 'Teknoloji Keşfi',
             'objects': 'Obje Tespiti',
             'samples': 'Veri Toplama',
-            'qa_generation': 'QA Üretimi',
+            'qa_generation': 'Şema Öğrenimi',
+            'schema_learning': 'Şema Öğrenimi',
             'full_learning': 'Tam Pipeline'
         };
         const typeName = typeNames[jobType] || jobType;
 
-        if (jobType === 'qa_generation') {
-            const qaPairs = resultData.qa_pairs_generated || 0;
-            const schemas = resultData.schema_descriptions || 0;
-            const rels = resultData.relationship_maps || 0;
-            const samples = resultData.sample_insights || 0;
-            const aggs = resultData.aggregate_queries || 0;
+        if (jobType === 'qa_generation' || jobType === 'schema_learning') {
+            const learnedTables = resultData.learned_tables || resultData.qa_pairs_generated || 0;
             const elapsed = resultData.elapsed_ms ? `${(resultData.elapsed_ms / 1000).toFixed(1)}s` : '-';
+            const tables = resultData.tables || [];
 
             bodyContent = `
                 <div class="ds-job-detail-summary">
                     <div class="ds-job-detail-total">
-                        <div class="ds-job-detail-total-num">${qaPairs}</div>
-                        <div class="ds-job-detail-total-label">Toplam QA Çifti Üretildi</div>
+                        <div class="ds-job-detail-total-num">${learnedTables}</div>
+                        <div class="ds-job-detail-total-label">Öğrenilen Tablo</div>
                     </div>
                 </div>
-                <div class="ds-step-result-grid" style="margin-top: 16px;">
-                    <div class="ds-result-card">
-                        <div class="ds-result-card-label">Şema Açıklaması</div>
-                        <div class="ds-result-card-value">${schemas}</div>
+                ${tables.length > 0 ? `
+                <div class="ds-details-section" style="margin-top: 16px;">
+                    <h4><i class="fa-solid fa-table"></i> Öğrenilen Tablolar</h4>
+                    <div class="ds-details-table-wrap" style="max-height: 200px; overflow-y: auto;">
+                        ${tables.map(t => `<span class="ds-job-type-badge" style="margin: 2px; display: inline-block; padding: 4px 10px; font-size: 0.82rem;">${_escapeHtml(t)}</span>`).join('')}
                     </div>
-                    <div class="ds-result-card">
-                        <div class="ds-result-card-label">İlişki Haritası</div>
-                        <div class="ds-result-card-value">${rels}</div>
-                    </div>
-                    <div class="ds-result-card">
-                        <div class="ds-result-card-label">Örnek Veri</div>
-                        <div class="ds-result-card-value">${samples}</div>
-                    </div>
-                    <div class="ds-result-card">
-                        <div class="ds-result-card-label">SQL Sorguları</div>
-                        <div class="ds-result-card-value">${aggs}</div>
-                    </div>
-                </div>
+                </div>` : ''}
                 <div class="ds-result-elapsed" style="margin-top: 12px;">
                     <i class="fa-solid fa-clock"></i> İşlem Süresi: ${elapsed}
                 </div>
@@ -1002,10 +1000,10 @@ window.DSLearningModule = (function () {
                 </div>
                 <div class="ds-lr-tabs" id="dsLrTabs">
                     <button class="ds-lr-tab active" data-type="">Tümü</button>
-                    <button class="ds-lr-tab" data-type="schema_description">Şema Bilgileri</button>
-                    <button class="ds-lr-tab" data-type="sample_insight">Örnek Veriler</button>
-                    <button class="ds-lr-tab" data-type="aggregate_query">SQL Sorguları</button>
-                    <button class="ds-lr-tab" data-type="relationship_map">İlişki Haritaları</button>
+                    <button class="ds-lr-tab" data-type="schema_record">Şema Kayıtları</button>
+                    <button class="ds-lr-tab" data-type="schema_description">Şema Bilgileri (Eski)</button>
+                    <button class="ds-lr-tab" data-type="sample_insight">Örnek Veriler (Eski)</button>
+                    <button class="ds-lr-tab" data-type="relationship_map">İlişki Haritaları (Eski)</button>
                 </div>
                 <div class="ds-lr-summary" id="dsLrSummary"></div>
                 <div class="ds-wizard-body ds-details-body ds-lr-body" id="dsLrBody">
@@ -1102,14 +1100,15 @@ window.DSLearningModule = (function () {
 
             // Özet bilgi
             const typeLabels = {
-                'schema_description': 'Şema',
-                'relationship_map': 'İlişki',
-                'sample_insight': 'Örnek Veri',
-                'aggregate_query': 'SQL Sorgu'
+                'schema_record': 'Şema Kaydı',
+                'schema_description': 'Şema (Eski)',
+                'relationship_map': 'İlişki (Eski)',
+                'sample_insight': 'Örnek Veri (Eski)',
+                'aggregate_query': 'SQL Sorgu (Eski)'
             };
             summary.innerHTML = `
                 <div class="ds-lr-summary-inner">
-                    <div class="ds-lr-stat"><span class="ds-lr-stat-num">${total}</span><span class="ds-lr-stat-label">Toplam QA</span></div>
+                    <div class="ds-lr-stat"><span class="ds-lr-stat-num">${total}</span><span class="ds-lr-stat-label">Toplam Kayıt</span></div>
                     ${Object.entries(typeCounts).map(([t, c]) =>
                         `<div class="ds-lr-stat"><span class="ds-lr-stat-num">${c}</span><span class="ds-lr-stat-label">${typeLabels[t] || t}</span></div>`
                     ).join('')}
@@ -1117,7 +1116,7 @@ window.DSLearningModule = (function () {
             `;
 
             if (results.length === 0) {
-                body.innerHTML = '<div class="ds-lr-loading">Henüz öğrenme sonucu bulunmuyor. Önce QA Üretimi yapın.</div>';
+                body.innerHTML = '<div class="ds-lr-loading">Henüz öğrenme sonucu bulunmuyor. Önce tabloları onaylayıp "Onaylıları Öğren" butonunu kullanın.</div>';
                 return;
             }
 
@@ -1213,8 +1212,9 @@ window.DSLearningModule = (function () {
             if (check.has_running && check.job) {
                 const jobLabels = {
                     'technology': 'Teknoloji Keşfi', 'objects': 'Obje Tespiti',
-                    'samples': 'Veri Toplama', 'learning': 'Öğrenme',
-                    'qa_generation': 'QA Üretimi', 'full_learning': 'Tam Pipeline'
+                    'samples': 'Veri Toplama', 'learning': 'Şema Öğrenimi',
+                    'qa_generation': 'Şema Öğrenimi', 'schema_learning': 'Şema Öğrenimi',
+                    'full_learning': 'Tam Pipeline'
                 };
                 const label = jobLabels[check.job.job_type] || check.job.job_type;
                 toast('warning', `⚠️ Bu kaynak için "${label}" işi hâlâ çalışıyor. Tamamlanmasını beklemelisiniz.`);
@@ -1403,7 +1403,7 @@ window.DSLearningModule = (function () {
                         <button class="ds-wizard-btn success" id="dsHistoryRunFull" title="Baştan Sona Tüm Aşamaları Çalıştırır">
                             <i class="fa-solid fa-rocket"></i> Tam Pipeline Başlat
                         </button>
-                        <button class="ds-wizard-btn" id="dsHistoryRunApproved" style="background:#8b5cf6;" title="Sadece Onaylı Tabloları Öğrenir">
+                        <button class="ds-wizard-btn" id="dsHistoryRunApproved" style="background:#8b5cf6;" title="Sadece admin onaylı tabloların şema bilgisini (kolon isimleri, eşanlamlılar, değer örnekleri) öğrenir">
                             <i class="fa-solid fa-brain"></i> Onaylıları Öğren
                         </button>
                         <button class="ds-wizard-btn secondary" id="dsHistorySchedule">
@@ -1459,7 +1459,10 @@ window.DSLearningModule = (function () {
                         if (typeof showToast === 'function') showToast(data.message || 'Onaylıları öğrenme başlatıldı!', 'success');
                         setTimeout(() => loadHistory(sourceId), 2000);
                     } else {
-                        if (typeof showToast === 'function') showToast(data.message || 'Başlatılamadı.', 'error');
+                        if (typeof showToast === 'function') showToast(data.message || 'Başlatılamadı.', 'warning');
+                        approvedBtn.innerHTML = oldHtml;
+                        approvedBtn.disabled = false;
+                        approvedBtn.classList.remove('ds-btn-disabled');
                     }
                 } catch (e) {
                      if (typeof showToast === 'function') showToast('Hata: ' + e.message, 'error');

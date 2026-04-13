@@ -399,6 +399,45 @@ def get_schema_context(source_id: int) -> Dict[str, Any]:
                 "description_tr": row.get("description_tr", "") or "",
             })
 
+        # 🆕 v5.0: Kolon enrichment bilgilerini al (iş isimleri, eşanlamlılar)
+        col_enrichments_map = {}  # {(schema, table): {col_name: {business_name_tr, ...}}}
+        try:
+            cur.execute("""
+                SELECT te.schema_name, te.table_name,
+                       ce.column_name, ce.business_name_tr AS col_bname,
+                       ce.admin_label_tr AS col_admin_label,
+                       ce.synonyms_json, ce.is_searchable, ce.semantic_type
+                FROM ds_column_enrichments ce
+                JOIN ds_table_enrichments te ON te.id = ce.table_enrichment_id
+                WHERE te.source_id = %s AND te.is_active = TRUE AND te.admin_approved = TRUE
+            """, (source_id,))
+            for crow in cur.fetchall():
+                key = (crow.get("schema_name") or "", crow["table_name"])
+                col_name = crow["column_name"]
+
+                # Synonyms parse
+                synonyms = []
+                raw_syn = crow.get("synonyms_json")
+                if raw_syn:
+                    try:
+                        synonyms = json.loads(raw_syn) if isinstance(raw_syn, str) else (raw_syn or [])
+                    except Exception:
+                        synonyms = []
+
+                col_enrichments_map.setdefault(key, {})[col_name] = {
+                    "business_name_tr": crow.get("col_bname") or crow.get("col_admin_label") or "",
+                    "synonyms": synonyms,
+                    "is_searchable": crow.get("is_searchable", False),
+                    "semantic_type": crow.get("semantic_type") or "",
+                }
+        except Exception:
+            pass  # synonyms_json kolonu henüz yoksa sessizce geç
+
+        # Tablolara kolon enrichment'larını ekle
+        for t in tables:
+            key = (t.get("schema") or "", t["name"])
+            t["col_enrichments"] = col_enrichments_map.get(key, {})
+
         # İlişkiler
         cur.execute("""
             SELECT from_schema, from_table, from_column,
@@ -450,19 +489,28 @@ def format_schema_for_llm(schema_context: Dict[str, Any]) -> str:
 
     for t in schema_context["tables"][:30]:  # Max 30 tablo context'e alınır
         cols = t.get("columns", [])
+        col_enrichments = t.get("col_enrichments", {})
         col_names = []
         pk_cols = []
         date_cols = []
 
         for c in cols:
-            col_names.append(f"{c['name']} ({c['data_type']})")
+            col_name = c['name']
+            col_dtype = c['data_type']
+            # 🆕 v5.0: Kolon iş ismi eklendi
+            enr = col_enrichments.get(col_name, {})
+            bname_col = enr.get("business_name_tr", "")
+            if bname_col:
+                col_names.append(f"{col_name} ({col_dtype}) [{bname_col}]")
+            else:
+                col_names.append(f"{col_name} ({col_dtype})")
             if c.get("is_pk"):
-                pk_cols.append(c["name"])
+                pk_cols.append(col_name)
             if c.get("data_type", "").lower() in (
                 "timestamp", "timestamptz", "datetime", "date",
                 "timestamp without time zone", "timestamp with time zone"
             ):
-                date_cols.append(c["name"])
+                date_cols.append(col_name)
 
         # 🆕 v3.1.0: Enrichment bilgilerini LLM context'e dahil et
         bname = t.get("admin_label_tr") or t.get("business_name_tr") or ""
