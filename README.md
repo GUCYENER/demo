@@ -2139,6 +2139,43 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 ---
 
 
+### v3.6.6 (2026-04-13) - DS Enrichment UI/UX & Learning Pipeline Cleanup 🧹
+
+**✨ Enrichment Modal İyileştirmeleri (UI/UX):**
+- ✅ Tablo etiketleme modalında akıllı buton durumları eklendi:
+  - "Tümünü Keşfet" → tüm tablolar zaten keşfedildiyse pasif
+  - "Seçilenleri Onayla" → seçilen tablolar keşfedilmemişse pasif
+  - "Tümünü Onayla" → tüm tablolar keşfedilmemişse pasif
+- ✅ Tooltip edge case düzeltildi: veri yüklenirken "Tablolar yükleniyor..." gösteriliyor
+- ✅ Tablo sütunları CSS'de `table-layout: fixed` + `colgroup` ile sabitlendi (overflow sorunu giderildi)
+- ✅ İşlem sütunu 130px → 210px genişletildi
+- ✅ Açıklama hücresi `text-overflow: ellipsis` ile kısaltıldı
+- ✅ Yeni CSS sınıfları: `.ds-action-cell`, `.ds-desc-cell`, `.ds-action-nowrap`, `.ds-table-name-cell`, `.ds-status-badge`
+- ✅ Status badge sistemi: `ds-status-pending-disc` (mor), `ds-status-pending-appr` (amber), `ds-status-approved` (yeşil)
+
+**🗑️ Eski QA Sistemi Temizliği:**
+- ✅ `generate_synthetic_qa()` fonksiyonu kaldırıldı (~210 satır dead code, hiçbir yerden çağrılmıyordu)
+- ✅ Kullanılmayan `import hashlib` kaldırıldı
+- ✅ Öğrenme Geçmişi modalından "Şema Bilgileri (Eski)", "Örnek Veriler (Eski)", "İlişki Haritaları (Eski)" sekmeleri kaldırıldı
+- ✅ `typeLabels`'tan legacy tip tanımları temizlendi (schema_description, relationship_map, sample_insight, aggregate_query)
+- ✅ `aggregate_query` özel SQL render bloğu kaldırıldı
+
+**⚡ Learning Pipeline İyileştirmeleri:**
+- ✅ `search_db_knowledge` fonksiyonuna `content_type = 'schema_record'` filtresi eklendi — eski veriler SQL üretimini etkileyemez
+- ✅ `format_schema_for_llm` kolon limiti 20 → 50 yükseltildi
+- ✅ `for c in cols[:50]` erken kesinim ile 200+ kolonlu tablolarda bellek/string optimizasyonu sağlandı
+
+**🔧 Değişen Dosyalar:**
+- `app/services/ds_learning_service.py` → dead code temizliği, hashlib kaldırıldı, search_db_knowledge filtresi
+- `app/services/text_to_sql.py` → kolon limiti 20→50
+- `app/services/ds_qa_generator.py` → v5.0 schema_record öğrenicisi (önceki oturumdan)
+- `frontend/assets/js/modules/ds_enrichment_module.js` → akıllı buton durumları, colgroup, status badge
+- `frontend/assets/js/modules/ds_learning_module.js` → eski sekmeler kaldırıldı
+- `frontend/assets/css/modules/ds_enrichment.css` → yeni CSS sınıfları, tablo hizalama
+- `frontend/home.html` → bundle cache bust `v3.6.6`
+
+---
+
 ### v3.1.1 (2026-04-01) - Branding Parameterization — Full Bundle Cleanup 🏷️
 
 **🔄 Parametrik Branding:**

@@ -409,20 +409,19 @@ const DSEnrichmentModule = (() => {
                                 ${(item.enrichment_score || 0).toFixed(2)}
                             </span>
                         </td>
-                        <td title="${item.description_tr || ''}">
-                            ${(item.description_tr || '').substring(0, 80)}${(item.description_tr || '').length > 80 ? '...' : ''}
+                        <td class="ds-desc-cell" title="${item.description_tr || '(Açıklama yok)'}">
+                            ${(item.description_tr || '').substring(0, 60)}${(item.description_tr || '').length > 60 ? '...' : ''}
                         </td>
-                        <td style="text-align:center;">
-                            <div class="ds-enrich-actions" style="justify-content:center;">
+                        <td class="ds-action-cell">
+                            <div class="ds-enrich-actions ds-action-nowrap">
                                 ${!item.enrichment_id ? `
-                                <span style="color:#a78bfa;font-size:0.9rem;"><i class="fa-solid fa-hourglass-half"></i> Keşif Bekliyor</span>
+                                <span class="ds-status-badge ds-status-pending-disc"><i class="fa-solid fa-hourglass-half"></i> Keşif Bekliyor</span>
                                 ` : (!item.is_approved ? `
-                                <span style="color:#f59e0b;font-size:0.8rem;font-weight:600;margin-right:4px;white-space:nowrap;"><i class="fa-solid fa-clock"></i> Onay Bekliyor</span>
-
+                                <span class="ds-status-badge ds-status-pending-appr"><i class="fa-solid fa-clock"></i> Onay Bekliyor</span>
                                 <button class="ds-enrich-btn approve" onclick="DSEnrichmentModule.quickApprove(${item.id})" title="Direkt onayla" style="background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);">
                                     <i class="fa-solid fa-check"></i>
                                 </button>
-                                ` : '<span style="color:#4cd964;font-size:0.9rem;margin-right:10px;"><i class="fa-solid fa-check-double"></i> Onaylı</span>')}
+                                ` : '<span class="ds-status-badge ds-status-approved"><i class="fa-solid fa-check-double"></i> Onaylı</span>')}
                                 ${item.enrichment_id ? `
                                 <button class="ds-enrich-btn edit" onclick="DSEnrichmentModule.toggleEdit(${item.id})" title="Düzenle">
                                     <i class="fa-solid fa-pen"></i>
@@ -454,6 +453,23 @@ const DSEnrichmentModule = (() => {
             }
         }
 
+        // ---- Buton disabled state hesaplamaları ----
+        const _btnUndiscoveredCount = _pendingData.filter(x => !x.enrichment_id).length;
+        const _btnSelUndiscovered   = Array.from(_selectedIds).filter(id => { const r = _pendingData.find(x => x.id == id); return r && !r.enrichment_id; }).length;
+        const _btnSelApprovable     = Array.from(_selectedIds).filter(id => { const r = _pendingData.find(x => x.id == id); return r && r.enrichment_id && !r.is_approved; }).length;
+        const _btnAllApprovable     = _pendingData.filter(x => x.enrichment_id && !x.is_approved).length;
+        const _btnDiscoverAllDis    = _btnUndiscoveredCount === 0;
+        const _btnDiscoverSelDis    = _btnSelUndiscovered === 0;
+        const _btnApproveSelDis     = _btnSelApprovable === 0;
+        const _btnApproveAllDis     = _btnAllApprovable === 0;
+        // Tooltip metinleri
+        const _ttDiscoverAll  = _pendingData.length === 0
+            ? 'Tablolar yükleniyor...'
+            : (_btnDiscoverAllDis ? 'Tüm tablolar zaten keşfedilmiş' : 'Keşfedilmemiş tüm tabloları keşfet');
+        const _ttDiscoverSel  = (_btnSelUndiscovered === 0 && _selectedIds.size > 0) ? 'Seçili tablolar zaten keşfedilmiş' : 'Seçili keşfedilmemiş tabloları keşfet';
+        const _ttApproveSel   = _btnApproveSelDis ? (_btnSelUndiscovered > 0 ? 'Seçili tablolar henüz keşfedilmemiş, önce keşfedin' : 'Onaylanacak seçili tablo yok') : 'Seçili keşfedilmiş tabloları onayla';
+        const _ttApproveAll   = _btnApproveAllDis ? (_btnUndiscoveredCount > 0 ? 'Önce tüm tabloları keşfedin' : 'Onaylanacak tablo yok') : `${_btnAllApprovable} keşfedilmiş tabloyu onayla`;
+
         body.innerHTML = `
             <div class="ds-enrich-filter-bar" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; flex-wrap:wrap; gap:10px; flex-shrink:0;">
                 <div style="flex:1; max-width:650px; display:flex; gap:0.5rem; align-items:center;">
@@ -480,25 +496,44 @@ const DSEnrichmentModule = (() => {
                     </button>
                 </div>
                 <div style="display:flex; align-items:center; gap:10px;">
-                    <button id="dsBulkDiscoverAllBtn" onclick="DSEnrichmentModule.discoverAll()" 
-                            style="padding:8px 16px; border-radius:6px; border:none; background:#8b5cf6; color:#fff; cursor:pointer; font-weight:600; transition: all 0.2s;">
-                        <i class="fa-solid fa-brain mr-2"></i> Onaylıları Öğren
+                    <button id="dsBulkDiscoverAllBtn" onclick="DSEnrichmentModule.discoverAll()"
+                            ${_btnDiscoverAllDis ? 'disabled' : ''}
+                            style="padding:8px 16px; border-radius:6px; border:none; background:#7c3aed; color:#fff; cursor:${_btnDiscoverAllDis ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_btnDiscoverAllDis ? '0.45' : '1'}; transition: all 0.2s;"
+                            title="${_ttDiscoverAll}">
+                        <i class="fa-solid fa-magnifying-glass mr-2"></i> Tümünü Keşfet
                     </button>
-                    <button id="dsBulkDiscoverBtn" onclick="DSEnrichmentModule.bulkDiscover()" 
-                            ${_selectedIds.size > 0 ? '' : 'disabled'}
-                            style="padding:8px 16px; border-radius:6px; border:none; background:#a78bfa; color:#fff; cursor:${_selectedIds.size > 0 ? 'pointer' : 'not-allowed'}; font-weight:600; opacity: ${_selectedIds.size > 0 ? '1' : '0.5'}; transition: all 0.2s;">
-                        <i class="fa-solid fa-robot mr-2"></i> Seçilenleri Keşfet (<span id="dsBulkDiscoverCount">${Array.from(_selectedIds).filter(id => { const r = _pendingData.find(x => x.id == id); return r && !r.enrichment_id; }).length}</span>)
+                    <button id="dsBulkDiscoverBtn" onclick="DSEnrichmentModule.bulkDiscover()"
+                            ${_btnDiscoverSelDis ? 'disabled' : ''}
+                            style="padding:8px 16px; border-radius:6px; border:none; background:#a78bfa; color:#fff; cursor:${_btnDiscoverSelDis ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_btnDiscoverSelDis ? '0.45' : '1'}; transition: all 0.2s;"
+                            title="${_ttDiscoverSel}">
+                        <i class="fa-solid fa-robot mr-2"></i> Seçilenleri Keşfet (<span id="dsBulkDiscoverCount">${_btnSelUndiscovered}</span>)
                     </button>
-                    <button id="dsBulkApproveBtn" onclick="DSEnrichmentModule.bulkApprove()" 
-                            ${_selectedIds.size > 0 ? '' : 'disabled'}
-                            style="padding:8px 16px; border-radius:6px; border:none; background:var(--primary-color, #4f46e5); color:#fff; cursor:${_selectedIds.size > 0 ? 'pointer' : 'not-allowed'}; font-weight:600; opacity: ${_selectedIds.size > 0 ? '1' : '0.5'}; transition: all 0.2s;">
-                        <i class="fa-solid fa-check-double mr-2"></i> Seçilenleri Onayla (<span id="dsBulkApproveCount">${Array.from(_selectedIds).filter(id => { const r = _pendingData.find(x => x.id == id); return r && r.enrichment_id && !r.is_approved; }).length}</span>)
+                    <button id="dsBulkApproveBtn" onclick="DSEnrichmentModule.bulkApprove()"
+                            ${_btnApproveSelDis ? 'disabled' : ''}
+                            style="padding:8px 16px; border-radius:6px; border:none; background:var(--primary-color, #4f46e5); color:#fff; cursor:${_btnApproveSelDis ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_btnApproveSelDis ? '0.45' : '1'}; transition: all 0.2s;"
+                            title="${_ttApproveSel}">
+                        <i class="fa-solid fa-check-double mr-2"></i> Seçilenleri Onayla (<span id="dsBulkApproveCount">${_btnSelApprovable}</span>)
+                    </button>
+                    <button id="dsApproveAllBtn" onclick="DSEnrichmentModule.bulkApproveAll()"
+                            ${_btnApproveAllDis ? 'disabled' : ''}
+                            style="padding:8px 16px; border-radius:6px; border:none; background:#059669; color:#fff; cursor:${_btnApproveAllDis ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_btnApproveAllDis ? '0.45' : '1'}; transition: all 0.2s;"
+                            title="${_ttApproveAll}">
+                        <i class="fa-solid fa-check-circle mr-2"></i> Tümünü Onayla
                     </button>
                 </div>
             </div>
             
             <div class="ds-enrich-table-wrap" id="dsMainTableWrap" style="flex:1; overflow-y:auto; min-height:0; padding-right:4px;">
-                <table class="ds-enrich-table">
+                <table class="ds-enrich-table" style="table-layout:fixed; width:100%;">
+                    <colgroup>
+                        <col style="width:40px;" />
+                        <col style="width:22%;" />
+                        <col style="width:14%;" />
+                        <col style="width:80px;" />
+                        <col style="width:72px;" />
+                        <col style="width:auto;" />
+                        <col style="width:210px;" />
+                    </colgroup>
                     <thead style="position:sticky; top:0; z-index:10; background:var(--bg-card, #1a1e29); box-shadow:0 2px 5px rgba(0,0,0,0.2);">
                         <tr>
                             <th style="width:40px; text-align:center;">
@@ -509,7 +544,7 @@ const DSEnrichmentModule = (() => {
                             <th>Kategori</th>
                             <th>Skor</th>
                             <th>Açıklama</th>
-                            <th>İşlem</th>
+                            <th style="text-align:right; padding-right:12px;">İşlem</th>
                         </tr>
                     </thead>
                     <tbody id="dsEnrichTableBody">
@@ -552,6 +587,20 @@ const DSEnrichmentModule = (() => {
             return;
         }
         const enrichmentId = item.enrichment_id;
+
+        // Çalışan iş kontrolü — keşif devam ediyorsa onay engelle
+        try {
+            const _jobCheckToken = localStorage.getItem('access_token');
+            const _jobCheckRes = await fetch(`/api/data-sources/${_currentSourceId}/check-running-job`, {
+                headers: { 'Authorization': `Bearer ${_jobCheckToken}` }
+            });
+            const _jobCheck = await _jobCheckRes.json();
+            if (_jobCheck.has_running) {
+                _showToast('Keşif işlemi devam ediyor. Tamamlanmasını bekleyin.', 'warning');
+                return;
+            }
+        } catch (e) { /* kontrol başarısız, devam et */ }
+
         try {
             const token = localStorage.getItem('access_token');
             const res = await fetch(
@@ -912,47 +961,39 @@ const DSEnrichmentModule = (() => {
     }
 
     async function discoverAll() {
-        if (typeof Swal !== 'undefined') {
-            const result = await Swal.fire({
-                title: 'Onaylıları Öğren',
-                text: 'Sadece admin onaylı tablolar için şema öğrenimi (kolon isimleri, eşanlamlılar, değer örnekleri) başlatılacak.',
-                icon: 'info',
-                showCancelButton: true,
-                confirmButtonText: 'Evet, Başlat',
-                cancelButtonText: 'İptal'
-            });
-            if (!result.isConfirmed) return;
+        // Keşfedilmemiş tüm tabloları keşfet (enrich-selected)
+        const unprocessed = _pendingData.filter(x => !x.enrichment_id).map(x => Number(x.id));
+        if (unprocessed.length === 0) {
+            _showToast('Keşfedilmemiş tablo bulunamadı. Tüm tablolar zaten keşfedilmiş.', 'info');
+            return;
         }
 
         const btn = document.getElementById('dsBulkDiscoverAllBtn');
-        const oldContent = btn ? btn.innerHTML : '';
         if (btn) {
-            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Başlatılıyor...';
+            if (btn.disabled) return; // Çift tıklama koruması
             btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Keşfediliyor...';
         }
 
         try {
             const token = localStorage.getItem('access_token');
-            const res = await fetch(`/api/data-sources/${_currentSourceId}/run-approved-learning`, {
+            const res = await fetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
                 method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}` }
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ object_ids: unprocessed })
             });
             const data = await res.json();
             if (data.success) {
-                _showToast(data.message || 'Onaylıların şema öğrenimi başlatıldı.', 'success');
+                _showToast(data.message || `${unprocessed.length} tablo için keşif başlatıldı. Liste otomatik güncellenecek.`, 'success');
             } else {
-                _showToast(data.message || 'Başlatılamadı.', 'warning');
-                if (btn) {
-                    btn.innerHTML = oldContent;
-                    btn.disabled = false;
-                }
+                _showToast(data.message || 'Keşif başlatılamadı.', 'warning');
             }
         } catch (err) {
-            _showToast('Hata oluştu.', 'error');
+            _showToast('Keşif isteği atılamadı.', 'error');
         } finally {
             if (btn) {
-                btn.innerHTML = oldContent;
                 btn.disabled = false;
+                btn.innerHTML = '<i class="fa-solid fa-magnifying-glass mr-2"></i> Tümünü Keşfet';
             }
         }
     }
@@ -960,12 +1001,27 @@ const DSEnrichmentModule = (() => {
     async function bulkApprove() {
         const checkedBoxes = Array.from(_selectedIds);
         if (checkedBoxes.length === 0) return;
-        
+
         const btn = document.getElementById('dsBulkApproveBtn');
-        if(btn) {
-           btn.disabled=true; 
-           btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Onaylanıyor...';
+        if (btn) {
+            if (btn.disabled) return; // Çift tıklama koruması
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Onaylanıyor...';
         }
+
+        // Çalışan iş kontrolü — keşif devam ediyorsa onay engelle
+        try {
+            const _jcToken = localStorage.getItem('access_token');
+            const _jcRes = await fetch(`/api/data-sources/${_currentSourceId}/check-running-job`, {
+                headers: { 'Authorization': `Bearer ${_jcToken}` }
+            });
+            const _jc = await _jcRes.json();
+            if (_jc.has_running) {
+                _showToast('Keşif işlemi devam ediyor. Tamamlanmasını bekleyin.', 'warning');
+                if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-check-double mr-2"></i> Seçilenleri Onayla'; }
+                return;
+            }
+        } catch (e) { /* kontrol başarısız, devam et */ }
 
         // object_id -> enrichment_id map: _selectedIds stores object_ids
         const objectToEnrichMap = {};
@@ -1040,6 +1096,90 @@ const DSEnrichmentModule = (() => {
     }
 
     // ============================================
+    // Tümünü Onayla
+    // ============================================
+
+    async function bulkApproveAll() {
+        // Keşfedilmiş ama onaylanmamış tüm tabloları toplu onayla
+        const toApprove = _pendingData.filter(x => x.enrichment_id && !x.is_approved);
+        if (toApprove.length === 0) {
+            _showToast('Onaylanacak tablo bulunamadı. Önce keşif yapın.', 'warning');
+            return;
+        }
+
+        const btn = document.getElementById('dsApproveAllBtn');
+        if (btn) {
+            if (btn.disabled) return; // Çift tıklama koruması
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Onaylanıyor...';
+        }
+
+        // Çalışan iş kontrolü — keşif devam ediyorsa onay engelle
+        try {
+            const _jcToken = localStorage.getItem('access_token');
+            const _jcRes = await fetch(`/api/data-sources/${_currentSourceId}/check-running-job`, {
+                headers: { 'Authorization': `Bearer ${_jcToken}` }
+            });
+            const _jc = await _jcRes.json();
+            if (_jc.has_running) {
+                _showToast('Keşif işlemi devam ediyor. Tamamlanmasını bekleyin.', 'warning');
+                if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-check-circle mr-2"></i> Tümünü Onayla'; }
+                return;
+            }
+        } catch (e) { /* kontrol başarısız, devam et */ }
+
+        try {
+            const token = localStorage.getItem('access_token');
+            let successCount = 0;
+            let failCount = 0;
+
+            for (const item of toApprove) {
+                try {
+                    const res = await fetch(
+                        `/api/data-sources/${_currentSourceId}/enrichment-approve/${item.enrichment_id}`,
+                        {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${token}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({})
+                        }
+                    );
+                    const data = await res.json();
+                    if (data.success) {
+                        item.is_approved = true;
+                        successCount++;
+                    } else {
+                        failCount++;
+                    }
+                } catch (e) {
+                    failCount++;
+                }
+            }
+
+            if (successCount > 0) {
+                const msg = failCount > 0
+                    ? `${successCount} tablo onaylandı, ${failCount} başarısız`
+                    : `${successCount} tablo onaylandı`;
+                _showToast(msg, 'success');
+                _updateStatsAfterApprove();
+                applyFilterAndRender();
+            } else {
+                _showToast('Toplu onay başarısız', 'error');
+            }
+        } catch (err) {
+            console.error('[DSEnrich] Tümünü onayla hatası:', err);
+            _showToast('Onay sırasında hata oluştu', 'error');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fa-solid fa-check-circle mr-2"></i> Tümünü Onayla';
+            }
+        }
+    }
+
+    // ============================================
     // Helpers
     // ============================================
 
@@ -1094,6 +1234,7 @@ const DSEnrichmentModule = (() => {
         toggleAllBulk,
         updateBulkCount,
         bulkApprove,
+        bulkApproveAll,
         bulkDiscover,
         discoverAll,
         applyFilterAndRender,

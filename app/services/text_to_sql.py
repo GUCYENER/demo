@@ -494,7 +494,7 @@ def format_schema_for_llm(schema_context: Dict[str, Any]) -> str:
         pk_cols = []
         date_cols = []
 
-        for c in cols:
+        for c in cols[:50]:  # Max 50 kolon prompt'a alınır
             col_name = c['name']
             col_dtype = c['data_type']
             # 🆕 v5.0: Kolon iş ismi eklendi
@@ -524,7 +524,7 @@ def format_schema_for_llm(schema_context: Dict[str, Any]) -> str:
             parts.append(f"   Açıklama: {desc}")
         if pk_cols:
             parts.append(f"   PK: {', '.join(pk_cols)}")
-        parts.append(f"   Sütunlar: {', '.join(col_names[:20])}")
+        parts.append(f"   Sütunlar: {', '.join(col_names[:50])}")
         if date_cols:
             parts.append(f"   Tarih sütunları: {', '.join(date_cols)}")
         parts.append("")

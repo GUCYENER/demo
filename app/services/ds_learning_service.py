@@ -10,7 +10,7 @@ Version: 2.56.0
 import logging
 import time
 import json
-import hashlib
+
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -1002,221 +1002,10 @@ def get_job_result_stats(vyra_conn, source_id: int) -> list:
 
 
 # =====================================================
-# Faz 2: Sentetik QA Üretimi (Template-Based)
-# =====================================================
-
-def generate_synthetic_qa(source_id: int, vyra_conn) -> dict:
-    """
-    Keşfedilen DB verilerinden template-based sentetik QA çiftleri üretir.
-    Modüler olarak düzenlendi, hash kontrolü ile gereksiz oluşturmaları atlar (erken dedup) ve 
-    batch komitleri ile UI'ın anlık beslenmesini sağlar.
-    """
-    start = time.time()
-    cur = vyra_conn.cursor()
-    logger.info("[DSLearning] QA üretimi başlatıldı: source_id=%s", source_id)
-
-    cur.execute("SELECT company_id FROM data_sources WHERE id = %s", (source_id,))
-    source_row = cur.fetchone()
-    company_id = source_row["company_id"] if source_row else 1
-
-    try:
-        from app.services.rag.embedding import EmbeddingManager
-        emb_mgr = EmbeddingManager()
-    except Exception:
-        logger.error("[DSLearning] EmbeddingManager yüklenemedi")
-        return {"success": False, "error": "Embedding modeli yüklenemedi"}
-
-    cur.execute("""
-        SELECT id, schema_name, object_name, object_type, column_count,
-               row_count_estimate, columns_json
-        FROM ds_db_objects WHERE source_id = %s
-        ORDER BY object_name
-    """, (source_id,))
-    objects = cur.fetchall()
-
-    if not objects:
-        return {"success": False, "error": "Önce obje tespiti yapılmalı"}
-
-    cur.execute("""
-        SELECT from_schema, from_table, from_column, to_schema, to_table, to_column
-        FROM ds_db_relationships WHERE source_id = %s
-    """, (source_id,))
-    all_rels = cur.fetchall()
-
-    cur.execute("""
-        SELECT s.object_id, s.sample_data, s.row_count, o.object_name
-        FROM ds_db_samples s
-        JOIN ds_db_objects o ON s.object_id = o.id
-        WHERE s.source_id = %s
-    """, (source_id,))
-    all_samples = {row["object_id"]: row for row in cur.fetchall()}
-
-    cur.execute("""
-        SELECT md5(metadata->>'question') as q_hash
-        FROM ds_learning_results
-        WHERE source_id = %s
-    """, (source_id,))
-    existing_hashes = {row["q_hash"] for row in cur.fetchall()}
-    logger.info("[DSLearning] Mevcut %d unique QA hash bulundu", len(existing_hashes))
-
-    cur.execute("""
-        SELECT id FROM ds_discovery_jobs
-        WHERE source_id = %s AND job_type = 'qa_generation' AND status = 'running'
-        ORDER BY started_at DESC LIMIT 1
-    """, (source_id,))
-    job_row = cur.fetchone()
-    current_job_id = job_row["id"] if job_row else None
-
-    state = {
-        "qa_count": 0,
-        "skipped_count": 0,
-        "type_counts": {"schema_description": 0, "relationship_map": 0, "sample_insight": 0, "aggregate_query": 0}
-    }
-    batch_pairs = []
-
-    def commit_batch():
-        if not batch_pairs:
-            return
-        
-        all_texts = [f"{p['question_text']} {p['content_text']}" for p in batch_pairs]
-        embeddings = emb_mgr.get_embeddings_batch(all_texts)
-        
-        for pair, embedding in zip(batch_pairs, embeddings):
-            cur.execute("""
-                INSERT INTO ds_learning_results
-                    (source_id, company_id, job_id, content_type, content_text, embedding, metadata, score)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                source_id, company_id, current_job_id,
-                pair["content_type"], pair["content_text"], embedding,
-                json.dumps({"question": pair["question_text"], "table_name": pair["object_name"]}),
-                1.0
-            ))
-            state["qa_count"] += 1
-            state["type_counts"][pair["content_type"]] = state["type_counts"].get(pair["content_type"], 0) + 1
-            
-        vyra_conn.commit()
-        batch_pairs.clear()
-
-    def add_qa_pair(content_type, content_text, question_text, object_name):
-        q_hash = hashlib.md5(question_text.encode()).hexdigest()
-        if q_hash in existing_hashes:
-            state["skipped_count"] += 1
-            return
-        
-        batch_pairs.append({
-            "content_type": content_type, "content_text": content_text,
-            "question_text": question_text, "object_name": object_name
-        })
-        existing_hashes.add(q_hash)
-        
-        if len(batch_pairs) >= 20: 
-            commit_batch()
-
-    # Tabloları İşle
-    for obj in objects:
-        obj_id = obj["id"]
-        obj_name = obj["object_name"]
-        obj_type = obj["object_type"]
-        schema = obj["schema_name"] or "public"
-        col_count = obj["column_count"]
-        row_est = obj["row_count_estimate"] or 0
-        cols_raw = obj["columns_json"]
-
-        cols = []
-        if isinstance(cols_raw, str):
-            try:
-                cols = json.loads(cols_raw)
-            except Exception:
-                pass
-        else:
-            cols = cols_raw or []
-
-        col_descriptions, pk_cols = [], []
-        for c in cols[:20]:
-            desc = f"{c['name']} ({c['data_type']})"
-            if c.get("is_pk"):
-                desc += " [PK]"
-                pk_cols.append(c["name"])
-            col_descriptions.append(desc)
-
-        col_text = ", ".join(col_descriptions)
-
-        # 1) Schema QA
-        q1 = f"{obj_name} tablosu ne içerir? {obj_name} tablosunun yapısı nedir?"
-        a1 = f"{schema}.{obj_name} ({obj_type}): {col_count} sütun, yaklaşık {row_est} kayıt. Sütunlar: {col_text}."
-        if pk_cols: a1 += f" Primary Key: {', '.join(pk_cols)}."
-        add_qa_pair("schema_description", a1, q1, obj_name)
-
-        q2 = f"{obj_name} tablosunda kaç sütun var? {obj_name} kaç alana sahip?"
-        a2 = f"{obj_name} tablosunda {col_count} sütun bulunmaktadır: {col_text}."
-        add_qa_pair("schema_description", a2, q2, obj_name)
-
-        if row_est > 0:
-            q3 = f"{obj_name} tablosunda kaç kayıt var? {obj_name} ne kadar veri içeriyor?"
-            a3 = f"{obj_name} tablosunda yaklaşık {row_est} kayıt bulunmaktadır."
-            add_qa_pair("schema_description", a3, q3, obj_name)
-
-        # 2) Aggregate Query
-        if obj_type == "table":
-            q_agg = f"{obj_name} tablosunda kaç kayıt var? {obj_name} toplam satır sayısı nedir?"
-            a_agg = f"{obj_name} tablosundaki kayıt sayısını bulmak için: SELECT COUNT(*) FROM {schema}.{obj_name}; Tahmini kayıt: {row_est}."
-            add_qa_pair("aggregate_query", a_agg, q_agg, obj_name)
-
-        # 3) Sample Insight
-        sample = all_samples.get(obj_id)
-        if sample and sample.get("sample_data"):
-            s_data = sample["sample_data"]
-            if isinstance(s_data, str):
-                try:
-                    s_data = json.loads(s_data)
-                except Exception:
-                    s_data = []
-                    
-            if s_data and isinstance(s_data, list) and len(s_data) > 0:
-                s_text = "\\n".join([f"  Satır {i+1}: " + ", ".join([f"{k}={v}" for k,v in list(r.items())[:8]]) for i, r in enumerate(s_data[:3])])
-                q_s = f"{obj_name} tablosunda ne tür veriler var? {obj_name} örnek veriler nelerdir?"
-                a_s = f"{obj_name} tablosundan örnek veriler ({sample.get('row_count', 0)} satır örneklendi):\\n{s_text}"
-                add_qa_pair("sample_insight", a_s, q_s, obj_name)
-
-    # 4) İlişki QA
-    if all_rels:
-        rel_descriptions = [f"{r['from_table']}.{r['from_column']} → {r['to_table']}.{r['to_column']}" for r in all_rels[:30]]
-        add_qa_pair("relationship_map", f"Veritabanında {len(all_rels)} FK ilişkisi bulunmaktadır: " + "; ".join(rel_descriptions) + ".",
-                    "Tablolar arası ilişkiler nelerdir? Hangi tablolar birbiriyle bağlantılı?", "_relationships")
-
-        rel_by_table = {}
-        for rel in all_rels:
-            rel_by_table.setdefault(rel["from_table"], []).append(rel)
-            rel_by_table.setdefault(rel["to_table"], []).append(rel)
-
-        for t_name, rels in rel_by_table.items():
-            if len(rels) > 0:
-                r_text = "; ".join([f"{r['from_table']}.{r['from_column']} → {r['to_table']}.{r['to_column']}" for r in rels[:10]])
-                add_qa_pair("relationship_map", f"{t_name} tablosu şu tablolarla ilişkilidir: {r_text}.",
-                            f"{t_name} tablosu hangi tablolarla ilişkili? {t_name} FK ilişkileri nelerdir?", t_name)
-
-    commit_batch()
-
-    elapsed = int((time.time() - start) * 1000)
-    logger.info("[DSLearning] Sentetik QA üretimi: %d yeni, %d atlandı, %dms", state["qa_count"], state["skipped_count"], elapsed)
-
-    return {
-        "success": True,
-        "data": {
-            "qa_pairs_generated": state["qa_count"],
-            "schema_descriptions": state["type_counts"].get("schema_description", 0),
-            "relationship_maps": state["type_counts"].get("relationship_map", 0),
-            "sample_insights": state["type_counts"].get("sample_insight", 0),
-            "aggregate_queries": state["type_counts"].get("aggregate_query", 0),
-            "elapsed_ms": elapsed
-        }
-    }
-
-
-# =====================================================
 # Faz 2: DB Knowledge Arama (RAG Entegrasyonu)
 # =====================================================
+
+
 
 def search_db_knowledge(query: str, company_id: int = None, min_score: float = 0.35, max_results: int = 3) -> list:
     """
@@ -1250,7 +1039,10 @@ def search_db_knowledge(query: str, company_id: int = None, min_score: float = 0
                            ds.name AS source_name
                     FROM ds_learning_results lr
                     JOIN data_sources ds ON lr.source_id = ds.id
-                    WHERE ds.company_id = %s AND lr.embedding IS NOT NULL AND lr.is_valid = TRUE
+                    WHERE ds.company_id = %s
+                      AND lr.embedding IS NOT NULL
+                      AND lr.is_valid = TRUE
+                      AND lr.content_type = 'schema_record'
                 """, (company_id,))
             else:
                 cur.execute("""
@@ -1258,7 +1050,9 @@ def search_db_knowledge(query: str, company_id: int = None, min_score: float = 0
                            ds.name AS source_name
                     FROM ds_learning_results lr
                     JOIN data_sources ds ON lr.source_id = ds.id
-                    WHERE lr.embedding IS NOT NULL AND lr.is_valid = TRUE
+                    WHERE lr.embedding IS NOT NULL
+                      AND lr.is_valid = TRUE
+                      AND lr.content_type = 'schema_record'
                 """)
 
             rows = cur.fetchall()
