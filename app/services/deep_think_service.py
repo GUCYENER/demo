@@ -2070,10 +2070,10 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 "(SaaS hissi veren UX) bir formatta yanıt vereceksin.\n\n"
                 "KURALLAR:\n"
                 "1. Çok önemli: Veri boşsa ([]), sonucun bulunamadığını kibarca belirt ve tahmin yürütme.\n"
-                "2. Yanıtına hoş bir girişle başla (Örn: 'İşte aradığınız veriler:', 'Sorgunuza ait sonuçları aşağıda listeledim:' vb.).\n"
-                "3. Veriler tek veya az ise maddeler halinde vurgulayarak (Kalın metinler, emojiler) sun.\n"
-                "4. Veri çoksa (3'ten fazla satır), okunabilir temiz bir Markdown tablosu ( | Sütun | ) oluştur.\n"
-                "5. YALNIZCA aşağıdaki JSON verisindeki sütun ve değerleri kullan. Kendi bilgini ekleme!\n\n"
+                "2. Yanıtına hoş bir girişle başla (Örn: 'İşte aradığınız veriler:', 'Sorgunuza ait sonuçları listeledim:' vb.).\n"
+                "3. Verileri HER ZAMAN temiz, okunaklı, maddeler (bullet points -) veya numaralı liste (1.) halinde sun.\n"
+                "4. ASLA Markdown tablosu ( | Sütun | ) OLUŞTURMA! Arayüz bunu desteklemiyor. Her sonuç için: `- **(Sütun Adı)**: (Değer)` şeklinde madde oluştur.\n"
+                "5. YALNIZCA aşağıdaki JSON verisindeki sütun ve değerleri kullan. Kendi bilgini KESİNLİKLE ekleme!\n\n"
                 f"Sorgulanan Kaynak: {source_name}{truncation_note}\n"
                 f"Veritabanı SQL Sonucu (JSON):\n{data_json}"
             )
@@ -2092,10 +2092,10 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                     full_content += token
                     yield {"type": "token", "data": token}
 
-                # Teknik SQL izi (transparency)
-                sql_footer = f"\n\n<br/><small>*(🔍 Çalıştırılan SQL: `{sql_executed}`)*</small>"
+                # Teknik SQL izi (transparency) - HTML değil Markdown kullan (VYRA Markdown <hr> => ---)
+                sql_footer = f"\n\n---\n**🔍 Çalıştırılan SQL:** `{sql_executed}`"
                 if truncated:
-                    sql_footer += f"<br/><small>*(📊 {len(db_data)} satırdan {len(data_for_llm)} tanesi gösterildi)*</small>"
+                    sql_footer += f"\n**📊 {len(db_data)} satırdan {len(data_for_llm)} tanesi gösterildi**"
                 full_content += sql_footer
 
                 for char in sql_footer:
