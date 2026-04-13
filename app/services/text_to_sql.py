@@ -36,14 +36,14 @@ logger = logging.getLogger(__name__)
 TEXT_TO_SQL_SYSTEM_PROMPT = """Sen bir SQL uzmanısın. Kullanıcının doğal dildeki sorusunu SQL sorgusuna çeviriyorsun.
 
 KRİTİK KURALLAR:
-1. SADECE SELECT sorguları yaz. INSERT, UPDATE, DELETE, DROP, ALTER gibi komutlar KESİNLİKLE YASAK.
-2. Yalnızca açıklamasında ve iş adında kullanıcının hedefine en uygun olan TEK BİR ANA tabloyu seç. Yanlış tablo seçme.
-3. Yalnızca verilen şemadaki gerçek tablo ve sütunları kullan. Hayali sütun uydurma! (Örn: "aktif" istendiğinde tabloda Active yoksa IsLocked, Status, WorkStatus gibi GERÇEK sütunlara bak).
-4. Sütunlardaki kelime veya metin aramalarında KESİNLİKLE eşittir (=) KULLANMA! Bunun yerine büyük/küçük harf duyarsız olan `LOWER("Column") LIKE LOWER('%kelime%')` yapısını veya PostgreSQL kullanıcısı isen `ILIKE` operatörünü kullan.
-5. Kullanıcı isim ve soyisim (örn: "hakan tütüncü") arıyorsa; eğer tabloda Ad (Name) ve Soyad (Surname) kolonları AYRI tutuluyorsa, SADECE Name sütununda TÜM kelimeyi arama! Adı ve Soyadı sütunlarını birleştirerek (CONCAT) veya iki kelimeyi bölüp her iki sütunda AND ile ara.
+1. SADECE SELECT sorguları yaz. INSERT, UPDATE, DELETE, DROP, ALTER, CREATE gibi komutlar KESİNLİKLE YASAK.
+2. Yalnızca açıklamasında ve iş adında kullanıcının hedefine en uygun olan TEK BİR ANA tabloyu seç. Eğer kullanıcının isteğini çözecek (örn: "son giriş tarihi") bir sütun/tablo şemada HİÇ YOKSA, KESİNLİKLE SQL üretme ve sadece Nedenini 'DIAGNOSTIC:' başlığı ile açıkla.
+3. Yalnızca verilen şemadaki gerçek tablo ve sütunları kullan. Hayali sütun uydurma!
+4. Sütunlardaki kelime veya metin aramalarında HER ZAMAN LOWER() ile LIKE veya ILIKE kullan (harf duyarlılığını aşmak için). KESİNLİKLE eşittir (=) kullanma.
+5. Kullanıcı isim ve soyisim arıyorsa; tabloda Ad (Name) ve Soyad (Surname) kolonları AYRI ise iki sütunda da arama yap (örn: LOWER(Name) LIKE '%hakan%' AND LOWER(Surname) LIKE '%tütüncü%').
 6. {dialect_rules}
-7. SQL'i ```sql ... ``` bloğu içinde yaz.
-8. SQL'den önce hangi tabloyu neden seçtiğini ("İş Adı"na atıf yaparak) 1 cümle ile açıkla.
+7. Ürettiğin SQL'i KESİNLİKLE özel olarak ```sql <sorgu> ``` bloğu içine al. SQL kodunu bu blok dışına taşırma.
+8. Kodun sonuna KESİNLİKLE noktalı virgül (;) koy. Ve SQL öncesinde "İş Adı"na atıf yaparak 1 cümlelik analiz yap.
 
 DİALECT: {dialect}
 """
@@ -251,11 +251,17 @@ def generate_sql(
     # 3. SQL parse et
     sql = parse_sql_from_llm(llm_response)
     if not sql:
+        # v3.6.8: DIAGNOSTIC mekanizması — Şemada veri yoksa LLM mantıklı bir hata dönebilir
+        diagnostic_match = re.search(r'DIAGNOSTIC:\s*(.*)', llm_response, re.IGNORECASE | re.DOTALL)
+        error_msg = "LLM yanıtından SQL parse edilemedi, sistem sorunuz için geçerli bir tablo eşleştirememiş olabilir."
+        if diagnostic_match:
+            error_msg = diagnostic_match.group(1).strip()
+            
         return {
             "success": False,
             "sql": None,
-            "explanation": llm_response[:300],
-            "error": "LLM yanıtından SQL parse edilemedi",
+            "explanation": llm_response[:500],
+            "error": error_msg,
         }
 
     # 4. Güvenlik doğrulaması

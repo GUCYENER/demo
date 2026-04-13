@@ -1968,11 +1968,11 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             if not sql_result.get("success"):
                 _sql_err = sql_result.get("error", "Bilinmeyen SQL hatasi")
                 log_warning(f"DB-Only: SQL uretimi basarisiz: {_sql_err}", "deep_think")
+                
+                content_msg = f"Sorgunuz oluşturulurken bir problem yaşandı:\n\n**Yapay Zeka Notu:**\n_{_sql_err}_\n\nLütfen farklı bir şekilde sormayı deneyin."
+                
                 yield {"type": "done", "data": {
-                    "content": (
-                        f"SQL sorgusu olusturulamadi: {_sql_err}\n\n"
-                        "Sorunuzu farkli bir sekilde ifade etmeyi deneyin."
-                    ),
+                    "content": content_msg,
                     "metadata": {"db_only": True, "error": True, "sql_error": _sql_err}
                 }}
                 return
