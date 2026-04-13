@@ -2025,19 +2025,57 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             sql_executed = exec_result.sql_executed or sql
             source_name = schema_ctx.get("source_name", source["name"])
 
+            # ── 6a. Boş sonuç erken dönüşü (LLM'e gereksiz yere gitme) ──────────
+            if not db_data:
+                empty_msg = (
+                    f"📭 Sorgunuz çalıştırıldı ancak **hiç kayıt bulunamadı**.\n\n"
+                    f"Arama kriterlerinizi değiştirerek tekrar deneyebilirsiniz.\n\n"
+                    f"<br/><small>*(🔍 Çalıştırılan SQL: `{sql_executed}`)*</small>"
+                )
+                yield {"type": "token", "data": empty_msg}
+                yield {"type": "done", "data": {
+                    "content": empty_msg,
+                    "metadata": {
+                        "db_only": True, "sql": sql_executed,
+                        "row_count": 0, "source_db": source_name,
+                        "ml_context_used": bool(ml_context),
+                        "processing_time_ms": elapsed_ms,
+                    }
+                }}
+                return
+
             import json
-            data_json = json.dumps(db_data, ensure_ascii=False, default=str)
-            
+
+            # ── 6b. Büyük sonuç setlerini sınırla (LLM token taşması önleme) ─────
+            MAX_LLM_ROWS = 50
+            MAX_JSON_CHARS = 8000
+            data_for_llm = db_data[:MAX_LLM_ROWS]
+            data_json = json.dumps(data_for_llm, ensure_ascii=False, default=str)
+            truncated = len(db_data) > MAX_LLM_ROWS or len(data_json) > MAX_JSON_CHARS
+
+            if len(data_json) > MAX_JSON_CHARS:
+                # Karakter sınırı aşılmışsa satır sayısını da azalt
+                data_for_llm = data_for_llm[:10]
+                data_json = json.dumps(data_for_llm, ensure_ascii=False, default=str)
+                truncated = True
+
+            truncation_note = (
+                f"\n[NOT: Toplam {len(db_data)} satırdan ilk {len(data_for_llm)} tanesi gösterilmektedir.]"
+                if truncated else ""
+            )
+
             system_prompt = (
-                "Sen kıdemli bir veri asistanı ve raporlama uzmanısın. Kullanıcının sorusuna, veritabanından dönen aşağıdaki JSON sonuçlarına göre doğal, profesyonel ve modern (SaaS hissi veren UX) bir formatta yanıt vereceksin.\n\n"
+                "Sen kıdemli bir veri asistanı ve raporlama uzmanısın. Kullanıcının sorusuna, "
+                "veritabanından dönen aşağıdaki JSON sonuçlarına göre doğal, profesyonel ve modern "
+                "(SaaS hissi veren UX) bir formatta yanıt vereceksin.\n\n"
                 "KURALLAR:\n"
                 "1. Çok önemli: Veri boşsa ([]), sonucun bulunamadığını kibarca belirt ve tahmin yürütme.\n"
-                "2. Yanıtına RAG tarzı hoş bir girişle başla (Örn: 'İşte aradığınız veriler:', 'Sorgunuza ait sonuçları aşağıda listeledim:' vb.).\n"
+                "2. Yanıtına hoş bir girişle başla (Örn: 'İşte aradığınız veriler:', 'Sorgunuza ait sonuçları aşağıda listeledim:' vb.).\n"
                 "3. Veriler tek veya az ise maddeler halinde vurgulayarak (Kalın metinler, emojiler) sun.\n"
                 "4. Veri çoksa (3'ten fazla satır), okunabilir temiz bir Markdown tablosu ( | Sütun | ) oluştur.\n"
-                "5. Yalnızca seninle paylaşılan SQL JSON sonucundaki verileri kullan.\n\n"
-                f"Sorgulanan Kaynak: {source_name}\n"
-                f"Veritabanı SQL Sonucu: {data_json}"
+                "5. YALNIZCA aşağıdaki JSON verisindeki sütun ve değerleri kullan. Kendi bilgini ekleme!\n\n"
+                f"Sorgulanan Kaynak: {source_name}{truncation_note}\n"
+                f"Veritabanı SQL Sonucu (JSON):\n{data_json}"
             )
 
             messages = [
@@ -2049,26 +2087,27 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             try:
                 from app.core.llm import call_llm_api_stream
                 stream_gen = call_llm_api_stream(messages)
-                
-                # RAG ile birebir aynı tokenleştirme ve animasyon aktarımı
+
                 for token in stream_gen:
                     full_content += token
                     yield {"type": "token", "data": token}
-                
+
                 # Teknik SQL izi (transparency)
                 sql_footer = f"\n\n<br/><small>*(🔍 Çalıştırılan SQL: `{sql_executed}`)*</small>"
+                if truncated:
+                    sql_footer += f"<br/><small>*(📊 {len(db_data)} satırdan {len(data_for_llm)} tanesi gösterildi)*</small>"
                 full_content += sql_footer
-                
-                # Footer'ı da usulca stream et
+
                 for char in sql_footer:
                     yield {"type": "token", "data": char}
-                    
+
             except Exception as llm_err:
                 log_warning(f"DB-Only Yanıt Sentezi Hatası: {llm_err}", "deep_think")
-                full_content = f"Tablo sonuçları başarıyla çekildi ({len(db_data)} kayıt) ancak formatlanırken hata oluştu.\nSQL: `{sql_executed}`"
+                full_content = (
+                    f"✅ Sorgu başarıyla çalıştırıldı: **{len(db_data)} kayıt** bulundu.\n\n"
+                    f"*(Yanıt formatlanırken hata oluştu.)*\n\nSQL: `{sql_executed}`"
+                )
                 yield {"type": "token", "data": full_content}
-
-            yield {"type": "done", "data": {"content": full_content, "metadata": {"db_only": True, "sql": sql_executed}}}
 
             log_system_event(
                 "INFO",
@@ -2077,13 +2116,15 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             )
 
             yield {"type": "done", "data": {
-                "content": content,
+                "content": full_content,
                 "metadata": {
                     "db_only": True,
                     "deep_think": True,
                     "db_routing": True,
+                    "sql": sql_executed,
                     "sql_executed": sql_executed,
                     "row_count": len(db_data),
+                    "rows_shown": len(data_for_llm),
                     "source_db": source_name,
                     "ml_context_used": bool(ml_context),
                     "processing_time_ms": elapsed_ms,
