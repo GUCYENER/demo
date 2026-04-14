@@ -555,7 +555,7 @@ def discover_technology(
     except Exception as e:
         logger.error("[DataSources] Teknoloji keşfi sırasında hata oluştu")
         logger.debug("[DataSources] discover_technology detay: %s", type(e).__name__)
-        return {"success": False, "message": f"Teknoloji keşfi sırasında hata: {type(e).__name__}"}
+        return {"success": False, "message": "Teknoloji keşfi sırasında beklenmeyen bir hata oluştu."}
 
 
 @router.post("/{source_id}/detect-objects")
@@ -602,7 +602,7 @@ def detect_objects(
     except Exception as e:
         logger.error("[DataSources] Obje tespiti sırasında hata oluştu")
         logger.debug("[DataSources] detect_objects detay: %s", type(e).__name__)
-        return {"success": False, "message": f"Obje tespiti sırasında hata: {type(e).__name__}"}
+        return {"success": False, "message": "Obje tespiti sırasında beklenmeyen bir hata oluştu."}
 
 
 @router.post("/{source_id}/collect-samples")
@@ -649,7 +649,7 @@ def collect_samples(
     except Exception as e:
         logger.error("[DataSources] Örnek veri toplama sırasında hata oluştu")
         logger.debug("[DataSources] collect_samples detay: %s", type(e).__name__)
-        return {"success": False, "message": f"Veri toplama sırasında hata: {type(e).__name__}"}
+        return {"success": False, "message": "Veri toplama sırasında beklenmeyen bir hata oluştu."}
 
 
 @router.get("/{source_id}/check-running-job")
@@ -825,7 +825,7 @@ def run_full_learning(
     except Exception as e:
         logger.error("[DataSources] Tam öğrenme pipeline başlatılırken hata oluştu")
         logger.debug("[DataSources] run-full-learning detay: %s", type(e).__name__)
-        return {"success": False, "message": f"Pipeline başlatılamadı: {type(e).__name__}"}
+        return {"success": False, "message": "Pipeline başlatılırken beklenmeyen bir hata oluştu."}
 
 @router.post("/{source_id}/run-approved-learning")
 def run_approved_learning(
@@ -1015,7 +1015,7 @@ def enrich_selected_tables(
         return {"success": True, "message": "Seçili tablolar için keşif başlatıldı"}
     except Exception as e:
         logger.error("[DataSources] enrich-selected hatası: %s", type(e).__name__)
-        return {"success": False, "message": f"Hata: {type(e).__name__}"}
+        return {"success": False, "message": "Seçili tablolar için keşif başlatılırken hata oluştu."}
 
 
 class EnrichmentApproveRequest(BaseModel):
