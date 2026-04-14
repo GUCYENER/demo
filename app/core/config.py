@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.7.0"  # ML Learning Results: Search + Pagination
+    APP_VERSION: str = "3.7.2"  # ML Results Text Formatter & LLM JOIN fix
 
     # Frontend & API prefix
     api_prefix: str = "/api"
