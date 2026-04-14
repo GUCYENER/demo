@@ -990,10 +990,10 @@ window.DSLearningModule = (function () {
         });
 
         // Mevcut sayfayı yükle
-        function loadCurrentPage(isPolling) {
+        async function loadCurrentPage(isPolling) {
             const jobId = document.getElementById('dsLrJobSelect').value || null;
             const offset = (_lrState.page - 1) * _lrState.pageSize;
-            _loadLearningResults(sourceId, 'schema_record', jobId, isPolling, _lrState.pageSize, offset, _lrState.search, _lrState, _renderPagination);
+            await _loadLearningResults(sourceId, 'schema_record', jobId, isPolling, _lrState.pageSize, offset, _lrState.search, _lrState, _renderPagination);
         }
 
         // Pagination render
@@ -1074,7 +1074,7 @@ window.DSLearningModule = (function () {
 
         // Auto Refresh (Polling)
         async function fetchInitialAndPoll() {
-            loadCurrentPage(false);
+            await loadCurrentPage(false);
             try {
                 const check = await apiCall(`/${sourceId}/check-running-job`);
                 if (check.has_running) {
