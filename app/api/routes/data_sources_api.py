@@ -742,17 +742,21 @@ def api_get_learning_results(
     content_type: str = None,
     job_id: int = None,
     limit: int = 50,
+    offset: int = 0,
+    search: str = None,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
-    """ML pipeline'ın ürettiği öğrenme sonuçlarını (QA çiftleri) döner."""
+    """ML pipeline'ın ürettiği öğrenme sonuçlarını (QA çiftleri) döner. v3.7.0: Pagination ve arama."""
     try:
         with get_db_context() as conn:
-            data = ds_learning_service.get_learning_results(conn, source_id, content_type, job_id, limit)
+            data = ds_learning_service.get_learning_results(
+                conn, source_id, content_type, job_id, limit, offset, search
+            )
             return data
     except Exception as e:
-        logger.error("[Öğrenme sonuçları yüklenirken hata oluştu")
+        logger.error("[DataSources] Öğrenme sonuçları yüklenirken hata oluştu")
         logger.debug("[DataSources] learning-results detay: %s", type(e).__name__)
-        return {"results": [], "type_counts": {}, "total": 0}
+        return {"results": [], "type_counts": {}, "total": 0, "total_filtered": 0, "page": 1, "page_size": limit, "total_pages": 0}
 
 
 @router.get("/{source_id}/job-result-stats")

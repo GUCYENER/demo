@@ -932,6 +932,14 @@ window.DSLearningModule = (function () {
         const existing = document.getElementById('dsLearningResultsModal');
         if (existing) existing.remove();
 
+        // Pagination ve arama state'i
+        const _lrState = {
+            page: 1,
+            pageSize: 30,
+            search: '',
+            debounceTimer: null
+        };
+
         const modal = document.createElement('div');
         modal.id = 'dsLearningResultsModal';
         modal.className = 'ds-wizard-overlay';
@@ -952,14 +960,17 @@ window.DSLearningModule = (function () {
                         <option value="">Tüm İşler</option>
                     </select>
                 </div>
-                <div class="ds-lr-tabs" id="dsLrTabs">
-                    <button class="ds-lr-tab active" data-type="">Tümü</button>
-                    <button class="ds-lr-tab" data-type="schema_record">Şema Kayıtları</button>
+                <div class="ds-lr-toolbar" id="dsLrToolbar">
+                    <div class="ds-lr-search-wrap">
+                        <i class="fa-solid fa-search ds-lr-search-icon"></i>
+                        <input type="text" id="dsLrSearchInput" class="ds-lr-search-input" placeholder="Tablo adı veya içerik ara..." autocomplete="off">
+                    </div>
                 </div>
                 <div class="ds-lr-summary" id="dsLrSummary"></div>
                 <div class="ds-wizard-body ds-details-body ds-lr-body" id="dsLrBody">
                     <div class="ds-lr-loading"><i class="fa-solid fa-spinner fa-spin"></i> Yükleniyor...</div>
                 </div>
+                <div class="ds-lr-pagination" id="dsLrPagination"></div>
             </div>
         `;
 
@@ -969,6 +980,7 @@ window.DSLearningModule = (function () {
         let _pollInterval = null;
         const closeLr = () => { 
             if (_pollInterval) clearInterval(_pollInterval);
+            if (_lrState.debounceTimer) clearTimeout(_lrState.debounceTimer);
             modal.classList.remove('active'); 
             setTimeout(() => modal.remove(), 300); 
         };
@@ -976,6 +988,58 @@ window.DSLearningModule = (function () {
         document.addEventListener('keydown', function escLr(e) {
             if (e.key === 'Escape') { closeLr(); document.removeEventListener('keydown', escLr); }
         });
+
+        // Mevcut sayfayı yükle
+        function loadCurrentPage(isPolling) {
+            const jobId = document.getElementById('dsLrJobSelect').value || null;
+            const offset = (_lrState.page - 1) * _lrState.pageSize;
+            _loadLearningResults(sourceId, 'schema_record', jobId, isPolling, _lrState.pageSize, offset, _lrState.search, _lrState, _renderPagination);
+        }
+
+        // Pagination render
+        function _renderPagination(paginationData) {
+            const container = document.getElementById('dsLrPagination');
+            if (!container) return;
+
+            const { page, total_pages, total_filtered } = paginationData;
+            if (total_pages <= 1) {
+                container.innerHTML = '';
+                return;
+            }
+
+            const maxVisible = 5;
+            let startPage = Math.max(1, page - Math.floor(maxVisible / 2));
+            let endPage = Math.min(total_pages, startPage + maxVisible - 1);
+            if (endPage - startPage < maxVisible - 1) {
+                startPage = Math.max(1, endPage - maxVisible + 1);
+            }
+
+            let html = '<div class="ds-lr-pagination-inner">';
+            html += `<button class="ds-lr-page-btn" data-page="1" ${page === 1 ? 'disabled' : ''}><i class="fa-solid fa-angles-left"></i></button>`;
+            html += `<button class="ds-lr-page-btn" data-page="${page - 1}" ${page === 1 ? 'disabled' : ''}><i class="fa-solid fa-angle-left"></i></button>`;
+
+            for (let i = startPage; i <= endPage; i++) {
+                html += `<button class="ds-lr-page-btn ${i === page ? 'active' : ''}" data-page="${i}">${i}</button>`;
+            }
+
+            html += `<button class="ds-lr-page-btn" data-page="${page + 1}" ${page === total_pages ? 'disabled' : ''}><i class="fa-solid fa-angle-right"></i></button>`;
+            html += `<button class="ds-lr-page-btn" data-page="${total_pages}" ${page === total_pages ? 'disabled' : ''}><i class="fa-solid fa-angles-right"></i></button>`;
+            html += `<span class="ds-lr-page-info">${total_filtered} kayıt</span>`;
+            html += '</div>';
+
+            container.innerHTML = html;
+
+            // Page buton event'leri
+            container.querySelectorAll('.ds-lr-page-btn:not([disabled])').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const targetPage = parseInt(btn.dataset.page);
+                    if (targetPage && targetPage !== _lrState.page) {
+                        _lrState.page = targetPage;
+                        loadCurrentPage(false);
+                    }
+                });
+            });
+        }
 
         // İş geçmişi dropdown'ını doldur
         try {
@@ -994,35 +1058,28 @@ window.DSLearningModule = (function () {
 
         // Dropdown seçimi
         document.getElementById('dsLrJobSelect').addEventListener('change', () => {
-            const activeTab = document.querySelector('.ds-lr-tab.active');
-            const contentType = activeTab ? activeTab.dataset.type || null : null;
-            const jobId = document.getElementById('dsLrJobSelect').value || null;
-            _loadLearningResults(sourceId, contentType, jobId);
+            _lrState.page = 1;
+            loadCurrentPage(false);
         });
 
-        // Tab tıklama
-        document.getElementById('dsLrTabs').addEventListener('click', (e) => {
-            const tab = e.target.closest('.ds-lr-tab');
-            if (!tab) return;
-            document.querySelectorAll('.ds-lr-tab').forEach(t => t.classList.remove('active'));
-            tab.classList.add('active');
-            const jobId = document.getElementById('dsLrJobSelect').value || null;
-            _loadLearningResults(sourceId, tab.dataset.type || null, jobId);
+        // Arama input'u (debounce ile)
+        document.getElementById('dsLrSearchInput').addEventListener('input', (e) => {
+            if (_lrState.debounceTimer) clearTimeout(_lrState.debounceTimer);
+            _lrState.debounceTimer = setTimeout(() => {
+                _lrState.search = e.target.value.trim();
+                _lrState.page = 1;
+                loadCurrentPage(false);
+            }, 400);
         });
 
         // Auto Refresh (Polling)
         async function fetchInitialAndPoll() {
-            await _loadLearningResults(sourceId, null, null);
+            loadCurrentPage(false);
             try {
-                // Eğer bir job çalışıyorsa, tablo bazlı akışı görebilmek için 5 saniyede bir paneli yenile
                 const check = await apiCall(`/${sourceId}/check-running-job`);
                 if (check.has_running) {
                     _pollInterval = setInterval(() => {
-                        const activeTab = document.querySelector('.ds-lr-tab.active');
-                        // Sade Tümü veya bir filtre açıkken periyodik tazele
-                        const contentType = activeTab ? activeTab.dataset.type || null : null;
-                        const jobId = document.getElementById('dsLrJobSelect').value || null;
-                        _loadLearningResults(sourceId, contentType, jobId, true);
+                        loadCurrentPage(true);
                     }, 5000);
                 }
             } catch(e) {}
@@ -1031,7 +1088,7 @@ window.DSLearningModule = (function () {
         fetchInitialAndPoll();
     }
 
-    async function _loadLearningResults(sourceId, contentType, jobId, isPolling=false) {
+    async function _loadLearningResults(sourceId, contentType, jobId, isPolling, pageSize, offset, search, stateRef, renderPaginationFn) {
         const body = document.getElementById('dsLrBody');
         const summary = document.getElementById('dsLrSummary');
         if (!body) return;
@@ -1041,29 +1098,42 @@ window.DSLearningModule = (function () {
         }
 
         try {
-            let url = `/${sourceId}/learning-results?limit=100`;
+            let url = `/${sourceId}/learning-results?limit=${pageSize}&offset=${offset}`;
             if (contentType) url += `&content_type=${contentType}`;
             if (jobId) url += `&job_id=${jobId}`;
+            if (search) url += `&search=${encodeURIComponent(search)}`;
             const data = await apiCall(url);
             const results = data.results || [];
             const typeCounts = data.type_counts || {};
-            const total = data.total || 0;
+            const totalAll = data.total || 0;
+            const totalFiltered = data.total_filtered || 0;
+            const currentPage = data.page || 1;
+            const totalPages = data.total_pages || 1;
 
             // Özet bilgi
             const typeLabels = {
                 'schema_record': 'Şema Kaydı',
             };
-            summary.innerHTML = `
+
+            let summaryContent = `
                 <div class="ds-lr-summary-inner">
-                    <div class="ds-lr-stat"><span class="ds-lr-stat-num">${total}</span><span class="ds-lr-stat-label">Toplam Kayıt</span></div>
+                    <div class="ds-lr-stat"><span class="ds-lr-stat-num">${totalAll}</span><span class="ds-lr-stat-label">Toplam Kayıt</span></div>
                     ${Object.entries(typeCounts).map(([t, c]) =>
                         `<div class="ds-lr-stat"><span class="ds-lr-stat-num">${c}</span><span class="ds-lr-stat-label">${typeLabels[t] || t}</span></div>`
                     ).join('')}
-                </div>
             `;
+            if (search && totalFiltered !== totalAll) {
+                summaryContent += `<div class="ds-lr-stat ds-lr-stat-filtered"><span class="ds-lr-stat-num">${totalFiltered}</span><span class="ds-lr-stat-label">Filtre Sonucu</span></div>`;
+            }
+            summaryContent += '</div>';
+            summary.innerHTML = summaryContent;
 
             if (results.length === 0) {
-                body.innerHTML = '<div class="ds-lr-loading">Henüz öğrenme sonucu bulunmuyor. Önce tabloları onaylayıp "Onaylıları Öğren" butonunu kullanın.</div>';
+                const emptyMsg = search ? 
+                    `"${_escapeHtml(search)}" araması için sonuç bulunamadı.` :
+                    'Henüz öğrenme sonucu bulunmuyor. Önce tabloları onaylayıp "Onaylıları Öğren" butonunu kullanın.';
+                body.innerHTML = `<div class="ds-lr-loading">${emptyMsg}</div>`;
+                if (renderPaginationFn) renderPaginationFn({ page: 1, total_pages: 0, total_filtered: 0 });
                 return;
             }
 
@@ -1098,6 +1168,16 @@ window.DSLearningModule = (function () {
                     </div>
                 `;
             }).join('');
+
+            // Pagination render
+            if (renderPaginationFn) {
+                renderPaginationFn({ page: currentPage, total_pages: totalPages, total_filtered: totalFiltered });
+            }
+
+            // Sayfa değişiminde scroll to top
+            if (!isPolling && stateRef && stateRef.page > 1) {
+                body.scrollTop = 0;
+            }
 
         } catch (err) {
             body.innerHTML = `<div class="ds-lr-error">Yükleme hatası: ${_escapeHtml(err.message)}</div>`;

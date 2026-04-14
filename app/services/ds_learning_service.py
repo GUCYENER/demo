@@ -907,8 +907,12 @@ def get_learning_history(vyra_conn, source_id: int, limit: int = 20) -> list:
 
 
 def get_learning_results(vyra_conn, source_id: int, content_type: str = None,
-                         job_id: int = None, limit: int = 50) -> dict:
-    """ML pipeline'ın ürettiği öğrenme sonuçlarını (QA çiftleri) döner."""
+                         job_id: int = None, limit: int = 50,
+                         offset: int = 0, search: str = None) -> dict:
+    """
+    ML pipeline'ın ürettiği öğrenme sonuçlarını (QA çiftleri) döner.
+    v3.7.0: Pagination (offset/limit) ve arama (search) desteği eklendi.
+    """
     cur = vyra_conn.cursor()
 
     # Dinamik WHERE builder
@@ -923,16 +927,30 @@ def get_learning_results(vyra_conn, source_id: int, content_type: str = None,
         conditions.append("job_id = %s")
         params.append(job_id)
 
-    where_clause = " AND ".join(conditions)
-    params.append(limit)
+    if search:
+        conditions.append("(metadata::text ILIKE %s OR content_text ILIKE %s)")
+        search_pattern = f"%{search}%"
+        params.extend([search_pattern, search_pattern])
 
+    where_clause = " AND ".join(conditions)
+
+    # Toplam kayıt sayısı (pagination için)
+    cur.execute(f"""
+        SELECT COUNT(*) AS cnt
+        FROM ds_learning_results
+        WHERE {where_clause}
+    """, tuple(params))
+    total_filtered = cur.fetchone()["cnt"]
+
+    # Sayfalanmış sonuçları al
+    query_params = list(params) + [limit, offset]
     cur.execute(f"""
         SELECT id, content_type, content_text, metadata, created_at, job_id
         FROM ds_learning_results
         WHERE {where_clause}
         ORDER BY created_at DESC
-        LIMIT %s
-    """, tuple(params))
+        LIMIT %s OFFSET %s
+    """, tuple(query_params))
 
     results = []
     for row in cur.fetchall():
@@ -953,19 +971,37 @@ def get_learning_results(vyra_conn, source_id: int, content_type: str = None,
             "created_at": row["created_at"].isoformat() if row["created_at"] else None
         })
 
-    # Tip bazlı sayılar
-    cur.execute("""
+    # Tip bazlı sayılar (filtre uygulanmadan — genel istatistik)
+    count_conditions = ["source_id = %s", "is_valid = TRUE"]
+    count_params = [source_id]
+    if job_id:
+        count_conditions.append("job_id = %s")
+        count_params.append(job_id)
+
+    cur.execute(f"""
         SELECT content_type, COUNT(*) as cnt
         FROM ds_learning_results
-        WHERE source_id = %s AND is_valid = TRUE
+        WHERE {' AND '.join(count_conditions)}
         GROUP BY content_type
         ORDER BY cnt DESC
-    """, (source_id,))
+    """, tuple(count_params))
     type_counts = {}
     for row in cur.fetchall():
         type_counts[row["content_type"]] = row["cnt"]
 
-    return {"results": results, "type_counts": type_counts, "total": sum(type_counts.values())}
+    total_all = sum(type_counts.values())
+    total_pages = (total_filtered + limit - 1) // limit if limit > 0 else 1
+    current_page = (offset // limit) + 1 if limit > 0 else 1
+
+    return {
+        "results": results,
+        "type_counts": type_counts,
+        "total": total_all,
+        "total_filtered": total_filtered,
+        "page": current_page,
+        "page_size": limit,
+        "total_pages": total_pages
+    }
 
 
 def get_job_result_stats(vyra_conn, source_id: int) -> list:

@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.6.9"  # SQL Parse Diagnostic & AI Fallback Fix
+    APP_VERSION: str = "3.7.0"  # ML Learning Results: Search + Pagination
 
     # Frontend & API prefix
     api_prefix: str = "/api"
