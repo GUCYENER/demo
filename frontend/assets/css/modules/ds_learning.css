@@ -1111,7 +1111,8 @@
 }
 
 .ds-lr-card.expanded .ds-lr-card-body {
-    max-height: 500px;
+    max-height: 2000px;
+    overflow-y: auto;
 }
 
 .ds-lr-answer {
@@ -1137,6 +1138,27 @@
     line-height: 1.65;
     white-space: pre-wrap;
     word-break: break-word;
+    max-height: 400px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+/* Answer text scrollbar */
+.ds-lr-answer-text::-webkit-scrollbar {
+    width: 5px;
+}
+
+.ds-lr-answer-text::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.ds-lr-answer-text::-webkit-scrollbar-thumb {
+    background: rgba(99, 102, 241, 0.25);
+    border-radius: 4px;
+}
+
+.ds-lr-answer-text::-webkit-scrollbar-thumb:hover {
+    background: rgba(99, 102, 241, 0.4);
 }
 
 /* SQL Code Block */
