@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.7.2"  # ML Results Text Formatter & LLM JOIN fix
+    APP_VERSION: str = "3.10.0"  # P0+P1+P2 Text-to-SQL Pipeline: Cache, Self-Healing, Schema Auto Re-Learn
 
     # Frontend & API prefix
     api_prefix: str = "/api"

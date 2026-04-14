@@ -346,6 +346,7 @@ async def send_message_stream(
                 images=images,
                 widget_config=stream_widget_config,
                 source_type=request.source_type,
+                company_id=user.get("company_id"),
             ):
                 event_type = event.get("type", "token")
                 event_data = event.get("data", "")

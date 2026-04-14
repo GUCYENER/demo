@@ -49,6 +49,21 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.10.0 (2026-04-14) - Text-to-SQL Pipeline: P0+P1+P2 İyileştirmeleri
+- ✅ **[P0] Tenant İzolasyonu (company_id):** DB-only pipeline'a firma bazlı kaynak filtresi eklendi. Her kullanıcı yalnızca kendi firmasına ait kaynağa erişir.
+- ✅ **[P0] Schema Pruning:** ML match sonuçlarına göre ilgili tablolar + FK komşuları filtrelenerek LLM'e gönderilen context daraltıldı.
+- ✅ **[P0] Error Sanitization (Fortify):** SQL ve LLM hata detayları kullanıcıya gösterilmez, genel mesaj sunulur, teknik detaylar loglara yazılır.
+- ✅ **[P1] SQL Self-Healing/Retry:** SQL execution hatası alındığında hata mesajı LLM'e geri gönderilip düzeltilmiş SQL üretilir (max 2 retry).
+- ✅ **[P1] Synonym Desteği:** Kolon eşanlamlıları (synonyms) LLM prompt'una dahil edildi. Doğal dil ↔ teknik kolon eşleştirmesi iyileştirildi.
+- ✅ **[P1] Tablo Formatında Sonuç:** ≤15 satır + ≤6 sütun → Markdown tablo; aksi halde madde listesi formatı.
+- ✅ **[P1] Admin Onay → Otomatik Schema Record:** Tablo onaylandığında otomatik schema_record + embedding oluşturulur (search_db_knowledge için).
+- ✅ **[P1] JOIN Doğruluğu:** İlişki formatı yapılandırılmış tablo + JOIN talimatlarıyla güçlendirildi.
+- ✅ **[P2] FAQ/Query Cache:** LRU-based in-memory SQL cache (128 entry). Aynı soru tekrar sorulduğunda LLM atlanır.
+- ✅ **[P2] Confirm Before Execute:** SQL önizleme ve onay modu desteği (confirm_mode parametresi).
+- ✅ **[P2] Boş Tablo Filtresi:** row_count_estimate=0 olan tablolar schema context'ten çıkarıldı (~%28 token tasarrufu).
+- ✅ **[P2] Schema Change → Auto Re-Learn:** Snapshot diff'te değişiklik tespit edildiğinde schema_record embedding invalidation + cache temizleme.
+- 🗄️ **Schema Migration:** `ds_learning_results` tablosuna `is_valid`, `updated_at` sütunları eklendi.
+
 ### 🆕 v3.5.6 (2026-04-11) - Enrichment UX & Bulk API Fixes
 - ✅ **Bulk API DB Locking Patlaması:** Aynı anda asenkron patlatılan 50 onay ricası sıralı (sequential) hale getirildi ve DB patlaması önlendi.
 - ✅ **Onaylıları Gizleme/Gösterme:** UI ekranına "Onaylıları Göster" checkbox filtresi eklendi.

@@ -518,7 +518,7 @@ CREATE INDEX IF NOT EXISTS idx_system_settings_key ON system_settings(setting_ke
 
 -- Varsayılan ayarlar
 INSERT INTO system_settings (setting_key, setting_value, description) VALUES
-    ('app_version', '3.7.2', 'Uygulama versiyonu'),
+    ('app_version', '3.10.0', 'Uygulama versiyonu'),
     ('cl_interval_minutes', '30', 'Sürekli öğrenme aralığı (dakika)'),
     ('cl_is_active', 'true', 'Sürekli öğrenme aktiflik durumu'),
     ('maturity_enhance_threshold', '80', 'Maturity iyileştirme eşik değeri (0-100)')
@@ -884,6 +884,10 @@ CREATE TABLE IF NOT EXISTS ds_learning_results (
 
 -- Migration: Mevcut tabloya eksik sütunları ekle
 ALTER TABLE ds_learning_results ADD COLUMN IF NOT EXISTS score FLOAT DEFAULT 0.0;
+
+-- v3.10.0 Migration: schema_record auto-generation desteği
+ALTER TABLE ds_learning_results ADD COLUMN IF NOT EXISTS is_valid BOOLEAN DEFAULT TRUE;
+ALTER TABLE ds_learning_results ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
 
 -- Migration: ds_learning_schedules UNIQUE constraint (ON CONFLICT için)
 DO $$ BEGIN

@@ -1030,7 +1030,10 @@ def approve_enrichment(
     body: EnrichmentApproveRequest = None,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
-    """Bir tablo enrichment'ını admin olarak onaylar."""
+    """
+    Bir tablo enrichment'ını admin olarak onaylar.
+    v3.9.0: Onay sonrası otomatik schema_record + embedding oluşturma.
+    """
     try:
         from app.services import ds_enrichment_service
         from app.services import ds_learning_service
@@ -1049,11 +1052,178 @@ def approve_enrichment(
                 label, notes
             )
             if success:
-                return {"success": True, "message": "Etiket onaylandı"}
+                # v3.9.0: Onay sonrası otomatik schema_record + embedding oluştur
+                try:
+                    _generate_schema_record_for_enrichment(conn, source_id, enrichment_id)
+                    logger.info(f"[DataSources] Enrichment #{enrichment_id} onaylandı → schema_record oluşturuldu")
+                except Exception as sr_err:
+                    logger.warning(f"[DataSources] schema_record oluşturulamadı: {sr_err}")
+                    # Ana onay başarılı, schema_record hatası critical değil
+
+                return {"success": True, "message": "Etiket onaylandı ve şema kaydı oluşturuldu"}
             return {"success": False, "message": "Onay işlemi başarısız"}
     except Exception as e:
         logger.error("[DataSources] Enrichment onay hatası: %s", type(e).__name__)
         return {"success": False, "message": f"Onay hatası: {type(e).__name__}"}
+
+
+def _generate_schema_record_for_enrichment(conn, source_id: int, enrichment_id: int):
+    """
+    v3.9.0: Admin onayı sonrası otomatik schema_record ve embedding oluşturur.
+
+    1. Onaylanan tablo enrichment + kolon bilgilerini toplar
+    2. Yapılandırılmış schema_record metni üretir
+    3. ds_learning_results tablosuna kaydeder
+    4. Embedding hesaplayıp günceller
+
+    Bu sayede search_db_knowledge() fonksiyonu onaylanan tabloyu
+    cosine similarity ile bulabilir hale gelir.
+    """
+    import json
+
+    cur = conn.cursor()
+
+    # 1. Enrichment bilgisini al
+    cur.execute("""
+        SELECT te.id, te.source_id, te.schema_name, te.table_name,
+               te.business_name_tr, te.admin_label_tr, te.description_tr,
+               te.category, te.enrichment_score
+        FROM ds_table_enrichments te
+        WHERE te.id = %s AND te.admin_approved = TRUE
+    """, (enrichment_id,))
+    te_row = cur.fetchone()
+    if not te_row:
+        return  # Enrichment bulunamadı veya onaysız
+
+    schema_name = te_row["schema_name"] or ""
+    table_name = te_row["table_name"]
+    full_table = f"{schema_name}.{table_name}" if schema_name else table_name
+    bname = te_row["admin_label_tr"] or te_row["business_name_tr"] or table_name
+    desc = te_row["description_tr"] or ""
+    category = te_row["category"] or ""
+
+    # 2. Kolon enrichment bilgilerini al
+    cur.execute("""
+        SELECT ce.column_name, ce.business_name_tr, ce.admin_label_tr,
+               ce.synonyms_json, ce.semantic_type, ce.is_searchable
+        FROM ds_column_enrichments ce
+        WHERE ce.table_enrichment_id = %s
+        ORDER BY ce.column_name
+    """, (enrichment_id,))
+    col_rows = cur.fetchall()
+
+    # 3. Orijinal kolon bilgilerini al (veri tipleri için)
+    cur.execute("""
+        SELECT columns_json, row_count_estimate
+        FROM ds_db_objects
+        WHERE source_id = %s AND object_name = %s
+          AND COALESCE(schema_name, '') = COALESCE(%s, '')
+        LIMIT 1
+    """, (source_id, table_name, schema_name))
+    obj_row = cur.fetchone()
+    columns_json = []
+    row_estimate = 0
+    if obj_row:
+        col_data = obj_row["columns_json"]
+        if isinstance(col_data, str):
+            try:
+                columns_json = json.loads(col_data)
+            except Exception:
+                columns_json = []
+        elif isinstance(col_data, list):
+            columns_json = col_data
+        row_estimate = obj_row.get("row_count_estimate", 0) or 0
+
+    # Kolon dtype haritası
+    col_dtype_map = {c["name"]: c.get("data_type", "unknown") for c in columns_json if isinstance(c, dict)}
+
+    # 4. Schema record metni oluştur
+    lines = [
+        f"Tablo: {full_table}",
+        f"İş Adı: {bname}",
+    ]
+    if desc:
+        lines.append(f"Açıklama: {desc}")
+    if category:
+        lines.append(f"Kategori: {category}")
+    lines.append(f"Tahmini Satır: {row_estimate}")
+    lines.append("")
+    lines.append("Sütunlar:")
+
+    for cr in col_rows:
+        col_name = cr["column_name"]
+        col_bname = cr.get("admin_label_tr") or cr.get("business_name_tr") or ""
+        dtype = col_dtype_map.get(col_name, "unknown")
+        synonyms = []
+        raw_syn = cr.get("synonyms_json")
+        if raw_syn:
+            try:
+                synonyms = json.loads(raw_syn) if isinstance(raw_syn, str) else (raw_syn or [])
+            except Exception:
+                synonyms = []
+
+        col_line = f"  - {col_name} ({dtype})"
+        if col_bname:
+            col_line += f" [{col_bname}]"
+        if synonyms:
+            col_line += f" synonyms: {', '.join(synonyms[:5])}"
+        if cr.get("is_searchable"):
+            col_line += " [aranabilir]"
+        lines.append(col_line)
+
+    content_text = "\n".join(lines)
+
+    # 5. ds_learning_results'a kaydet (UPSERT — aynı tablo için varsa güncelle)
+    metadata = {
+        "table_name": table_name,
+        "schema_name": schema_name,
+        "full_table": full_table,
+        "business_name": bname,
+        "category": category,
+        "enrichment_id": enrichment_id,
+        "auto_generated": True,
+    }
+
+    cur.execute("""
+        SELECT id FROM ds_learning_results
+        WHERE source_id = %s AND content_type = 'schema_record'
+          AND metadata->>'full_table' = %s
+        LIMIT 1
+    """, (source_id, full_table))
+    existing = cur.fetchone()
+
+    if existing:
+        cur.execute("""
+            UPDATE ds_learning_results
+            SET content_text = %s, metadata = %s, embedding = NULL, updated_at = NOW()
+            WHERE id = %s
+        """, (content_text, json.dumps(metadata), existing["id"]))
+        record_id = existing["id"]
+    else:
+        cur.execute("""
+            INSERT INTO ds_learning_results
+            (source_id, content_type, content_text, metadata, is_valid, created_at)
+            VALUES (%s, 'schema_record', %s, %s, TRUE, NOW())
+            RETURNING id
+        """, (source_id, content_text, json.dumps(metadata)))
+        record_id = cur.fetchone()["id"]
+
+    conn.commit()
+
+    # 6. Embedding hesapla (async-safe, hata tolere edilir)
+    try:
+        from app.services.rag.embedding import EmbeddingManager
+        emb_mgr = EmbeddingManager()
+        embedding = emb_mgr.get_embedding(content_text)
+        if embedding is not None:
+            cur.execute(
+                "UPDATE ds_learning_results SET embedding = %s WHERE id = %s",
+                (json.dumps(embedding), record_id)
+            )
+            conn.commit()
+            logger.info(f"[DataSources] schema_record embedding oluşturuldu: {full_table} (id={record_id})")
+    except Exception as emb_err:
+        logger.warning(f"[DataSources] Embedding hesaplanamadı: {emb_err}")
 
 
 @router.get("/enrichment/{enrichment_id}/columns")

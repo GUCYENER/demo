@@ -513,6 +513,7 @@ def process_user_message_stream(
     images: Optional[List[bytes]] = None,
     widget_config: dict = None,  # v2.61.0: Widget veri kaynağı override
     source_type: str = None,  # v3.6.0: 'rag', 'db' veya None — frontend mod seçimi
+    company_id: int = None,  # v3.8.0: Firma bazlı DB kaynağı filtresi
 ):
     """
     🆕 v2.50.0: Streaming mesaj işleme orchestrator'ı.
@@ -590,7 +591,7 @@ def process_user_message_stream(
         
         # 🆕 v3.6.0: source_type bazlı pipeline seçimi
         if source_type == 'db':
-            stream_gen = deep_think.process_stream_db_only(search_query, user_id)
+            stream_gen = deep_think.process_stream_db_only(search_query, user_id, company_id=company_id)
         elif source_type == 'rag':
             stream_gen = deep_think.process_stream_rag_only(search_query, user_id)
         else:

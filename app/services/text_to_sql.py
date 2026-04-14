@@ -14,7 +14,7 @@ Güvenlik:
   - Üretilen SQL safe_sql_executor.validate_sql() ile doğrulanır
   - DDL/DML/injection kontrollerinden geçemeyen SQL reddedilir
 
-Version: 2.58.0
+Version: 3.9.0
 """
 
 from __future__ import annotations
@@ -311,6 +311,152 @@ def generate_sql(
     }
 
 
+# =====================================================
+# v3.9.0: SQL Self-Healing / Retry
+# =====================================================
+
+def generate_sql_with_retry(
+    query: str,
+    schema_context: Dict[str, Any],
+    allowed_tables: Optional[List[str]] = None,
+    execution_error: Optional[str] = None,
+    failed_sql: Optional[str] = None,
+    max_retries: int = 2,
+) -> Dict[str, Any]:
+    """
+    v3.9.0: SQL Self-Healing — İlk üretim başarısızsa hata bilgisiyle düzeltme denemesi.
+
+    Pipeline:
+    1. İlk denemede generate_sql() çağrısı
+    2. DB execution hatası alınırsa, hata mesajını LLM'e geri gönder
+    3. LLM düzeltilmiş SQL üretir → tekrar validate et
+    4. Max 2 retry (toplam 3 deneme)
+
+    Args:
+        query: Kullanıcı sorusu
+        schema_context: Schema bilgisi
+        allowed_tables: İzin verilen tablo adları
+        execution_error: İlk deneme exec hatası (yoksa ilk üretim yapılır)
+        failed_sql: Hata veren SQL (retry için)
+        max_retries: Max düzeltme denemesi
+
+    Returns:
+        generate_sql() ile aynı format + "retry_count" alanı
+    """
+    # İlk üretim (execution hatası yoksa)
+    if not execution_error:
+        result = generate_sql(query, schema_context, allowed_tables)
+        result["retry_count"] = 0
+        return result
+
+    # Self-healing retry döngüsü
+    from app.core.llm import call_llm_api
+    from app.services.safe_sql_executor import validate_sql, check_table_whitelist
+
+    current_error = execution_error
+    current_sql = failed_sql
+
+    for attempt in range(1, max_retries + 1):
+        log_system_event(
+            "INFO",
+            f"SQL Self-Healing retry #{attempt}: {current_error[:100]}",
+            "text_to_sql"
+        )
+
+        # Düzeltme prompt'u oluştur
+        dialect = schema_context.get("dialect", "postgresql").lower()
+        schema_text = format_schema_for_llm(schema_context)
+
+        correction_prompt = f"""Aşağıdaki SQL sorgusu veritabanında çalıştırıldığında HATA aldı.
+Hatayı düzelt ve çalışan bir SQL üret.
+
+ORİJİNAL KULLANICI SORUSU:
+{query}
+
+HATA VEREN SQL:
+```sql
+{current_sql}
+```
+
+HATA MESAJI:
+{current_error}
+
+VERİTABANI ŞEMASI:
+{schema_text}
+
+DİALECT: {dialect}
+
+KURRALLAR:
+1. SADECE SELECT sorgusu yaz.
+2. Hatayı analiz et ve SADECE düzeltilmiş SQL'i ```sql ... ``` bloğu içinde yaz.
+3. Şemada OLMAYAN tablo/sütun kullanma.
+4. Hata "column not found" ise doğru sütun adını şemadan bul.
+5. Hata "syntax error" ise {dialect} dialect'ine uygun sözdizimi kullan.
+"""
+
+        messages = [
+            {"role": "system", "content": "Sen SQL hata düzeltme uzmanısın. Verilen hatayı analiz edip düzeltilmiş SQL üretiyorsun."},
+            {"role": "user", "content": correction_prompt},
+        ]
+
+        try:
+            llm_response = call_llm_api(messages)
+        except Exception as e:
+            log_warning(f"SQL Self-Healing LLM hatası (retry #{attempt}): {e}", "text_to_sql")
+            continue
+
+        if not llm_response:
+            continue
+
+        # Parse corrected SQL
+        corrected_sql = parse_sql_from_llm(llm_response)
+        if not corrected_sql:
+            continue
+
+        # Güvenlik doğrulaması
+        is_valid, validation_error = validate_sql(corrected_sql)
+        if not is_valid:
+            log_warning(f"SQL Self-Healing güvenlik reddi (retry #{attempt}): {validation_error}", "text_to_sql")
+            continue
+
+        # Whitelist kontrolü
+        if allowed_tables:
+            is_allowed, table_error = check_table_whitelist(corrected_sql, allowed_tables, dialect)
+            if not is_allowed:
+                log_warning(f"SQL Self-Healing whitelist reddi (retry #{attempt}): {table_error}", "text_to_sql")
+                continue
+
+        explanation = _extract_explanation(llm_response)
+
+        log_system_event(
+            "INFO",
+            f"SQL Self-Healing başarılı (retry #{attempt}): {corrected_sql[:100]}",
+            "text_to_sql"
+        )
+
+        return {
+            "success": True,
+            "sql": corrected_sql,
+            "explanation": explanation,
+            "error": None,
+            "retry_count": attempt,
+            "original_error": execution_error,
+        }
+
+    # Tüm retry'lar başarısız
+    log_warning(
+        f"SQL Self-Healing tüm denemeler başarısız ({max_retries} retry)",
+        "text_to_sql"
+    )
+    return {
+        "success": False,
+        "sql": failed_sql,
+        "explanation": None,
+        "error": execution_error,
+        "retry_count": max_retries,
+    }
+
+
 def _extract_explanation(llm_response: str) -> str:
     """LLM yanıtından SQL öncesi açıklamayı çıkarır."""
     # ```sql bloğundan önceki metni al
@@ -404,6 +550,20 @@ def get_schema_context(source_id: int) -> Dict[str, Any]:
                 "category": row.get("category", "") or "",
                 "description_tr": row.get("description_tr", "") or "",
             })
+
+        # v3.10.0: Boş tablo filtresi — 0 satırlık tabloları context'ten çıkar
+        # Bu tablolar LLM'i gereksiz yere yönlendirir ve token israfına neden olur
+        non_empty_tables = [t for t in tables if (t.get("row_estimate") or 0) > 0]
+        if non_empty_tables:
+            filtered_count = len(tables) - len(non_empty_tables)
+            if filtered_count > 0:
+                log_system_event(
+                    "DEBUG",
+                    f"Schema context: {filtered_count} boş tablo filtrelendi ({len(non_empty_tables)} kaldı)",
+                    "text_to_sql"
+                )
+            tables = non_empty_tables
+        # else: tüm tablolar boş görünüyor, filtreleme yapma (ilk keşif olabilir)
 
         # 🆕 v5.0: Kolon enrichment bilgilerini al (iş isimleri, eşanlamlılar)
         col_enrichments_map = {}  # {(schema, table): {col_name: {business_name_tr, ...}}}
@@ -504,12 +664,17 @@ def format_schema_for_llm(schema_context: Dict[str, Any]) -> str:
             col_name = c['name']
             col_dtype = c['data_type']
             # 🆕 v5.0: Kolon iş ismi eklendi
+            # v3.8.0: Synonym desteği — kullanıcı eşanlamlı kelime kullandığında LLM doğru kolonu bulabilir
             enr = col_enrichments.get(col_name, {})
             bname_col = enr.get("business_name_tr", "")
+            synonyms = enr.get("synonyms", [])
+
+            col_str = f"{col_name} ({col_dtype})"
             if bname_col:
-                col_names.append(f"{col_name} ({col_dtype}) [{bname_col}]")
-            else:
-                col_names.append(f"{col_name} ({col_dtype})")
+                col_str += f" [{bname_col}]"
+            if synonyms:
+                col_str += f" synonyms: {', '.join(synonyms[:5])}"
+            col_names.append(col_str)
             if c.get("is_pk"):
                 pk_cols.append(col_name)
             if c.get("data_type", "").lower() in (
@@ -535,12 +700,24 @@ def format_schema_for_llm(schema_context: Dict[str, Any]) -> str:
             parts.append(f"   Tarih sütunları: {', '.join(date_cols)}")
         parts.append("")
 
-    # İlişkiler
+    # v3.9.0: İlişkiler — JOIN doğruluğu için yapılandırılmış format
     rels = schema_context.get("relationships", [])
     if rels:
-        parts.append("İlişkiler:")
-        for r in rels[:20]:  # Max 20 ilişki
-            parts.append(f"  {r['from']} → {r['to']}")
+        parts.append("")
+        parts.append("JOIN İLİŞKİLERİ (Foreign Key):")
+        parts.append("| İlişki No | Ana Tablo.Sütun | → | Referans Tablo.Sütun | Constraint |")
+        parts.append("|-----------|-----------------|---|----------------------|------------|")
+        for idx, r in enumerate(rels[:30], 1):  # v3.9.0: 20→30 ilişki
+            from_parts = r.get('from', '').split('.')
+            to_parts = r.get('to', '').split('.')
+            # from: schema.table.column → table.column
+            from_display = f"{from_parts[-2]}.{from_parts[-1]}" if len(from_parts) >= 2 else r.get('from', '')
+            to_display = f"{to_parts[-2]}.{to_parts[-1]}" if len(to_parts) >= 2 else r.get('to', '')
+            constraint = r.get('constraint', '')
+            parts.append(f"| {idx} | {from_display} | → | {to_display} | {constraint} |")
+        parts.append("")
+        parts.append("NOT: Yukarıdaki ilişkileri JOIN sorguları oluştururken ON koşulu olarak kullan.")
+        parts.append("Örn: JOIN referans_tablo ON ana_tablo.FK_sutun = referans_tablo.PK_sutun")
         parts.append("")
 
     return "\n".join(parts)

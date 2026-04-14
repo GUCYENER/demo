@@ -1824,41 +1824,84 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             }}
 
 
-    def process_stream_db_only(self, query: str, user_id: int) -> Generator[Dict[str, Any], None, None]:
+    def process_stream_db_only(self, query: str, user_id: int, company_id: int = None, confirm_mode: bool = False) -> Generator[Dict[str, Any], None, None]:
         """
-        v3.6.1: DB-only pipeline — HybridRouter kaldırıldı.
+        v3.10.0: DB-only pipeline — Firma bazlı DB kaynağı filtresi + Schema Pruning + Error Sanitization.
+        + FAQ/Query Cache + Confirm before execute + Self-Healing.
 
         Akış:
-        1. Kullanıcının DB kaynaklarını bul
+        0. **FAQ Cache:** Aynı soru+firma için cached SQL/sonuç kontrolü
+        1. Kullanıcının **firmasına ait** (company_id) aktif DB kaynağını bul
         2. ML öğrenme verisiyle (search_db_knowledge) ilgili tabloyu tespit et
         3. Schema context'i al (get_schema_context)
-        4. ML bağlamı + şema ile LLM Text-to-SQL üret
-        5. SafeSQLExecutor ile güvenli çalıştır
-        6. Sonuçları markdown tablo olarak formatla
+        4. **Schema Pruning:** ML match'e göre sadece ilgili tabloları context'e al
+        5. ML bağlamı + budanmış şema ile LLM Text-to-SQL üret
+        5b. **Confirm Mode:** SQL'i kullanıcıya göster, onay bekle
+        6. SafeSQLExecutor ile güvenli çalıştır + Self-Healing retry
+        7. Sonuçları markdown tablo olarak formatla
+        8. **Error Sanitization:** Fortify uyumu — hata detaylarını kullanıcıya gösterme
+        9. **Cache:** Başarılı sonucu cache'e yaz
         """
         import time
         start_time = time.time()
 
         try:
-            # ── 1. Kullanıcının DB kaynaklarını bul ─────────────────────────
+            # ── 0. FAQ/Query Cache kontrolü ────────────────────────────
+            cache_key = _make_cache_key(query, company_id)
+            cached = _SQL_QUERY_CACHE.get(cache_key)
+            if cached and not confirm_mode:
+                log_system_event(
+                    "INFO",
+                    f"DB-Only: Cache HIT — '{query[:50]}' (company={company_id})",
+                    "deep_think", user_id
+                )
+                # Cached SQL'i tekrar çalıştır (veri güncelliği için)
+                # Ama LLM çağrısını atla
+                yield {"type": "status", "data": "📦 Önceki sorgu sonuçları kullanılıyor..."}
+
+            # ── 1. Kullanıcının firmasına ait DB kaynağını bul ──────────────
             from app.core.db import get_db_conn
             sources = []
             conn = get_db_conn()
             try:
                 cur = conn.cursor()
-                cur.execute("""
-                    SELECT ds.id, ds.name, ds.db_type, ds.host, ds.port,
-                           ds.db_name, ds.db_user, ds.db_password_encrypted
-                    FROM data_sources ds
-                    WHERE ds.source_type = 'database'
-                      AND ds.is_active = TRUE
-                      AND EXISTS (
-                          SELECT 1 FROM ds_db_objects dbo
-                          WHERE dbo.source_id = ds.id
-                      )
-                    ORDER BY ds.name
-                    LIMIT 5
-                """)
+
+                # v3.8.0: company_id filtresi — kullanıcının firmasına ait kaynaklar
+                if company_id:
+                    cur.execute("""
+                        SELECT ds.id, ds.name, ds.db_type, ds.host, ds.port,
+                               ds.db_name, ds.db_user, ds.db_password_encrypted
+                        FROM data_sources ds
+                        WHERE ds.source_type = 'database'
+                          AND ds.is_active = TRUE
+                          AND ds.company_id = %s
+                          AND EXISTS (
+                              SELECT 1 FROM ds_db_objects dbo
+                              WHERE dbo.source_id = ds.id
+                          )
+                        ORDER BY ds.name
+                        LIMIT 1
+                    """, (company_id,))
+                else:
+                    # Fallback: company_id yoksa tüm aktif kaynaklar (geriye uyumluluk)
+                    log_warning(
+                        "DB-Only: company_id parametresi yok, tüm kaynaklar aranıyor (güvenlik riski!)",
+                        "deep_think"
+                    )
+                    cur.execute("""
+                        SELECT ds.id, ds.name, ds.db_type, ds.host, ds.port,
+                               ds.db_name, ds.db_user, ds.db_password_encrypted
+                        FROM data_sources ds
+                        WHERE ds.source_type = 'database'
+                          AND ds.is_active = TRUE
+                          AND EXISTS (
+                              SELECT 1 FROM ds_db_objects dbo
+                              WHERE dbo.source_id = ds.id
+                          )
+                        ORDER BY ds.name
+                        LIMIT 1
+                    """)
+
                 for row in cur.fetchall():
                     sources.append({
                         "id": row["id"], "name": row["name"],
@@ -1878,7 +1921,7 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 except Exception:
                     is_admin = False
                 msg = (
-                    "📊 Henüz tanımlı bir veritabanı kaynağı yok. "
+                    "📊 Firmanıza tanımlı bir veritabanı kaynağı bulunamadı. "
                     "Parametreler → Kaynaklar sekmesinden bir veritabanı bağlantısı ekleyin."
                     if is_admin else
                     "📊 Bu özellik henüz kullanımda değildir."
@@ -1886,14 +1929,12 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 yield {"type": "done", "data": {"content": msg, "metadata": {"db_only": True}}}
                 return
 
-            # yield {"type": "status", "data": "ML ogrenmis sema aranıyor..."}
-
             # ── 2. ML öğrenilmiş şema bilgisini getir (schema_record) ──────
             ml_context = ""
             ml_matched_tables = []
             try:
                 from app.services.ds_learning_service import search_db_knowledge
-                ml_results = search_db_knowledge(query, min_score=0.25, max_results=3)
+                ml_results = search_db_knowledge(query, company_id=company_id, min_score=0.25, max_results=3)
                 if ml_results:
                     schema_parts = []
                     for r in ml_results:
@@ -1921,8 +1962,6 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
 
 
             # ── 3. Schema context'i al ────────────────────────────────────
-            # yield {"type": "status", "data": "📋 Veritabanı şeması yükleniyor..."}
-
             from app.services.text_to_sql import get_schema_context
             schema_ctx = None
             source = None
@@ -1943,51 +1982,132 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 }}
                 return
 
-            # ── 4. LLM Text-to-SQL üret (ML bağlamı + şema) ─────────────
-            # yield {"type": "status", "data": "SQL sorgusu olusturuluyor..."}
-
-            from app.services.text_to_sql import generate_sql
-            from app.services.safe_sql_executor import SafeSQLExecutor
-
-            # ML bağlamını schema_context'e göm — generate_sql bunu prompt'a alır
+            # ── 4. Schema Pruning: ML match'e göre sadece ilgili tabloları al ──
             schema_ctx_with_ml = dict(schema_ctx)
             if ml_context:
                 schema_ctx_with_ml["extra_context"] = ml_context
+
+            if ml_matched_tables and schema_ctx_with_ml.get("tables"):
+                pruned_tables = _prune_schema_tables(
+                    all_tables=schema_ctx_with_ml["tables"],
+                    matched_tables=ml_matched_tables,
+                    relationships=schema_ctx_with_ml.get("relationships", []),
+                )
+                if pruned_tables:
+                    log_system_event(
+                        "INFO",
+                        f"DB-Only Schema Pruning: {len(schema_ctx_with_ml['tables'])} → {len(pruned_tables)} tablo "
+                        f"(ML match: {ml_matched_tables})",
+                        "deep_think", user_id
+                    )
+                    schema_ctx_with_ml["tables"] = pruned_tables
+
+            # ── 5. LLM Text-to-SQL üret (ML bağlamı + şema) ─────────────
+            from app.services.text_to_sql import generate_sql, generate_sql_with_retry
+            from app.services.safe_sql_executor import SafeSQLExecutor
 
             dialect = schema_ctx.get("dialect", "mssql")
 
             executor = SafeSQLExecutor()
             allowed_tables = executor.get_allowed_tables(source["id"])
 
-            sql_result = generate_sql(
-                query=query,
-                schema_context=schema_ctx_with_ml,
-                allowed_tables=allowed_tables,
-            )
+            # v3.10.0: Cache'den SQL kullan (LLM çağrısını atla)
+            if cached and cached.get("sql") and not confirm_mode:
+                sql_result = {
+                    "success": True,
+                    "sql": cached["sql"],
+                    "explanation": "Önceki sorgununuz tekrar kullanılıyor.",
+                    "error": None,
+                    "from_cache": True,
+                }
+                log_system_event("INFO", f"DB-Only: Cache'den SQL kullanılıyor: {cached['sql'][:80]}", "deep_think", user_id)
+            else:
+                sql_result = generate_sql(
+                    query=query,
+                    schema_context=schema_ctx_with_ml,
+                    allowed_tables=allowed_tables,
+                )
 
             if not sql_result.get("success"):
                 _sql_err = sql_result.get("error", "Bilinmeyen SQL hatasi")
                 log_warning(f"DB-Only: SQL uretimi basarisiz: {_sql_err}", "deep_think")
                 
-                content_msg = f"Sorgunuz oluşturulurken bir problem yaşandı:\n\n**Yapay Zeka Notu:**\n_{_sql_err}_\n\nLütfen farklı bir şekilde sormayı deneyin."
+                # v3.8.0 Error Sanitization: Teknik detayları kullanıcıya gösterme
+                content_msg = (
+                    "Sorgunuz oluşturulurken bir problem yaşandı:\n\n"
+                    f"**Yapay Zeka Notu:**\n_{_sanitize_error_for_user(_sql_err)}_\n\n"
+                    "Lütfen farklı bir şekilde sormayı deneyin."
+                )
                 
                 yield {"type": "done", "data": {
                     "content": content_msg,
-                    "metadata": {"db_only": True, "error": True, "sql_error": _sql_err}
+                    "metadata": {"db_only": True, "error": True}
                 }}
                 return
 
             sql = sql_result["sql"]
+            retry_count = 0
+            from_cache = sql_result.get("from_cache", False)
 
-            # ── 5. SQL'i guvenli calistir ────────────────────────────────
-            # yield {"type": "status", "data": "Veritabani sorgusu calistiriliyor..."}
+            # ── 5b. Confirm Mode: SQL'i göster, çalıştırma ──────────────
+            if confirm_mode:
+                yield {"type": "done", "data": {
+                    "content": (
+                        "📋 **Oluşturulan SQL sorgusu:**\n\n"
+                        f"```sql\n{sql}\n```\n\n"
+                        "Bu sorguyu çalıştırmak ister misiniz?"
+                    ),
+                    "metadata": {
+                        "db_only": True,
+                        "confirm_pending": True,
+                        "pending_sql": sql,
+                        "source_id": source["id"],
+                        "source_name": source["name"],
+                        "dialect": dialect,
+                    }
+                }}
+                return
 
+            # ── 6. SQL'i güvenli çalıştır + Self-Healing Retry ──────────
             exec_result = executor.execute(
                 sql=sql,
                 source=source,
                 dialect=dialect,
                 allowed_tables=allowed_tables,
             )
+
+            # v3.9.0: Self-Healing — execution hatası varsa LLM ile düzeltme
+            if not exec_result.success and exec_result.error:
+                log_system_event(
+                    "INFO",
+                    f"DB-Only: SQL Self-Healing tetikleniyor: {exec_result.error[:100]}",
+                    "deep_think", user_id
+                )
+                retry_result = generate_sql_with_retry(
+                    query=query,
+                    schema_context=schema_ctx_with_ml,
+                    allowed_tables=allowed_tables,
+                    execution_error=exec_result.error,
+                    failed_sql=exec_result.sql_executed or sql,
+                    max_retries=2,
+                )
+
+                if retry_result.get("success"):
+                    retry_count = retry_result.get("retry_count", 0)
+                    sql = retry_result["sql"]
+                    # Düzeltilmiş SQL'i tekrar çalıştır
+                    exec_result = executor.execute(
+                        sql=sql,
+                        source=source,
+                        dialect=dialect,
+                        allowed_tables=allowed_tables,
+                    )
+                    log_system_event(
+                        "INFO",
+                        f"DB-Only: Self-Healing retry #{retry_count} → "
+                        f"{'BAŞARILI' if exec_result.success else 'BAŞARISIZ'}",
+                        "deep_think", user_id
+                    )
 
             elapsed_ms = (time.time() - start_time) * 1000
 
@@ -2004,33 +2124,35 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                     row_count=exec_result.row_count if exec_result.success else 0,
                     elapsed_ms=elapsed_ms,
                     error_msg=exec_result.error if not exec_result.success else None,
+                    company_id=company_id,
                 )
             except Exception:
                 pass
 
             if not exec_result.success:
-                log_warning(f"DB-Only: SQL çalıştırma hatası: {exec_result.error}", "deep_think")
+                # v3.8.0 Error Sanitization: DB hata detaylarını loglayıp kullanıcıya genel mesaj göster
+                log_warning(f"DB-Only: SQL çalıştırma hatası (retry={retry_count}): {exec_result.error}", "deep_think")
                 yield {"type": "done", "data": {
                     "content": (
-                        f"❌ Sorgu çalıştırılırken hata oluştu:\n\n"
-                        f"`{exec_result.error}`\n\n"
-                        f"Çalıştırılan SQL: `{exec_result.sql_executed or sql}`"
+                        "❌ Sorgu çalıştırılırken bir hata oluştu.\n\n"
+                        "Lütfen sorunuzu farklı şekilde ifade ederek tekrar deneyin. "
+                        "Sorun devam ederse sistem yöneticinize başvurun."
                     ),
-                    "metadata": {"db_only": True, "error": True, "sql": exec_result.sql_executed}
+                    "metadata": {"db_only": True, "error": True, "retry_count": retry_count}
                 }}
                 return
 
-            # ── 6. Sonuçları LLM ile Sentezle ve Stream Et ───────────────────────
+            # ── 7. Sonuçları LLM ile Sentezle ve Stream Et ───────────────────────
             db_data = exec_result.data or []
             sql_executed = exec_result.sql_executed or sql
             source_name = schema_ctx.get("source_name", source["name"])
 
-            # ── 6a. Boş sonuç erken dönüşü (LLM'e gereksiz yere gitme) ──────────
+            # ── 7a. Boş sonuç erken dönüşü (LLM'e gereksiz yere gitme) ──────────
             if not db_data:
                 empty_msg = (
                     f"📭 Sorgunuz çalıştırıldı ancak **hiç kayıt bulunamadı**.\n\n"
                     f"Arama kriterlerinizi değiştirerek tekrar deneyebilirsiniz.\n\n"
-                    f"<br/><small>*(🔍 Çalıştırılan SQL: `{sql_executed}`)*</small>"
+                    f"\n<small>*(🔍 Çalıştırılan SQL: `{sql_executed}`)*</small>"
                 )
                 yield {"type": "token", "data": empty_msg}
                 yield {"type": "done", "data": {
@@ -2040,13 +2162,15 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                         "row_count": 0, "source_db": source_name,
                         "ml_context_used": bool(ml_context),
                         "processing_time_ms": elapsed_ms,
+                        "company_id": company_id,
+                        "retry_count": retry_count,
                     }
                 }}
                 return
 
             import json
 
-            # ── 6b. Büyük sonuç setlerini sınırla (LLM token taşması önleme) ─────
+            # ── 7b. Büyük sonuç setlerini sınırla (LLM token taşması önleme) ─────
             MAX_LLM_ROWS = 50
             MAX_JSON_CHARS = 8000
             data_for_llm = db_data[:MAX_LLM_ROWS]
@@ -2064,6 +2188,24 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 if truncated else ""
             )
 
+            # v3.9.0: Tablo formatı desteği — az veri (≤15 satır, ≤6 sütun) → markdown tablo, aksi halde madde
+            row_count = len(data_for_llm)
+            col_count = len(data_for_llm[0]) if data_for_llm and isinstance(data_for_llm[0], dict) else 0
+            use_table_format = (row_count <= 15 and col_count <= 6)
+
+            if use_table_format:
+                format_instruction = (
+                    "3. Verileri **Markdown tablo** formatında göster. Tablo başlıklarını Türkçe iş ismiyle yaz (varsa).\n"
+                    "   Örnek: | Ad | Soyad | E-posta |\n"
+                    "4. Tablo altına kısa bir özet cümlesi ekle (kaç kayıt bulundu vb.)."
+                )
+            else:
+                format_instruction = (
+                    "3. Verileri HER ZAMAN temiz, okunaklı, maddeler (bullet points -) veya numaralı liste (1.) halinde sun.\n"
+                    "4. Her sonuç için: `- **(Sütun Adı)**: (Değer)` şeklinde madde oluştur.\n"
+                    "5. Sonuçlar çok fazlaysa, özet tablo ve kilit bilgilere odaklan."
+                )
+
             system_prompt = (
                 "Sen kıdemli bir veri asistanı ve raporlama uzmanısın. Kullanıcının sorusuna, "
                 "veritabanından dönen aşağıdaki JSON sonuçlarına göre doğal, profesyonel ve modern "
@@ -2071,9 +2213,8 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 "KURALLAR:\n"
                 "1. Çok önemli: Veri boşsa ([]), sonucun bulunamadığını kibarca belirt ve tahmin yürütme.\n"
                 "2. Yanıtına hoş bir girişle başla (Örn: 'İşte aradığınız veriler:', 'Sorgunuza ait sonuçları listeledim:' vb.).\n"
-                "3. Verileri HER ZAMAN temiz, okunaklı, maddeler (bullet points -) veya numaralı liste (1.) halinde sun.\n"
-                "4. ASLA Markdown tablosu ( | Sütun | ) OLUŞTURMA! Arayüz bunu desteklemiyor. Her sonuç için: `- **(Sütun Adı)**: (Değer)` şeklinde madde oluştur.\n"
-                "5. YALNIZCA aşağıdaki JSON verisindeki sütun ve değerleri kullan. Kendi bilgini KESİNLİKLE ekleme!\n\n"
+                f"{format_instruction}\n"
+                "6. YALNIZCA aşağıdaki JSON verisindeki sütun ve değerleri kullan. Kendi bilgini KESİNLİKLE ekleme!\n\n"
                 f"Sorgulanan Kaynak: {source_name}{truncation_note}\n"
                 f"Veritabanı SQL Sonucu (JSON):\n{data_json}"
             )
@@ -2115,6 +2256,14 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 "deep_think", user_id
             )
 
+            # ── 9. Cache: Başarılı sonucu cache'e yaz ────────────────────
+            if not from_cache:
+                _SQL_QUERY_CACHE[cache_key] = {
+                    "sql": sql_executed,
+                    "source_id": source["id"],
+                    "dialect": dialect,
+                }
+
             yield {"type": "done", "data": {
                 "content": full_content,
                 "metadata": {
@@ -2128,6 +2277,9 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                     "source_db": source_name,
                     "ml_context_used": bool(ml_context),
                     "processing_time_ms": elapsed_ms,
+                    "company_id": company_id,
+                    "retry_count": retry_count,
+                    "from_cache": from_cache,
                 }
             }}
 
@@ -2135,14 +2287,181 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             import traceback as _tb
             _detail = _tb.format_exc()
             log_error(f"DB Only stream hatasi: {e}", "deep_think", error_detail=_detail)
+            # v3.8.0 Error Sanitization: Kullanıcıya teknik detay gösterme
             yield {"type": "done", "data": {
                 "content": (
-                    f"Sorgu calistirilirken bir hata olustu.\n\n"
-                    f"**Hata:** `{type(e).__name__}: {str(e)[:200]}`\n\n"
-                    f"Lutfen sistem yoneticisine bildirin."
+                    "Sorgu çalıştırılırken beklenmeyen bir hata oluştu.\n\n"
+                    "Lütfen birkaç dakika sonra tekrar deneyin. "
+                    "Sorun devam ederse sistem yöneticinize başvurun."
                 ),
                 "metadata": {"db_only": True, "error": True, "error_type": type(e).__name__}
             }}
+
+# =====================================================
+# FAQ/Query Cache (v3.10.0)
+# =====================================================
+
+from collections import OrderedDict
+import hashlib as _hashlib
+import re as _re_cache
+
+_SQL_QUERY_CACHE_MAX = 128  # Max cache entry sayısı
+_SQL_QUERY_CACHE: OrderedDict = OrderedDict()
+
+
+def _make_cache_key(query: str, company_id: int = None) -> str:
+    """
+    Sorgu + firma ID'sinden cache key üretir.
+    Normalize: küçük harf, fazla boşluk temizle, Türkçe karakter düzleştirme.
+    """
+    normalized = query.strip().lower()
+    normalized = _re_cache.sub(r'\s+', ' ', normalized)
+    raw = f"{normalized}|company={company_id or 0}"
+    return _hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+
+def _cache_set(key: str, value: dict):
+    """LRU cache'e yaz. Max boyuta ulaşınca en eski entry'yi sil."""
+    if key in _SQL_QUERY_CACHE:
+        _SQL_QUERY_CACHE.move_to_end(key)
+    _SQL_QUERY_CACHE[key] = value
+    while len(_SQL_QUERY_CACHE) > _SQL_QUERY_CACHE_MAX:
+        _SQL_QUERY_CACHE.popitem(last=False)
+
+
+def invalidate_sql_cache(company_id: int = None, source_id: int = None):
+    """
+    Cache'i temizler. company_id veya source_id verilirse sadece ilgili entry'leri siler.
+    Schema değişikliği veya admin onay sonrası çağrılır.
+    """
+    if company_id is None and source_id is None:
+        _SQL_QUERY_CACHE.clear()
+        return
+
+    keys_to_delete = []
+    for k, v in _SQL_QUERY_CACHE.items():
+        if source_id and v.get("source_id") == source_id:
+            keys_to_delete.append(k)
+    for k in keys_to_delete:
+        del _SQL_QUERY_CACHE[k]
+
+
+# =====================================================
+# Schema Pruning & Error Sanitization Helpers (v3.8.0)
+# =====================================================
+
+def _prune_schema_tables(
+    all_tables: list,
+    matched_tables: list,
+    relationships: list,
+) -> list:
+    """
+    ML match sonuçlarına göre şema tablosu listesini budar (prune).
+    
+    Sadece eşleşen tabloları VE FK ilişkisi olan komşu tabloları döndürür.
+    Bu sayede LLM'e gereksiz 30+ tablo yerine sadece ilgili 3-5 tablo gönderilir.
+    
+    Args:
+        all_tables: Tüm keşfedilmiş tablolar
+        matched_tables: ML'den eşleşen tablo isimleri (schema.table veya table)
+        relationships: FK ilişki listesi [{from: "s.t.c", to: "s.t.c"}, ...]
+    
+    Returns:
+        Budanmış tablo listesi (en az matched + FK komşuları)
+    """
+    if not matched_tables or not all_tables:
+        return all_tables
+
+    # Normalize match isimleri (hem "schema.table" hem "table" formatını destekle)
+    match_set = set()
+    for mt in matched_tables:
+        mt_lower = mt.lower().strip()
+        match_set.add(mt_lower)
+        # "schema.table" formatından sadece table kısmını da ekle
+        if "." in mt_lower:
+            match_set.add(mt_lower.split(".")[-1])
+
+    # FK ilişkilerinden komşu tabloları bul
+    neighbor_tables = set()
+    for rel in relationships:
+        from_parts = rel.get("from", "").lower().split(".")
+        to_parts = rel.get("to", "").lower().split(".")
+
+        from_table = from_parts[1] if len(from_parts) >= 2 else ""
+        to_table = to_parts[1] if len(to_parts) >= 2 else ""
+        from_full = f"{from_parts[0]}.{from_table}" if len(from_parts) >= 2 else ""
+        to_full = f"{to_parts[0]}.{to_table}" if len(to_parts) >= 2 else ""
+
+        # Eşleşen tablo FK'nın bir tarafında mı?
+        if from_table in match_set or from_full in match_set:
+            neighbor_tables.add(to_table)
+            if to_full:
+                neighbor_tables.add(to_full)
+        if to_table in match_set or to_full in match_set:
+            neighbor_tables.add(from_table)
+            if from_full:
+                neighbor_tables.add(from_full)
+
+    # İlgili tabloları filtrele
+    allowed_set = match_set | neighbor_tables
+    pruned = []
+    for t in all_tables:
+        table_name = (t.get("name") or "").lower()
+        schema_name = (t.get("schema") or "").lower()
+        full_name = f"{schema_name}.{table_name}" if schema_name else table_name
+
+        if table_name in allowed_set or full_name in allowed_set:
+            pruned.append(t)
+
+    # Güvenlik: Pruning sonucu boşsa orijinal listeyi döndür (fallback)
+    if not pruned:
+        return all_tables
+
+    return pruned
+
+
+def _sanitize_error_for_user(error_msg: str) -> str:
+    """
+    v3.8.0 Fortify uyumu: SQL/DB hata mesajlarındaki teknik detayları
+    temizleyerek kullanıcıya güvenli bir mesaj döndürür.
+    
+    - Tablo/kolon adları, SQL fragmanları → kaldırılır
+    - Connection string, host/port bilgileri → kaldırılır
+    - DIAGNOSTIC mesajları (LLM'in can't generate açıklaması) → korunur
+    """
+    import re
+
+    if not error_msg:
+        return "Bilinmeyen bir hata oluştu."
+
+    # DIAGNOSTIC mesajları kullanıcıya gösterilebilir (LLM'in "bu soru şemada yok" açıklaması)
+    if error_msg.startswith("DIAGNOSTIC") or "şemada" in error_msg.lower() or "tablo" in error_msg.lower():
+        # Teknik SQL referanslarını temizle ama anlamı koru
+        cleaned = re.sub(r'`[^`]+`', '', error_msg)
+        cleaned = re.sub(r'"[^"]*"\."[^"]*"', '', cleaned)
+        cleaned = re.sub(r'\[.*?\]\.\[.*?\]', '', cleaned)
+        return cleaned.strip() or error_msg
+
+    # Güvenlik: Teknik detay içerebilecek mesajları genel mesajla değiştir
+    sensitive_patterns = [
+        r'(?i)(column|relation|table)\s+"?\w+"?\s+(does not exist|not found)',
+        r'(?i)syntax error',
+        r'(?i)permission denied',
+        r'(?i)connection refused',
+        r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b',  # IP adresleri
+        r'(?i)(host|port|password|user)\s*=',  # Connection string parçaları
+    ]
+
+    for pattern in sensitive_patterns:
+        if re.search(pattern, error_msg):
+            return "Sorgunuz işlenirken teknik bir sorun oluştu. Lütfen farklı bir şekilde sormayı deneyin."
+
+    # Uzun hata mesajlarını kes (max 200 karakter)
+    if len(error_msg) > 200:
+        return error_msg[:200] + "..."
+
+    return error_msg
+
 
 # Fallback Prompt
 # ============================================

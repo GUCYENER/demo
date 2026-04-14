@@ -540,6 +540,10 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                 logger.info("[DSLearning] Schema snapshot oluşturuldu: id=%s, diff=%s",
                             snapshot_result.get("snapshot_id"),
                             snapshot_result.get("diff", {}).get("summary", ""))
+
+                # v3.10.0: Schema değişikliği → otomatik schema_record invalidation
+                if snapshot_result.get("has_changes") and not snapshot_result.get("is_first_run"):
+                    _auto_invalidate_schema_records(vyra_conn, source_id, snapshot_result.get("diff", {}))
             else:
                 logger.info("[DSLearning] Şemada değişiklik yok, snapshot atlandı")
         except Exception as snap_err:
@@ -1515,3 +1519,83 @@ def upsert_schedule(vyra_conn, source_id: int, schedule_type: str,
         return {"success": False, "message": "Zamanlama kaydedilemedi"}
 
 
+# =====================================================
+# v3.10.0: Schema Change → Auto Re-Learn
+# =====================================================
+
+def _auto_invalidate_schema_records(vyra_conn, source_id: int, diff: dict):
+    """
+    Schema değişikliği tespit edildiğinde:
+    1. Değişen tabloların schema_record embedding'lerini invalidate et
+    2. SQL query cache'ini temizle
+    3. Değişiklik logla
+
+    Bu fonksiyon detect_objects snapshot diff sonucunda çağrılır.
+    Admin'in tekrar "Öğrenme Başlat" çalıştırmasına gerek kalmaz,
+    sonraki approve veya learning job schema_record'ları yeniden oluşturur.
+    """
+    try:
+        cur = vyra_conn.cursor()
+
+        # Değişen tablo isimleri
+        affected_tables = set()
+        for t in diff.get("added_tables", []):
+            affected_tables.add(t)
+        for t in diff.get("removed_tables", []):
+            affected_tables.add(t)
+        for mod in diff.get("modified_tables", []):
+            if isinstance(mod, dict):
+                affected_tables.add(mod.get("table", ""))
+            elif isinstance(mod, str):
+                affected_tables.add(mod)
+
+        if not affected_tables:
+            return
+
+        # 1. Değişen tablolara ait schema_record'ların embedding'ini temizle
+        invalidated_count = 0
+        for full_table in affected_tables:
+            if not full_table:
+                continue
+            cur.execute("""
+                UPDATE ds_learning_results
+                SET embedding = NULL, updated_at = NOW()
+                WHERE source_id = %s
+                  AND content_type = 'schema_record'
+                  AND metadata->>'full_table' = %s
+            """, (source_id, full_table))
+            invalidated_count += cur.rowcount
+
+        # 2. Silinen tabloların schema_record'larını tamamen kaldır
+        for full_table in diff.get("removed_tables", []):
+            if not full_table:
+                continue
+            cur.execute("""
+                DELETE FROM ds_learning_results
+                WHERE source_id = %s
+                  AND content_type = 'schema_record'
+                  AND metadata->>'full_table' = %s
+            """, (source_id, full_table))
+
+        vyra_conn.commit()
+
+        # 3. SQL query cache'ini temizle
+        try:
+            from app.services.deep_think_service import invalidate_sql_cache
+            invalidate_sql_cache(source_id=source_id)
+        except Exception:
+            pass
+
+        logger.info(
+            "[DSLearning] Schema change → auto-invalidate: %d schema_record, "
+            "%d tablo etkilendi (source_id=%s)",
+            invalidated_count, len(affected_tables), source_id
+        )
+
+    except Exception as e:
+        logger.warning("[DSLearning] Auto-invalidate hatası: %s — %s",
+                       type(e).__name__, str(e)[:200])
+        try:
+            vyra_conn.rollback()
+        except Exception:
+            pass
