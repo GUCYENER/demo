@@ -1144,7 +1144,7 @@ window.DSLearningModule = (function () {
                 const question = r.question || '';
                 const answer = r.content_text || '';
 
-                let answerHtml = _escapeHtml(answer);
+                let answerHtml = _formatMLAnswer(answer);
 
                 return `
                     <div class="ds-lr-card" data-idx="${idx}">
@@ -1191,6 +1191,29 @@ window.DSLearningModule = (function () {
     function _escapeHtml(str) {
         if (!str) return '';
         return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function _formatMLAnswer(str) {
+        if (!str) return '';
+        let esc = _escapeHtml(str);
+
+        // 1. Ana Başlıklar (TABLO:, İş Adı: vs.)
+        esc = esc.replace(/^(TABLO:|İş Adı:|Açıklama:|Sütunlar:)/gm, '<span class="ds-lr-txt-key">$1</span>');
+
+        // 2. Sütun Adları ve Tipler: " - PartyId (integer) → İş Adı:"
+        esc = esc.replace(/^(\s*-\s*)([a-zA-Z0-9_ığüşöçİĞÜŞÖÇ]+)(\s*\([^)]+\))/gm, 
+            '$1<span class="ds-lr-txt-col">$2</span><span class="ds-lr-txt-type">$3</span>');
+
+        // 3. Eşanlamlılar: "Eşanlamlılar: [kullanıcı numarası, personel ID]"
+        esc = esc.replace(/(Eşanlamlılar:\s*)(\[[^\]]+\])/g, '<strong>$1</strong><span class="ds-lr-txt-synonym">$2</span>');
+
+        // 4. Olası Değerler: "    Olası Değerler: 675477, ..."
+        esc = esc.replace(/^(.*)(Olası Değerler:)(.*)$/gm, '$1<span class="ds-lr-txt-values"><strong>$2</strong>$3</span>');
+
+        // 5. [ARANABİLİR] Badge çevrimi
+        esc = esc.replace(/\[ARANABİLİR\]/g, '<span class="ds-lr-badge-searchable"><i class="fa-solid fa-search"></i> ARANABİLİR</span>');
+
+        return esc;
     }
 
     function _formatNumber(num) {
