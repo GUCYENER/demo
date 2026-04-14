@@ -1063,8 +1063,8 @@ def approve_enrichment(
                 return {"success": True, "message": "Etiket onaylandı ve şema kaydı oluşturuldu"}
             return {"success": False, "message": "Onay işlemi başarısız"}
     except Exception as e:
-        logger.error("[DataSources] Enrichment onay hatası: %s", type(e).__name__)
-        return {"success": False, "message": f"Onay hatası: {type(e).__name__}"}
+        logger.error("[DataSources] Enrichment onay hatası: %s — %s", type(e).__name__, str(e)[:200])
+        return {"success": False, "message": "Onay işlemi sırasında beklenmeyen bir hata oluştu."}
 
 
 def _generate_schema_record_for_enrichment(conn, source_id: int, enrichment_id: int):
@@ -1094,6 +1094,11 @@ def _generate_schema_record_for_enrichment(conn, source_id: int, enrichment_id: 
     te_row = cur.fetchone()
     if not te_row:
         return  # Enrichment bulunamadı veya onaysız
+
+    # company_id'yi data_sources'dan al (ds_learning_results NOT NULL constraint)
+    cur.execute("SELECT company_id FROM data_sources WHERE id = %s", (source_id,))
+    ds_row = cur.fetchone()
+    company_id = ds_row["company_id"] if ds_row else None
 
     schema_name = te_row["schema_name"] or ""
     table_name = te_row["table_name"]
@@ -1202,10 +1207,10 @@ def _generate_schema_record_for_enrichment(conn, source_id: int, enrichment_id: 
     else:
         cur.execute("""
             INSERT INTO ds_learning_results
-            (source_id, content_type, content_text, metadata, is_valid, created_at)
-            VALUES (%s, 'schema_record', %s, %s, TRUE, NOW())
+            (source_id, company_id, content_type, content_text, metadata, is_valid, created_at)
+            VALUES (%s, %s, 'schema_record', %s, %s, TRUE, NOW())
             RETURNING id
-        """, (source_id, content_text, json.dumps(metadata)))
+        """, (source_id, company_id, content_text, json.dumps(metadata)))
         record_id = cur.fetchone()["id"]
 
     conn.commit()

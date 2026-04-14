@@ -2258,11 +2258,11 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
 
             # ── 9. Cache: Başarılı sonucu cache'e yaz ────────────────────
             if not from_cache:
-                _SQL_QUERY_CACHE[cache_key] = {
+                _cache_set(cache_key, {
                     "sql": sql_executed,
                     "source_id": source["id"],
                     "dialect": dialect,
-                }
+                })
 
             yield {"type": "done", "data": {
                 "content": full_content,
@@ -2341,6 +2341,9 @@ def invalidate_sql_cache(company_id: int = None, source_id: int = None):
     keys_to_delete = []
     for k, v in _SQL_QUERY_CACHE.items():
         if source_id and v.get("source_id") == source_id:
+            keys_to_delete.append(k)
+            continue
+        if company_id and v.get("company_id") == company_id:
             keys_to_delete.append(k)
     for k in keys_to_delete:
         del _SQL_QUERY_CACHE[k]
