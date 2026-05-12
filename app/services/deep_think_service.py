@@ -2304,9 +2304,11 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
 from collections import OrderedDict
 import hashlib as _hashlib
 import re as _re_cache
+import threading as _threading
 
 _SQL_QUERY_CACHE_MAX = 128  # Max cache entry sayısı
 _SQL_QUERY_CACHE: OrderedDict = OrderedDict()
+_SQL_CACHE_LOCK = _threading.Lock()
 
 
 def _make_cache_key(query: str, company_id: int = None) -> str:
@@ -2321,32 +2323,34 @@ def _make_cache_key(query: str, company_id: int = None) -> str:
 
 
 def _cache_set(key: str, value: dict):
-    """LRU cache'e yaz. Max boyuta ulaşınca en eski entry'yi sil."""
-    if key in _SQL_QUERY_CACHE:
-        _SQL_QUERY_CACHE.move_to_end(key)
-    _SQL_QUERY_CACHE[key] = value
-    while len(_SQL_QUERY_CACHE) > _SQL_QUERY_CACHE_MAX:
-        _SQL_QUERY_CACHE.popitem(last=False)
+    """LRU cache'e yaz. Max boyuta ulaşınca en eski entry'yi sil. Thread-safe."""
+    with _SQL_CACHE_LOCK:
+        if key in _SQL_QUERY_CACHE:
+            _SQL_QUERY_CACHE.move_to_end(key)
+        _SQL_QUERY_CACHE[key] = value
+        while len(_SQL_QUERY_CACHE) > _SQL_QUERY_CACHE_MAX:
+            _SQL_QUERY_CACHE.popitem(last=False)
 
 
 def invalidate_sql_cache(company_id: int = None, source_id: int = None):
     """
     Cache'i temizler. company_id veya source_id verilirse sadece ilgili entry'leri siler.
-    Schema değişikliği veya admin onay sonrası çağrılır.
+    Schema değişikliği veya admin onay sonrası çağrılır. Thread-safe.
     """
-    if company_id is None and source_id is None:
-        _SQL_QUERY_CACHE.clear()
-        return
+    with _SQL_CACHE_LOCK:
+        if company_id is None and source_id is None:
+            _SQL_QUERY_CACHE.clear()
+            return
 
-    keys_to_delete = []
-    for k, v in _SQL_QUERY_CACHE.items():
-        if source_id and v.get("source_id") == source_id:
-            keys_to_delete.append(k)
-            continue
-        if company_id and v.get("company_id") == company_id:
-            keys_to_delete.append(k)
-    for k in keys_to_delete:
-        del _SQL_QUERY_CACHE[k]
+        keys_to_delete = []
+        for k, v in list(_SQL_QUERY_CACHE.items()):
+            if source_id and v.get("source_id") == source_id:
+                keys_to_delete.append(k)
+                continue
+            if company_id and v.get("company_id") == company_id:
+                keys_to_delete.append(k)
+        for k in keys_to_delete:
+            del _SQL_QUERY_CACHE[k]
 
 
 # =====================================================

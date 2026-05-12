@@ -294,9 +294,13 @@ KURALLAR:
 # LLM API Call
 # ============================================
 
-def call_llm_api(messages: list) -> str:
+def call_llm_api(messages: list, temperature: Optional[float] = None) -> str:
     """Aktif LLM API'sine istek atar.
-    
+
+    Args:
+        messages: LLM mesaj listesi
+        temperature: Opsiyonel temperature override. None ise config'deki varsayılan kullanılır.
+
     Raises:
         LLMConnectionError: VPN/network hatası durumunda
         LLMConfigError: Konfigürasyon hatası durumunda
@@ -310,14 +314,14 @@ def call_llm_api(messages: list) -> str:
     headers = {
         "Content-Type": "application/json",
     }
-    
+
     if config['api_token']:
         headers["Authorization"] = f"Bearer {config['api_token']}"
 
     payload = {
         "model": config['model_name'],
         "messages": messages,
-        "temperature": config['temperature'],
+        "temperature": temperature if temperature is not None else config['temperature'],
         "top_p": config['top_p'],
         "max_tokens": config.get('max_tokens', 4096)
     }

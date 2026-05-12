@@ -138,7 +138,7 @@ def process_all_files_for_embeddings() -> Dict[str, Any]:
             # ❌ BU DOSYA İÇİN ROLLBACK (diğer dosyalar etkilenmez)
             file_conn.rollback()
             result["failed_files"].append(file_name)
-            result["errors"].append(f"{file_name}: {str(e)}")
+            result["errors"].append(file_name)
             log_error(f"Dosya işleme hatası: {file_name} - {str(e)}", "rag", error_detail=str(e))
             
         finally:

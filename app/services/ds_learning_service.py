@@ -8,12 +8,21 @@ Version: 2.56.0
 """
 
 import logging
+import re
 import time
 import json
 
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_identifier(name):
+    """Allow only alphanumeric, underscore, dot, space (for quoted identifiers)."""
+    if not name:
+        return ""
+    cleaned = re.sub(r'[^\w\s.]', '', name)
+    return cleaned
 
 
 # =====================================================
@@ -221,52 +230,75 @@ def detect_objects(source: dict, vyra_conn) -> dict:
             """)
             tables = cur.fetchall()
 
+            # ── Toplu kolon sorgusu (N+1 yerine 1 sorgu) ──
+            all_columns = {}  # key: (schema, table) → list of column dicts
+            cur.execute("""
+                SELECT table_schema, table_name, column_name, data_type, is_nullable, column_default
+                FROM information_schema.columns
+                WHERE table_schema NOT IN ('pg_catalog','information_schema','pg_toast')
+                ORDER BY table_schema, table_name, ordinal_position
+            """)
+            for col in cur.fetchall():
+                key = (col[0] if isinstance(col, tuple) else col["table_schema"],
+                       col[1] if isinstance(col, tuple) else col["table_name"])
+                if key not in all_columns:
+                    all_columns[key] = []
+                col_name = col[2] if isinstance(col, tuple) else col["column_name"]
+                data_type = col[3] if isinstance(col, tuple) else col["data_type"]
+                is_nullable = col[4] if isinstance(col, tuple) else col["is_nullable"]
+                default_val = col[5] if isinstance(col, tuple) else col["column_default"]
+                all_columns[key].append({
+                    "name": col_name,
+                    "data_type": data_type,
+                    "is_nullable": is_nullable == "YES",
+                    "default_val": str(default_val) if default_val else None
+                })
+
+            # ── Toplu PK sorgusu (1 sorgu ile tüm PK'lar) ──
+            all_pks = {}  # key: (schema, table) → set of column names
+            cur.execute("""
+                SELECT tc.table_schema, tc.table_name, kcu.column_name
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                    ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+                WHERE tc.constraint_type = 'PRIMARY KEY'
+                    AND tc.table_schema NOT IN ('pg_catalog','information_schema','pg_toast')
+            """)
+            for pk_row in cur.fetchall():
+                key = (pk_row[0] if isinstance(pk_row, tuple) else pk_row["table_schema"],
+                       pk_row[1] if isinstance(pk_row, tuple) else pk_row["table_name"])
+                if key not in all_pks:
+                    all_pks[key] = set()
+                all_pks[key].add(pk_row[2] if isinstance(pk_row, tuple) else pk_row["column_name"])
+
+            # ── Toplu satır tahmini (pg_stat_user_tables) ──
+            row_estimates = {}
+            cur.execute("""
+                SELECT schemaname, relname, n_live_tup
+                FROM pg_stat_user_tables
+            """)
+            for est_row in cur.fetchall():
+                key = (est_row[0] if isinstance(est_row, tuple) else est_row["schemaname"],
+                       est_row[1] if isinstance(est_row, tuple) else est_row["relname"])
+                row_estimates[key] = est_row[2] if isinstance(est_row, tuple) else est_row["n_live_tup"]
+
+            # ── Objeleri birleştir ──
             for row in tables:
                 schema_name, table_name, table_type = row[0], row[1], row[2]
                 obj_type = "table" if table_type == "BASE TABLE" else "view"
 
-                # Sütunlar
-                cur.execute("""
-                    SELECT column_name, data_type, is_nullable, column_default
-                    FROM information_schema.columns
-                    WHERE table_schema = %s AND table_name = %s
-                    ORDER BY ordinal_position
-                """, (schema_name, table_name))
-                columns = []
-                for col in cur.fetchall():
-                    columns.append({
-                        "name": col[0],
-                        "data_type": col[1],
-                        "is_nullable": col[2] == "YES",
-                        "default_val": str(col[3]) if col[3] else None
-                    })
+                key = (schema_name, table_name)
+                columns = list(all_columns.get(key, []))
 
-                # PK tespiti
-                cur.execute("""
-                    SELECT kcu.column_name
-                    FROM information_schema.table_constraints tc
-                    JOIN information_schema.key_column_usage kcu
-                        ON tc.constraint_name = kcu.constraint_name
-                        AND tc.table_schema = kcu.table_schema
-                    WHERE tc.constraint_type = 'PRIMARY KEY'
-                        AND tc.table_schema = %s AND tc.table_name = %s
-                """, (schema_name, table_name))
-                pk_cols = {r[0] for r in cur.fetchall()}
+                # PK işaretle
+                pk_cols = all_pks.get(key, set())
                 for c in columns:
                     c["is_pk"] = c["name"] in pk_cols
 
                 # Tahmini satır sayısı
                 row_estimate = 0
                 if obj_type == "table":
-                    try:
-                        cur.execute(f"""
-                            SELECT reltuples::bigint FROM pg_class
-                            WHERE oid = '{schema_name}.{table_name}'::regclass
-                        """)
-                        est = cur.fetchone()
-                        row_estimate = max(0, est[0]) if est else 0
-                    except Exception:
-                        pass
+                    row_estimate = max(0, row_estimates.get(key, 0))
 
                 objects.append({
                     "schema_name": schema_name,
@@ -374,30 +406,63 @@ def detect_objects(source: dict, vyra_conn) -> dict:
             """)
             tables = cur.fetchall()
 
+            # ── Toplu kolon sorgusu (N+1 yerine 1 sorgu) ──
+            all_columns = {}  # key: (schema, table) → list of column dicts
+            cur.execute("""
+                SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT,
+                       CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE
+                FROM INFORMATION_SCHEMA.COLUMNS
+                ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION
+            """)
+            for col in cur.fetchall():
+                cs = col["TABLE_SCHEMA"] if isinstance(col, dict) else col[0]
+                ct = col["TABLE_NAME"] if isinstance(col, dict) else col[1]
+                key = (cs, ct)
+                cn = col["COLUMN_NAME"] if isinstance(col, dict) else col[2]
+                dt = col["DATA_TYPE"] if isinstance(col, dict) else col[3]
+                nullable = col["IS_NULLABLE"] if isinstance(col, dict) else col[4]
+                default = col["COLUMN_DEFAULT"] if isinstance(col, dict) else col[5]
+                if key not in all_columns:
+                    all_columns[key] = []
+                all_columns[key].append({
+                    "name": cn, "data_type": dt,
+                    "is_nullable": nullable == "YES",
+                    "default_val": str(default) if default else None,
+                    "is_pk": False
+                })
+
+            # ── Toplu PK sorgusu (1 sorgu ile tüm PK'lar) ──
+            all_pks = {}  # key: (schema, table) → set of column names
+            cur.execute("""
+                SELECT tc.TABLE_SCHEMA, tc.TABLE_NAME, kcu.COLUMN_NAME
+                FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+                JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+                    ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA
+                WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
+            """)
+            for pk_row in cur.fetchall():
+                ps = pk_row["TABLE_SCHEMA"] if isinstance(pk_row, dict) else pk_row[0]
+                pt = pk_row["TABLE_NAME"] if isinstance(pk_row, dict) else pk_row[1]
+                pc = pk_row["COLUMN_NAME"] if isinstance(pk_row, dict) else pk_row[2]
+                key = (ps, pt)
+                if key not in all_pks:
+                    all_pks[key] = set()
+                all_pks[key].add(pc)
+
+            # ── Objeleri birleştir ──
             for row in tables:
                 schema_name = row["TABLE_SCHEMA"] if isinstance(row, dict) else row[0]
                 table_name = row["TABLE_NAME"] if isinstance(row, dict) else row[1]
                 table_type = row["TABLE_TYPE"] if isinstance(row, dict) else row[2]
                 obj_type = "table" if table_type == "BASE TABLE" else "view"
 
-                cur.execute("""
-                    SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT
-                    FROM INFORMATION_SCHEMA.COLUMNS
-                    WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s
-                    ORDER BY ORDINAL_POSITION
-                """, (schema_name, table_name))
-                columns = []
-                for col in cur.fetchall():
-                    cn = col["COLUMN_NAME"] if isinstance(col, dict) else col[0]
-                    dt = col["DATA_TYPE"] if isinstance(col, dict) else col[1]
-                    nullable = col["IS_NULLABLE"] if isinstance(col, dict) else col[2]
-                    default = col["COLUMN_DEFAULT"] if isinstance(col, dict) else col[3]
-                    columns.append({
-                        "name": cn, "data_type": dt,
-                        "is_nullable": nullable == "YES",
-                        "default_val": str(default) if default else None,
-                        "is_pk": False
-                    })
+                key = (schema_name, table_name)
+                columns = list(all_columns.get(key, []))
+
+                # PK işaretle
+                pk_cols = all_pks.get(key, set())
+                for c in columns:
+                    c["is_pk"] = c["name"] in pk_cols
 
                 objects.append({
                     "schema_name": schema_name,
@@ -806,7 +871,7 @@ def collect_samples(source: dict, vyra_conn, max_rows: int = 10) -> dict:
             for col in (columns_data or []):
                 ctype = col.get("data_type", "").lower()
                 if not any(u in ctype for u in unsafe_types):
-                    safe_cols.append(col.get("name"))
+                    safe_cols.append(_safe_identifier(col.get("name", "")))
 
             if not safe_cols:
                 safe_cols = ["*"]
@@ -815,9 +880,9 @@ def collect_samples(source: dict, vyra_conn, max_rows: int = 10) -> dict:
             if safe_cols[0] != "*" and len(safe_cols) > 50:
                 safe_cols = safe_cols[:50]
 
-            # Güvenli tablo adı — sadece alfanümerik ve underscore
-            safe_name = object_name.replace("'", "").replace(";", "")
-            safe_schema = (schema_name or "").replace("'", "").replace(";", "")
+            # Güvenli tablo adı — sadece alfanümerik, underscore, nokta, boşluk
+            safe_name = _safe_identifier(object_name)
+            safe_schema = _safe_identifier(schema_name or "")
 
             if db_dialect == "postgresql":
                 cols_str = ", ".join([f'"{c}"' for c in safe_cols]) if safe_cols[0] != "*" else "*"

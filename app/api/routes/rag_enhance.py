@@ -855,7 +855,7 @@ async def upload_enhanced_to_rag(
 
 
 @router.delete("/cleanup-enhanced/{session_id}")
-async def cleanup_enhanced(session_id: str):
+async def cleanup_enhanced(session_id: str, current_user: dict = Depends(get_current_user)):
     """Geçici iyileştirilmiş dosyayı ve session verisini temizle"""
     # v3.4.4: Disk'teki orijinal dosyayı da temizle
     data = _session_data.get(session_id, {})

@@ -55,7 +55,13 @@ class DataSourceUpdate(BaseModel):
 # --- Helpers ---
 
 def _encrypt_password(plain: str) -> str:
-    """Basit şifreleme (Fernet yoksa base64 fallback)."""
+    """Şifreyi Fernet ile şifreler. Key yoksa encryption modülünden alır."""
+    try:
+        from app.core.encryption import encrypt_password
+        return encrypt_password(plain)
+    except Exception:
+        pass
+    # Fallback: Fernet key environment'tan
     try:
         from cryptography.fernet import Fernet
         import os
@@ -65,8 +71,9 @@ def _encrypt_password(plain: str) -> str:
             return f.encrypt(plain.encode()).decode()
     except ImportError:
         pass
-    # Fallback: base64
+    # Son çare: base64 (güvensiz — log uyarısı)
     import base64
+    logger.warning("[DataSources] UYARI: Fernet key bulunamadı, şifre base64 ile saklanıyor (güvensiz)")
     return "b64:" + base64.b64encode(plain.encode()).decode()
 
 

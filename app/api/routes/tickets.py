@@ -598,7 +598,7 @@ def add_ai_evaluation(
         return AIEvaluateResponse(
             success=False,
             ticket_id=ticket_id,
-            error=str(e)
+            error="İşlem sırasında bir hata oluştu"
         )
 
 
@@ -648,5 +648,5 @@ def add_user_selection(
         return UserSelectionResponse(
             success=False,
             ticket_id=ticket_id,
-            error=str(e)
+            error="İşlem sırasında bir hata oluştu"
         )

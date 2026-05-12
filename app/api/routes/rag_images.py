@@ -7,11 +7,12 @@ Author: VYRA AI Team
 Version: 1.0.0
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import Response
 
 from app.core.db import get_db_conn
 from app.services.logging_service import log_error
+from app.api.routes.auth import get_current_user
 
 router = APIRouter()
 
@@ -19,7 +20,7 @@ router = APIRouter()
 # ⚠ SIRA ÖNEMLİ: Literal path'ler ({image_id} parametreli) path'lerden ÖNCE!
 
 @router.get("/images/by-file/{file_id}")
-async def get_file_images(file_id: int):
+async def get_file_images(file_id: int, current_user: dict = Depends(get_current_user)):
     """
     Bir dosyaya ait tüm görsellerin listesini döndürür (binary hariç).
     
@@ -75,7 +76,7 @@ async def get_file_images(file_id: int):
 
 
 @router.get("/images/{image_id}")
-async def get_document_image(image_id: int):
+async def get_document_image(image_id: int, current_user: dict = Depends(get_current_user)):
     """
     Doküman görselini binary olarak döndürür.
     

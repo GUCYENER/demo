@@ -39,7 +39,7 @@ KRİTİK KURALLAR:
 1. SADECE SELECT sorguları yaz. INSERT, UPDATE, DELETE, DROP, ALTER, CREATE gibi komutlar KESİNLİKLE YASAK.
 2. Kullanıcının isteğini karşılamak için şemada verilen tablolar arasından en uygun tabloyu veya tabloları seç. Eğer soru birden fazla tablodaki veriyi ilgilendiriyorsa, tabloları birbiriyle uygun alanlar (ID) üzerinden JOIN ile birleştirerek sorguyu oluştur. Eğer kullanıcının isteğini çözecek (örn: "son giriş tarihi") sütun/tablolar şemada HİÇ YOKSA, KESİNLİKLE SQL üretme ve sadece Nedenini 'DIAGNOSTIC:' başlığı ile açıkla.
 3. Yalnızca verilen şemadaki gerçek tablo ve sütunları kullan. Hayali sütun uydurma!
-4. Sütunlardaki kelime veya metin aramalarında HER ZAMAN LOWER() ile LIKE veya ILIKE kullan (harf duyarlılığını aşmak için). KESİNLİKLE eşittir (=) kullanma.
+4. Metin aramasında büyük/küçük harf duyarsız karşılaştırma kullan (PostgreSQL: ILIKE, Oracle: UPPER(), MSSQL: COLLATE). KESİNLİKLE eşittir (=) kullanma.
 5. Kullanıcı isim ve soyisim arıyorsa; tabloda Ad (Name) ve Soyad (Surname) kolonları AYRI ise iki sütunda da arama yap (örn: LOWER(Name) LIKE '%hakan%' AND LOWER(Surname) LIKE '%tütüncü%').
 6. {dialect_rules}
 7. Ürettiğin SQL'i KESİNLİKLE özel olarak ```sql <sorgu> ``` bloğu içine al. SQL kodunu bu blok dışına taşırma.
@@ -115,6 +115,17 @@ KULLANICI SORUSU:
 {query}
 
 Lütfen bu soruyu yanıtlayacak bir SELECT sorgusu yaz. SQL'i ```sql ... ``` bloğu içine yaz."""
+
+    # Few-shot örnekleri (varsa)
+    examples_block = ""
+    for tbl in (schema_context.get("tables") or [])[:5]:
+        sq = tbl.get("sample_questions")
+        if sq and isinstance(sq, list) and len(sq) > 0:
+            examples_block += f"-- Örnek soru ({tbl.get('table_name', tbl.get('name', ''))}): {sq[0]}\n"
+        if len(examples_block) > 300:
+            break
+    if examples_block:
+        user_msg += f"\n\nÖRNEK SORULAR:\n{examples_block}"
 
     return [
         {"role": "system", "content": system},
@@ -224,9 +235,9 @@ def generate_sql(
     # 1. Prompt oluştur
     messages = build_text_to_sql_prompt(query, schema_context)
 
-    # 2. LLM çağır
+    # 2. LLM çağır (temperature=0.1 ile daha deterministik SQL üretimi)
     try:
-        llm_response = call_llm_api(messages)
+        llm_response = call_llm_api(messages, temperature=0.1)
     except Exception as e:
         log_warning(f"Text-to-SQL LLM çağrısı başarısız: {e}", "hybrid_router")
         return {
@@ -252,13 +263,49 @@ def generate_sql(
 
     # 3. SQL parse et
     sql = parse_sql_from_llm(llm_response)
+
+    # M3: Parse başarısızsa bir kez daha basit prompt ile dene
     if not sql:
         # v3.6.8: DIAGNOSTIC mekanizması — Şemada veri yoksa LLM mantıklı bir hata dönebilir
         diagnostic_match = re.search(r'DIAGNOSTIC:\s*(.*)', llm_response, re.IGNORECASE | re.DOTALL)
-        error_msg = "LLM yanıtından SQL parse edilemedi, sistem sorunuz için geçerli bir tablo eşleştirememiş olabilir."
         if diagnostic_match:
-            error_msg = diagnostic_match.group(1).strip()
-            
+            # Gerçek bir DIAGNOSTIC yanıtı — retry gerekmez
+            return {
+                "success": False,
+                "sql": None,
+                "explanation": llm_response[:500],
+                "error": diagnostic_match.group(1).strip(),
+            }
+
+        # Basit prompt ile tek retry
+        log_system_event(
+            "INFO",
+            "Text-to-SQL parse başarısız, basit prompt ile retry yapılıyor",
+            "hybrid_router"
+        )
+        retry_messages = messages.copy()
+        retry_messages.append({"role": "assistant", "content": llm_response})
+        retry_messages.append({
+            "role": "user",
+            "content": "Lütfen sadece SQL sorgusu döndür, başka açıklama ekleme. "
+                       "SQL'i ```sql ... ``` bloğu içine yaz."
+        })
+        try:
+            retry_response = call_llm_api(retry_messages, temperature=0.1)
+            if retry_response:
+                sql = parse_sql_from_llm(retry_response)
+                if sql:
+                    llm_response = retry_response  # açıklama çıkarmak için güncelle
+                    log_system_event(
+                        "INFO",
+                        f"Text-to-SQL retry başarılı: {sql[:100]}",
+                        "hybrid_router"
+                    )
+        except Exception as retry_err:
+            log_warning(f"Text-to-SQL retry hatası: {retry_err}", "hybrid_router")
+
+    if not sql:
+        error_msg = "LLM yanıtından SQL parse edilemedi, sistem sorunuz için geçerli bir tablo eşleştirememiş olabilir."
         return {
             "success": False,
             "sql": None,

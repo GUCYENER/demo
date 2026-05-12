@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS user_organizations (
 -- Ticket'lar tablosu
 CREATE TABLE IF NOT EXISTS tickets (
     id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     title VARCHAR(500) NOT NULL,
     description TEXT NOT NULL,
     source_type VARCHAR(100),
@@ -126,8 +126,8 @@ CREATE TABLE IF NOT EXISTS ticket_messages (
 -- Çözüm logları
 CREATE TABLE IF NOT EXISTS solution_logs (
     id SERIAL PRIMARY KEY,
-    ticket_id INTEGER NOT NULL REFERENCES tickets(id),
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE SET NULL,
     topic VARCHAR(500) NOT NULL,
     description TEXT NOT NULL,
     source_type VARCHAR(100) NOT NULL,
@@ -726,15 +726,15 @@ CREATE INDEX IF NOT EXISTS idx_companies_active ON companies(is_active);
 -- Multi-Tenant Migration: company_id FK to existing tables
 -- =====================================================
 
-ALTER TABLE users ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id);
-ALTER TABLE llm_config ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id);
-ALTER TABLE prompt_templates ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id);
-ALTER TABLE uploaded_files ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id);
-ALTER TABLE widget_api_keys ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id);
-ALTER TABLE tickets ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id);
-ALTER TABLE dialogs ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id);
-ALTER TABLE ldap_settings ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id);
-ALTER TABLE organization_groups ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE;
+ALTER TABLE llm_config ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE;
+ALTER TABLE prompt_templates ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE;
+ALTER TABLE uploaded_files ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE;
+ALTER TABLE widget_api_keys ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE;
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE;
+ALTER TABLE dialogs ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE;
+ALTER TABLE ldap_settings ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE;
+ALTER TABLE organization_groups ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE;
 
 -- company_id indexes
 CREATE INDEX IF NOT EXISTS idx_users_company ON users(company_id);

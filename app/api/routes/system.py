@@ -779,7 +779,7 @@ async def get_learned_answer(
     
     except Exception as e:
         log_error(f"Learned answer getirme hatası: {e}", "ml_training")
-        return {"found": False, "answer": None, "error": str(e)}
+        return {"found": False, "answer": None, "error": "Arama sırasında bir hata oluştu"}
 
 class ScheduleItem(BaseModel):
     trigger_type: str = Field(..., pattern=r'^(feedback_count|interval_days|quality_drop|job_timeout|cl_interval)$')
@@ -933,7 +933,7 @@ async def update_continuous_config(
 # ════════════════════════════════════════════════
 
 @router.get("/maturity-threshold")
-async def get_maturity_threshold():
+async def get_maturity_threshold(current_user: dict = Depends(get_current_user)):
     """Maturity iyileştirme eşik değerini getir"""
     conn = None
     try:
@@ -954,7 +954,7 @@ async def get_maturity_threshold():
 
 
 @router.put("/maturity-threshold")
-async def set_maturity_threshold(threshold: int = Query(..., ge=0, le=100)):
+async def set_maturity_threshold(threshold: int = Query(..., ge=0, le=100), current_user: dict = Depends(get_current_user)):
     """Maturity iyileştirme eşik değerini güncelle"""
     conn = None
     try:

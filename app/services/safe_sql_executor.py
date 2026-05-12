@@ -359,7 +359,7 @@ class SafeSQLExecutor:
             log_error(f"SQL yürütme hatası: {e}", "hybrid_router")
             return SQLResult(
                 success=False,
-                error=str(e)[:500],
+                error="SQL çalıştırma sırasında beklenmeyen bir hata oluştu",
                 sql_executed=adapted_sql[:200],
                 elapsed_ms=elapsed,
             )

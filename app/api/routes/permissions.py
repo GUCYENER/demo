@@ -65,7 +65,7 @@ def get_all_resources() -> List[Dict[str, Any]]:
 # ============================================
 
 @router.get("/roles")
-async def get_roles():
+async def get_roles(current_user: dict = Depends(get_current_user)):
     """Mevcut rolleri getir"""
     log_system_event("DEBUG", "[Permissions] GET /roles", "permissions")
     return {
@@ -78,7 +78,7 @@ async def get_roles():
 
 
 @router.get("/resources")
-async def get_resources():
+async def get_resources(current_user: dict = Depends(get_current_user)):
     """Sistemdeki tüm kaynakları (menü, sekme, buton) getir"""
     log_system_event("DEBUG", "[Permissions] GET /resources", "permissions")
     resources = get_all_resources()
@@ -163,7 +163,7 @@ async def get_my_permissions(request_user=Depends(get_current_user)):
 
 
 @router.get("/{role_name}")
-async def get_role_permissions(role_name: str):
+async def get_role_permissions(role_name: str, current_user: dict = Depends(get_current_user)):
     """Belirli bir rolün yetkilerini getir"""
     
     if role_name not in ["admin", "user"]:

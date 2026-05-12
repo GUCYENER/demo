@@ -60,8 +60,10 @@ def _sync_from_api():
     import httpx
 
     try:
-        # SSL verify=False: kurumsal proxy sertifika sorununu aşmak için
-        with httpx.Client(timeout=30.0, verify=False) as client:
+        # SSL verify: kurumsal ortamda False gerekebilir (VYRA_SSL_VERIFY env ile kontrol)
+        import os
+        ssl_verify = os.environ.get("VYRA_SSL_VERIFY", "false").lower() != "false"
+        with httpx.Client(timeout=30.0, verify=ssl_verify) as client:
             # 1. İlleri çek (ilçeler dahil)
             res = client.get(f"{TURKEY_API}/provinces")
             res.raise_for_status()
@@ -155,8 +157,9 @@ def get_neighborhoods(district_id: int):
 
     # DB'de yok — API'den çek ve kaydet
     try:
-        import httpx
-        with httpx.Client(timeout=15.0, verify=False) as client:
+        import httpx, os
+        ssl_verify = os.environ.get("VYRA_SSL_VERIFY", "false").lower() != "false"
+        with httpx.Client(timeout=15.0, verify=ssl_verify) as client:
             res = client.get(f"{TURKEY_API}/districts/{district_id}")
             res.raise_for_status()
             data = res.json().get("data", {})

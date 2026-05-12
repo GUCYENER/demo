@@ -13,6 +13,11 @@
 const DSEnrichmentModule = (() => {
     'use strict';
 
+    function _escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+
     let _currentSourceId = null;
     let _pendingData = [];
     let _filteredData = [];
@@ -146,6 +151,7 @@ const DSEnrichmentModule = (() => {
                 fetch(`/api/data-sources/${_currentSourceId}/enrichment-all`, { headers })
             ]);
 
+            if (!statsRes.ok || !allRes.ok) throw new Error(`Sunucu hatası (HTTP ${statsRes.ok ? allRes.status : statsRes.status})`);
             const stats = await statsRes.json();
             const allData = await allRes.json();
 
@@ -165,7 +171,7 @@ const DSEnrichmentModule = (() => {
                 <div class="ds-enrich-empty">
                     <i class="fa-solid fa-triangle-exclamation"></i>
                     <h4>Yükleme Hatası</h4>
-                    <p>${err.message || 'Veriler yüklenemedi'}</p>
+                    <p>${_escapeHtml(err.message || 'Veriler yüklenemedi')}</p>
                 </div>
             `;
         }
@@ -404,17 +410,17 @@ const DSEnrichmentModule = (() => {
                         <td style="text-align: center;">
                             <input type="checkbox" class="ds-bulk-chk ${item.is_approved ? '' : 'cursor-pointer'}" value="${item.id}" ${isChecked} ${approvedAttr} onchange="DSEnrichmentModule.toggleCheckbox(this)">
                         </td>
-                        <td class="ds-schema-cell" title="${schemaName}" style="font-size:0.82rem;color:#9ca3af;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-                            ${schemaName}
+                        <td class="ds-schema-cell" title="${_escapeHtml(schemaName)}" style="font-size:0.82rem;color:#9ca3af;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                            ${_escapeHtml(schemaName)}
                         </td>
-                        <td class="ds-table-name-cell" title="${tableName}">
-                            <strong>${tableName}</strong>
+                        <td class="ds-table-name-cell" title="${_escapeHtml(tableName)}">
+                            <strong>${_escapeHtml(tableName)}</strong>
                         </td>
                         <td>
-                            ${item.business_name_tr || '<em class="ds-enrich-no-label">—</em>'}
+                            ${item.business_name_tr ? _escapeHtml(item.business_name_tr) : '<em class="ds-enrich-no-label">—</em>'}
                         </td>
                         <td style="text-align:center;">
-                            <span class="ds-cat-badge ${catClass}">${catClass}</span>
+                            <span class="ds-cat-badge ${catClass}">${_escapeHtml(catClass)}</span>
                         </td>
                         <td style="text-align:center;">
                             <span class="ds-score-badge ${scoreClass}">
@@ -422,8 +428,8 @@ const DSEnrichmentModule = (() => {
                                 ${(item.enrichment_score || 0).toFixed(2)}
                             </span>
                         </td>
-                        <td class="ds-desc-cell" title="${item.description_tr || '(Açıklama yok)'}">
-                            ${(item.description_tr || '').substring(0, 60)}${(item.description_tr || '').length > 60 ? '...' : ''}
+                        <td class="ds-desc-cell" title="${_escapeHtml(item.description_tr || '(Açıklama yok)')}">
+                            ${_escapeHtml((item.description_tr || '').substring(0, 60))}${(item.description_tr || '').length > 60 ? '...' : ''}
                         </td>
                         <td class="ds-action-cell">
                             <div class="ds-enrich-actions ds-action-nowrap">
@@ -699,16 +705,16 @@ const DSEnrichmentModule = (() => {
         const editRow = document.createElement('tr');
         editRow.className = 'ds-enrich-edit-row';
         editRow.innerHTML = `
-            <td colspan="6">
+            <td colspan="8">
                 <div class="ds-enrich-edit-form">
                     <div>
                         <label>Türkçe İş Adı</label>
-                        <input type="text" id="dsEditLabel" value="${item.business_name_tr || ''}"
+                        <input type="text" id="dsEditLabel" value="${_escapeHtml(item.business_name_tr || '')}"
                                placeholder="Örn: Fatura, Müşteri, Sipariş">
                     </div>
                     <div>
                         <label>Admin Notu</label>
-                        <textarea id="dsEditNotes" placeholder="Opsiyonel: Düzeltme gerekçesi veya ek bilgi">${item.admin_notes || ''}</textarea>
+                        <textarea id="dsEditNotes" placeholder="Opsiyonel: Düzeltme gerekçesi veya ek bilgi">${_escapeHtml(item.admin_notes || '')}</textarea>
                     </div>
                     <div class="ds-enrich-edit-actions">
                         <button class="save-btn" onclick="DSEnrichmentModule.saveEdit(${enrichmentId})">
@@ -735,14 +741,20 @@ const DSEnrichmentModule = (() => {
     // Save Edit (Approve with custom label)
     // ============================================
 
-    async function saveEdit(enrichmentId) {
+    async function saveEdit(objectId) {
+        const item = _pendingData.find(p => p.id === objectId);
+        if (!item || !item.enrichment_id) {
+            _showToast('Bu tablonun keşif kaydı bulunamadı', 'error');
+            return;
+        }
+        const realEnrichmentId = item.enrichment_id;
         const label = document.getElementById('dsEditLabel')?.value?.trim() || null;
         const notes = document.getElementById('dsEditNotes')?.value?.trim() || null;
 
         try {
             const token = localStorage.getItem('access_token');
             const res = await fetch(
-                `/api/data-sources/${_currentSourceId}/enrichment-approve/${enrichmentId}`,
+                `/api/data-sources/${_currentSourceId}/enrichment-approve/${realEnrichmentId}`,
                 {
                     method: 'POST',
                     headers: {
@@ -758,7 +770,7 @@ const DSEnrichmentModule = (() => {
             const data = await res.json();
 
             if (data.success) {
-                const existing = _pendingData.find(p => p.id === enrichmentId);
+                const existing = _pendingData.find(p => p.id === objectId);
                 if(existing) existing.is_approved = true;
                 _editingId = null;
 

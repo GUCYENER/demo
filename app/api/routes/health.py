@@ -45,7 +45,7 @@ async def health():
             overall_status = "error"
     except Exception as e:
         log_warning(f"Health check DB hatası: {e}", "health")
-        components["database"] = {"status": "error", "message": str(e)}
+        components["database"] = {"status": "error", "message": "unavailable"}
         overall_status = "error"
     
     # 2) Cache Check
@@ -59,7 +59,7 @@ async def health():
         }
     except Exception as e:
         log_warning(f"Health check cache hatası: {e}", "health")
-        components["cache"] = {"status": "error", "message": str(e)}
+        components["cache"] = {"status": "error", "message": "unavailable"}
         if overall_status == "ok":
             overall_status = "degraded"
     

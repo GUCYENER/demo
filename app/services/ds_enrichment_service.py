@@ -538,21 +538,26 @@ def _upsert_table_enrichment(vyra_conn, source_id: int, company_id: int,
         raise
 
 
+_COLUMN_SCHEMA_MIGRATED = False
+
 def _enrich_columns(vyra_conn, source_id: int, table_enrichment_id: int,
                     columns: list, llm_columns: dict):
     """Sütun enrichment kayıtlarını oluştur/güncelle. v5.0: synonyms + is_searchable desteği."""
+    global _COLUMN_SCHEMA_MIGRATED
     cur = vyra_conn.cursor()
 
-    # İdempotent schema migration — yeni kolonları ekle (yoksa)
-    try:
-        cur.execute("ALTER TABLE ds_column_enrichments ADD COLUMN IF NOT EXISTS synonyms_json TEXT DEFAULT NULL")
-        cur.execute("ALTER TABLE ds_column_enrichments ADD COLUMN IF NOT EXISTS is_searchable BOOLEAN DEFAULT FALSE")
-        vyra_conn.commit()
-    except Exception:
+    # İdempotent schema migration — yeni kolonları ekle (process başına bir kez)
+    if not _COLUMN_SCHEMA_MIGRATED:
         try:
-            vyra_conn.rollback()
+            cur.execute("ALTER TABLE ds_column_enrichments ADD COLUMN IF NOT EXISTS synonyms_json TEXT DEFAULT NULL")
+            cur.execute("ALTER TABLE ds_column_enrichments ADD COLUMN IF NOT EXISTS is_searchable BOOLEAN DEFAULT FALSE")
+            vyra_conn.commit()
+            _COLUMN_SCHEMA_MIGRATED = True
         except Exception:
-            pass
+            try:
+                vyra_conn.rollback()
+            except Exception:
+                pass
 
     for col in columns:
         col_name = col.get("name", "")
