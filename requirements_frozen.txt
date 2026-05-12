@@ -66,6 +66,7 @@ onnx==1.20.1
 onnxruntime==1.24.1
 opencv-python-headless==4.13.0.92
 openpyxl==3.1.5
+oracledb==4.0.0
 optimum==2.1.0
 optimum-onnx==0.1.0
 packaging==26.0

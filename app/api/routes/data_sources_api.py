@@ -343,9 +343,9 @@ def _test_database_connection(source: dict, password: str) -> dict:
         return {"success": True, "message": "Bağlantı başarılı", "server_info": version, "elapsed_ms": elapsed}
 
     elif db_type == "oracle":
-        import cx_Oracle
-        dsn = cx_Oracle.makedsn(host, port, service_name=db_name)
-        conn = cx_Oracle.connect(user=db_user, password=password, dsn=dsn)
+        import oracledb
+        dsn = oracledb.makedsn(host, port, service_name=db_name)
+        conn = oracledb.connect(user=db_user, password=password, dsn=dsn)
         version = conn.version
         conn.close()
         elapsed = int((time.time() - start) * 1000)
@@ -481,18 +481,24 @@ def test_connection(
         return result
 
     except Exception as e:
-        logger.debug(f"[DataSources] Bağlantı testi hatası: {type(e).__name__}")
-        # Hata mesajını kullanıcıya anlamlı şekilde döndür (güvenlik: traceback yok)
         error_type = type(e).__name__
         error_msg = str(e)
+        logger.warning(f"[DataSources] Bağlantı testi hatası: {error_type}: {error_msg}")
 
         # Bilinen hata tiplerini kullanıcı dostu mesaja çevir
         friendly_messages = {
-            "OperationalError": "Veritabanına bağlanılamadı. Sunucu adresi, port veya kimlik bilgilerini kontrol edin.",
-            "ConnectionRefusedError": "Bağlantı reddedildi. Sunucu çalışıyor mu?",
-            "timeout": "Bağlantı zaman aşımına uğradı. Sunucu erişilebilir mi?",
-            "gaierror": "Sunucu adresi çözümlenemedi. DNS ayarlarını kontrol edin.",
-            "AuthenticationError": "Kimlik doğrulama başarısız. Kullanıcı adı veya şifreyi kontrol edin.",
+            "OperationalError": f"Veritabanına bağlanılamadı. Sunucu adresi, port veya kimlik bilgilerini kontrol edin.\n\nDetay: {error_msg}",
+            "InterfaceError": f"Veritabanı sürücüsü bağlantı kuramadı.\n\nDetay: {error_msg}",
+            "DatabaseError": f"Veritabanı hatası.\n\nDetay: {error_msg}",
+            "ConnectionRefusedError": f"Bağlantı reddedildi. Sunucu çalışıyor mu? Port açık mı?\n\nDetay: {error_msg}",
+            "ConnectionResetError": f"Bağlantı sunucu tarafından kesildi.\n\nDetay: {error_msg}",
+            "TimeoutError": f"Bağlantı zaman aşımına uğradı. Sunucu erişilebilir mi?\n\nDetay: {error_msg}",
+            "timeout": f"Bağlantı zaman aşımına uğradı.\n\nDetay: {error_msg}",
+            "gaierror": f"Sunucu adresi çözümlenemedi. DNS ayarlarını veya host adresini kontrol edin.\n\nDetay: {error_msg}",
+            "AuthenticationError": f"Kimlik doğrulama başarısız. Kullanıcı adı veya şifreyi kontrol edin.\n\nDetay: {error_msg}",
+            "ModuleNotFoundError": f"Gerekli veritabanı sürücüsü kurulu değil.\n\nDetay: {error_msg}",
+            "ImportError": f"Gerekli veritabanı sürücüsü yüklenemedi.\n\nDetay: {error_msg}",
+            "OSError": f"Ağ bağlantısı kurulamadı. Sunucu adresi ve portu kontrol edin.\n\nDetay: {error_msg}",
         }
 
         friendly = friendly_messages.get(error_type, None)

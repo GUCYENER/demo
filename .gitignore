@@ -69,3 +69,15 @@ catboost_info/
 *.onnx
 *.cbm
 *.safetensors
+
+# Setup binary dosyalar (installer/packages - repo'ya girmez)
+setup/windows/
+setup/linux_wheels/
+setup/rpms/
+offline_packages/
+
+# Claude
+.claude/
+
+# Archive
+*.7z

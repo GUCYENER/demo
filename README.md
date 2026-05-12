@@ -6,17 +6,27 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 
 ## 🏗️ Portable Altyapı (Standalone Dağıtım)
 
-> **ÖNEMLİ:** Bu proje tamamen **portable/standalone** olarak çalışır. Sunucuya ayrıca yazılım kurulumu gerekmez. Tüm bileşenler proje klasörünün içindedir.
+> **ÖNEMLİ:** Bu proje **portable/standalone** çalışır. PostgreSQL, Redis, Nginx proje içindedir.
+> Python ve Visual C++ sunucuya kurulur, paketler offline yüklenir.
 
 ### Bileşenler
 
 | Bileşen | Konum | Açıklama |
 |---|---|---|
-| **Python 3.13** | `python/` | Portable Python (venv yapısı). `python/Scripts/python.exe` ana çalıştırıcı. `python/Lib/site-packages/` paketler. |
-| **PostgreSQL** | `pgsql/` | Standalone PostgreSQL kurulumu (port 5005). `pgsql/bin/` binary, `pgsql/data/` veritabanı. |
-| **Redis** | `redis/` | Portable Redis server (port 6380, auth, 128MB LRU). Deep Think cache persistence. |
-| **Nginx** | `nginx/` | Portable Nginx reverse proxy (port 8000). `nginx/conf/conf.d/vyra.conf` config. |
-| **Offline Paketler** | `offline_packages/` | pip bağımlılıkları offline kurulum için. İnternete kapalı sunucularda kullanılır. |
+| **Python 3.13** | `python/` | Sunucuya kurulur, `python -m venv python` ile venv oluşturulur. |
+| **PostgreSQL 16** | `pgsql/` | Standalone (port 5005). `pgsql/bin/` binary, `pgsql/data/` veritabanı. |
+| **Redis** | `redis/` | Portable Redis server (port 6380, auth, 128MB LRU). |
+| **Nginx 1.27** | `nginx/` | Portable Nginx reverse proxy (port 8000). |
+| **Offline Paketler** | `setup/windows/packages/` | 141 .whl dosyası, offline kurulum için. |
+
+### Desteklenen Veritabanları (Data Sources)
+
+| DB | Sürücü | Paket |
+|---|---|---|
+| PostgreSQL | psycopg2 | `psycopg2-binary` |
+| Oracle | oracledb (thin mode) | `oracledb` |
+| MSSQL | pymssql | `pymssql` |
+| MySQL | pymysql | `pymysql` |
 
 ### Başlatma / Durdurma
 
@@ -26,6 +36,7 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
 | `canlida_durdur.bat` | Tek tıkla güvenli durdurma |
 | `start.ps1` | PowerShell ile başlatma (geliştirme ortamı, port 5500) |
 | `stop.ps1` | PowerShell ile durdurma |
+| `canlida_calistir_linux.py` | Linux (RHEL 8.10) production launcher |
 
 ### Taşınabilirlik (Portability)
 
@@ -35,19 +46,42 @@ VYRA L1 Support API, AI destekli teknik destek sistemidir. RAG (Retrieval-Augmen
   - `vyra.conf` → Nginx frontend root yolunu günceller
 - Tüm script'ler `%~dp0` (bat) veya `$PSScriptRoot` (ps1) ile dinamik proje kökü kullanır
 
-### Canlıya Taşıma (Yeni Sunucu Kurulumu)
+### Canlıya Taşıma
 
-1. Proje klasörünü hedef sunucuya kopyalayın
-2. `python/Lib/` altında stdlib dosyaları yoksa (sadece `site-packages` varsa):
-   ```powershell
-   # Kaynak makinede çalıştırın (Python 3.13 kurulu olan makine):
-   robocopy "C:\...\Python313\Lib" "PROJE\python\Lib" /E /XD site-packages __pycache__ test tests tkinter turtledemo idlelib ensurepip lib2to3
-   robocopy "C:\...\Python313" "PROJE\python\Scripts" python3.dll python313.dll /NFL /NDL
-   ```
-3. `.env` dosyasını düzenleyin (JWT_SECRET, DB bilgileri vb.)
-4. `canlida_calistir.bat` çift tıklayın — tüm servisler otomatik başlar
+#### Windows Server (İnternetsiz)
+
+Detaylı rehber: [`setup/WINDOWS_KURULUM_REHBERI.md`](setup/WINDOWS_KURULUM_REHBERI.md)
+
+```
+1. setup\windows\vc_redist.x64.exe      → Install
+2. setup\windows\python-3.13.8-amd64.exe → "Add to PATH" → Install
+3. python -m venv python
+   python\Scripts\pip install --no-index --find-links setup\windows\packages -r requirements_frozen.txt
+4. Firewall'da 8000 portu aç
+5. .env kontrol et
+6. canlida_calistir.bat → çift tıkla
+```
+
+#### Linux RHEL 8.10 (İnternetsiz)
+
+Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
+
+```
+1. RPM kur (setup/rpms/ içindeki PostgreSQL 16, Python 3.11, Redis, Nginx)
+2. pgsql/data/ sahipliği ve izni ayarla (chown + chmod 700)
+3. SELinux portları aç (5005, 6380, 8000, 8002)
+4. python3 canlida_calistir_linux.py
+```
 
 ## 🚀 Versiyon Geçmişi
+
+### 🆕 v3.11.0 (2026-05-12) - Multi-Platform Deployment & Oracle DB Desteği
+- ✅ **Oracle DB Desteği:** `cx_Oracle` → `oracledb` (thin mode) geçişi. Oracle Client kurulumu gerektirmez.
+- ✅ **Detaylı Hata Mesajları:** Bağlantı testi hata popup'ları artık ModuleNotFoundError, InterfaceError, OSError vb. tüm hata tiplerini Türkçe açıklamayla gösterir.
+- ✅ **Windows Server Offline Kurulum:** `setup/windows/` klasörüne Python 3.13.8 installer, VC++ Redistributable ve 141 offline .whl paketi eklendi.
+- ✅ **Linux RHEL 8.10 Desteği:** `canlida_calistir_linux.py` launcher, `setup/rpms/` (PostgreSQL 16.13, Python 3.11, Redis 6, Nginx), `setup/linux_wheels/` (139 Linux .whl) oluşturuldu.
+- ✅ **Kurulum Rehberleri:** `setup/WINDOWS_KURULUM_REHBERI.md` ve `setup/KURULUM_REHBERI.md` (Linux) eklendi.
+- ✅ **offline_packages/ kaldırıldı:** Paketler artık `setup/windows/packages/` ve `setup/linux_wheels/` içinde platform-ayrık tutulur.
 
 ### 🆕 v3.10.0 (2026-04-14) - Text-to-SQL Pipeline: P0+P1+P2 İyileştirmeleri
 - ✅ **[P0] Tenant İzolasyonu (company_id):** DB-only pipeline'a firma bazlı kaynak filtresi eklendi. Her kullanıcı yalnızca kendi firmasına ait kaynağa erişir.

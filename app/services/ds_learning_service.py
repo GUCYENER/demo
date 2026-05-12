@@ -60,9 +60,9 @@ def _get_db_connector(source: dict, password: str):
         return conn, "mysql"
 
     elif db_type == "oracle":
-        import cx_Oracle
-        dsn = cx_Oracle.makedsn(host, port, service_name=db_name)
-        conn = cx_Oracle.connect(user=db_user, password=password, dsn=dsn)
+        import oracledb
+        dsn = oracledb.makedsn(host, port, service_name=db_name)
+        conn = oracledb.connect(user=db_user, password=password, dsn=dsn)
         return conn, "oracle"
 
     else:
