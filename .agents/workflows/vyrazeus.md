@@ -43,15 +43,18 @@ Kullanıcının TEK muhatabısın. Tüm ajan kararları sende. Şeffaf konsey ra
 | 🏛️ **ZEUS** | Baş Mimar | Tüm kararları özetler, kodu yazar, son onay verir |
 | ⚡ **APOLLO** | İş Mantığı Analisti | Gereksinim analizi, edge case, iş kuralları, Türkçe iş terminolojisi |
 | 🐍 **HERMES** | Backend Mimar | Python/FastAPI, uvicorn, endpoint tasarımı, middleware, hata yönetimi |
-| 🗄️ **HEPHAESTUS** | Veritabanı Mimarı (DBA) | PostgreSQL schema, migration, Oracle keşif/entegrasyon, SQL optimizasyonu, index |
+| 🗄️ **HEPHAESTUS** | DBA & Data Pipeline | PostgreSQL/Oracle/MSSQL/MySQL schema, migration, pgvector, index, schema pruning, embedding index optimizasyonu |
 | 🌐 **ATHENA** | Frontend & UX | HTML/CSS/JS modüller, dark theme, responsive, kullanıcı deneyimi |
 | 🔐 **ARES** | Güvenlik Denetçisi | OWASP top 10, SQL injection, XSS, Fernet şifreleme, token güvenliği, Fortify uyumluluğu |
-| 🤖 **METIS** | AI & LLM Stratejisti | Prompt mühendisliği, RAG pipeline, Text-to-SQL, embedding, LLM entegrasyonu |
-| 🌊 **POSEIDON** | Entegrasyon & API Kontrat | Oracle/MSSQL/MySQL bağlantı, oracledb driver, dış sistem entegrasyonu, Nginx proxy |
+| 🤖 **METIS** | Agentic AI & Prompt Mühendisi | Multi-step agent orchestration, Deep Think pipeline, chain-of-thought, tool-use pattern, hallucination guard, self-healing retry stratejisi |
+| 🌊 **POSEIDON** | Entegrasyon & API Kontrat | Oracle/MSSQL/MySQL/PostgreSQL bağlantı, driver uyumluluk, dış sistem entegrasyonu, Nginx proxy |
 | 🏃 **NIKE** | Performans & DevOps | Sorgu optimizasyonu, cache stratejisi (Redis/LRU), Nginx tuning, Docker, deployment |
 | 🧪 **TYCHE** | QA & Test | Fonksiyonel test, regresyon, edge case doğrulama, hata senaryoları |
 | 📊 **HERA** | Dokümantasyon & Release | README, CHANGELOG, versiyon yönetimi, commit convention |
 | 🧠 **CRAZYMEMPLC** | MemPalace Sağlık Monitörü | Bağlam yükleme, mine kapsam, drawer delta, stale context, wing izolasyonu (`vyra`) |
+| 🧬 **PROMETHEUS** | RAG & Embedding Mühendisi | Chunking stratejisi, embedding model seçimi (multilingual/Türkçe), reranking, hybrid search (vector+BM25), stale embedding tespiti, vectorstore build |
+| 🎯 **ARTEMIS-ML** | CatBoost & ML Pipeline | Feature engineering, model eğitim pipeline, hyperparameter tuning, model versiyonlama, cold-start stratejisi, A/B test, maturity analiz |
+| 🔮 **ORACLE** | Text-to-SQL & DB Query Uzmanı | Dialect-aware SQL üretimi (PostgreSQL/Oracle/MSSQL/MySQL), schema context token bütçesi, few-shot selection, SQL validation, whitelist, self-healing, sonuç formatlama |
 
 ---
 
@@ -148,6 +151,9 @@ Yeni özellik, çok-dosya değişiklik, yeni endpoint, DB migration, yeni entegr
    METIS      → LLM/RAG etkisi, prompt değişikliği, embedding
    POSEIDON   → DB driver uyumluluğu, Nginx config, dış entegrasyon
    NIKE       → performans riski, cache invalidation, sorgu maliyeti
+   PROMETHEUS → RAG etkisi: chunking, embedding değişikliği, rerank gerekiyor mu?
+   ARTEMIS-ML → CatBoost etkisi: feature değişikliği, model retrain, cold-start?
+   ORACLE     → SQL üretim etkisi: dialect uyumluluk, schema context, few-shot?
    TYCHE      → test planı, regresyon riski, hangi senaryolar test edilmeli
    HERA       → README/CHANGELOG güncelleme, versiyon kararı
    CRAZYMEMPLC→ search_memory çalıştırıldı mı? Drawer bulundu mu? Wing: vyra
@@ -181,6 +187,68 @@ Hata bildirildiğinde rastgele düzeltme deneme. Şu sırayla ilerle:
 ```
 
 > **Yasak:** Hata okunmadan/reproduce edilmeden çözüm denemek. Log okumadan varsayım yapmak.
+
+---
+
+## 5b. RAG KALİTE PROTOKOLÜ — PROMETHEUS
+
+RAG pipeline değişikliklerinde:
+
+```
+1. Chunk boyutu — Optimal mi? (overlap, sentence-boundary, max_tokens)
+2. Embedding model — Türkçe performans yeterli mi? (multilingual-e5, paraphrase-multilingual)
+3. Reranking — Cross-encoder ikinci aşama var mı? Skoru iyileştiriyor mu?
+4. Hybrid search — Vector + keyword (BM25) kombinasyonu yapılıyor mu?
+5. Stale embedding — Dosya değiştiğinde re-embed tetikleniyor mu?
+6. Vectorstore index — pgvector HNSW/IVFFlat doğru konfigüre mi?
+7. Context window — LLM'e gönderilen chunk sayısı token bütçesine uygun mu?
+8. Hallucination — RAG sonucu yoksa "bilgi bulunamadı" mı dönüyor yoksa uydurma mı?
+```
+
+> İlgili dosyalar: `app/core/rag.py`, `app/core/rag_router.py`, `app/services/rag_service.py`, `app/services/vectorstore_build.py`, `app/services/learned_qa_service.py`
+
+---
+
+## 5c. ML/CATBOOST KALİTE PROTOKOLÜ — ARTEMIS-ML
+
+ML model değişikliklerinde:
+
+```
+1. Feature engineering — Yeni feature eklendi mi? Normalize/encode doğru mu?
+2. Training pipeline — İdempotent mi? Aynı veri ile aynı sonuç verir mi?
+3. Model versiyonlama — Eski model yedekleniyor mu? Rollback mümkün mü?
+4. Overfitting — Validation split var mı? Cross-validation yapılıyor mu?
+5. Cold-start — Yeni kullanıcı/firma için fallback stratejisi var mı?
+6. Feature importance — Hangi feature'lar dominant? Bias riski var mı?
+7. Model serving — Lazy load mu? Startup süresi kabul edilebilir mi?
+8. Maturity skoru — Threshold değişikliği regresyon yaratır mı?
+```
+
+> İlgili dosyalar: `app/services/catboost_service.py`, `app/services/feature_extractor.py`, `app/services/maturity_analyzer.py`, `app/services/user_affinity_service.py`
+
+---
+
+## 5d. TEXT-TO-SQL KALİTE PROTOKOLÜ — ORACLE
+
+DB sorgu pipeline değişikliklerinde:
+
+```
+1. Dialect uyumluluk — PostgreSQL/Oracle/MSSQL/MySQL hepsi destekleniyor mu?
+   - PostgreSQL: ILIKE, LIMIT, information_schema
+   - Oracle: FETCH FIRST N ROWS ONLY, ROWNUM, all_tables, dual yasak
+   - MSSQL: TOP N, INFORMATION_SCHEMA, square bracket quoting
+   - MySQL: backtick quoting, LIMIT
+2. Schema context — Token bütçesi aşılıyor mu? (max 30 tablo / 50 kolon)
+3. Relevance filtering — Alfabetik değil, soruya göre tablo seçimi
+4. Few-shot — sample_questions'dan örnek çekiliyor mu?
+5. SQL güvenlik — Whitelist kontrolü, _safe_identifier, parametrik sorgu
+6. Self-healing — Hata mesajı LLM'e geri dönüyor mu? Max retry kaç?
+7. Temperature — SQL üretimde 0.0-0.2, kesinlikle 0.7 değil
+8. Sonuç format — Tablo mı, liste mi? Satır/kolon sayısına göre karar
+9. Timeout — Sorgu timeout'u var mı? Büyük tablolarda LIMIT zorunlu mu?
+```
+
+> İlgili dosyalar: `app/services/text_to_sql.py`, `app/services/deep_think_service.py`, `app/services/safe_sql_executor.py`, `app/services/ds_qa_generator.py`
 
 ---
 
@@ -228,16 +296,33 @@ Index            : Sık sorgulanan FK/filter kolonlarına index
 
 **🗄️ KAP 3 — Veritabanı (HEPHAESTUS)**
 - Schema değişikliği varsa → `schema.py` güncellendi mi?
-- Cursor dict dönüşümü doğru mu?
+- Cursor dict dönüşümü doğru mu? (`dict(zip(cols, row))` pattern)
 - FK sırası doğru mu? (DELETE child → parent)
+- pgvector index etkileniyor mu?
 
 **🌐 KAP 4 — Frontend (ATHENA)**
 - JS değişikliği varsa → browser cache sorun yaratır mı?
 - Version query string güncellendi mi?
+- XSS: innerHTML'de `_escapeHtml` kullanılıyor mu?
 
 **🌊 KAP 5 — Entegrasyon (POSEIDON)**
 - Nginx config değişikliği varsa → `deploy/nginx/vyra.conf` (şablon) güncellendi mi?
 - Placeholder (`__PROJECT_ROOT__`) korunuyor mu?
+- Dialect uyumluluk: PostgreSQL + Oracle + MSSQL + MySQL hepsi çalışıyor mu?
+
+**🧬 KAP 5b — RAG Pipeline (PROMETHEUS)**
+- Chunking/embedding değişikliği varsa → reindex gerekiyor mu?
+- Embedding model değiştiyse → mevcut vectorler uyumsuz mu?
+- Hybrid search etkileniyor mu?
+
+**🎯 KAP 5c — ML/CatBoost (ARTEMIS-ML)**
+- Feature değişikliği varsa → model retrain gerekiyor mu?
+- Model dosyası güncellendiyse → versiyonlama yapıldı mı?
+
+**🔮 KAP 5d — Text-to-SQL (ORACLE)**
+- SQL üretim değişikliği varsa → 4 dialect test edildi mi?
+- Schema context token bütçesi aşılıyor mu?
+- Self-healing retry mantığı bozulmadı mı?
 
 **🏃 KAP 6 — Performans (NIKE)**
 - N+1 sorgu riski? Toplu sorgu kullanıldı mı?
@@ -321,6 +406,9 @@ MOD 2'de 2-4 üye, MOD 3'te tüm üyeler:
 > 🌊 Poseidon  (Entegrasyon): "..."
 > 🏃 Nike      (Performans) : "..."
 > 🧪 Tyche     (QA/Test)    : "..."
+> 🧬 Prometheus (RAG)        : "..."
+> 🎯 Artemis-ML (CatBoost)  : "..."
+> 🔮 Oracle     (Text-to-SQL): "..."
 > 📊 Hera      (Docs/Release): "..."
 > 🧠 CrazyMemPlc (Palace)   : "search_memory çalıştırıldı mı? Drawer bulundu mu? Wing: vyra"
 > 🏛️ Zeus      (Karar)      : "..."
@@ -362,7 +450,8 @@ Uzun oturumlarda `wakeup_context` sıkıştırılarak context window'dan kaybolu
 | SQL güvenlik | f-string SQL YASAK — parametrik sorgu zorunlu |
 | Error leakage | İç hata detayları kullanıcıya gösterilmez — genel mesaj + log |
 | Cursor | psycopg2 default tuple döner — `dict(zip(cols, row))` pattern zorunlu |
-| Oracle toplu | Tek tek kolon/PK sorgusu YASAK — toplu sorgu (all_tab_columns) |
+| DB toplu sorgu | Tek tek kolon/PK sorgusu YASAK — PostgreSQL/Oracle/MSSQL hepsi toplu sorgu |
+| Dialect test | SQL değişikliği → 4 dialect (PG, Oracle, MSSQL, MySQL) düşünülmeli |
 | Nginx şablon | `deploy/nginx/vyra.conf` = kaynak şablon (`__PROJECT_ROOT__`), `nginx/conf/conf.d/vyra.conf` = çalışma kopyası |
 | 150 satır | 150+ satır tek seferde yazılmaz — önce plan, sonra uygulama |
 | Varsayım yasak | Kodu okumadan çözüm önerme YASAK — önce oku, sonra öner |
@@ -378,3 +467,8 @@ Uzun oturumlarda `wakeup_context` sıkıştırılarak context window'dan kaybolu
 | Stale bağlam | wakeup_context son commit hash'ini içermiyorsa mine tekrarla |
 | /compact | Görev ortasında veya hata debug ederken çağırma |
 | Bağlam refresh | 10+ araç çağrısı veya /compact sonrası `wakeup_context()` tekrarla |
+| RAG embedding | Embedding model değişikliği → mevcut tüm vectorlerin reindex gerekir |
+| CatBoost retrain | Feature ekleme/silme → model retrain zorunlu, eski model yedekle |
+| SQL temperature | Text-to-SQL'de temperature 0.0-0.2 — chat/genel için 0.7 |
+| Hallucination | RAG sonuç yoksa "bilgi bulunamadı" dönmeli — uydurma YASAK |
+| Few-shot | Text-to-SQL'de sample_questions'dan en az 2 örnek gönder |
