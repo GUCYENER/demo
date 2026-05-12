@@ -228,6 +228,11 @@ async def reset_system(
         cur.execute("SELECT COUNT(*) as cnt FROM ds_db_objects")
         deleted_counts["ds_db_objects"] = cur.fetchone()["cnt"]
         cur.execute("DELETE FROM ds_db_objects")
+
+        # DS Schema Snapshots
+        cur.execute("SELECT COUNT(*) as cnt FROM ds_schema_snapshots")
+        deleted_counts["ds_schema_snapshots"] = cur.fetchone()["cnt"]
+        cur.execute("DELETE FROM ds_schema_snapshots")
         
         # DS Keşif Job'ları
         cur.execute("SELECT COUNT(*) as cnt FROM ds_discovery_jobs")

@@ -676,7 +676,9 @@ def detect_objects(source: dict, vyra_conn) -> dict:
         # VYRA DB'ye kaydet
         vyra_cur = vyra_conn.cursor()
 
-        # Eski objeleri temizle
+        # Eski objeleri ve enrichment kalıntılarını temizle (FK sırasına dikkat)
+        vyra_cur.execute("DELETE FROM ds_column_enrichments WHERE source_id = %s", (source_id,))
+        vyra_cur.execute("DELETE FROM ds_table_enrichments WHERE source_id = %s", (source_id,))
         vyra_cur.execute("DELETE FROM ds_db_samples WHERE source_id = %s", (source_id,))
         vyra_cur.execute("DELETE FROM ds_db_objects WHERE source_id = %s", (source_id,))
         vyra_cur.execute("DELETE FROM ds_db_relationships WHERE source_id = %s", (source_id,))

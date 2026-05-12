@@ -87,6 +87,7 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 - ✅ **Windows Server Offline Kurulum:** `setup/windows/` klasörüne Python 3.13.8, VC++, Oracle Instant Client ve 141+ offline .whl eklendi.
 - ✅ **Linux RHEL 8.10 Desteği:** `canlida_calistir_linux.py` launcher, RPM'ler, Linux wheel'leri oluşturuldu.
 - ✅ **Kurulum Rehberleri:** `setup/WINDOWS_KURULUM_REHBERI.md` ve `setup/KURULUM_REHBERI.md` (Linux) eklendi.
+- ✅ **Local Oracle Test DB:** Docker + Oracle Free 23ai ile local test ortamı. `oracle_local_test/oracle_test.bat` ile tek tıkla başlatma. 11 tablo, 187 kayıt (müşteri, sipariş, fatura, ödeme, abonelik).
 
 ### 🆕 v3.10.0 (2026-04-14) - Text-to-SQL Pipeline: P0+P1+P2 İyileştirmeleri
 - ✅ **[P0] Tenant İzolasyonu (company_id):** DB-only pipeline'a firma bazlı kaynak filtresi eklendi. Her kullanıcı yalnızca kendi firmasına ait kaynağa erişir.

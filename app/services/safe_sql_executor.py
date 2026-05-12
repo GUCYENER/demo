@@ -178,6 +178,9 @@ def check_table_whitelist(
     if not allowed_tables:
         return True, None  # Whitelist boşsa kontrol atla
 
+    # Oracle/PG sistem pseudo-tabloları — her zaman izinli
+    system_tables = {"dual", "sysibm.sysdummy1"}
+
     # FROM ve JOIN sonrasındaki tablo adlarını çıkar
     # Quoted ve unquoted identifier formatlarını destekler:
     #   FROM users / FROM "users" / FROM [users] / FROM `users`
@@ -200,7 +203,7 @@ def check_table_whitelist(
     allowed_lower = {t.lower() for t in allowed_tables}
 
     for table in table_refs:
-        if table not in allowed_lower:
+        if table not in allowed_lower and table not in system_tables:
             return False, f"Tablo erişim yetkisi yok: {table}"
 
     return True, None

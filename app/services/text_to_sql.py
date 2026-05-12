@@ -91,9 +91,11 @@ def build_text_to_sql_prompt(
   - Tarih işlemleri için CURDATE() veya NOW() kullan ve metin birleştirirken CONCAT() kullan.'''
     elif dialect == "oracle":
         dialect_rules = '''Oracle Özel Kuralları:
-  - Anahtar kelimeleri korumak için çift tırnak (") kullan.
-  - Oracle "LIMIT" desteklemez. Bunun yerine tam cümlenin sonuna "FETCH FIRST 100 ROWS ONLY" ekle.
-  - Tarih işlemleri için SYSDATE kullan.'''
+  - Tablo ve kolon adlarını çift tırnak (") içinde schema ile kullan: "SCHEMA"."TABLO"."KOLON"
+  - Oracle "LIMIT" desteklemez. Bunun yerine "FETCH FIRST N ROWS ONLY" ekle.
+  - Tarih işlemleri için SYSDATE kullan.
+  - COUNT, SUM gibi aggregate fonksiyonlar doğrudan tabloda çalışır. "FROM dual" KULLANMA.
+  - Birden fazla tablodan COUNT almak için subquery veya UNION ALL kullan, dual kullanma.'''
     else:
         dialect_rules = "Sorguya maksimum 100 satır sınırı ekle (LIMIT veya TOP) ve sütun adlarını veritabanının diline uygun quote et."
 

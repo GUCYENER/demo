@@ -699,8 +699,8 @@ def get_pending_approvals(vyra_conn, source_id: int = None,
     query += " ORDER BY te.enrichment_score ASC, te.table_name ASC"
 
     cur.execute(query, params)
-    rows = cur.fetchall()
-    return [dict(r) if hasattr(r, 'keys') else r for r in rows]
+    cols = [desc[0] for desc in cur.description]
+    return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
 def get_approved_enrichments(vyra_conn, source_id: int = None, company_id: int = None) -> list:
@@ -729,8 +729,8 @@ def get_approved_enrichments(vyra_conn, source_id: int = None, company_id: int =
     query += " ORDER BY te.table_name ASC"
 
     cur.execute(query, params)
-    rows = cur.fetchall()
-    return [dict(r) if hasattr(r, 'keys') else r for r in rows]
+    cols = [desc[0] for desc in cur.description]
+    return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
 def approve_enrichment(vyra_conn, enrichment_id: int, user_id: int,
@@ -824,7 +824,8 @@ def get_column_enrichments(vyra_conn, table_enrichment_id: int) -> list:
         ORDER BY is_key_column DESC, column_name ASC
     """, (table_enrichment_id,))
 
-    return [dict(r) if hasattr(r, 'keys') else r for r in cur.fetchall()]
+    cols = [desc[0] for desc in cur.description]
+    return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
 # =====================================================

@@ -51,6 +51,7 @@ nginx/
 
 # Temporary Files
 Gecici_Dosyalar_Sil/
+oracle_local_test/
 tmp/
 temp/
 

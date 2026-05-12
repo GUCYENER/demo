@@ -1288,9 +1288,10 @@ def get_column_enrichments(
         from app.services import ds_enrichment_service
         with get_db_context() as conn:
             columns = ds_enrichment_service.get_column_enrichments(conn, enrichment_id)
+            logger.info("[DataSources] Column enrichments: enrichment_id=%s → %d sütun döndü", enrichment_id, len(columns))
             return {"success": True, "columns": columns}
     except Exception as e:
-        logger.error("[DataSources] Column enrichments hatası: %s", type(e).__name__)
+        logger.error("[DataSources] Column enrichments hatası: enrichment_id=%s, hata=%s — %s", enrichment_id, type(e).__name__, str(e)[:200])
         return {"success": False, "columns": []}
 
 

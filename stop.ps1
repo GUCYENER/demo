@@ -20,8 +20,24 @@ Write-Host "         VYRA L1 Support API - Durdurma" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# 1. Frontend (Python serve.py) durdur
-Write-Host "[1/4] Frontend durduruluyor..." -ForegroundColor Yellow
+# 1. Nginx durdur
+Write-Host "[1/6] Nginx durduruluyor..." -ForegroundColor Yellow
+$nginxExe = "$ProjectRoot\nginx\nginx.exe"
+if (Test-Path $nginxExe) {
+    $nginxRunning = tasklist /fi "imagename eq nginx.exe" 2>$null | Select-String "nginx.exe"
+    if ($nginxRunning) {
+        Start-Process -FilePath $nginxExe -ArgumentList "-s", "quit" -WorkingDirectory "$ProjectRoot\nginx" -WindowStyle Hidden -Wait
+        Start-Sleep -Seconds 1
+        Write-Host "   [OK] Nginx durduruldu" -ForegroundColor Green
+    } else {
+        Write-Host "   [--] Nginx zaten calismiyordu" -ForegroundColor DarkGray
+    }
+} else {
+    Write-Host "   [--] Nginx bulunamadi" -ForegroundColor DarkGray
+}
+
+# 2. Frontend (Python serve.py) durdur
+Write-Host "[2/6] Frontend durduruluyor..." -ForegroundColor Yellow
 $frontendProcs = Get-Process -Name "python" -ErrorAction SilentlyContinue | Where-Object {
     try {
         $_.CommandLine -match "serve\.py"
@@ -42,7 +58,7 @@ if ($frontendProcs) {
 }
 
 # 2. Backend (Uvicorn) durdur
-Write-Host "[2/4] Backend durduruluyor..." -ForegroundColor Yellow
+Write-Host "[3/6] Backend durduruluyor..." -ForegroundColor Yellow
 $backendProcs = Get-Process -Name "python" -ErrorAction SilentlyContinue | Where-Object {
     try {
         $_.CommandLine -match "uvicorn"
@@ -63,7 +79,7 @@ if ($backendProcs) {
 }
 
 # 3. Redis durdur
-Write-Host "[3/4] Redis durduruluyor..." -ForegroundColor Yellow
+Write-Host "[4/6] Redis durduruluyor..." -ForegroundColor Yellow
 $redisCli = "$ProjectRoot\redis\redis-cli.exe"
 if (Test-Path $redisCli) {
     try {
@@ -88,8 +104,23 @@ if (Test-Path $redisCli) {
     }
 }
 
-# 4. PostgreSQL durdur
-Write-Host "[4/4] PostgreSQL durduruluyor..." -ForegroundColor Yellow
+# 5. Oracle Test DB (Docker container) durdur
+$dockerExe = "C:\Program Files\Docker\Docker\resources\bin\docker.exe"
+if (Test-Path $dockerExe) {
+    Write-Host "[5/6] Oracle Test DB durduruluyor..." -ForegroundColor Yellow
+    $oraStatus = & $dockerExe ps --filter "name=vyra-oracle-test" --format "{{.Status}}" 2>$null
+    if ($oraStatus -match "Up") {
+        & $dockerExe stop vyra-oracle-test 2>$null | Out-Null
+        Write-Host "   [OK] Oracle Test DB durduruldu" -ForegroundColor Green
+    } else {
+        Write-Host "   [--] Oracle Test DB zaten calismiyordu" -ForegroundColor DarkGray
+    }
+} else {
+    Write-Host "[5/6] Oracle Test DB atlandi (Docker kurulu degil)" -ForegroundColor DarkGray
+}
+
+# 6. PostgreSQL durdur
+Write-Host "[6/6] PostgreSQL durduruluyor..." -ForegroundColor Yellow
 $pgCtl = "$ProjectRoot\pgsql\bin\pg_ctl.exe"
 $pgData = "$ProjectRoot\pgsql\data"
 if (Test-Path $pgCtl) {

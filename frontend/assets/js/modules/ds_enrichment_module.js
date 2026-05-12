@@ -439,7 +439,7 @@ const DSEnrichmentModule = (() => {
                                 <button class="ds-enrich-btn edit" onclick="DSEnrichmentModule.toggleEdit(${item.id})" title="Düzenle">
                                     <i class="fa-solid fa-pen"></i>
                                 </button>
-                                <button class="ds-enrich-btn columns" onclick="DSEnrichmentModule.showColumns(${item.id})" title="Sütunları göster">
+                                <button class="ds-enrich-btn columns" onclick="DSEnrichmentModule.showColumns(${item.enrichment_id})" title="Sütunları göster">
                                     <i class="fa-solid fa-table-columns"></i>
                                 </button>
                                 ` : ''}
@@ -795,12 +795,24 @@ const DSEnrichmentModule = (() => {
 
     async function showColumns(enrichmentId) {
         try {
+            if (!enrichmentId) {
+                _showToast('Bu tablo henüz keşfedilmedi', 'warning');
+                return;
+            }
             const token = localStorage.getItem('access_token');
             const res = await fetch(
                 `/api/data-sources/enrichment/${enrichmentId}/columns`,
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
+
+            if (!res.ok) {
+                console.error('[DSEnrich] Sütun API hatası:', res.status, res.statusText);
+                _showToast(`Sütun verisi alınamadı (HTTP ${res.status})`, 'error');
+                return;
+            }
+
             const data = await res.json();
+            console.log('[DSEnrich] showColumns enrichmentId=', enrichmentId, 'response=', data);
 
             if (!data.success || !data.columns || data.columns.length === 0) {
                 _showToast('Sütun verisi bulunamadı', 'warning');
@@ -808,7 +820,7 @@ const DSEnrichmentModule = (() => {
             }
 
             // Sütun detaylarını mini modal olarak göster
-            const item = _pendingData.find(p => p.id === enrichmentId);
+            const item = _pendingData.find(p => p.enrichment_id === enrichmentId);
             const tableName = item ? (item.schema_name ? `${item.schema_name}.${item.table_name}` : item.table_name) : '';
 
             let colRows = '';
