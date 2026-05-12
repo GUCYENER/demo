@@ -28,6 +28,7 @@ const DSEnrichmentModule = (() => {
     let _pollingTimer = null;
     let _isPolling = false;
     let _filterPendingApproval = false;
+    let _filterSchema = '';
 
     // ============================================
     // Panel Aç/Kapat
@@ -45,6 +46,7 @@ const DSEnrichmentModule = (() => {
         _filterLowScore = false;
         _showApproved = false;
         _filterPendingApproval = false;
+        _filterSchema = '';
         _selectedIds.clear();
         _onCloseCallback = onCloseCallback || null;
 
@@ -303,7 +305,12 @@ const DSEnrichmentModule = (() => {
                 approvalMatch = false;
             }
 
-            return textMatch && scoreMatch && approvalMatch;
+            let schemaMatch = true;
+            if (_filterSchema) {
+                schemaMatch = (item.schema_name || '').toLowerCase() === _filterSchema.toLowerCase();
+            }
+
+            return textMatch && scoreMatch && approvalMatch && schemaMatch;
         });
 
         // Onay bekleyen filtresi (sadece kesfedilmis ama onayla beklenenler)
@@ -343,7 +350,9 @@ const DSEnrichmentModule = (() => {
     }
 
     function _renderUIPartial(body, items, totalItems, totalPages, startIndex, endIndex) {
+        const searchInput = document.getElementById('dsSearchInput');
         const wasSearchFocused = document.activeElement && document.activeElement.id === 'dsSearchInput';
+        const savedCursorPos = wasSearchFocused && searchInput ? searchInput.selectionStart : null;
 
         if (_filteredData.length === 0 && _searchQuery === '' && !_filterLowScore) {
             const total = parseInt(document.querySelector('.ds-enrich-stat-num')?.textContent || "0");
@@ -377,13 +386,14 @@ const DSEnrichmentModule = (() => {
 
         let rows = '';
         if (items.length === 0) {
-            rows = `<tr><td colspan="7" class="text-center" style="padding:2rem;color:#aaa;">Bu filtrelere uygun tablo bulunamadı.</td></tr>`;
+            rows = `<tr><td colspan="8" class="text-center" style="padding:2rem;color:#aaa;">Bu filtrelere uygun tablo bulunamadı.</td></tr>`;
         } else {
             for (const item of items) {
                 const scoreClass = item.enrichment_score >= 0.7 ? 'high' :
                                    item.enrichment_score >= 0.4 ? 'medium' : 'low';
                 const catClass = item.category || 'other';
-                const tableName = item.schema_name ? `${item.schema_name}.${item.table_name}` : item.table_name;
+                const schemaName = item.schema_name || '';
+                const tableName = item.table_name || '';
                 const isChecked = _selectedIds.has(item.id.toString()) ? 'checked' : '';
                 const approvedAttr = item.is_approved ? 'disabled title="Zaten onaylandı"' : '';
                 const rowOpacity = item.is_approved ? 'opacity: 0.7;' : '';
@@ -393,6 +403,9 @@ const DSEnrichmentModule = (() => {
                     <tr data-id="${item.id}" class="ds-enrich-data-row" style="${rowOpacity}${rowHighlight}">
                         <td style="text-align: center;">
                             <input type="checkbox" class="ds-bulk-chk ${item.is_approved ? '' : 'cursor-pointer'}" value="${item.id}" ${isChecked} ${approvedAttr} onchange="DSEnrichmentModule.toggleCheckbox(this)">
+                        </td>
+                        <td class="ds-schema-cell" title="${schemaName}" style="font-size:0.82rem;color:#9ca3af;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                            ${schemaName}
                         </td>
                         <td class="ds-table-name-cell" title="${tableName}">
                             <strong>${tableName}</strong>
@@ -470,16 +483,27 @@ const DSEnrichmentModule = (() => {
         const _ttApproveSel   = _btnApproveSelDis ? (_btnSelUndiscovered > 0 ? 'Seçili tablolar henüz keşfedilmemiş, önce keşfedin' : 'Onaylanacak seçili tablo yok') : 'Seçili keşfedilmiş tabloları onayla';
         const _ttApproveAll   = _btnApproveAllDis ? (_btnUndiscoveredCount > 0 ? 'Önce tüm tabloları keşfedin' : 'Onaylanacak tablo yok') : `${_btnAllApprovable} keşfedilmiş tabloyu onayla`;
 
+        // Schema dropdown için unique listesi oluştur
+        const uniqueSchemas = [...new Set(_pendingData.map(x => x.schema_name).filter(Boolean))].sort();
+        let schemaOptions = '<option value="">Tüm Schemalar</option>';
+        for (const s of uniqueSchemas) {
+            schemaOptions += `<option value="${s}" ${_filterSchema === s ? 'selected' : ''}>${s}</option>`;
+        }
+
         body.innerHTML = `
             <div class="ds-enrich-filter-bar" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; flex-wrap:wrap; gap:10px; flex-shrink:0;">
-                <div style="flex:1; max-width:650px; display:flex; gap:0.5rem; align-items:center;">
+                <div style="flex:1; max-width:800px; display:flex; gap:0.5rem; align-items:center;">
                     <button onclick="DSEnrichmentModule.refreshData()" style="padding:8px 14px; border-radius:6px; border:none; background:rgba(255,255,255,0.1); color:#fff; cursor:pointer;" title="Verileri Yenile">
                         <i class="fa-solid fa-sync"></i>
                     </button>
+                    <select id="dsSchemaFilter" onchange="DSEnrichmentModule.filterBySchema(this.value)"
+                        style="padding:8px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.3); color:#fff; outline:none; font-size:0.85rem; min-width:130px; max-width:200px; cursor:pointer;">
+                        ${schemaOptions}
+                    </select>
                     <div style="position:relative; flex:1;">
                         <i class="fa-solid fa-search" style="position:absolute; left:12px; top:10px; color:#888;"></i>
-                        <input type="text" id="dsSearchInput" value="${_searchQuery}" placeholder="Tablo veya iş adı ara..." 
-                            style="width:100%; padding:8px 32px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.2); color:#fff; outline:none;" 
+                        <input type="text" id="dsSearchInput" value="${_searchQuery}" placeholder="Tablo veya iş adı ara..."
+                            style="width:100%; padding:8px 32px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.2); color:#fff; outline:none;"
                             oninput="DSEnrichmentModule.filterTables(this.value)" autocomplete="off">
                     </div>
                     <label style="display:flex; align-items:center; gap:6px; color:#ddd; font-size:0.85rem; cursor:pointer; white-space:nowrap;">
@@ -527,18 +551,20 @@ const DSEnrichmentModule = (() => {
                 <table class="ds-enrich-table" style="table-layout:fixed; width:100%;">
                     <colgroup>
                         <col style="width:40px;" />
-                        <col style="width:22%;" />
-                        <col style="width:14%;" />
-                        <col style="width:80px;" />
+                        <col style="width:12%;" />
+                        <col style="width:18%;" />
+                        <col style="width:12%;" />
                         <col style="width:72px;" />
+                        <col style="width:60px;" />
                         <col style="width:auto;" />
-                        <col style="width:210px;" />
+                        <col style="width:200px;" />
                     </colgroup>
                     <thead style="position:sticky; top:0; z-index:10; background:var(--bg-card, #1a1e29); box-shadow:0 2px 5px rgba(0,0,0,0.2);">
                         <tr>
                             <th style="width:40px; text-align:center;">
                                 <input type="checkbox" id="dsSelectAllChk" ${isAllSelected ? "checked" : ""} onchange="DSEnrichmentModule.toggleAllBulk(this.checked)" class="cursor-pointer" title="Bu sayfadaki tümünü seç" style="width:16px; height:16px; cursor:pointer; accent-color:var(--primary-color, #4f46e5); display:inline-block; visibility:visible; opacity:1;">
                             </th>
+                            <th>Schema</th>
                             <th>Tablo</th>
                             <th>İş Adı (TR)</th>
                             <th>Kategori</th>
@@ -566,11 +592,15 @@ const DSEnrichmentModule = (() => {
         `;
 
         if (wasSearchFocused) {
-            const searchInput = document.getElementById('dsSearchInput');
-            if (searchInput) {
-                searchInput.focus();
-                const len = searchInput.value.length;
-                searchInput.setSelectionRange(len, len);
+            const newSearchInput = document.getElementById('dsSearchInput');
+            if (newSearchInput) {
+                newSearchInput.focus();
+                if (savedCursorPos !== null) {
+                    newSearchInput.setSelectionRange(savedCursorPos, savedCursorPos);
+                } else {
+                    const len = newSearchInput.value.length;
+                    newSearchInput.setSelectionRange(len, len);
+                }
             }
         }
     }
@@ -868,6 +898,12 @@ const DSEnrichmentModule = (() => {
         _searchTimer = setTimeout(() => {
             applyFilterAndRender();
         }, 300);
+    }
+
+    function filterBySchema(schema) {
+        _filterSchema = schema;
+        _currentPage = 1;
+        applyFilterAndRender();
     }
 
     function toggleLowScoreFilter(checked) {
@@ -1226,6 +1262,7 @@ const DSEnrichmentModule = (() => {
         saveEdit,
         showColumns,
         filterTables,
+        filterBySchema,
         toggleLowScoreFilter,
         toggleShowApprovedFilter,
         togglePendingApprovalFilter,

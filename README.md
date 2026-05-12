@@ -75,13 +75,18 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
-### 🆕 v3.11.0 (2026-05-12) - Multi-Platform Deployment & Oracle DB Desteği
-- ✅ **Oracle DB Desteği:** `cx_Oracle` → `oracledb` (thin mode) geçişi. Oracle Client kurulumu gerektirmez.
-- ✅ **Detaylı Hata Mesajları:** Bağlantı testi hata popup'ları artık ModuleNotFoundError, InterfaceError, OSError vb. tüm hata tiplerini Türkçe açıklamayla gösterir.
-- ✅ **Windows Server Offline Kurulum:** `setup/windows/` klasörüne Python 3.13.8 installer, VC++ Redistributable ve 141 offline .whl paketi eklendi.
-- ✅ **Linux RHEL 8.10 Desteği:** `canlida_calistir_linux.py` launcher, `setup/rpms/` (PostgreSQL 16.13, Python 3.11, Redis 6, Nginx), `setup/linux_wheels/` (139 Linux .whl) oluşturuldu.
+### 🆕 v3.11.0 (2026-05-12) - Multi-Platform Deployment, Oracle DB & UI İyileştirmeleri
+- ✅ **Oracle DB Desteği:** `cx_Oracle` → `oracledb` geçişi. Thick mode (Instant Client) ile eski password verifier desteği.
+- ✅ **Oracle Obje Keşfi:** `detect_objects`'e Oracle branch eklendi (tablo, view, kolon, PK, FK keşfi). Toplu sorgu optimizasyonu (1355 → 5 SQL).
+- ✅ **Oracle Veri Toplama:** CLOB/NCLOB/LONG/XMLTYPE güvenli filtre, max 50 kolon limiti, ilerleme loglama.
+- ✅ **MSSQL & MySQL Sürücüleri:** `pymssql`, `pymysql` paketleri eklendi.
+- ✅ **Detaylı Hata Mesajları:** Bağlantı testi hata popup'ları tüm hata tiplerini (NotSupportedError, InterfaceError, OSError vb.) Türkçe detayla gösterir.
+- ✅ **Enrichment UI — Schema Kolonu:** Tablo listesine ayrı Schema kolonu ve Schema dropdown filtresi eklendi.
+- ✅ **Enrichment UI — Cursor Fix:** Arama yaparken cursor pozisyonu artık başa atlamaz.
+- ✅ **Nginx Timeout:** DS Discovery endpoint'leri 600s timeout (büyük Oracle DB'ler için).
+- ✅ **Windows Server Offline Kurulum:** `setup/windows/` klasörüne Python 3.13.8, VC++, Oracle Instant Client ve 141+ offline .whl eklendi.
+- ✅ **Linux RHEL 8.10 Desteği:** `canlida_calistir_linux.py` launcher, RPM'ler, Linux wheel'leri oluşturuldu.
 - ✅ **Kurulum Rehberleri:** `setup/WINDOWS_KURULUM_REHBERI.md` ve `setup/KURULUM_REHBERI.md` (Linux) eklendi.
-- ✅ **offline_packages/ kaldırıldı:** Paketler artık `setup/windows/packages/` ve `setup/linux_wheels/` içinde platform-ayrık tutulur.
 
 ### 🆕 v3.10.0 (2026-04-14) - Text-to-SQL Pipeline: P0+P1+P2 İyileştirmeleri
 - ✅ **[P0] Tenant İzolasyonu (company_id):** DB-only pipeline'a firma bazlı kaynak filtresi eklendi. Her kullanıcı yalnızca kendi firmasına ait kaynağa erişir.

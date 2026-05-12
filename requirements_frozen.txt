@@ -88,6 +88,8 @@ pydantic-settings==2.12.0
 pydantic_core==2.41.5
 pyflakes==3.4.0
 Pygments==2.19.2
+pymssql==2.3.13
+pymysql==2.2.8
 PyMuPDF==1.26.7
 pyparsing==3.3.2
 pypdf==6.6.2

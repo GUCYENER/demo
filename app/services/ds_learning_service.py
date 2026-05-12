@@ -61,6 +61,8 @@ def _get_db_connector(source: dict, password: str):
 
     elif db_type == "oracle":
         import oracledb
+        from app.api.routes.data_sources_api import _init_oracle_thick_mode
+        _init_oracle_thick_mode()
         dsn = oracledb.makedsn(host, port, service_name=db_name)
         conn = oracledb.connect(user=db_user, password=password, dsn=dsn)
         return conn, "oracle"
@@ -160,8 +162,20 @@ def discover_technology(source: dict, vyra_conn) -> dict:
 
         elif db_dialect == "oracle":
             result["db_version"] = db_conn.version
-            cur.execute("SELECT DISTINCT owner FROM all_tables WHERE owner NOT IN ('SYS','SYSTEM','OUTLN','DBSNMP') ORDER BY owner")
+            cur.execute("""
+                SELECT DISTINCT owner FROM all_tables
+                WHERE owner NOT IN (
+                    'SYS','SYSTEM','OUTLN','DBSNMP','XDB','CTXSYS','MDSYS',
+                    'ORDDATA','ORDSYS','WMSYS','EXFSYS','OLAPSYS','DVSYS',
+                    'LBACSYS','APEX_PUBLIC_USER','FLOWS_FILES','ANONYMOUS',
+                    'APEX_040000','APEX_040200','APPQOSSYS','AUDSYS',
+                    'GSMADMIN_INTERNAL','OJVMSYS','DVF','DBSFWUSER'
+                )
+                ORDER BY owner
+            """)
             result["schemas"] = [r[0] for r in cur.fetchall()]
+            logger.info("[DSLearning] Oracle schema sayısı: %d, schemalar: %s",
+                        len(result["schemas"]), result["schemas"][:10])
 
         elapsed = int((time.time() - start) * 1000)
         result["elapsed_ms"] = elapsed
@@ -497,6 +511,165 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                     "constraint_name": cn
                 })
 
+        elif db_dialect == "oracle":
+            # Oracle: Tablo ve View keşfi
+            # db_user ile bağlanan kullanıcının erişebildiği tüm schema'ları keşfet
+            # Sadece db_user'ın kendi schema'sı değil, erişim izni olan diğer schema'lar da dahil
+            schema_owner = source.get("db_user", "").upper()
+
+            # Adım 1 sonucundaki schema listesi varsa kullan, yoksa bağlanan kullanıcının schema'sını al
+            # Oracle'da bağlanan kullanıcı kendi schema'sındaki tablolara erişir
+            # Ama başka schema'lara da grant ile erişim olabilir
+            logger.info("[DSLearning] Oracle keşif: db_user=%s, schema_owner=%s", source.get("db_user"), schema_owner)
+
+            # Bağlanan kullanıcının görebildiği tüm tabloları al (SYS/SYSTEM hariç)
+            excluded_owners = (
+                'SYS', 'SYSTEM', 'OUTLN', 'DBSNMP', 'XDB', 'CTXSYS', 'MDSYS',
+                'ORDDATA', 'ORDSYS', 'WMSYS', 'EXFSYS', 'OLAPSYS', 'DVSYS',
+                'LBACSYS', 'APEX_PUBLIC_USER', 'FLOWS_FILES', 'ANONYMOUS',
+                'APEX_040000', 'APEX_040200', 'APPQOSSYS', 'AUDSYS',
+                'GSMADMIN_INTERNAL', 'OJVMSYS', 'DVF', 'DBSFWUSER'
+            )
+            exclude_placeholders = ",".join([f"'{o}'" for o in excluded_owners])
+
+            cur.execute(f"""
+                SELECT owner, table_name, 'TABLE' AS object_type, num_rows
+                FROM all_tables
+                WHERE owner NOT IN ({exclude_placeholders})
+                ORDER BY owner, table_name
+            """)
+            tables_raw = cur.fetchall()
+            logger.info("[DSLearning] Oracle all_tables sonucu: %d tablo", len(tables_raw))
+
+            cur.execute(f"""
+                SELECT owner, view_name, 'VIEW' AS object_type, 0
+                FROM all_views
+                WHERE owner NOT IN ({exclude_placeholders})
+                ORDER BY owner, view_name
+            """)
+            views_raw = cur.fetchall()
+            logger.info("[DSLearning] Oracle all_views sonucu: %d view", len(views_raw))
+
+            all_objects = list(tables_raw) + list(views_raw)
+            logger.info("[DSLearning] Oracle toplam obje: %d (tablo+view)", len(all_objects))
+
+            # ── Toplu kolon sorgusu (676 tablo × tek tek yerine 1 sorgu) ──
+            all_columns = {}  # key: (owner, table_name) → list of column dicts
+            try:
+                cur.execute(f"""
+                    SELECT owner, table_name, column_name, data_type, nullable,
+                           data_length, data_precision, data_scale, column_id
+                    FROM all_tab_columns
+                    WHERE owner NOT IN ({exclude_placeholders})
+                    ORDER BY owner, table_name, column_id
+                """)
+                for col in cur.fetchall():
+                    key = (col[0], col[1])
+                    data_type = col[3]
+                    data_length = col[5]
+                    data_precision = col[6]
+                    data_scale = col[7]
+
+                    if data_type in ("NUMBER",) and data_precision is not None:
+                        full_type = f"{data_type}({data_precision},{data_scale or 0})"
+                    elif data_type in ("VARCHAR2", "CHAR", "NVARCHAR2", "NCHAR", "RAW"):
+                        full_type = f"{data_type}({data_length})"
+                    else:
+                        full_type = data_type
+
+                    if key not in all_columns:
+                        all_columns[key] = []
+                    all_columns[key].append({
+                        "name": col[2],
+                        "data_type": full_type,
+                        "is_nullable": col[4] == "Y",
+                        "default_val": None,
+                        "is_pk": False
+                    })
+                logger.info("[DSLearning] Oracle toplu kolon sorgusu: %d tablo için kolon alındı", len(all_columns))
+            except Exception as col_err:
+                logger.error("[DSLearning] Oracle toplu kolon sorgusu hatası: %s", str(col_err)[:300])
+
+            # ── Toplu PK sorgusu (1 sorgu ile tüm PK'lar) ──
+            all_pks = {}  # key: (owner, table_name) → set of column names
+            try:
+                cur.execute(f"""
+                    SELECT c.owner, c.table_name, cc.column_name
+                    FROM all_constraints c
+                    JOIN all_cons_columns cc ON c.constraint_name = cc.constraint_name AND c.owner = cc.owner
+                    WHERE c.constraint_type = 'P'
+                      AND c.owner NOT IN ({exclude_placeholders})
+                """)
+                for row in cur.fetchall():
+                    key = (row[0], row[1])
+                    if key not in all_pks:
+                        all_pks[key] = set()
+                    all_pks[key].add(row[2])
+                logger.info("[DSLearning] Oracle toplu PK sorgusu: %d tablo için PK alındı", len(all_pks))
+            except Exception as pk_err:
+                logger.error("[DSLearning] Oracle toplu PK sorgusu hatası: %s", str(pk_err)[:300])
+
+            # ── Objeleri birleştir ──
+            for row in all_objects:
+                obj_owner = row[0]
+                obj_name = row[1]
+                obj_type_raw = row[2]
+                row_estimate = row[3] or 0
+                obj_type = "table" if obj_type_raw == "TABLE" else "view"
+
+                key = (obj_owner, obj_name)
+                columns = all_columns.get(key, [])
+
+                # PK işaretle
+                pk_cols = all_pks.get(key, set())
+                for c in columns:
+                    c["is_pk"] = c["name"] in pk_cols
+
+                objects.append({
+                    "schema_name": obj_owner,
+                    "object_name": obj_name,
+                    "object_type": obj_type,
+                    "column_count": len(columns),
+                    "row_count_estimate": row_estimate,
+                    "columns_json": columns
+                })
+
+            # Oracle FK İlişkileri
+            try:
+                cur.execute(f"""
+                    SELECT
+                        c.owner         AS from_schema,
+                        c.table_name    AS from_table,
+                        cc.column_name  AS from_column,
+                        r.owner         AS to_schema,
+                        r.table_name    AS to_table,
+                        rc.column_name  AS to_column,
+                        c.constraint_name
+                    FROM all_constraints c
+                    JOIN all_cons_columns cc ON c.constraint_name = cc.constraint_name AND c.owner = cc.owner
+                    JOIN all_constraints r ON c.r_constraint_name = r.constraint_name AND c.r_owner = r.owner
+                    JOIN all_cons_columns rc ON r.constraint_name = rc.constraint_name AND r.owner = rc.owner
+                        AND cc.position = rc.position
+                    WHERE c.constraint_type = 'R'
+                      AND c.owner NOT IN ({exclude_placeholders})
+                    ORDER BY c.table_name, c.constraint_name, cc.position
+                """)
+                for row in cur.fetchall():
+                    relationships.append({
+                        "from_schema": row[0],
+                        "from_table": row[1],
+                        "from_column": row[2],
+                        "to_schema": row[3],
+                        "to_table": row[4],
+                        "to_column": row[5],
+                        "constraint_name": row[6]
+                    })
+                logger.info("[DSLearning] Oracle FK ilişki sayısı: %d", len(relationships))
+            except Exception as fk_err:
+                logger.error("[DSLearning] Oracle FK sorgusu hatası: %s", str(fk_err)[:300])
+
+            logger.info("[DSLearning] Oracle keşif tamamlandı: %d obje, %d ilişki", len(objects), len(relationships))
+
         elapsed = int((time.time() - start) * 1000)
         db_conn.close()
 
@@ -608,11 +781,14 @@ def collect_samples(source: dict, vyra_conn, max_rows: int = 10) -> dict:
         target_cur = db_conn.cursor()
         total_sampled = 0
         failed_tables = []
+        total_tables = len(db_objects)
 
         # Eski sample'ları temizle
         vyra_cur.execute("DELETE FROM ds_db_samples WHERE source_id = %s", (source_id,))
 
-        for obj_row in db_objects:
+        for idx, obj_row in enumerate(db_objects):
+            if (idx + 1) % 50 == 0 or idx == 0:
+                logger.info("[DSLearning] Veri toplama ilerleme: %d/%d tablo", idx + 1, total_tables)
             obj_id = obj_row["id"] if isinstance(obj_row, dict) else obj_row[0]
             schema_name = obj_row["schema_name"] if isinstance(obj_row, dict) else obj_row[1]
             object_name = obj_row["object_name"] if isinstance(obj_row, dict) else obj_row[2]
@@ -621,16 +797,21 @@ def collect_samples(source: dict, vyra_conn, max_rows: int = 10) -> dict:
             if isinstance(columns_data, str):
                 columns_data = json.loads(columns_data)
 
-            # Sadece güvenli (binary olmayan) kolonları seç
-            unsafe_types = ["blob", "bytea", "varbinary", "binary", "image", "raw", "bfile"]
+            # Sadece güvenli (binary/LOB olmayan) kolonları seç
+            unsafe_types = ["blob", "bytea", "varbinary", "binary", "image", "raw", "bfile",
+                            "clob", "nclob", "long", "long raw", "xmltype", "blobtype"]
             safe_cols = []
             for col in (columns_data or []):
                 ctype = col.get("data_type", "").lower()
                 if not any(u in ctype for u in unsafe_types):
                     safe_cols.append(col.get("name"))
-                    
+
             if not safe_cols:
                 safe_cols = ["*"]
+
+            # Maksimum 50 kolon (çok geniş tablolarda performans)
+            if safe_cols[0] != "*" and len(safe_cols) > 50:
+                safe_cols = safe_cols[:50]
 
             # Güvenli tablo adı — sadece alfanümerik ve underscore
             safe_name = object_name.replace("'", "").replace(";", "")

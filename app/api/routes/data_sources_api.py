@@ -7,6 +7,7 @@ v2.56.0
 
 import logging
 import threading
+from pathlib import Path
 from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, HTTPException, Depends, Query, Body
@@ -289,6 +290,42 @@ def _decrypt_stored_password(encrypted: str) -> str:
         return encrypted
 
 
+_oracle_thick_initialized = False
+
+def _init_oracle_thick_mode():
+    """Oracle Instant Client varsa thick mode'u başlat (DPY-3015 hatası için gerekli)."""
+    global _oracle_thick_initialized
+    if _oracle_thick_initialized:
+        return
+    import oracledb
+    try:
+        # Proje içindeki Instant Client'ı dene
+        project_root = Path(__file__).resolve().parent.parent.parent.parent
+        ic_candidates = [
+            project_root / "setup" / "windows" / "instantclient",
+            project_root / "instantclient",
+            Path(r"C:\oracle\instantclient"),
+        ]
+        lib_dir = None
+        for candidate in ic_candidates:
+            if candidate.exists() and (candidate / "oci.dll").exists():
+                lib_dir = str(candidate)
+                break
+
+        if lib_dir:
+            oracledb.init_oracle_client(lib_dir=lib_dir)
+            logger.info(f"[Oracle] Thick mode aktif: {lib_dir}")
+        else:
+            oracledb.init_oracle_client()
+            logger.info("[Oracle] Thick mode aktif (PATH'ten)")
+        _oracle_thick_initialized = True
+    except oracledb.ProgrammingError:
+        # Zaten init edilmiş
+        _oracle_thick_initialized = True
+    except Exception as e:
+        logger.warning(f"[Oracle] Thick mode baslatılamadı, thin mode kullanılacak: {e}")
+
+
 def _test_database_connection(source: dict, password: str) -> dict:
     """Veritabanı bağlantı testi (PostgreSQL / MSSQL / MySQL / Oracle)."""
     import time
@@ -344,6 +381,7 @@ def _test_database_connection(source: dict, password: str) -> dict:
 
     elif db_type == "oracle":
         import oracledb
+        _init_oracle_thick_mode()
         dsn = oracledb.makedsn(host, port, service_name=db_name)
         conn = oracledb.connect(user=db_user, password=password, dsn=dsn)
         version = conn.version
@@ -498,6 +536,9 @@ def test_connection(
             "AuthenticationError": f"Kimlik doğrulama başarısız. Kullanıcı adı veya şifreyi kontrol edin.\n\nDetay: {error_msg}",
             "ModuleNotFoundError": f"Gerekli veritabanı sürücüsü kurulu değil.\n\nDetay: {error_msg}",
             "ImportError": f"Gerekli veritabanı sürücüsü yüklenemedi.\n\nDetay: {error_msg}",
+            "NotSupportedError": f"Oracle bağlantısı için thick mode gerekli. setup/windows/instantclient/ klasörünün sunucuda mevcut olduğundan emin olun.\n\nDetay: {error_msg}",
+            "ProgrammingError": f"SQL veya bağlantı parametresi hatası.\n\nDetay: {error_msg}",
+            "InternalError": f"Veritabanı iç hatası.\n\nDetay: {error_msg}",
             "OSError": f"Ağ bağlantısı kurulamadı. Sunucu adresi ve portu kontrol edin.\n\nDetay: {error_msg}",
         }
 
