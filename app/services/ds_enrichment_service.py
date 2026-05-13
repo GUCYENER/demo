@@ -829,8 +829,14 @@ def get_column_enrichments(vyra_conn, table_enrichment_id: int) -> list:
         ORDER BY is_key_column DESC, column_name ASC
     """, (table_enrichment_id,))
 
+    rows = cur.fetchall()
+    if not rows:
+        return []
+    # RealDictCursor ile dict(row); plain cursor ile zip
+    if hasattr(rows[0], 'keys'):
+        return [dict(row) for row in rows]
     cols = [desc[0] for desc in cur.description]
-    return [dict(zip(cols, row)) for row in cur.fetchall()]
+    return [dict(zip(cols, row)) for row in rows]
 
 
 # =====================================================

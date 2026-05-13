@@ -179,7 +179,7 @@ def check_table_whitelist(
         return True, None  # Whitelist boşsa kontrol atla
 
     # Oracle/PG sistem pseudo-tabloları — her zaman izinli
-    system_tables = {"dual", "sysibm.sysdummy1"}
+    system_tables = {"dual", "sysibm.sysdummy1", "sysdate", "rownum", "rowid", "systimestamp", "current_date", "current_timestamp"}
 
     # FROM ve JOIN sonrasındaki tablo adlarını çıkar
     # Quoted ve unquoted identifier formatlarını destekler:
@@ -194,17 +194,34 @@ def check_table_whitelist(
 
     for match in re.finditer(table_pattern, sql, re.IGNORECASE):
         raw = match.group(1)
-        # Quote karakterlerini temizle ve son parçayı al (tablo adı)
-        parts = raw.split(".")
-        table_part = parts[-1].strip('"[]`').lower()
-        table_refs.add(table_part)
+        # Quote karakterlerini temizle
+        clean = re.sub(r'["\'`\[\]]', '', raw).lower()
+        table_refs.add(clean)
 
-    # Whitelist'i lowercase olarak kontrol et
+    # Whitelist'i lowercase olarak kontrol et (hem tam "schema.tablo" hem sadece "tablo")
     allowed_lower = {t.lower() for t in allowed_tables}
+    # Whitelist'teki kısa adlar (son parça) — "schema.tablo" → "tablo"
+    allowed_short = {t.lower().rsplit(".", 1)[-1] for t in allowed_tables}
 
-    for table in table_refs:
-        if table not in allowed_lower and table not in system_tables:
-            return False, f"Tablo erişim yetkisi yok: {table}"
+    for ref in table_refs:
+        if ref in system_tables:
+            continue
+        # Tam eşleşme (schema.tablo veya tablo)
+        if ref in allowed_lower:
+            continue
+        # Kısa ad eşleşmesi (ref'in son parçası whitelist'te varsa)
+        ref_short = ref.rsplit(".", 1)[-1]
+        if ref_short in allowed_short:
+            continue
+        # ref schema.tablo ise — schema farklı ama tablo aynı → REDDet
+        if "." in ref and ref_short in allowed_short:
+            # Schema prefix kontrolü: ref'in schema kısmı whitelist'teki herhangi biriyle eşleşiyor mu?
+            ref_schema = ref.rsplit(".", 1)[0]
+            allowed_schemas = {t.lower().rsplit(".", 1)[0] for t in allowed_tables if "." in t}
+            if allowed_schemas and ref_schema not in allowed_schemas:
+                return False, f"Şema erişim yetkisi yok: {ref}"
+            continue
+        return False, f"Tablo erişim yetkisi yok: {ref}"
 
     return True, None
 
@@ -391,16 +408,40 @@ class SafeSQLExecutor:
             cur = conn.cursor()
 
             # DB-native timeout ayarla
+            db_native_timeout = False
             try:
                 if dialect == SQLDialect.POSTGRESQL:
                     cur.execute(f"SET statement_timeout = '{self.timeout * 1000}'")
+                    db_native_timeout = True
                 elif dialect == SQLDialect.MYSQL:
                     cur.execute(f"SET SESSION MAX_EXECUTION_TIME = {self.timeout * 1000}")
+                    db_native_timeout = True
             except Exception as timeout_err:
-                logger.debug(f"DB-native timeout ayarlanamadı: {timeout_err}")
+                logger.warning(f"DB-native timeout ayarlanamadı (thread fallback kullanılacak): {timeout_err}")
 
-            # Sorguyu çalıştır
-            cur.execute(sql)
+            # Sorguyu çalıştır (native timeout yoksa thread-based güvenlik)
+            import threading as _threading_exec
+            if not db_native_timeout:
+                exec_result = {"done": False, "error": None}
+                exec_event = _threading_exec.Event()
+
+                def _do_execute():
+                    try:
+                        cur.execute(sql)
+                        exec_result["done"] = True
+                    except Exception as ex:
+                        exec_result["error"] = ex
+                    finally:
+                        exec_event.set()
+
+                t_exec = _threading_exec.Thread(target=_do_execute, daemon=True)
+                t_exec.start()
+                if not exec_event.wait(timeout=self.timeout):
+                    raise SQLTimeoutError(f"Sorgu {self.timeout}s'de tamamlanamadı (thread timeout)")
+                if exec_result["error"]:
+                    raise exec_result["error"]
+            else:
+                cur.execute(sql)
 
             # Sütun adlarını al
             columns = []
@@ -414,7 +455,8 @@ class SafeSQLExecutor:
             rows = []
             for r in rows_raw:
                 if isinstance(r, dict):
-                    rows.append(r)
+                    # Dict olarak gelen satırların değerlerini de serialize et
+                    rows.append({k: _serialize_value(v) for k, v in r.items()})
                 else:
                     row_dict = {}
                     for i, val in enumerate(r):

@@ -81,17 +81,38 @@ def _get_db_connector(source: dict, password: str):
 
 
 def _decrypt_password(encrypted: str) -> str:
-    """Şifreli parolayı çözer."""
+    """
+    Şifreli parolayı çözer.
+
+    Desteklenen formatlar:
+    - "b64:<base64>"  → base64 decode
+    - Diğer           → app.core.encryption.decrypt_password
+
+    Hata durumunda şifreli metni asla düz metin olarak döndürmez;
+    exception fırlatır (bağlantı daha açık bir hatayla başarısız olur).
+    """
     if not encrypted:
         return ""
     if encrypted.startswith("b64:"):
-        import base64
-        return base64.b64decode(encrypted[4:]).decode()
+        import base64 as _b64
+        try:
+            decoded = _b64.b64decode(encrypted[4:], validate=True).decode("utf-8")
+            return decoded
+        except Exception as e:
+            from app.services.logging_service import log_error
+            log_error(f"b64 parola çözme hatası: {e}", "ds_learning")
+            raise ValueError(f"Parola çözme başarısız (geçersiz base64): {e}") from e
     try:
         from app.core.encryption import decrypt_password
         return decrypt_password(encrypted)
-    except Exception:
-        return encrypted
+    except ImportError:
+        from app.services.logging_service import log_error
+        log_error("Şifreleme modülü bulunamadı (app.core.encryption)", "ds_learning")
+        raise
+    except Exception as e:
+        from app.services.logging_service import log_error
+        log_error(f"Parola çözme hatası: {e}", "ds_learning")
+        raise ValueError(f"Parola çözme başarısız: {e}") from e
 
 
 # =====================================================
@@ -820,9 +841,10 @@ def detect_objects(source: dict, vyra_conn) -> dict:
 # Adım 3: Örnek Veri Toplama
 # =====================================================
 
-def collect_samples(source: dict, vyra_conn, max_rows: int = 10) -> dict:
+def collect_samples(source: dict, vyra_conn, max_rows: int = 10, schema_filter: list = None) -> dict:
     """
     Keşfedilen tablolardan örnek SELECT sorguları hazırlayıp çalıştırır.
+    schema_filter: Belirli schema adlarına göre filtreler (None = tüm şemalar).
     """
     source_id = source["id"]
     start = time.time()
@@ -831,15 +853,27 @@ def collect_samples(source: dict, vyra_conn, max_rows: int = 10) -> dict:
     try:
         password = _decrypt_password(source.get("db_password_encrypted", ""))
         db_conn, db_dialect = _get_db_connector(source, password)
-        
-        # VYRA DB'den keşfedilmiş objeleri al
+
+        # VYRA DB'den keşfedilmiş objeleri al (opsiyonel schema filtresi ile)
         vyra_cur = vyra_conn.cursor()
-        vyra_cur.execute("""
-            SELECT id, schema_name, object_name, object_type, columns_json
-            FROM ds_db_objects
-            WHERE source_id = %s AND object_type = 'table'
-            ORDER BY object_name
-        """, (source_id,))
+        if schema_filter:
+            format_strings = ','.join(['%s'] * len(schema_filter))
+            vyra_cur.execute(f"""
+                SELECT id, schema_name, object_name, object_type, columns_json
+                FROM ds_db_objects
+                WHERE source_id = %s AND object_type = 'table'
+                  AND schema_name IN ({format_strings})
+                ORDER BY schema_name, object_name
+            """, [source_id] + list(schema_filter))
+            logger.info("[DSLearning] Veri toplama: schema filtresi uygulandı (%d şema: %s)",
+                        len(schema_filter), schema_filter[:5])
+        else:
+            vyra_cur.execute("""
+                SELECT id, schema_name, object_name, object_type, columns_json
+                FROM ds_db_objects
+                WHERE source_id = %s AND object_type = 'table'
+                ORDER BY schema_name, object_name
+            """, (source_id,))
         db_objects = vyra_cur.fetchall()
 
         if not db_objects:

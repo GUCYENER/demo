@@ -1824,7 +1824,7 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             }}
 
 
-    def process_stream_db_only(self, query: str, user_id: int, company_id: int = None, confirm_mode: bool = False) -> Generator[Dict[str, Any], None, None]:
+    def process_stream_db_only(self, query: str, user_id: int, company_id: int = None, confirm_mode: bool = False, schema_hint: str = None, report_template: str = None) -> Generator[Dict[str, Any], None, None]:
         """
         v3.10.0: DB-only pipeline — Firma bazlı DB kaynağı filtresi + Schema Pruning + Error Sanitization.
         + FAQ/Query Cache + Confirm before execute + Self-Healing.
@@ -2002,6 +2002,73 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                     )
                     schema_ctx_with_ml["tables"] = pruned_tables
 
+            # ── 4b. v4.0: schema_hint ile tablo önceliklendirme ───────────
+            if schema_hint:
+                from app.services.text_to_sql import filter_tables_by_schema_hint
+                filtered = filter_tables_by_schema_hint(
+                    schema_ctx_with_ml.get("tables", []), schema_hint
+                )
+                schema_ctx_with_ml = dict(schema_ctx_with_ml)
+                schema_ctx_with_ml["tables"] = filtered
+                log_system_event(
+                    "INFO",
+                    f"DB-Only: schema_hint='{schema_hint}' uygulandı, "
+                    f"{len(filtered)} tablo kaldı",
+                    "deep_think", user_id
+                )
+
+            # ── 4c. v4.0: Disambiguation — aynı isimde çoklu tablo kontrolü ──
+            if not schema_hint:
+                from app.services.text_to_sql import detect_ambiguous_tables
+                ambiguous = detect_ambiguous_tables(schema_ctx_with_ml.get("tables", []))
+                if ambiguous:
+                    candidates = []
+                    for base_name, group in ambiguous.items():
+                        for t in group:
+                            candidates.append({
+                                "schema": t.get("schema", ""),
+                                "table_name": t["name"],
+                                "full_name": f"{t.get('schema', '')}.{t['name']}",
+                                "business_name_tr": (
+                                    t.get("admin_label_tr") or t.get("business_name_tr") or t["name"]
+                                ),
+                                "description_tr": t.get("description_tr", ""),
+                                "row_estimate": t.get("row_estimate", 0),
+                                "base_name": base_name,
+                            })
+                    log_system_event(
+                        "INFO",
+                        f"DB-Only: Disambiguation tetiklendi — {len(candidates)} aday tablo",
+                        "deep_think", user_id
+                    )
+                    yield {"type": "clarification", "data": {
+                        "candidates": candidates,
+                        "query": query,
+                        "message": "Aynı isimde birden fazla tablo bulundu. Hangisini kastettiğinizi seçin:",
+                    }}
+                    return
+
+            # ── 4d. v4.0: DB Intent Tespiti + Rapor Şablonu Önerisi ─────────
+            if not report_template:
+                db_intent = _detect_db_intent(query)
+                if db_intent == "DB_REPORT":
+                    templates = _generate_report_templates(query, schema_ctx_with_ml)
+                    if templates:
+                        log_system_event(
+                            "INFO",
+                            f"DB-Only: DB_REPORT intent — {len(templates)} şablon önerildi",
+                            "deep_think", user_id
+                        )
+                        yield {"type": "suggestions", "data": {
+                            "intent": "DB_REPORT",
+                            "message": "Bu analiz için birkaç yaklaşım hazırladım. Hangisiyle ilerleyelim?",
+                            "templates": templates,
+                        }}
+                        return
+            else:
+                # Kullanıcı rapor şablonu seçti — şablonu sorguya ekle
+                query = f"{query}\n\n[Rapor Yaklaşımı: {report_template}]"
+
             # ── 5. LLM Text-to-SQL üret (ML bağlamı + şema) ─────────────
             from app.services.text_to_sql import generate_sql, generate_sql_with_retry
             from app.services.safe_sql_executor import SafeSQLExecutor
@@ -2026,6 +2093,7 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                     query=query,
                     schema_context=schema_ctx_with_ml,
                     allowed_tables=allowed_tables,
+                    schema_hint=schema_hint,
                 )
 
             if not sql_result.get("success"):
@@ -2089,7 +2157,7 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                     allowed_tables=allowed_tables,
                     execution_error=exec_result.error,
                     failed_sql=exec_result.sql_executed or sql,
-                    max_retries=2,
+                    max_retries=3,
                 )
 
                 if retry_result.get("success"):
@@ -2151,19 +2219,19 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             if not db_data:
                 empty_msg = (
                     f"📭 Sorgunuz çalıştırıldı ancak **hiç kayıt bulunamadı**.\n\n"
-                    f"Arama kriterlerinizi değiştirerek tekrar deneyebilirsiniz.\n\n"
-                    f"\n<small>*(🔍 Çalıştırılan SQL: `{sql_executed}`)*</small>"
+                    f"Arama kriterlerinizi değiştirerek tekrar deneyebilirsiniz."
                 )
                 yield {"type": "token", "data": empty_msg}
                 yield {"type": "done", "data": {
                     "content": empty_msg,
                     "metadata": {
-                        "db_only": True, "sql": sql_executed,
+                        "db_only": True, "sql": sql_executed, "sql_executed": sql_executed,
                         "row_count": 0, "source_db": source_name,
                         "ml_context_used": bool(ml_context),
                         "processing_time_ms": elapsed_ms,
                         "company_id": company_id,
                         "retry_count": retry_count,
+                        "columns": [], "raw_data": [],
                     }
                 }}
                 return
@@ -2233,14 +2301,8 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                     full_content += token
                     yield {"type": "token", "data": token}
 
-                # Teknik SQL izi (transparency) - HTML değil Markdown kullan (VYRA Markdown <hr> => ---)
-                sql_footer = f"\n\n---\n**🔍 Çalıştırılan SQL:** `{sql_executed}`"
-                if truncated:
-                    sql_footer += f"\n**📊 {len(db_data)} satırdan {len(data_for_llm)} tanesi gösterildi**"
-                full_content += sql_footer
-
-                for char in sql_footer:
-                    yield {"type": "token", "data": char}
+                # SQL footer artık frontend'de buton olarak gösterilir (metadata.sql_executed)
+                # İnline metin olarak eklenmez — temiz yanıt akışı
 
             except Exception as llm_err:
                 log_warning(f"DB-Only Yanıt Sentezi Hatası: {llm_err}", "deep_think")
@@ -2264,6 +2326,12 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                     "dialect": dialect,
                 })
 
+            # Export için ham veri — JSON-safe'e çevir (Oracle Decimal/date/LOB vb. için)
+            try:
+                safe_raw_data = json.loads(json.dumps(db_data[:100], ensure_ascii=False, default=str))
+            except Exception:
+                safe_raw_data = []
+
             yield {"type": "done", "data": {
                 "content": full_content,
                 "metadata": {
@@ -2280,8 +2348,18 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                     "company_id": company_id,
                     "retry_count": retry_count,
                     "from_cache": from_cache,
+                    "columns": exec_result.columns or [],
+                    "raw_data": safe_raw_data,  # Export için ham veri (JSON-safe)
                 }
             }}
+
+            # ── 10. v4.0: Follow-up Önerileri ───────────────────────────────
+            try:
+                followups = _generate_followup_suggestions(query, db_data, schema_ctx)
+                if followups:
+                    yield {"type": "followup", "data": {"suggestions": followups}}
+            except Exception as _fu_err:
+                log_warning(f"DB-Only: Follow-up üretim hatası: {_fu_err}", "deep_think")
 
         except Exception as e:
             import traceback as _tb
@@ -2468,6 +2546,265 @@ def _sanitize_error_for_user(error_msg: str) -> str:
         return error_msg[:200] + "..."
 
     return error_msg
+
+
+# =====================================================
+# v4.0: DB Intent, Rapor Şablonu ve Follow-up Helpers
+# =====================================================
+
+_DB_INTENT_REPORT_KW = (
+    "rapor", "analiz", "özet", "özet rapor", "istatistik", "dağılım",
+    "trend", "performans", "karşılaştır", "kıyasla",
+    "analiz et", "incele", "değerlendir", "breakdown", "summary", "report",
+)
+_DB_INTENT_AGGREGATE_KW = (
+    "kaç", "toplam", "ortalama", "en fazla", "en az", "en çok", "sayısı",
+    "count", "sum", "avg", "max", "min", "total", "average",
+)
+_DB_INTENT_TIME_KW = (
+    "bu ay", "geçen ay", "bu hafta", "geçen hafta", "bu yıl", "tarih aralığı",
+    "son 30 gün", "son 7 gün", "bugün", "dün", "aylık", "yıllık", "haftalık",
+)
+_DB_INTENT_COUNT_KW = ("kaç tane", "kaç adet", "kaç kişi", "kaç satır", "toplam kaç")
+
+
+def _detect_db_intent(query: str) -> str:
+    """
+    Kullanıcı sorgusundan DB intent tipini tespit eder.
+
+    Returns:
+        'DB_REPORT' | 'DB_AGGREGATE' | 'DB_TIME_SERIES' | 'DB_COUNT' | 'DB_LOOKUP'
+    """
+    q = query.lower()
+    if any(kw in q for kw in _DB_INTENT_COUNT_KW):
+        return "DB_COUNT"
+    if any(kw in q for kw in _DB_INTENT_TIME_KW):
+        return "DB_TIME_SERIES"
+    if any(kw in q for kw in _DB_INTENT_AGGREGATE_KW):
+        return "DB_AGGREGATE"
+    if any(kw in q for kw in _DB_INTENT_REPORT_KW):
+        return "DB_REPORT"
+    return "DB_LOOKUP"
+
+
+def _generate_report_templates(query: str, schema_ctx: dict) -> list:
+    """
+    DB_REPORT intent için 2-3 rapor yaklaşımı üretir.
+    Önce hızlı kural bazlı yaklaşım dener, başarısız olursa LLM kullanır.
+
+    Returns:
+        [{"title": "...", "description": "...", "hint": "..."}, ...]
+    """
+    tables = schema_ctx.get("tables", [])
+    if not tables:
+        return []
+
+    q_lower = query.lower()
+
+    # ── Hızlı kural bazlı şablonlar (LLM'siz, anlık) ───────────────────────
+    heuristic = []
+
+    # Zaman bazlı analiz tespiti
+    time_kw = any(w in q_lower for w in ("aylık", "haftalık", "günlük", "yıllık", "tarih", "dönem", "periyot", "trend"))
+    # Müşteri/kullanıcı bazlı
+    customer_kw = any(w in q_lower for w in ("müşteri", "kullanıcı", "üye", "kişi", "kişisel", "bireysel"))
+    # Ürün/sipariş bazlı
+    order_kw = any(w in q_lower for w in ("sipariş", "fatura", "satış", "ödeme", "gelir", "ciro"))
+    # İstatistik/özet
+    stat_kw = any(w in q_lower for w in ("istatistik", "analiz", "özet", "performans", "kıyasla", "karşılaştır", "dağılım"))
+
+    if time_kw or order_kw:
+        heuristic.append({
+            "title": "📅 Zaman Bazlı Analiz",
+            "description": "Verileri aylık/günlük periyotlarla grupla ve trendi göster",
+            "hint": "aylık gruplama ile toplam ve ortalama değerleri hesapla"
+        })
+    if customer_kw or stat_kw:
+        heuristic.append({
+            "title": "👥 Detaylı Özet Tablo",
+            "description": "Tüm kayıtları özet halinde, sayı ve yüzdelerle listele",
+            "hint": "toplam sayı, ortalama ve yüzde dağılımlarını göster"
+        })
+    if order_kw or stat_kw:
+        heuristic.append({
+            "title": "🏆 En Yüksek / En Düşük",
+            "description": "Değer bazında sıralama ve en kritik kayıtları öne çıkar",
+            "hint": "değere göre azalan sırada ilk 20 kaydı getir"
+        })
+
+    # Genel fallback — her zaman en az 1 şablon sun
+    if not heuristic:
+        heuristic = [
+            {
+                "title": "📊 Genel Özet",
+                "description": "Tüm verileri özetleyen genel bakış tablosu",
+                "hint": "toplam kayıt sayısı ve temel metrikleri göster"
+            },
+            {
+                "title": "📋 Detaylı Liste",
+                "description": "Tüm kayıtları filtresiz, tam detaylarıyla getir",
+                "hint": "son 100 kaydı tüm sütunlarıyla listele"
+            },
+            {
+                "title": "📈 Trend Analizi",
+                "description": "Zaman içindeki değişim ve eğilimleri incele",
+                "hint": "tarihe göre grupla, artış/azalış trendini göster"
+            },
+        ]
+
+    if len(heuristic) >= 3:
+        return heuristic[:3]
+
+    # ── LLM ile zenginleştir (opsiyonel, kural bazlı şablonlar yetersizse) ──
+    try:
+        from app.core.llm import call_llm_api
+        import json as _json
+        import threading as _thr
+
+        table_summary = "; ".join(
+            f"{t.get('schema','')}.{t['name']} [{t.get('business_name_tr') or t['name']}]"
+            for t in tables[:5]
+        )
+
+        prompt_messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Sen bir veri analiz uzmanısın. Kullanıcının rapor isteğine göre "
+                    "3 farklı analiz yaklaşımı öner. YANIT FORMATI — JSON array:\n"
+                    '[{"title":"...","description":"...","hint":"..."},...]\n'
+                    "Sadece JSON döndür, başka açıklama ekleme."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Kullanıcı isteği: {query}\nMevcut tablolar: {table_summary}",
+            },
+        ]
+
+        result = {"raw": None}
+        done_event = _thr.Event()
+
+        def _llm_call():
+            try:
+                result["raw"] = call_llm_api(prompt_messages, temperature=0.4)
+            except Exception:
+                pass
+            finally:
+                done_event.set()  # Her durumda sinyali gönder (race condition yok)
+
+        t = _thr.Thread(target=_llm_call, daemon=False)
+        t.start()
+        done_event.wait(timeout=8)  # Event tabanlı bekleme — güvenli senkronizasyon
+
+        if result["raw"]:
+            # Non-greedy: ilk tam JSON array bloğunu yakala, açgözlü \[.*\] yerine
+            match = re.search(r'\[\s*\{.*?\}\s*\]', result["raw"], re.DOTALL)
+            if match:
+                try:
+                    llm_templates = _json.loads(match.group(0))
+                    # Schema doğrulama: her şablon title/description/hint içermeli
+                    validated = [
+                        t for t in llm_templates
+                        if isinstance(t, dict)
+                        and "title" in t and "description" in t and "hint" in t
+                        and isinstance(t["title"], str) and isinstance(t["hint"], str)
+                    ]
+                    if validated:
+                        return validated[:3]
+                except (_json.JSONDecodeError, Exception):
+                    pass  # LLM JSON formatı bozuk → heuristic'e dön
+
+    except Exception as e:
+        log_warning(f"_generate_report_templates LLM hata: {e}", "deep_think")
+
+    return heuristic[:3]
+
+
+def _generate_followup_suggestions(query: str, db_data: list, schema_ctx: dict) -> list:
+    """
+    Sorgu sonrasında kullanıcıya proaktif follow-up önerileri üretir.
+    LLM kullanmadan kural bazlı + şema bazlı hızlı öneriler.
+
+    Returns:
+        [{"text": "...", "query": "..."}, ...]  — max 3 öneri
+    """
+    from app.core.llm import call_llm_api
+
+    if not db_data:
+        return []
+
+    # Kural bazlı hızlı öneriler (LLM gerektirmez)
+    row_count = len(db_data)
+    first_row = db_data[0] if db_data else {}
+    col_names = list(first_row.keys()) if isinstance(first_row, dict) else []
+
+    quick_suggestions = []
+
+    # Tarih kolonu varsa → trend önerisi
+    date_cols = [c for c in col_names if any(
+        kw in c.lower() for kw in ("tarih", "date", "time", "created", "updated", "zaman")
+    )]
+    if date_cols:
+        quick_suggestions.append({
+            "text": "📈 Aylık trend olarak görüntüle",
+            "query": f"{query} — aylık gruplama ile trend analizi"
+        })
+
+    # Sayısal kolon varsa → özet önerisi
+    numeric_hint = any(
+        isinstance(v, (int, float)) for v in first_row.values()
+        if isinstance(first_row, dict)
+    ) if first_row else False
+    if numeric_hint:
+        quick_suggestions.append({
+            "text": "📊 Toplamları ve ortalamaları göster",
+            "query": f"{query} — toplam ve ortalama hesapla"
+        })
+
+    # Çok satır varsa → filtreleme önerisi
+    if row_count >= 10:
+        quick_suggestions.append({
+            "text": f"🔍 En son {min(10, row_count)} kaydı göster",
+            "query": f"{query} — en son 10 kayıt"
+        })
+
+    if quick_suggestions:
+        return quick_suggestions[:3]
+
+    # Kural bazlı yeterli değilse LLM ile 2 öneri üret
+    try:
+        col_sample = ", ".join(col_names[:8])
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Sen bir veri asistanısın. Kullanıcının DB sorgusuna ilişkin "
+                    "2 adet kısa follow-up soru öner. Doğal dilde, Türkçe. "
+                    "YANIT FORMATI — JSON array:\n"
+                    '[{"text":"📋 Kısa buton etiketi","query":"Tam sorgu metni"},...]\n'
+                    "Sadece JSON döndür."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Kullanıcının sorusu: {query}\n"
+                    f"Dönen veri kolonları: {col_sample}\n"
+                    f"Satır sayısı: {row_count}"
+                ),
+            },
+        ]
+        raw = call_llm_api(messages, temperature=0.3)
+        if raw:
+            import json as _json
+            match = re.search(r'\[.*\]', raw, re.DOTALL)
+            if match:
+                return _json.loads(match.group(0))[:2]
+    except Exception as e:
+        log_warning(f"_generate_followup_suggestions LLM hata: {e}", "deep_think")
+
+    return []
 
 
 # Fallback Prompt

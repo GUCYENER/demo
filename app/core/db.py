@@ -52,7 +52,7 @@ def _reset_pool() -> None:
         try:
             _connection_pool.closeall()
         except Exception as e:
-            print(f"[DB] Pool close hatası (reset sırasında): {e}")
+            print(f"[DB] Pool close error (during reset): {e}")
     _connection_pool = None
 
 
@@ -86,7 +86,7 @@ class PooledConnection:
                 self._pool.putconn(self._conn)
             except Exception as e:
                 # Pool kapalıysa gerçekten kapat
-                print(f"[DB] Pool putconn hatası, bağlantı kapatılıyor: {e}")
+                print(f"[DB] Pool putconn error, closing connection: {e}")
                 self._conn.close()
     
     def __enter__(self):
@@ -116,7 +116,7 @@ def get_db_conn():
         return PooledConnection(conn, pool_ref)
     except Exception as e:
         # Pool başarısızsa direkt bağlantı aç
-        print(f"[DB] Pool bağlantısı alınamadı, direkt bağlanılıyor: {e}")
+        print(f"[DB] Pool connection failed, connecting directly: {e}")
         conn = psycopg2.connect(
             host=settings.DB_HOST,
             port=settings.DB_PORT,
@@ -202,7 +202,7 @@ def init_db() -> None:
                 lock_cur = lock_conn.cursor()
                 lock_cur.execute("SELECT pg_advisory_lock(%s)", (SCHEMA_LOCK_ID,))
                 lock_conn.commit()
-                print(f"[VYRA] Schema lock alındı (attempt {attempt})")
+                print(f"[VYRA] Schema lock acquired (attempt {attempt})")
                 
                 # 1) Alembic migration
                 _run_alembic_migration()
@@ -231,9 +231,9 @@ def init_db() -> None:
                                 "UPDATE system_settings SET setting_value = %s, updated_at = NOW() WHERE setting_key = 'app_version'",
                                 (settings.APP_VERSION,)
                             )
-                            print(f"[VYRA] DB app_version güncellendi: {db_ver} → {settings.APP_VERSION}")
+                            print(f"[VYRA] DB app_version updated: {db_ver} -> {settings.APP_VERSION}")
                 except Exception as ve:
-                    print(f"[VYRA] DB versiyon sync hatası (kritik değil): {ve}")
+                    print(f"[VYRA] DB version sync error (non-critical): {ve}")
                 return
                 
             finally:
@@ -258,7 +258,7 @@ def init_db() -> None:
                 _reset_pool()
                 
                 if attempt < max_retries:
-                    print(f"[VYRA] PostgreSQL hazırlanıyor... ({attempt}/{max_retries}) - {retry_delay}s bekleniyor")
+                    print(f"[VYRA] PostgreSQL waiting... ({attempt}/{max_retries}) - {retry_delay}s delay")
                     time.sleep(retry_delay)
                     continue
             
@@ -270,7 +270,7 @@ def init_db() -> None:
         except psycopg2.errors.DeadlockDetected:
             _reset_pool()
             if attempt < max_retries:
-                print(f"[VYRA] Deadlock tespit edildi, tekrar denenecek... ({attempt}/{max_retries})")
+                print(f"[VYRA] Deadlock detected, retrying... ({attempt}/{max_retries})")
                 time.sleep(retry_delay)
                 continue
             raise
@@ -279,33 +279,51 @@ def init_db() -> None:
 def _run_alembic_migration() -> bool:
     """
     Alembic migration çalıştırır (upgrade head).
-    
+    Thread-based timeout ile 30 saniyede tamamlanamazsa fallback'e bırakır.
+
     Returns:
         bool: Başarılıysa True, hata oluşursa False (fallback'e bırakır)
     """
-    try:
-        from alembic.config import Config
-        from alembic import command
-        import os
-        
-        # alembic.ini konumunu bul
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        ini_path = os.path.join(project_root, "alembic.ini")
-        
-        if not os.path.exists(ini_path):
-            print("[VYRA] alembic.ini bulunamadı, fallback kullanılacak")
-            return False
-        
-        alembic_cfg = Config(ini_path)
-        alembic_cfg.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
-        
-        command.upgrade(alembic_cfg, "head")
-        print("[VYRA] Alembic migration başarılı (upgrade head)")
-        return True
-        
-    except Exception as e:
-        print(f"[VYRA] Alembic migration hatası (fallback kullanılacak): {e}")
+    import threading
+    import os
+
+    result = {"success": False, "error": None}
+
+    def _run():
+        try:
+            from alembic.config import Config
+            from alembic import command
+
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            ini_path = os.path.join(project_root, "alembic.ini")
+
+            if not os.path.exists(ini_path):
+                print("[VYRA] alembic.ini not found, using fallback")
+                return
+
+            alembic_cfg = Config(ini_path)
+            alembic_cfg.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+
+            command.upgrade(alembic_cfg, "head")
+            result["success"] = True
+        except Exception as e:
+            result["error"] = str(e)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=10)  # 10 saniye timeout
+
+    if t.is_alive():
+        print("[VYRA] Alembic migration timeout (10s), using SCHEMA_SQL fallback")
         return False
+
+    if result["success"]:
+        print("[VYRA] Alembic migration successful (upgrade head)")
+        return True
+
+    if result["error"]:
+        print(f"[VYRA] Alembic migration error (using fallback): {result['error']}")
+    return False
 
 
 def check_db_connection() -> bool:
@@ -322,7 +340,7 @@ def check_db_connection() -> bool:
         conn.close()
         return True
     except Exception as e:
-        print(f"[DB] check_db_connection hatası: {e}")
+        print(f"[DB] check_db_connection error: {e}")
         return False
 
 

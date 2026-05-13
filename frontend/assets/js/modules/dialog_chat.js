@@ -572,20 +572,17 @@ window.DialogChatModule = (function () {
 
                         switch (eventType) {
                             case 'rag_complete':
-                                // RAG tamamlandı — streaming mesaj container oluştur
                                 streamingEl = createStreamingMessage();
                                 updateStreamingStatus(streamingEl, `📚 ${eventData.result_count} sonuç bulundu, yanıt hazırlanıyor...`);
                                 break;
 
                             case 'status':
-                                // Durum güncellemesi
                                 if (streamingEl) {
                                     updateStreamingStatus(streamingEl, `⏳ ${eventData}`);
                                 }
                                 break;
 
                             case 'token':
-                                // LLM token geldi — ekrana yaz
                                 if (!streamingEl) {
                                     streamingEl = createStreamingMessage();
                                 }
@@ -594,25 +591,78 @@ window.DialogChatModule = (function () {
                                 break;
 
                             case 'cached':
-                                // Cache hit — tam yanıt tek seferde
                                 finalContent = eventData.content;
                                 finalMetadata = eventData;
                                 break;
 
                             case 'done':
-                                // Stream tamamlandı — final post-processed içerik
                                 finalContent = eventData.content;
                                 finalMetadata = eventData.metadata || {};
                                 break;
 
                             case 'saved':
-                                // DB'ye kaydedildi — message ID ve quick reply
                                 savedMessageId = eventData.message_id;
                                 savedQuickReply = eventData.quick_reply;
                                 break;
 
+                            // v4.0: Disambiguation — aynı isimde çoklu tablo
+                            case 'clarification': {
+                                if (streamingEl) streamingEl.remove();
+                                const { candidates, query: cQuery, message: cMsg } = eventData;
+                                const disambigHtml = window.DialogChatUtils.renderDisambiguationCard(
+                                    candidates, cQuery, cMsg,
+                                    (selectedFull) => {
+                                        // Kullanıcı tablo seçti — schema_hint ile yeniden gönder
+                                        _sendDbMessageWithHint(cQuery, selectedFull, null);
+                                    }
+                                );
+                                _insertInteractiveBlock(disambigHtml);
+                                isWaitingForResponse = false;
+                                hideTypingIndicator();
+                                return;
+                            }
+
+                            // v4.0: Rapor şablonu önerileri (DB_REPORT intent)
+                            case 'suggestions': {
+                                if (streamingEl) streamingEl.remove();
+                                const { templates, message: sMsg, intent } = eventData;
+                                if (intent === 'DB_REPORT' && templates?.length) {
+                                    const origQuery = content; // closure
+                                    const tmplHtml = window.DialogChatUtils.renderReportTemplates(
+                                        templates, sMsg,
+                                        (hint) => {
+                                            // Kullanıcı şablon seçti — report_template ile yeniden gönder
+                                            _sendDbMessageWithHint(origQuery, null, hint);
+                                        }
+                                    );
+                                    _insertInteractiveBlock(tmplHtml);
+                                }
+                                isWaitingForResponse = false;
+                                hideTypingIndicator();
+                                return;
+                            }
+
+                            // v4.0: Follow-up önerileri
+                            case 'followup': {
+                                const { suggestions: fuSugg } = eventData;
+                                if (fuSugg?.length) {
+                                    const fuHtml = window.DialogChatUtils.renderFollowUpChips(
+                                        fuSugg,
+                                        (q) => {
+                                            // Kullanıcı follow-up seçti — normal DB sorgusu gönder
+                                            const inputEl = document.getElementById('messageInput');
+                                            if (inputEl) {
+                                                inputEl.value = q;
+                                                sendMessage();
+                                            }
+                                        }
+                                    );
+                                    _insertInteractiveBlock(fuHtml);
+                                }
+                                break;
+                            }
+
                             case 'error':
-                                // Hata
                                 console.error('[DialogChat] Stream error:', eventData);
                                 if (streamingEl) streamingEl.remove();
                                 addSystemMessage('❌ Yanıt üretilirken hata oluştu. Lütfen tekrar deneyin.');
@@ -645,6 +695,35 @@ window.DialogChatModule = (function () {
 
                 lastAddedMessageId = savedMessageId;
                 addAssistantMessage(msgObj, savedQuickReply, true, responseTime);
+
+                // v4.0: DB sorgu sonucu — tablo + export bar + SQL butonu
+                if (finalMetadata?.db_only) {
+                    const cols = finalMetadata.columns || [];
+                    const rows = finalMetadata.raw_data || [];
+                    const sqlText = finalMetadata.sql_executed || finalMetadata.sql || '';
+
+                    let blockHtml = '';
+
+                    // Tablo + export bar (sadece veri varsa)
+                    if (rows.length > 0 && cols.length > 0) {
+                        const tblHtml = window.DialogChatUtils.renderSQLResultTable(cols, rows, finalMetadata);
+                        const expHtml = window.DialogChatUtils.renderExportBar(cols, rows, {
+                            title: 'VYRA Sorgu Sonucu',
+                            query: content,
+                            sql: sqlText,
+                        });
+                        blockHtml += tblHtml + expHtml;
+                    }
+
+                    // SQL butonu — her DB yanıtında göster
+                    if (sqlText) {
+                        blockHtml += window.DialogChatUtils.renderSQLButton(sqlText);
+                    }
+
+                    if (blockHtml) {
+                        _insertInteractiveBlock(blockHtml);
+                    }
+                }
 
                 // Response time'ı backend'e kaydet
                 if (savedMessageId) {
@@ -743,6 +822,131 @@ window.DialogChatModule = (function () {
             if (isNearBottom) {
                 scrollToBottom();
             }
+        }
+    }
+
+    /**
+     * v4.0: Chat mesaj listesine interaktif HTML bloğu (disambiguation, follow-up, export bar) ekler.
+     */
+    function _insertInteractiveBlock(html) {
+        if (!html) return;
+        const container = document.getElementById('dialogMessages');
+        if (!container) return;
+        const wrap = document.createElement('div');
+        wrap.className = 'db-interactive-block';
+        wrap.innerHTML = html;
+        container.appendChild(wrap);
+        container.scrollTop = container.scrollHeight;
+    }
+
+    /**
+     * v4.0: schema_hint veya report_template ile DB mesajını yeniden gönderir.
+     * Disambiguation seçimi veya rapor şablonu seçimi sonrasında çağrılır.
+     */
+    async function _sendDbMessageWithHint(query, schemaHint, reportTemplate) {
+        if (!currentDialogId || !query) return;
+
+        hideTypingIndicator();
+        showTypingIndicator();
+        isWaitingForResponse = true;
+
+        const token = localStorage.getItem('token') || sessionStorage.getItem('token') || '';
+        const body = {
+            content: query,
+            source_type: 'db',
+        };
+        if (schemaHint) body.schema_hint = schemaHint;
+        if (reportTemplate) body.report_template = reportTemplate;
+
+        try {
+            const response = await fetch(`${API_BASE}/dialogs/${currentDialogId}/messages/stream`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify(body),
+            });
+
+            if (!response.ok) {
+                hideTypingIndicator();
+                isWaitingForResponse = false;
+                addSystemMessage('❌ İstek gönderilemedi. Lütfen tekrar deneyin.');
+                return;
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let streamingEl = null;
+            let streamedText = '';
+            let finalContent = null;
+            let finalMetadata = null;
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    const jsonStr = line.slice(6).trim();
+                    if (!jsonStr) continue;
+                    try {
+                        const ev = JSON.parse(jsonStr);
+                        switch (ev.type) {
+                            case 'status':
+                                if (streamingEl) updateStreamingStatus(streamingEl, `⏳ ${ev.data}`);
+                                break;
+                            case 'token':
+                                if (!streamingEl) streamingEl = createStreamingMessage();
+                                streamedText += ev.data;
+                                appendStreamToken(streamingEl, ev.data);
+                                break;
+                            case 'done':
+                                finalContent = ev.data.content;
+                                finalMetadata = ev.data.metadata || {};
+                                break;
+                            case 'followup': {
+                                const { suggestions: fs } = ev.data;
+                                if (fs?.length) {
+                                    const fHtml = window.DialogChatUtils.renderFollowUpChips(fs,
+                                        (q) => { const inp = document.getElementById('messageInput'); if (inp) { inp.value = q; sendMessage(); } });
+                                    _insertInteractiveBlock(fHtml);
+                                }
+                                break;
+                            }
+                            case 'error':
+                                if (streamingEl) streamingEl.remove();
+                                addSystemMessage('❌ ' + (ev.data || 'Hata oluştu.'));
+                                hideTypingIndicator();
+                                isWaitingForResponse = false;
+                                return;
+                        }
+                    } catch (_) {}
+                }
+            }
+
+            if (streamingEl) streamingEl.remove();
+            if (finalContent) {
+                const msgObj = { id: 0, role: 'assistant', content: finalContent, content_type: 'text', metadata: finalMetadata, created_at: new Date().toISOString() };
+                addAssistantMessage(msgObj, null, true, '');
+
+                if (finalMetadata?.db_only && finalMetadata?.raw_data?.length > 0) {
+                    const cols = finalMetadata.columns || [];
+                    const rows = finalMetadata.raw_data || [];
+                    if (cols.length > 0) {
+                        const tblHtml = window.DialogChatUtils.renderSQLResultTable(cols, rows, finalMetadata);
+                        const expHtml = window.DialogChatUtils.renderExportBar(cols, rows, { title: 'VYRA Sorgu Sonucu', query, sql: finalMetadata.sql_executed });
+                        _insertInteractiveBlock(tblHtml + expHtml);
+                    }
+                }
+            }
+        } catch (err) {
+            console.error('[DialogChat] _sendDbMessageWithHint hatası:', err);
+            addSystemMessage('❌ Bağlantı hatası oluştu.');
+        } finally {
+            hideTypingIndicator();
+            isWaitingForResponse = false;
         }
     }
 
@@ -2106,6 +2310,104 @@ window.DialogChatModule = (function () {
         _syncPendingImages
     };
 
+})();
+
+// =============================================================================
+// v4.0: DB Export Handler (Global)
+// =============================================================================
+window.DBExportHandler = (function () {
+    'use strict';
+
+    const API_BASE = (window.API_BASE_URL || 'http://localhost:8002') + '/api';
+
+    function _getData(barId) {
+        return window[barId + '_data'] || null;
+    }
+
+    function _getToken() {
+        return localStorage.getItem('token') || sessionStorage.getItem('token') || '';
+    }
+
+    async function _doExport(barId, format) {
+        const d = _getData(barId);
+        if (!d) { console.warn('[DBExport] Veri bulunamadı:', barId); return; }
+
+        const endpoint = `${API_BASE}/db/export/${format}`;
+        const body = {
+            columns: d.columns,
+            rows: d.rows,
+            title: d.title || 'VYRA Sorgu Sonucu',
+            query: d.query || '',
+            sql: d.sql || '',
+            include_narrative: format !== 'excel',
+        };
+
+        try {
+            const btn = document.querySelector(`#${barId} .db-export-btn.${format}`);
+            if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+
+            const resp = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${_getToken()}`,
+                },
+                body: JSON.stringify(body),
+            });
+
+            if (!resp.ok) {
+                const err = await resp.text();
+                throw new Error(`Export hatası: ${resp.status} — ${err}`);
+            }
+
+            // Dosyayı indir
+            const blob = await resp.blob();
+            const ext = format === 'excel' ? 'xlsx' : format === 'word' ? 'docx' : 'pdf';
+            const filename = (d.title || 'vyra_export').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_') + `_${Date.now()}.${ext}`;
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 2000);
+
+        } catch (e) {
+            console.error('[DBExport]', e);
+            if (window.DialogChatUtils?.showToast) {
+                window.DialogChatUtils.showToast('error', '❌ Export başarısız: ' + e.message);
+            }
+        } finally {
+            const btn = document.querySelector(`#${barId} .db-export-btn.${format}`);
+            if (btn) {
+                btn.disabled = false;
+                const labels = { excel: '<i class="fa-solid fa-file-excel"></i> Excel', word: '<i class="fa-solid fa-file-word"></i> Word', pdf: '<i class="fa-solid fa-file-pdf"></i> PDF' };
+                btn.innerHTML = labels[format] || format;
+            }
+        }
+    }
+
+    function copyCSV(barId) {
+        const d = _getData(barId);
+        if (!d || !d.rows?.length) return;
+        const header = d.columns.join('\t');
+        const body = d.rows.map(r => d.columns.map(c => String(r[c] ?? '')).join('\t')).join('\n');
+        const csv = header + '\n' + body;
+        navigator.clipboard.writeText(csv).then(() => {
+            if (window.DialogChatUtils?.showToast) {
+                window.DialogChatUtils.showToast('success', '✅ Veri panoya kopyalandı (sekme ayrımlı)');
+            }
+        }).catch(e => {
+            console.error('[DBExport] Kopyalama hatası:', e);
+        });
+    }
+
+    return {
+        excel: (barId) => _doExport(barId, 'excel'),
+        word:  (barId) => _doExport(barId, 'word'),
+        pdf:   (barId) => _doExport(barId, 'pdf'),
+        copyCSV,
+    };
 })();
 
 // Auto-init when DOM ready

@@ -627,6 +627,320 @@ window.DialogChatUtils = (function () {
             .replace(/\r/g, '');
     }
 
+    // =========================================================================
+    // v4.0: DB SORGU SONUCU — TABLO RENDER
+    // =========================================================================
+
+    /**
+     * DB sorgu sonucunu scrollable HTML tablosuna çevirir.
+     * @param {string[]} columns - Sütun adları
+     * @param {Object[]} rows    - Satır verisi (dict listesi)
+     * @param {Object}   meta    - {row_count, rows_shown, sql_executed, source_db}
+     * @returns {string} HTML string
+     */
+    function renderSQLResultTable(columns, rows, meta) {
+        if (!columns || columns.length === 0 || !rows || rows.length === 0) {
+            return '';
+        }
+
+        const rowCount = meta?.row_count || rows.length;
+        const rowsShown = meta?.rows_shown || rows.length;
+        const sourceDb = meta?.source_db || '';
+        const truncated = rowCount > rowsShown;
+
+        let html = `<div class="db-result-table-wrap">`;
+
+        // Meta bar
+        html += `<div class="db-result-meta">`;
+        if (sourceDb) html += `<span class="db-result-db">🗄️ ${escapeHtml(sourceDb)}</span>`;
+        html += `<span class="db-result-count">📊 ${rowsShown} kayıt`;
+        if (truncated) html += ` <span class="db-truncated-badge">(toplam ${rowCount})</span>`;
+        html += `</span></div>`;
+
+        // Tablo
+        html += `<div class="db-table-scroll"><table class="db-result-table">`;
+
+        // Header
+        html += `<thead><tr>`;
+        columns.forEach(col => {
+            html += `<th>${escapeHtml(col)}</th>`;
+        });
+        html += `</tr></thead>`;
+
+        // Body
+        html += `<tbody>`;
+        rows.forEach((row, rowIdx) => {
+            const cls = rowIdx % 2 === 0 ? '' : ' class="alt-row"';
+            html += `<tr${cls}>`;
+            columns.forEach(col => {
+                const val = row[col];
+                const display = val === null || val === undefined ? '<span class="null-val">—</span>' : escapeHtml(String(val));
+                html += `<td>${display}</td>`;
+            });
+            html += `</tr>`;
+        });
+        html += `</tbody></table></div>`;
+
+        if (truncated) {
+            html += `<div class="db-truncated-note">⚠️ Toplam ${rowCount} kayıttan ilk ${rowsShown} tanesi gösteriliyor. Tümünü görmek için Excel'e aktarın.</div>`;
+        }
+
+        html += `</div>`;
+        return html;
+    }
+
+    // =========================================================================
+    // v4.0: DİSAMBIGUATION KARTI
+    // =========================================================================
+
+    /**
+     * Çoklu schema'da aynı isimli tablo için kullanıcı seçim kartı.
+     * @param {Object[]} candidates - [{schema, table_name, full_name, business_name_tr, description_tr, row_estimate}]
+     * @param {string}   query      - Orijinal kullanıcı sorusu
+     * @param {string}   message    - Gösterilecek açıklama
+     * @param {Function} onSelect   - Seçim callback: (full_name) => void
+     * @returns {string} HTML string
+     */
+    function renderDisambiguationCard(candidates, query, message, onSelect) {
+        const id = 'disambig_' + Date.now();
+
+        // Callback'i global scope'a kaydet
+        window[id + '_select'] = function(fullName) {
+            if (typeof onSelect === 'function') onSelect(fullName);
+            const card = document.getElementById(id);
+            if (card) card.remove();
+        };
+
+        let html = `<div class="db-disambig-card" id="${id}">`;
+        html += `<div class="db-disambig-header">`;
+        html += `<span class="db-disambig-icon">🔍</span>`;
+        html += `<span class="db-disambig-msg">${escapeHtml(message || 'Hangi tabloyu kastettiğinizi seçin:')}</span>`;
+        html += `</div>`;
+        html += `<div class="db-disambig-candidates">`;
+
+        candidates.forEach(c => {
+            const title = escapeHtml(c.business_name_tr || c.table_name);
+            const schema = escapeHtml(c.schema || '');
+            const tbl = escapeHtml(c.table_name);
+            const desc = c.description_tr ? escapeHtml(c.description_tr) : '';
+            const rows = c.row_estimate ? `~${Number(c.row_estimate).toLocaleString('tr-TR')} satır` : '';
+            const fullName = escapeHtml(c.full_name);
+
+            html += `<button class="db-disambig-btn" onclick="window['${id}_select']('${fullName}')">`;
+            html += `<div class="db-disambig-btn-title">📋 ${title}</div>`;
+            html += `<div class="db-disambig-btn-meta"><code>${schema}.${tbl}</code>`;
+            if (rows) html += ` · ${rows}`;
+            html += `</div>`;
+            if (desc) html += `<div class="db-disambig-btn-desc">${desc}</div>`;
+            html += `</button>`;
+        });
+
+        html += `</div>`;
+        html += `<button class="db-disambig-cancel" onclick="document.getElementById('${id}').remove()">İptal</button>`;
+        html += `</div>`;
+
+        return html;
+    }
+
+    // =========================================================================
+    // v4.0: RAPOR ŞABLONU ÖNERİLERİ
+    // =========================================================================
+
+    /**
+     * DB_REPORT intent için şablon seçim kartı.
+     * @param {Object[]} templates - [{title, description, hint}]
+     * @param {string}   message   - Başlık mesajı
+     * @param {Function} onSelect  - Seçim callback: (hint) => void
+     * @returns {string} HTML string
+     */
+    function renderReportTemplates(templates, message, onSelect) {
+        const id = 'rptmpl_' + Date.now();
+
+        window[id + '_pick'] = function(hint) {
+            if (typeof onSelect === 'function') onSelect(hint);
+            const card = document.getElementById(id);
+            if (card) card.remove();
+        };
+
+        let html = `<div class="db-template-card" id="${id}">`;
+        html += `<div class="db-template-header">`;
+        html += `<span class="db-template-icon">📊</span>`;
+        html += `<span class="db-template-msg">${escapeHtml(message || 'Bir yaklaşım seçin:')}</span>`;
+        html += `</div>`;
+        html += `<div class="db-template-list">`;
+
+        templates.forEach((t, i) => {
+            const title = escapeHtml(t.title || `Seçenek ${i + 1}`);
+            const desc = escapeHtml(t.description || '');
+            const hint = escapeHtml(t.hint || t.title || '');
+            html += `<button class="db-template-btn" onclick="window['${id}_pick']('${hint}')">`;
+            html += `<div class="db-template-btn-title">${title}</div>`;
+            if (desc) html += `<div class="db-template-btn-desc">${desc}</div>`;
+            html += `</button>`;
+        });
+
+        html += `</div>`;
+        html += `<button class="db-disambig-cancel" onclick="document.getElementById('${id}').remove()">Kendim yazayım</button>`;
+        html += `</div>`;
+
+        return html;
+    }
+
+    // =========================================================================
+    // v4.0: FOLLOW-UP ÖNERİ CHIPS
+    // =========================================================================
+
+    /**
+     * Sorgu sonrası proaktif follow-up öneri chip'leri.
+     * @param {Object[]} suggestions - [{text, query}]
+     * @param {Function} onSelect    - Seçim callback: (queryText) => void
+     * @returns {string} HTML string
+     */
+    function renderFollowUpChips(suggestions, onSelect) {
+        if (!suggestions || suggestions.length === 0) return '';
+
+        const id = 'fuchips_' + Date.now();
+
+        window[id + '_send'] = function(q) {
+            if (typeof onSelect === 'function') onSelect(q);
+            const wrap = document.getElementById(id);
+            if (wrap) wrap.remove();
+        };
+
+        let html = `<div class="db-followup-wrap" id="${id}">`;
+        html += `<div class="db-followup-label">💡 İlgili sorgular:</div>`;
+        html += `<div class="db-followup-chips">`;
+
+        suggestions.forEach(s => {
+            const label = escapeHtml(s.text || s.query);
+            const q = escapeHtml(s.query || s.text);
+            html += `<button class="db-followup-chip" onclick="window['${id}_send']('${q}')">${label}</button>`;
+        });
+
+        html += `</div></div>`;
+        return html;
+    }
+
+    // =========================================================================
+    // v4.0: EXPORT BAR
+    // =========================================================================
+
+    /**
+     * DB sorgu sonucu için export araç çubuğu.
+     * @param {string[]} columns - Sütun adları
+     * @param {Object[]} rows    - Satır verisi
+     * @param {Object}   meta    - {title, query, sql}
+     * @returns {string} HTML string
+     */
+    function renderExportBar(columns, rows, meta) {
+        if (!rows || rows.length === 0) return '';
+
+        const id = 'expbar_' + Date.now();
+        const safeTitle = escapeForJs(meta?.title || 'VYRA Sorgu Sonucu');
+        const safeQuery = escapeForJs(meta?.query || '');
+        const safeSql = escapeForJs(meta?.sql || '');
+
+        // Veriyi global scope'a kaydet (export handler kullanır)
+        window[id + '_data'] = { columns, rows, title: meta?.title, query: meta?.query, sql: meta?.sql };
+
+        let html = `<div class="db-export-bar" id="${id}">`;
+        html += `<span class="db-export-label">İndir:</span>`;
+        html += `<button class="db-export-btn excel" title="Excel olarak indir" onclick="window.DBExportHandler?.excel('${id}')">`;
+        html += `<i class="fa-solid fa-file-excel"></i> Excel</button>`;
+        html += `<button class="db-export-btn word" title="Word raporu" onclick="window.DBExportHandler?.word('${id}')">`;
+        html += `<i class="fa-solid fa-file-word"></i> Word</button>`;
+        html += `<button class="db-export-btn pdf" title="PDF olarak indir" onclick="window.DBExportHandler?.pdf('${id}')">`;
+        html += `<i class="fa-solid fa-file-pdf"></i> PDF</button>`;
+        html += `<button class="db-export-btn copy" title="CSV olarak kopyala" onclick="window.DBExportHandler?.copyCSV('${id}')">`;
+        html += `<i class="fa-solid fa-copy"></i> Kopyala</button>`;
+        html += `</div>`;
+
+        return html;
+    }
+
+    // =========================================================================
+    // v4.1: SQL MODAL BUTON
+    // =========================================================================
+
+    /**
+     * SQL'i tam ekran modal'da gösteren buton HTML'i döndürür.
+     * @param {string} sql - Gösterilecek SQL sorgusu
+     * @returns {string} HTML button string
+     */
+    function renderSQLButton(sql) {
+        if (!sql) return '';
+        const id = 'sqlbtn_' + Date.now();
+        // SQL'i global scope'a güvenli kaydet (onclick string injection'a karşı)
+        window[id] = sql;
+        return `<button class="db-sql-btn" title="SQL sorgusunu görüntüle" onclick="window.DialogChatUtils.showSQLModal(window['${id}'])">` +
+               `<i class="fa-solid fa-code"></i> SQL</button>`;
+    }
+
+    /**
+     * SQL içeriğini tam ekran modal'da gösterir.
+     * @param {string} sql - Gösterilecek SQL metni
+     */
+    function showSQLModal(sql) {
+        const existing = document.getElementById('vyra-sql-modal');
+        if (existing) existing.remove();
+
+        const modal = document.createElement('div');
+        modal.id = 'vyra-sql-modal';
+
+        const escapedSql = escapeHtml(sql || '');
+
+        modal.innerHTML =
+            `<div class="vyra-sql-modal-overlay" id="vyra-sql-overlay">` +
+            `  <div class="vyra-sql-modal-box" onclick="event.stopPropagation()">` +
+            `    <div class="vyra-sql-modal-header">` +
+            `      <span class="vyra-sql-modal-title"><i class="fa-solid fa-code"></i> Çalıştırılan SQL Sorgusu</span>` +
+            `      <div class="vyra-sql-modal-actions">` +
+            `        <button class="vyra-sql-copy-btn" id="vyra-sql-copy-btn"><i class="fa-regular fa-copy"></i> Kopyala</button>` +
+            `        <button class="vyra-sql-close-btn" onclick="document.getElementById('vyra-sql-modal').remove()">✕</button>` +
+            `      </div>` +
+            `    </div>` +
+            `    <div class="vyra-sql-modal-body">` +
+            `      <pre class="vyra-sql-modal-code">${escapedSql}</pre>` +
+            `    </div>` +
+            `  </div>` +
+            `</div>`;
+
+        document.body.appendChild(modal);
+
+        // Overlay tıklaması → kapat
+        document.getElementById('vyra-sql-overlay').addEventListener('click', function(e) {
+            if (e.target === this) modal.remove();
+        });
+
+        // Kopyala butonu
+        document.getElementById('vyra-sql-copy-btn').addEventListener('click', function() {
+            navigator.clipboard.writeText(sql).then(() => {
+                this.innerHTML = '<i class="fa-solid fa-check"></i> Kopyalandı!';
+                this.classList.add('copied');
+                setTimeout(() => {
+                    this.innerHTML = '<i class="fa-regular fa-copy"></i> Kopyala';
+                    this.classList.remove('copied');
+                }, 2000);
+            }).catch(() => {
+                // Fallback: execCommand
+                const ta = document.createElement('textarea');
+                ta.value = sql;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                this.textContent = '✅ Kopyalandı!';
+                setTimeout(() => { this.innerHTML = '<i class="fa-regular fa-copy"></i> Kopyala'; }, 2000);
+            });
+        });
+
+        // ESC tuşu → kapat
+        const onKeyDown = (e) => {
+            if (e.key === 'Escape') { modal.remove(); document.removeEventListener('keydown', onKeyDown); }
+        };
+        document.addEventListener('keydown', onKeyDown);
+    }
+
     // PUBLIC API
     return {
         formatTime,
@@ -635,6 +949,15 @@ window.DialogChatUtils = (function () {
         getUserInitial,
         showToast,
         getFileTypeIcon,
-        escapeForJs
+        escapeForJs,
+        // v4.0
+        renderSQLResultTable,
+        renderDisambiguationCard,
+        renderReportTemplates,
+        renderFollowUpChips,
+        renderExportBar,
+        // v4.1
+        renderSQLButton,
+        showSQLModal,
     };
 })();
