@@ -799,12 +799,17 @@ window.DialogChatUtils = (function () {
     function renderFollowUpChips(suggestions, onSelect) {
         if (!suggestions || suggestions.length === 0) return '';
 
-        const id = 'fuchips_' + Date.now();
+        const id = 'fuchips_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
 
-        window[id + '_send'] = function(q) {
-            if (typeof onSelect === 'function') onSelect(q);
-            const wrap = document.getElementById(id);
-            if (wrap) wrap.remove();
+        // Global tetikleyici — data-q attribute'tan okur (escape sorunu yok)
+        window[id + '_send'] = function(btn) {
+            try {
+                const q = (btn && btn.dataset && btn.dataset.q) || '';
+                if (q && typeof onSelect === 'function') onSelect(q);
+            } finally {
+                const wrap = document.getElementById(id);
+                if (wrap) wrap.remove();
+            }
         };
 
         let html = `<div class="db-followup-wrap" id="${id}">`;
@@ -812,9 +817,13 @@ window.DialogChatUtils = (function () {
         html += `<div class="db-followup-chips">`;
 
         suggestions.forEach(s => {
-            const label = escapeHtml(s.text || s.query);
-            const q = escapeHtml(s.query || s.text);
-            html += `<button class="db-followup-chip" onclick="window['${id}_send']('${q}')">${label}</button>`;
+            // s.query: backend'e gönderilecek doğal dil cümlesi
+            // s.text: chip üzerinde gösterilecek kısa/emoji'li etiket
+            const sendQuery = s.query || s.text || '';
+            const displayLabel = s.text || s.query || '';
+            const qAttr = escapeHtml(sendQuery);   // attribute güvenli
+            const labelHtml = escapeHtml(displayLabel);
+            html += `<button class="db-followup-chip" data-q="${qAttr}" onclick="window['${id}_send'](this)">${labelHtml}</button>`;
         });
 
         html += `</div></div>`;

@@ -301,7 +301,9 @@ Index            : Sık sorgulanan FK/filter kolonlarına index
 - pgvector index etkileniyor mu?
 
 **🌐 KAP 4 — Frontend (ATHENA)**
-- JS değişikliği varsa → browser cache sorun yaratır mı?
+- JS/CSS değişikliği varsa → **`node frontend/build.mjs` ile bundle ZORUNLU rebuild** (atlanırsa tarayıcı eski bundle yükler, değişiklikler etkisiz kalır)
+- Build sonrası `dist/bundle.min.js` timestamp'i kaynak dosyalardan YENİ mi? Doğrula
+- JS değişikliği varsa → browser cache sorun yaratır mı? Hard refresh (Ctrl+F5) gerek mi?
 - Version query string güncellendi mi?
 - XSS: innerHTML'de `_escapeHtml` kullanılıyor mu?
 
@@ -447,6 +449,7 @@ Uzun oturumlarda `wakeup_context` sıkıştırılarak context window'dan kaybolu
 | Konu | Kural |
 |------|-------|
 | Branch | Main'e doğrudan commit — yalnızca kullanıcı merge onayı ile |
+| Frontend bundle | `frontend/assets/` altında JS/CSS değiştiyse → `node frontend/build.mjs` ZORUNLU (ATHENA). Bundle rebuild atlanırsa tarayıcı eski kodu yükler, değişiklik etkisiz kalır. Build sonrası `dist/bundle.min.js` kaynak dosyalardan YENİ olmalı |
 | SQL güvenlik | f-string SQL YASAK — parametrik sorgu zorunlu |
 | Error leakage | İç hata detayları kullanıcıya gösterilmez — genel mesaj + log |
 | Cursor | psycopg2 default tuple döner — `dict(zip(cols, row))` pattern zorunlu |

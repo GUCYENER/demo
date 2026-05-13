@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.10.0"  # P0+P1+P2 Text-to-SQL Pipeline: Cache, Self-Healing, Schema Auto Re-Learn
+    APP_VERSION: str = "3.13.1"  # Chip click fix + Greeting bypass + PDF Türkçe font (Arial Unicode)
 
     # Frontend & API prefix
     api_prefix: str = "/api"

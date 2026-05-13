@@ -1824,6 +1824,58 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             }}
 
 
+    def _maybe_chitchat_reply(self, query: str) -> Optional[str]:
+        """
+        v3.13.1: Kısa selamlama/sohbet mesajları için Text-to-SQL bypass.
+        Eşleşirse dostane Türkçe yanıt döner, eşleşmezse None.
+        """
+        if not query:
+            return None
+        import re as _re
+        q = (query or "").strip().lower()
+        # Noktalama temizle (basit)
+        q_clean = _re.sub(r"[?!.,;:'\"\-]+", " ", q).strip()
+        q_clean = _re.sub(r"\s+", " ", q_clean)
+        if not q_clean or len(q_clean) > 80:
+            return None
+
+        # Tam eşleşmeli kısa selamlama setleri
+        greetings = {
+            "merhaba", "selam", "sa", "selamun aleykum", "selamünaleyküm",
+            "iyi günler", "iyi aksamlar", "iyi akşamlar", "iyi geceler",
+            "günaydın", "gunaydin", "hi", "hello", "hey", "naber", "nbr",
+        }
+        thanks = {
+            "tesekkurler", "teşekkürler", "tesekkur ederim", "teşekkür ederim",
+            "sagol", "sağol", "sagolun", "sağolun", "eyvallah",
+            "thanks", "thank you", "thx",
+        }
+        howareyou = {
+            "nasilsin", "nasılsın", "naber", "ne haber", "nasıl gidiyor",
+            "how are you",
+        }
+        whoareyou = {
+            "kimsin", "sen kimsin", "adın ne", "adin ne", "ne yapabilirsin",
+            "neler yapabilirsin", "ne yapiyorsun", "ne yapıyorsun",
+        }
+        bye = {
+            "gorusuruz", "görüşürüz", "hosca kal", "hoşça kal", "bye", "goodbye",
+        }
+
+        if q_clean in greetings:
+            return "Merhaba! 👋 Veritabanınız üzerinde size nasıl yardımcı olabilirim? Örneğin: *“geçen ayki toplam satışları göster”*."
+        if q_clean in thanks:
+            return "Rica ederim! 🙌 Başka bir veri sorgusu için buradayım."
+        if q_clean in howareyou:
+            return "İyiyim, teşekkürler! 🙂 Hangi veriyi getirmemi istersiniz?"
+        if q_clean in whoareyou:
+            return ("Ben **VYRA** — şirket verilerinize doğal dilde sorular sorabilmenizi sağlayan asistanınızım. "
+                    "Veritabanı sorgularınızı SQL'e çevirip sonuçları tablo/özet olarak gösteririm.")
+        if q_clean in bye:
+            return "Görüşmek üzere! 👋"
+        return None
+
+
     def process_stream_db_only(self, query: str, user_id: int, company_id: int = None, confirm_mode: bool = False, schema_hint: str = None, report_template: str = None) -> Generator[Dict[str, Any], None, None]:
         """
         v3.10.0: DB-only pipeline — Firma bazlı DB kaynağı filtresi + Schema Pruning + Error Sanitization.
@@ -1844,6 +1896,22 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
         """
         import time
         start_time = time.time()
+
+        # ── 0a. Selamlama / sohbet bypass (v3.13.1) ────────────────────
+        # "merhaba", "nasılsın", "teşekkür", "sa", "selam" gibi mesajlar
+        # SQL pipeline'ına girmemeli — kısa, dostane yanıt döner.
+        _bypass_text = self._maybe_chitchat_reply(query)
+        if _bypass_text is not None:
+            log_system_event(
+                "INFO",
+                f"DB-Only: Chitchat bypass — '{query[:60]}'",
+                "deep_think", user_id
+            )
+            yield {"type": "done", "data": {
+                "content": _bypass_text,
+                "metadata": {"deep_think": True, "intent": "chitchat", "source_type": "db", "bypass": True}
+            }}
+            return
 
         try:
             # ── 0. FAQ/Query Cache kontrolü ────────────────────────────
