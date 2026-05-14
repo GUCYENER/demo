@@ -187,12 +187,21 @@ def check_table_whitelist(
     #   FROM "public"."users" / FROM public.users
     table_refs = set()
 
-    # FROM tablo_adi, JOIN tablo_adi 
+    # EXTRACT(YEAR FROM col), TRIM([x] FROM str), OVERLAY(... FROM ...) gibi SQL
+    # fonksiyonlarının içindeki FROM ifadeleri tablo adı değil — maskeliyoruz.
+    sql_for_check = re.sub(
+        r'\b(?:EXTRACT|TRIM|OVERLAY)\s*\([^)]+\)',
+        'FUNC_PLACEHOLDER()',
+        sql,
+        flags=re.IGNORECASE
+    )
+
+    # FROM tablo_adi, JOIN tablo_adi
     # Quoted identifier'ları da yakalayan genişletilmiş regex
     identifier = r'(?:"[^"]+"|`[^`]+`|\[[^\]]+\]|\w+)'
     table_pattern = rf'(?:FROM|JOIN)\s+({identifier}(?:\.{identifier})?)'
 
-    for match in re.finditer(table_pattern, sql, re.IGNORECASE):
+    for match in re.finditer(table_pattern, sql_for_check, re.IGNORECASE):
         raw = match.group(1)
         # Quote karakterlerini temizle
         clean = re.sub(r'["\'`\[\]]', '', raw).lower()
@@ -380,6 +389,110 @@ class SafeSQLExecutor:
                 sql_executed=adapted_sql[:200],
                 elapsed_ms=elapsed,
             )
+
+    def execute_async(
+        self,
+        sql: str,
+        source: dict,
+        dialect: str,
+        allowed_tables: Optional[List[str]] = None,
+    ):
+        """
+        v3.14.0: Non-blocking SQL execution — SQL'i arka plan thread'de çalıştırır.
+        Caller, result_event'i periyodik olarak kontrol ederek sonucu alır.
+
+        Returns:
+            (result_holder, result_event, exec_thread)
+            - result_holder: {"result": SQLResult | None}
+            - result_event: threading.Event — set olunca sonuç hazır
+            - exec_thread: Thread referansı
+        """
+        import threading
+
+        # Önce validation (senkron, hızlı) — aynı modüldeki fonksiyonları doğrudan çağır
+        is_valid, validation_error = validate_sql(sql)
+        if not is_valid:
+            holder = {"result": SQLResult(success=False, error=f"Güvenlik: {validation_error}", sql_executed=sql[:200])}
+            evt = threading.Event()
+            evt.set()
+            return holder, evt, None
+
+        if allowed_tables:
+            is_allowed, table_error = check_table_whitelist(sql, allowed_tables, dialect)
+            if not is_allowed:
+                holder = {"result": SQLResult(success=False, error=table_error, sql_executed=sql[:200])}
+                evt = threading.Event()
+                evt.set()
+                return holder, evt, None
+
+        # Async execution
+        result_holder = {"result": None}
+        result_event = threading.Event()
+        _max_rows = self.max_rows  # Thread'e geçmeden önce yakala
+
+        def _bg_execute():
+            try:
+                # Uzun timeout ile çalıştır (max 120sn)
+                long_executor = SafeSQLExecutor(timeout=120, max_rows=_max_rows)
+                result_holder["result"] = long_executor.execute(
+                    sql=sql, source=source, dialect=dialect, allowed_tables=allowed_tables,
+                )
+            except Exception as e:
+                result_holder["result"] = SQLResult(
+                    success=False, error=str(e)[:200], sql_executed=sql[:200],
+                )
+            finally:
+                result_event.set()
+
+        exec_thread = threading.Thread(target=_bg_execute, daemon=True)
+        exec_thread.start()
+        return result_holder, result_event, exec_thread
+
+    def estimate_query_time(self, schema_ctx: dict, sql: str) -> dict:
+        """
+        v3.14.0: Tablo boyutu ve JOIN sayısına göre tahmini sorgu süresi.
+
+        Returns:
+            {"estimate_seconds": int, "complexity": "low|medium|high", "reason": str}
+        """
+        import re as _re
+
+        tables = schema_ctx.get("tables", [])
+        total_rows = 0
+        max_rows = 0
+        for t in tables:
+            row_est = t.get("row_estimate") or 0
+            total_rows += row_est
+            max_rows = max(max_rows, row_est)
+
+        # JOIN sayısı
+        join_count = len(_re.findall(r'\bJOIN\b', sql, _re.IGNORECASE))
+
+        # Tahmin
+        if max_rows > 10_000_000 or (join_count >= 3 and total_rows > 1_000_000):
+            return {
+                "estimate_seconds": 60,
+                "complexity": "high",
+                "reason": f"Büyük tablolar ({max_rows:,} satır) ve {join_count} JOIN",
+            }
+        elif max_rows > 1_000_000 or join_count >= 2:
+            return {
+                "estimate_seconds": 30,
+                "complexity": "medium",
+                "reason": f"Orta büyüklükte tablolar ({max_rows:,} satır)",
+            }
+        elif max_rows > 100_000:
+            return {
+                "estimate_seconds": 15,
+                "complexity": "low",
+                "reason": f"Normal boyut ({max_rows:,} satır)",
+            }
+        else:
+            return {
+                "estimate_seconds": 5,
+                "complexity": "low",
+                "reason": "Küçük tablolar",
+            }
 
     def _execute_with_timeout(
         self,

@@ -9,6 +9,7 @@ window.DialogVoiceModule = (function () {
 
     // State
     let recognition = null;
+    let isRecording = false;
     let finalTranscript = '';
     let isSpeaking = false;
     let activeSpeakBtn = null;
@@ -63,7 +64,9 @@ window.DialogVoiceModule = (function () {
             if (input) {
                 // Anlık + final sonuçları birleştir
                 input.value = (finalTranscript + interimTranscript).trim();
-                updateSendButtonState();
+                // Send buton state'ini güncelle
+                const sendBtn = document.getElementById('dialogSendBtn');
+                if (sendBtn) sendBtn.disabled = !input.value.trim();
                 console.log('[DialogChat] STT:', finalTranscript + interimTranscript);
             }
         };

@@ -33,7 +33,15 @@ logger = logging.getLogger(__name__)
 # System Prompt
 # =====================================================
 
-TEXT_TO_SQL_SYSTEM_PROMPT = """Sen bir SQL uzmanısın. Kullanıcının doğal dildeki sorusunu SQL sorgusuna çeviriyorsun.
+TEXT_TO_SQL_SYSTEM_PROMPT = """Sen kurumsal veritabanları konusunda uzman bir SQL analistsin. Kullanıcının doğal dildeki sorusunu adım adım analiz ederek profesyonel SQL sorgusuna çeviriyorsun.
+
+DÜŞÜNME SÜRECİ (Chain-of-Thought):
+SQL yazmadan ÖNCE aşağıdaki adımları kısaca analiz et:
+1. TABLO SEÇİMİ: Kullanıcının sorusu hangi tablolardaki verileri gerektiriyor?
+2. JOIN STRATEJİSİ: Bu tablolar nasıl bağlanıyor? FK ilişkilerini kontrol et ve JOIN yolunu belirle.
+3. FİLTRE & KOŞULLAR: Hangi WHERE koşulları gerekli? Tarih aralığı, durum filtresi vb.
+4. GRUPLAMA & SIRALAMA: GROUP BY, ORDER BY, HAVING gerekli mi?
+5. SQL YAZI: Yukarıdaki analizi kullanarak sorguyu oluştur.
 
 KRİTİK KURALLAR:
 1. SADECE SELECT sorguları yaz. INSERT, UPDATE, DELETE, DROP, ALTER, CREATE gibi komutlar KESİNLİKLE YASAK.
@@ -43,7 +51,7 @@ KRİTİK KURALLAR:
 5. Kullanıcı isim ve soyisim arıyorsa; tabloda Ad (Name) ve Soyad (Surname) kolonları AYRI ise iki sütunda da arama yap (örn: LOWER(Name) LIKE '%hakan%' AND LOWER(Surname) LIKE '%tütüncü%').
 6. {dialect_rules}
 7. Ürettiğin SQL'i KESİNLİKLE özel olarak ```sql <sorgu> ``` bloğu içine al. SQL kodunu bu blok dışına taşırma.
-8. Kodun sonuna KESİNLİKLE noktalı virgül (;) koy. Ve SQL öncesinde "İş Adı"na atıf yaparak 1 cümlelik analiz yap.
+8. Kodun sonuna KESİNLİKLE noktalı virgül (;) koy. Ve SQL öncesinde "İş Adı"na atıf yaparak kısa analiz yap.
 
 DİALECT: {dialect}
 """
@@ -71,8 +79,8 @@ def build_text_to_sql_prompt(
     
 
     dialect = schema_context.get("dialect", "postgresql").lower()
-    schema_text = format_schema_for_llm(schema_context)
-    
+    schema_text = format_schema_for_llm(schema_context, query=query)
+
     # Tüm veritabanları için özel kurallar (Best Practices)
     if dialect == "postgresql":
         dialect_rules = '''PostgreSQL Özel Kuralları:
@@ -116,16 +124,23 @@ KULLANICI SORUSU:
 
 Lütfen bu soruyu yanıtlayacak bir SELECT sorgusu yaz. SQL'i ```sql ... ``` bloğu içine yaz."""
 
-    # Few-shot örnekleri (varsa)
+    # v4.0 Enhanced few-shot: Tüm tablolardan örnek sorular, max 5 toplam
     examples_block = ""
-    for tbl in (schema_context.get("tables") or [])[:5]:
+    all_examples = []
+    for tbl in (schema_context.get("tables") or [])[:15]:
         sq = tbl.get("sample_questions")
-        if sq and isinstance(sq, list) and len(sq) > 0:
-            examples_block += f"-- Örnek soru ({tbl.get('table_name', tbl.get('name', ''))}): {sq[0]}\n"
-        if len(examples_block) > 300:
-            break
+        if sq and isinstance(sq, list):
+            tbl_label = (
+                tbl.get("admin_label_tr") or tbl.get("business_name_tr")
+                or f"{tbl.get('schema', '')}.{tbl.get('name', '')}"
+            )
+            for q in sq[:2]:  # Her tablodan max 2 örnek
+                if q and isinstance(q, str) and q.strip():
+                    all_examples.append(f"-- [{tbl_label}]: {q.strip()}")
+    if all_examples:
+        examples_block = "\n".join(all_examples[:5])  # Toplam max 5
     if examples_block:
-        user_msg += f"\n\nÖRNEK SORULAR:\n{examples_block}"
+        user_msg += f"\n\nÖRNEK SORULAR (benzer sorgular için referans):\n{examples_block}"
 
     return [
         {"role": "system", "content": system},
@@ -206,6 +221,7 @@ def generate_sql(
     query: str,
     schema_context: Dict[str, Any],
     allowed_tables: Optional[List[str]] = None,
+    schema_hint: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     LLM kullanarak kullanıcı sorusundan SQL üretir.
@@ -231,6 +247,14 @@ def generate_sql(
     """
     from app.core.llm import call_llm_api
     from app.services.safe_sql_executor import validate_sql, check_table_whitelist
+
+    # v4.0: schema_hint ile tablo önceliklendirmesi
+    if schema_hint:
+        ctx_tables = filter_tables_by_schema_hint(
+            schema_context.get("tables", []), schema_hint
+        )
+        schema_context = dict(schema_context)
+        schema_context["tables"] = ctx_tables
 
     # 1. Prompt oluştur
     messages = build_text_to_sql_prompt(query, schema_context)
@@ -414,10 +438,10 @@ def generate_sql_with_retry(
 
         # Düzeltme prompt'u oluştur
         dialect = schema_context.get("dialect", "postgresql").lower()
-        schema_text = format_schema_for_llm(schema_context)
+        schema_text = format_schema_for_llm(schema_context, query=query)
 
         correction_prompt = f"""Aşağıdaki SQL sorgusu veritabanında çalıştırıldığında HATA aldı.
-Hatayı düzelt ve çalışan bir SQL üret.
+Hatayı analiz edip düzelt.
 
 ORİJİNAL KULLANICI SORUSU:
 {query}
@@ -435,12 +459,16 @@ VERİTABANI ŞEMASI:
 
 DİALECT: {dialect}
 
-KURRALLAR:
-1. SADECE SELECT sorgusu yaz.
-2. Hatayı analiz et ve SADECE düzeltilmiş SQL'i ```sql ... ``` bloğu içinde yaz.
-3. Şemada OLMAYAN tablo/sütun kullanma.
-4. Hata "column not found" ise doğru sütun adını şemadan bul.
-5. Hata "syntax error" ise {dialect} dialect'ine uygun sözdizimi kullan.
+HATA ANALİZ ADIMLARI:
+1. Hata mesajını oku — hangi kolon/tablo bulunamadı?
+2. Şemadaki gerçek kolon/tablo adlarını kontrol et — büyük/küçük harf, alt çizgi farkı olabilir.
+3. "column not found" ise şemadan en yakın eşleşen kolonu bul (örn: total_price → total_amount).
+4. "table not found" ise schema prefix'ini kontrol et (örn: orders → "CSN"."ORDERS").
+5. "syntax error" ise {dialect} dialect kurallarını uygula (LIMIT vs FETCH FIRST, quote stili vb.).
+6. Sonuç boş döndüyse filtreleri gevşet (tarih aralığını genişlet, LIKE yerine daha geniş pattern kullan).
+7. Ambiguous column ise tablo alias'ı ekle (örn: o.order_id).
+
+Düzeltilmiş SQL'i ```sql ... ``` bloğu içinde yaz.
 """
 
         messages = [
@@ -521,7 +549,7 @@ def _extract_explanation(llm_response: str) -> str:
 # Schema Context Builder
 # =====================================================
 
-def get_schema_context(source_id: int) -> Dict[str, Any]:
+def get_schema_context(source_id: int, enriched_only: bool = False) -> Dict[str, Any]:
     """
     DS Learning'den öğrenilmiş schema bilgilerini context olarak hazırlar.
 
@@ -529,6 +557,8 @@ def get_schema_context(source_id: int) -> Dict[str, Any]:
 
     Args:
         source_id: Veri kaynağı ID
+        enriched_only: True ise sadece enrichment kaydı olan (öğrenilmiş) tabloları döner.
+                       Text-to-SQL akışında ML eşleşme bulunamadığında kullanılır.
 
     Returns:
         {
@@ -557,21 +587,38 @@ def get_schema_context(source_id: int) -> Dict[str, Any]:
         source_name = source_row["name"]
         dialect = source_row["db_type"]
 
-        # 🆕 v3.1.0: Tablolar + Enrichment bilgileri (LEFT JOIN)
-        cur.execute("""
-            SELECT o.schema_name, o.object_name, o.object_type, o.column_count,
-                   o.row_count_estimate, o.columns_json,
-                   e.business_name_tr, e.admin_label_tr,
-                   e.category, e.description_tr
-            FROM ds_db_objects o
-            LEFT JOIN ds_table_enrichments e
-                ON e.source_id = o.source_id
-                AND e.table_name = o.object_name
-                AND COALESCE(e.schema_name, '') = COALESCE(o.schema_name, '')
-                AND e.is_active = TRUE
-            WHERE o.source_id = %s AND o.object_type = 'table'
-            ORDER BY o.object_name
-        """, (source_id,))
+        # 🆕 v3.1.0: Tablolar + Enrichment bilgileri
+        # v3.14.0: enriched_only=True ise sadece öğrenilmiş tabloları getir (INNER JOIN)
+        if enriched_only:
+            cur.execute("""
+                SELECT o.schema_name, o.object_name, o.object_type, o.column_count,
+                       o.row_count_estimate, o.columns_json,
+                       e.business_name_tr, e.admin_label_tr,
+                       e.category, e.description_tr
+                FROM ds_db_objects o
+                INNER JOIN ds_table_enrichments e
+                    ON e.source_id = o.source_id
+                    AND e.table_name = o.object_name
+                    AND COALESCE(e.schema_name, '') = COALESCE(o.schema_name, '')
+                    AND e.is_active = TRUE
+                WHERE o.source_id = %s AND o.object_type = 'table'
+                ORDER BY o.object_name
+            """, (source_id,))
+        else:
+            cur.execute("""
+                SELECT o.schema_name, o.object_name, o.object_type, o.column_count,
+                       o.row_count_estimate, o.columns_json,
+                       e.business_name_tr, e.admin_label_tr,
+                       e.category, e.description_tr
+                FROM ds_db_objects o
+                LEFT JOIN ds_table_enrichments e
+                    ON e.source_id = o.source_id
+                    AND e.table_name = o.object_name
+                    AND COALESCE(e.schema_name, '') = COALESCE(o.schema_name, '')
+                    AND e.is_active = TRUE
+                WHERE o.source_id = %s AND o.object_type = 'table'
+                ORDER BY o.object_name
+            """, (source_id,))
 
         tables = []
         for row in cur.fetchall():
@@ -684,18 +731,27 @@ def get_schema_context(source_id: int) -> Dict[str, Any]:
         return {}
 
 
-def format_schema_for_llm(schema_context: Dict[str, Any]) -> str:
+def format_schema_for_llm(schema_context: Dict[str, Any], query: str = "") -> str:
     """
     Schema bilgilerini LLM'e gönderilebilecek context formatına çevirir.
 
+    v3.14.0: Opsiyonel query parametresi ile kolon pruning yapar.
+    Soru ile ilgili kolonları öncelikli gösterir, ilgisiz kolonları kısaltır.
+
     Args:
         schema_context: get_schema_context() çıktısı
+        query: Kullanıcı sorusu (kolon pruning için, opsiyonel)
 
     Returns:
         LLM'e gönderilecek schema açıklaması
     """
     if not schema_context or not schema_context.get("tables"):
         return ""
+
+    # v3.14.0: Kolon pruning için soru tokenları
+    query_tokens = set()
+    if query:
+        query_tokens = {w.lower() for w in query.split() if len(w) > 2}
 
     parts = [f"Veritabanı: {schema_context.get('source_name', 'Bilinmeyen')}"]
     parts.append(f"Dialect: {schema_context.get('dialect', 'postgresql')}")
@@ -709,11 +765,12 @@ def format_schema_for_llm(schema_context: Dict[str, Any]) -> str:
         pk_cols = []
         date_cols = []
 
-        for c in cols[:50]:  # Max 50 kolon prompt'a alınır
+        # v3.14.0: Kolon pruning — çok kolonlu tablolarda sadece ilgili kolonları göster
+        relevant_cols = []
+        other_cols = []
+        for c in cols[:80]:  # Max 80 kolon kontrol edilir
             col_name = c['name']
             col_dtype = c['data_type']
-            # 🆕 v5.0: Kolon iş ismi eklendi
-            # v3.8.0: Synonym desteği — kullanıcı eşanlamlı kelime kullandığında LLM doğru kolonu bulabilir
             enr = col_enrichments.get(col_name, {})
             bname_col = enr.get("business_name_tr", "")
             synonyms = enr.get("synonyms", [])
@@ -723,7 +780,42 @@ def format_schema_for_llm(schema_context: Dict[str, Any]) -> str:
                 col_str += f" [{bname_col}]"
             if synonyms:
                 col_str += f" synonyms: {', '.join(synonyms[:5])}"
-            col_names.append(col_str)
+            # v3.14.0: Enum/status kolonları için örnek değerler
+            sample_vals = c.get("sample_values") or []
+            if not sample_vals and col_dtype.upper() in ("VARCHAR", "VARCHAR2", "CHAR", "NVARCHAR", "NVARCHAR2"):
+                sample_vals = c.get("distinct_values") or []
+            if sample_vals and len(sample_vals) <= 15:
+                col_str += f" değerler: {', '.join(str(v) for v in sample_vals[:8])}"
+
+            # Kolon relevance kontrolü
+            is_relevant = False
+            if c.get("is_pk") or c.get("is_fk"):
+                is_relevant = True
+            elif col_dtype.lower() in ("timestamp", "timestamptz", "datetime", "date",
+                                        "timestamp without time zone", "timestamp with time zone"):
+                is_relevant = True
+            elif query_tokens:
+                col_lower = col_name.lower()
+                bname_lower = bname_col.lower()
+                syn_text = " ".join(s.lower() for s in synonyms)
+                for token in query_tokens:
+                    if token in col_lower or token in bname_lower or token in syn_text:
+                        is_relevant = True
+                        break
+
+            if is_relevant or not query_tokens:
+                relevant_cols.append(col_str)
+            else:
+                other_cols.append(col_str)
+
+        # İlgili kolonlar az ise geri kalanı da ekle (min 5 kolon garanti)
+        if len(relevant_cols) < 5:
+            relevant_cols.extend(other_cols[:50 - len(relevant_cols)])
+            col_names = relevant_cols
+        else:
+            col_names = relevant_cols[:50]
+            if other_cols:
+                col_names.append(f"... ve {len(other_cols)} kolon daha")
             if c.get("is_pk"):
                 pk_cols.append(col_name)
             if c.get("data_type", "").lower() in (
@@ -771,3 +863,340 @@ def format_schema_for_llm(schema_context: Dict[str, Any]) -> str:
 
     return "\n".join(parts)
 
+
+# =====================================================
+# v4.0: Disambiguation & Schema Hint Yardımcıları
+# =====================================================
+
+def detect_ambiguous_tables(tables: List[Dict]) -> Dict[str, List[Dict]]:
+    """
+    Farklı schema'larda aynı base isimde tablolar tespit eder.
+
+    Returns:
+        {base_table_name: [table_dict, ...]} — sadece birden fazla eşleşme olanlar.
+    """
+    from collections import defaultdict
+    name_groups: Dict[str, List] = defaultdict(list)
+    for t in tables:
+        name_groups[t.get("name", "").lower()].append(t)
+    return {n: g for n, g in name_groups.items() if len(g) > 1}
+
+
+def resolve_entities(query: str, tables: List[Dict]) -> List[str]:
+    """
+    v3.14.0: Deterministik Entity Resolution — soru kelimelerini tablo/kolon
+    iş isimleri ve synonyms ile eşleştirerek seed tabloları bulur.
+
+    ML embedding aramasından ÖNCE çalıştırılır, daha hızlı ve güvenilir.
+    Fuzzy matching ile yakın eşleşmeleri de yakalar.
+
+    Args:
+        query: Kullanıcı sorusu
+        tables: Schema context'ten gelen tablo listesi
+
+    Returns:
+        Eşleşen tablo isimleri listesi (schema.table formatında)
+    """
+    try:
+        from rapidfuzz import fuzz
+        has_fuzz = True
+    except ImportError:
+        has_fuzz = False
+        log_warning("rapidfuzz yüklü değil; fuzzy entity matching devre dışı", "text_to_sql")
+
+    query_lower = query.lower()
+    # Türkçe stop words filtresi
+    stop_words = {
+        "bir", "bu", "şu", "ve", "ile", "için", "den", "dan", "da", "de",
+        "mi", "mu", "mı", "nedir", "nasıl", "kaç", "ne", "hangi", "göster",
+        "listele", "bul", "getir", "hazırla", "rapor", "olan", "olan",
+        "numaralı", "son", "ilk", "en", "tüm", "toplam",
+    }
+    query_tokens = [w for w in query_lower.split() if len(w) > 2 and w not in stop_words]
+
+    matched = []
+    for t in tables:
+        table_name = (t.get("name") or "").lower()
+        schema_name = (t.get("schema") or "").lower()
+        full_name = f"{schema_name}.{table_name}" if schema_name else table_name
+        bname = (t.get("admin_label_tr") or t.get("business_name_tr") or "").lower()
+        desc = (t.get("description_tr") or "").lower()
+
+        score = 0
+
+        # 1. Tablo adı doğrudan eşleşme
+        for token in query_tokens:
+            if token in table_name:
+                score += 3
+            if bname and token in bname:
+                score += 5
+            if desc and token in desc:
+                score += 1
+
+        # 2. Kolon synonym eşleşmesi
+        col_enrichments = t.get("col_enrichments", {})
+        for col_name, enr in col_enrichments.items():
+            col_bname = (enr.get("business_name_tr") or "").lower()
+            synonyms = [s.lower() for s in (enr.get("synonyms") or [])]
+
+            for token in query_tokens:
+                if token in col_bname:
+                    score += 2
+                for syn in synonyms:
+                    if token in syn or syn in token:
+                        score += 2
+
+        # 3. Fuzzy matching (rapidfuzz varsa)
+        if has_fuzz and score == 0 and bname:
+            for token in query_tokens:
+                if fuzz.partial_ratio(token, bname) > 80:
+                    score += 3
+
+        if score >= 3:
+            matched.append((full_name, score))
+
+    # Score'a göre sırala, en yüksek skoru olanları döndür
+    matched.sort(key=lambda x: x[1], reverse=True)
+    return [m[0] for m in matched[:10]]
+
+
+def filter_tables_by_schema_hint(tables: List[Dict], schema_hint: str) -> List[Dict]:
+    """
+    schema_hint ('schema.table' formatı) ile hedef tabloyu öne alır,
+    aynı base name'e sahip diğer schema'ları konteksten çıkarır.
+
+    Args:
+        tables: Schema context tablo listesi
+        schema_hint: 'schema_name.table_name' — kullanıcı seçimi
+
+    Returns:
+        Önceliklendirilmiş tablo listesi
+    """
+    if not schema_hint or "." not in schema_hint:
+        return tables
+
+    parts = schema_hint.split(".", 1)
+    hint_schema = parts[0].strip().lower()
+    hint_table = parts[1].strip().lower()
+
+    # Hedef tabloyu bul
+    primary = [
+        t for t in tables
+        if t.get("name", "").lower() == hint_table
+        and t.get("schema", "").lower() == hint_schema
+    ]
+
+    # Aynı isimde ama farklı schema'daki rakip tabloları çıkar
+    others = [
+        t for t in tables
+        if not (t.get("name", "").lower() == hint_table
+                and t.get("schema", "").lower() != hint_schema)
+    ]
+
+    # Birleştir: primary önde, duplicate olmadan
+    result = list(primary)
+    primary_ids = {id(t) for t in primary}
+    for t in others:
+        if id(t) not in primary_ids:
+            result.append(t)
+
+    return result
+
+
+# =====================================================
+# v3.14.0: Golden SQL Store
+# =====================================================
+
+def search_golden_sql(query: str, source_id: int, company_id: int,
+                      min_score: float = 0.80, max_results: int = 3) -> list:
+    """
+    Doğrulanmış Golden SQL'ler arasında kullanıcı sorusuna en benzer olanları bulur.
+
+    Embedding cosine similarity ile arama yapar.
+    - Skor > 0.95: Direkt çalıştır (LLM bypass)
+    - Skor > 0.80: Few-shot örnek olarak LLM prompt'una ekle
+
+    Returns:
+        [{question_text, sql_query, tables_used, score, id}, ...]
+    """
+    try:
+        from app.core.db import get_db_conn
+        from app.services.rag.embedding import EmbeddingManager
+
+        emb_mgr = EmbeddingManager()
+        query_emb = emb_mgr.get_embedding(query)
+        if not query_emb:
+            return []
+
+        conn = get_db_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, question_text, sql_query, tables_used,
+                   question_embedding, dialect
+            FROM golden_sql
+            WHERE source_id = %s AND company_id = %s
+              AND verified = TRUE AND question_embedding IS NOT NULL
+        """, (source_id, company_id))
+
+        rows = cur.fetchall()
+        conn.close()
+
+        if not rows:
+            return []
+
+        import numpy as np
+        query_vec = np.array(query_emb, dtype=np.float32)
+        results = []
+
+        for row in rows:
+            row_dict = dict(row) if hasattr(row, 'keys') else dict(
+                zip(["id", "question_text", "sql_query", "tables_used",
+                     "question_embedding", "dialect"], row)
+            )
+            stored_emb = row_dict.get("question_embedding")
+            if not stored_emb:
+                continue
+            stored_vec = np.array(stored_emb, dtype=np.float32)
+
+            # Cosine similarity
+            norm_q = np.linalg.norm(query_vec)
+            norm_s = np.linalg.norm(stored_vec)
+            if norm_q == 0 or norm_s == 0:
+                continue
+            score = float(np.dot(query_vec, stored_vec) / (norm_q * norm_s))
+
+            if score >= min_score:
+                results.append({
+                    "id": row_dict["id"],
+                    "question_text": row_dict["question_text"],
+                    "sql_query": row_dict["sql_query"],
+                    "tables_used": row_dict.get("tables_used") or [],
+                    "dialect": row_dict.get("dialect", ""),
+                    "score": round(score, 4),
+                })
+
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results[:max_results]
+
+    except Exception as e:
+        log_warning(f"Golden SQL arama hatası: {e}", "text_to_sql")
+        return []
+
+
+def save_golden_sql(source_id: int, company_id: int, question: str,
+                    sql_query: str, tables_used: list = None,
+                    dialect: str = "postgresql", user_id: int = None) -> bool:
+    """
+    Doğrulanmış SQL'i Golden SQL Store'a kaydeder.
+
+    Returns:
+        True: Başarıyla kaydedildi
+    """
+    try:
+        from app.core.db import get_db_conn
+        from app.services.rag.embedding import EmbeddingManager
+
+        emb_mgr = EmbeddingManager()
+        question_emb = emb_mgr.get_embedding(question)
+
+        conn = get_db_conn()
+        cur = conn.cursor()
+
+        # Aynı soru varsa güncelle (ON CONFLICT yok — manual check)
+        cur.execute("""
+            SELECT id FROM golden_sql
+            WHERE source_id = %s AND company_id = %s AND question_text = %s
+        """, (source_id, company_id, question))
+        existing = cur.fetchone()
+
+        if existing:
+            eid = existing[0] if not isinstance(existing, dict) else existing["id"]
+            cur.execute("""
+                UPDATE golden_sql
+                SET sql_query = %s, tables_used = %s, question_embedding = %s,
+                    verified = TRUE, usage_count = usage_count + 1, updated_at = NOW()
+                WHERE id = %s
+            """, (sql_query, tables_used, question_emb, eid))
+        else:
+            cur.execute("""
+                INSERT INTO golden_sql
+                    (source_id, company_id, question_text, question_embedding,
+                     sql_query, tables_used, dialect, verified, created_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE, %s)
+            """, (source_id, company_id, question, question_emb,
+                  sql_query, tables_used, dialect, user_id))
+
+        conn.commit()
+        conn.close()
+        log_system_event("INFO", f"Golden SQL kaydedildi: {question[:80]}", "text_to_sql")
+        return True
+
+    except Exception as e:
+        log_warning(f"Golden SQL kaydetme hatası: {e}", "text_to_sql")
+        return False
+
+
+def value_retrieval(query: str, source_id: int, tables: list,
+                    max_results: int = 3) -> list:
+    """
+    v3.14.0: Value Retrieval — kullanıcı sorusundaki spesifik değerleri
+    (isim, numara, kod) veritabanında arar.
+
+    Örn: "Hakan Yılmaz'ın siparişleri" → customers.name'de 'Hakan Yılmaz' bulur.
+
+    Returns:
+        [{table, schema, column, value, match_type}, ...]
+    """
+    # Soruda tırnak içi veya sayısal değerleri çıkar
+    import re
+    quoted_values = re.findall(r"['\"]([^'\"]+)['\"]", query)
+    numeric_values = re.findall(r'\b(\d{5,})\b', query)  # 5+ haneli sayılar (ID'ler)
+
+    candidates = quoted_values + numeric_values
+    if not candidates:
+        # Büyük harfle başlayan kelimeleri potansiyel isim olarak al
+        words = query.split()
+        proper_nouns = []
+        for i, w in enumerate(words):
+            if w[0:1].isupper() and len(w) > 2 and i > 0:
+                proper_nouns.append(w)
+        # Ardışık özel isimleri birleştir (Ad Soyad)
+        if len(proper_nouns) >= 2:
+            candidates.append(" ".join(proper_nouns[:2]))
+        elif proper_nouns:
+            candidates.extend(proper_nouns)
+
+    if not candidates:
+        return []
+
+    results = []
+    try:
+        for table in tables[:10]:
+            t_name = table.get("name", "")
+            t_schema = table.get("schema", "")
+            searchable_cols = []
+
+            # Aranabilir kolon tespiti (VARCHAR/CHAR + enrichment flagı)
+            for col in table.get("columns", [])[:30]:
+                dtype = (col.get("data_type") or "").upper()
+                enr = table.get("col_enrichments", {}).get(col["name"], {})
+                if dtype in ("VARCHAR", "VARCHAR2", "CHAR", "NVARCHAR", "NVARCHAR2", "TEXT", "CLOB"):
+                    searchable_cols.append(col["name"])
+                elif enr.get("is_searchable"):
+                    searchable_cols.append(col["name"])
+
+            # Her aday değer için aranabilir kolonlarda ara
+            for val in candidates[:3]:
+                for col_name in searchable_cols[:5]:
+                    results.append({
+                        "table": t_name,
+                        "schema": t_schema,
+                        "column": col_name,
+                        "value": val,
+                        "match_type": "potential",
+                    })
+
+    except Exception as e:
+        log_warning(f"Value retrieval hatası: {e}", "text_to_sql")
+
+    return results[:max_results]

@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.13.1"  # Chip click fix + Greeting bypass + PDF Türkçe font (Arial Unicode)
+    APP_VERSION: str = "3.14.0"  # Text-to-SQL pipeline overhaul, async DB queries, Golden SQL, FKGraph
 
     # Frontend & API prefix
     api_prefix: str = "/api"

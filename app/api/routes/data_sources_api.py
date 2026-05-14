@@ -8,7 +8,7 @@ v2.56.0
 import logging
 import threading
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from fastapi import APIRouter, HTTPException, Depends, Query, Body
 from pydantic import BaseModel, Field
@@ -50,6 +50,10 @@ class DataSourceUpdate(BaseModel):
     file_server_path: Optional[str] = Field(None, max_length=1000)
     description: Optional[str] = None
     is_active: Optional[bool] = None
+
+
+class CollectSamplesRequest(BaseModel):
+    schemas: Optional[List[str]] = None  # None = tüm şemalar, liste = belirli şemalar
 
 
 # --- Helpers ---
@@ -659,13 +663,45 @@ def detect_objects(
         return {"success": False, "message": "Obje tespiti sırasında beklenmeyen bir hata oluştu."}
 
 
-@router.post("/{source_id}/collect-samples")
-def collect_samples(
+@router.get("/{source_id}/discovered-schemas")
+def get_discovered_schemas(
     source_id: int,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
-    """Adım 3: Tablolardan örnek veri topla."""
+    """Adım 2 sonrası: DS_DB_OBJECTS içindeki distinct şemaları ve tablo sayılarını döner."""
+    try:
+        with get_db_context() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT schema_name, COUNT(*) AS table_count
+                FROM ds_db_objects
+                WHERE source_id = %s AND object_type = 'table'
+                GROUP BY schema_name
+                ORDER BY schema_name
+            """, (source_id,))
+            rows = cur.fetchall()
+            schemas = [
+                {"schema": row["schema_name"] or "(varsayılan)", "table_count": row["table_count"]}
+                for row in rows
+            ]
+            return {"success": True, "schemas": schemas}
+    except Exception as e:
+        logger.error("[DataSources] discovered-schemas hatası: %s", type(e).__name__)
+        return {"success": False, "schemas": []}
+
+
+@router.post("/{source_id}/collect-samples")
+def collect_samples(
+    source_id: int,
+    body: CollectSamplesRequest = None,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Adım 3: Tablolardan örnek veri topla (arka planda çalışır, hemen döner).
+    body.schemas: Sadece bu şemalar örneklenir. None = tüm şemalar.
+    """
     is_admin = current_user.get("is_admin", False) or current_user.get("role") == "admin"
+    schema_filter = (body.schemas if body else None) or None
 
     try:
         with get_db_context() as conn:
@@ -689,14 +725,34 @@ def collect_samples(
                 rj = running_check["job"]
                 return {"success": False, "message": f"Bu kaynak için zaten çalışan bir iş var: {rj['job_type']}", "running_job": rj}
 
+            # Job'ı oluştur, hemen dön — veri toplama arka planda çalışır
             job_id = ds_learning_service.create_job(conn, source_id, source["company_id"], "samples", current_user.get("id"))
-            result = ds_learning_service.collect_samples(source, conn)
-            ds_learning_service.complete_job(conn, job_id, result)
 
-            if result.get("success"):
-                return {"success": True, "job_id": job_id, **result["data"]}
-            else:
-                return {"success": False, "job_id": job_id, "message": result.get("error", "Örnek toplama başarısız")}
+        schema_log = f"{len(schema_filter)} şema" if schema_filter else "tüm şemalar"
+        logger.info("[DataSources] Veri toplama başlatıldı (arka plan): source_id=%s, %s", source_id, schema_log)
+
+        def _bg_collect():
+            bg_conn = None
+            try:
+                from app.core.db import get_db_conn
+                bg_conn = get_db_conn()
+                result = ds_learning_service.collect_samples(source, bg_conn, schema_filter=schema_filter)
+                ds_learning_service.complete_job(bg_conn, job_id, result)
+            except Exception:
+                logger.error("[BG] Veri toplama arka plan hatası: source_id=%s", source_id)
+            finally:
+                if bg_conn:
+                    try:
+                        bg_conn.close()
+                    except Exception:
+                        pass
+
+        threading.Thread(target=_bg_collect, daemon=True).start()
+        return {
+            "success": True,
+            "job_id": job_id,
+            "message": f"Veri toplama başlatıldı ({schema_log}). İlerlemeyi check-running-job ile takip edebilirsiniz."
+        }
 
     except HTTPException:
         raise
@@ -1316,3 +1372,94 @@ def get_schema_history(
     except Exception as e:
         logger.error("[DataSources] Schema history hatası: %s", type(e).__name__)
         return {"success": False, "history": []}
+
+
+@router.get("/{source_id}/suggested-queries")
+def get_suggested_queries(
+    source_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    v3.14.0: Proaktif sorgu önerileri — öğrenilmiş tablolardan otomatik rapor önerileri.
+    Kullanıcı 'veritabanında ara' sekmesini açtığında gösterilir.
+    """
+    try:
+        with get_db_context() as conn:
+            cur = conn.cursor()
+
+            # 1. Golden SQL'den en çok kullanılan sorgular
+            cur.execute("""
+                SELECT question_text, usage_count
+                FROM golden_sql
+                WHERE source_id = %s AND verified = TRUE
+                ORDER BY usage_count DESC, created_at DESC
+                LIMIT 5
+            """, (source_id,))
+            golden = [{"text": r[0] if not isinstance(r, dict) else r["question_text"],
+                        "type": "golden"} for r in cur.fetchall()]
+
+            # 2. İş süreci şablonlarından öneriler
+            cur.execute("""
+                SELECT process_name_tr, typical_queries
+                FROM business_process_templates
+                WHERE source_id = %s AND is_active = TRUE
+                LIMIT 5
+            """, (source_id,))
+            process_suggestions = []
+            for row in cur.fetchall():
+                r = dict(row) if hasattr(row, 'keys') else {"process_name_tr": row[0], "typical_queries": row[1]}
+                queries = r.get("typical_queries") or []
+                if isinstance(queries, str):
+                    import json
+                    try:
+                        queries = json.loads(queries)
+                    except Exception:
+                        queries = []
+                for q in queries[:2]:
+                    q_text = q.get("question", "") if isinstance(q, dict) else str(q)
+                    if q_text:
+                        process_suggestions.append({
+                            "text": q_text,
+                            "type": "process",
+                            "process": r.get("process_name_tr", ""),
+                        })
+
+            # 3. Enriched tablolardan sample_questions
+            cur.execute("""
+                SELECT lr.metadata, lr.content_text
+                FROM ds_learning_results lr
+                WHERE lr.source_id = %s
+                  AND lr.content_type = 'schema_record'
+                  AND lr.is_valid = TRUE
+                LIMIT 10
+            """, (source_id,))
+            table_suggestions = []
+            for row in cur.fetchall():
+                r = dict(row) if hasattr(row, 'keys') else {"metadata": row[0], "content_text": row[1]}
+                meta = r.get("metadata") or {}
+                if isinstance(meta, str):
+                    import json
+                    try:
+                        meta = json.loads(meta)
+                    except Exception:
+                        meta = {}
+                bname = meta.get("business_name", "")
+                # content_text'ten sample_questions çıkar (varsa)
+                content = r.get("content_text", "")
+                if "Örnek Sorular:" in content:
+                    sq_section = content.split("Örnek Sorular:")[-1]
+                    for line in sq_section.strip().split("\n")[:2]:
+                        line = line.strip().lstrip("- •")
+                        if line and len(line) > 10:
+                            table_suggestions.append({
+                                "text": line,
+                                "type": "table",
+                                "table": bname,
+                            })
+
+            all_suggestions = golden + process_suggestions + table_suggestions
+            return {"success": True, "suggestions": all_suggestions[:10]}
+
+    except Exception as e:
+        logger.error("[DataSources] Suggested queries hatası: %s", type(e).__name__)
+        return {"success": True, "suggestions": []}

@@ -202,6 +202,11 @@
                 handleDialogTyping(data);
                 break;
 
+            // === v3.14.0: Asenkron DB Sorgu Tamamlandı ===
+            case 'db_query_complete':
+                handleDbQueryComplete(data);
+                break;
+
             // === RAG UPLOAD BİLDİRİMLERİ (v2.39.0) ===
             case 'rag_upload_progress':
                 handleRagUploadProgress(data);
@@ -376,6 +381,62 @@
         // Global event dispatch
         window.dispatchEvent(new CustomEvent('vyra:dialog_message', {
             detail: { dialog_id: dialogId, message, quick_reply: quickReply }
+        }));
+    }
+
+    // === v3.14.0: Asenkron DB Sorgu Tamamlandı Handler ===
+    function handleDbQueryComplete(data) {
+        const { dialog_id: dialogId, job_id: jobId, query_text_short: shortQ,
+                result_summary: summary, message_id: msgId, message } = data;
+
+        console.log('[NGSSAI-WS] 📊 DB sorgu tamamlandı:', shortQ, '→', summary);
+
+        // 1. Chat'te placeholder kartı güncelle (kullanıcı hala aynı sayfadaysa)
+        const statusEl = document.getElementById(`dbqs_${jobId}`);
+        if (statusEl) {
+            statusEl.textContent = `✅ ${summary}`;
+            statusEl.classList.add('db-query-done');
+        }
+
+        // 2. Mesajı dialog'a ekle (SSE ile zaten eklenmediyse)
+        if (msgId) {
+            const existing = document.querySelector(`[data-message-id="${msgId}"]`);
+            if (!existing && window.DialogChatModule && typeof DialogChatModule.addMessageFromWS === 'function') {
+                DialogChatModule.addMessageFromWS(message);
+            }
+        }
+
+        // 3. Bildirim — soru bazlı, tıklayınca ilgili mesaja gider
+        if (typeof NgssNotification !== 'undefined') {
+            const appName = window.BrandingEngine ? BrandingEngine.getAppName() : 'VYRA';
+            NgssNotification.add(
+                'success',
+                `📊 ${shortQ}`,
+                `✅ ${summary}`,
+                dialogId
+            );
+        }
+
+        // 4. Browser notification (sayfa gizliyse)
+        if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+            try {
+                const notif = new Notification(`📊 ${shortQ}`, {
+                    body: `✅ ${summary}`,
+                    icon: '/assets/images/vyra_logo.png',
+                    tag: `db-query-${jobId}`,
+                });
+                notif.onclick = () => {
+                    window.focus();
+                    if (typeof NgssNotification !== 'undefined') {
+                        NgssNotification.navigateToDialog(dialogId);
+                    }
+                };
+            } catch (e) { /* Browser notification hatası */ }
+        }
+
+        // 5. Global event
+        window.dispatchEvent(new CustomEvent('vyra:db_query_complete', {
+            detail: { dialog_id: dialogId, job_id: jobId, summary, message_id: msgId }
         }));
     }
 

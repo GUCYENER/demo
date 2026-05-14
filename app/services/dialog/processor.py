@@ -15,7 +15,7 @@ from typing import List, Optional, Dict, Any, Tuple
 
 from app.services.rag_service import get_rag_service
 from app.services.ocr_service import get_ocr_service
-from app.services.logging_service import log_system_event, log_error
+from app.services.logging_service import log_system_event, log_error, log_warning
 
 from app.services.dialog.messages import (
     add_message,
@@ -514,6 +514,8 @@ def process_user_message_stream(
     widget_config: dict = None,  # v2.61.0: Widget veri kaynağı override
     source_type: str = None,  # v3.6.0: 'rag', 'db' veya None — frontend mod seçimi
     company_id: int = None,  # v3.8.0: Firma bazlı DB kaynağı filtresi
+    schema_hint: str = None,  # v4.0: Disambiguation — kullanıcı seçilen schema.table
+    report_template: str = None,  # v4.0: Rapor yaklaşımı şablonu
 ):
     """
     🆕 v2.50.0: Streaming mesaj işleme orchestrator'ı.
@@ -589,9 +591,49 @@ def process_user_message_stream(
         final_content = None
         final_metadata = None
         
+        # v3.14.0: DB sorguları için pending_db_queries kaydı oluştur
+        pending_query_id = None
+        if source_type == 'db':
+            _pq_conn = None
+            try:
+                from app.core.db import get_db_conn
+                _pq_conn = get_db_conn()
+                _pq_cur = _pq_conn.cursor()
+                short_text = (search_query[:77] + "...") if len(search_query) > 80 else search_query
+                _pq_cur.execute("""
+                    INSERT INTO pending_db_queries
+                        (dialog_id, user_id, company_id, query_text, query_text_short, status)
+                    VALUES (%s, %s, %s, %s, %s, 'running')
+                    RETURNING id
+                """, (dialog_id, user_id, company_id or 1, search_query, short_text))
+                row = _pq_cur.fetchone()
+                pending_query_id = row[0] if row else None
+                _pq_conn.commit()
+
+                # Frontend'e job_queued event gönder
+                if pending_query_id:
+                    yield {"type": "job_queued", "data": {
+                        "job_id": pending_query_id,
+                        "query_text": search_query,
+                        "query_text_short": short_text,
+                    }}
+            except Exception as pq_err:
+                log_warning(f"pending_db_queries kayıt hatası: {str(pq_err)[:200]}", "dialog")
+            finally:
+                if _pq_conn:
+                    try:
+                        _pq_conn.close()
+                    except Exception:
+                        pass
+
         # 🆕 v3.6.0: source_type bazlı pipeline seçimi
         if source_type == 'db':
-            stream_gen = deep_think.process_stream_db_only(search_query, user_id, company_id=company_id)
+            stream_gen = deep_think.process_stream_db_only(
+                search_query, user_id,
+                company_id=company_id,
+                schema_hint=schema_hint,
+                report_template=report_template,
+            )
         elif source_type == 'rag':
             stream_gen = deep_think.process_stream_rag_only(search_query, user_id)
         else:
@@ -654,7 +696,7 @@ def process_user_message_stream(
                 pass
             
             msg_id = add_message(dialog_id, "assistant", final_content, "text", final_metadata)
-            
+
             elapsed = time.time() - start_total
             log_system_event(
                 "INFO",
@@ -662,7 +704,66 @@ def process_user_message_stream(
                 "dialog_perf",
                 user_id
             )
-            
+
+            # v3.14.0: pending_db_queries kaydını güncelle + WebSocket push
+            if pending_query_id:
+                _pq_conn2 = None
+                try:
+                    from app.core.db import get_db_conn
+                    _pq_conn2 = get_db_conn()
+                    _pq_cur2 = _pq_conn2.cursor()
+                    row_count = final_metadata.get("row_count", 0) if final_metadata else 0
+                    summary = f"{row_count} kayıt, {elapsed:.1f}sn"
+                    _pq_cur2.execute("""
+                        UPDATE pending_db_queries
+                        SET status = 'completed', result_message_id = %s,
+                            result_summary = %s, elapsed_ms = %s, completed_at = NOW()
+                        WHERE id = %s
+                    """, (msg_id, summary, int(elapsed * 1000), pending_query_id))
+                    _pq_conn2.commit()
+
+                    # WebSocket push — kullanıcı farklı ekrandaysa bildirim alacak
+                    try:
+                        import asyncio
+                        from app.core.websocket_manager import manager as ws_manager
+                        short_q = (search_query[:50] + "...") if len(search_query) > 50 else search_query
+                        ws_payload = {
+                            "type": "db_query_complete",
+                            "dialog_id": dialog_id,
+                            "job_id": pending_query_id,
+                            "query_text_short": short_q,
+                            "result_summary": summary,
+                            "message_id": msg_id,
+                            "message": {
+                                "id": msg_id,
+                                "role": "assistant",
+                                "content": final_content[:200] if final_content else "",
+                                "content_type": "text",
+                                "metadata": final_metadata,
+                            },
+                        }
+                        # Sync context'ten async WebSocket push — mevcut loop varsa kullan
+                        try:
+                            loop = asyncio.get_running_loop()
+                            loop.create_task(ws_manager.send_to_user(user_id, ws_payload))
+                        except RuntimeError:
+                            # Running loop yok — yeni oluştur (thread context)
+                            loop = asyncio.new_event_loop()
+                            try:
+                                loop.run_until_complete(ws_manager.send_to_user(user_id, ws_payload))
+                            finally:
+                                loop.close()
+                    except Exception as ws_err:
+                        log_warning(f"WebSocket push hatası: {str(ws_err)[:200]}", "dialog")
+                except Exception as pq_err2:
+                    log_warning(f"pending_db_queries güncelleme hatası: {str(pq_err2)[:200]}", "dialog")
+                finally:
+                    if _pq_conn2:
+                        try:
+                            _pq_conn2.close()
+                        except Exception:
+                            pass
+
             # Final DB kaydı event'ini gönder
             yield {"type": "saved", "data": {
                 "message_id": msg_id,
@@ -672,6 +773,20 @@ def process_user_message_stream(
     
     except Exception as e:
         log_error(f"Streaming orchestrator hatası: {e}", "dialog")
+        # v3.14.0: Hata durumunda pending_db_queries güncelle
+        if pending_query_id:
+            try:
+                from app.core.db import get_db_conn
+                _pq_err_conn = get_db_conn()
+                _pq_err_cur = _pq_err_conn.cursor()
+                _pq_err_cur.execute("""
+                    UPDATE pending_db_queries SET status = 'failed', error_message = %s, completed_at = NOW()
+                    WHERE id = %s
+                """, (str(e)[:500], pending_query_id))
+                _pq_err_conn.commit()
+                _pq_err_conn.close()
+            except Exception:
+                pass
         yield {"type": "error", "data": str(e)}
 
 

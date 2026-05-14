@@ -633,36 +633,86 @@ def _enrich_columns(vyra_conn, source_id: int, table_enrichment_id: int,
 # =====================================================
 
 def get_all_tables_status(vyra_conn, source_id: int) -> list:
-    """Tüm tabloların keşif/zenginleştirme (enrichment) durumlarını beraber döner."""
+    """
+    Örneklenen schema'lardaki tabloların keşif/zenginleştirme (enrichment) durumlarını döner.
+
+    v3.14.0: Sadece ds_db_samples kaydı olan (örneklenmiş) schema'lardaki tabloları gösterir.
+    Böylece kullanıcı Adım 3'te sadece belirli schema'ları seçtiyse, panelde sadece onlar görünür.
+    Eğer hiç sample yoksa (Adım 3 henüz yapılmamışsa), tüm tabloları gösterir (fallback).
+    """
     cur = vyra_conn.cursor()
+
+    # v3.14.0: Örneklenmiş schema'ları bul
     cur.execute("""
-        SELECT 
-            o.id as object_id,
-            o.schema_name,
-            o.object_name as table_name,
-            o.object_type,
-            te.id as enrichment_id,
-            te.business_name_tr,
-            te.description_tr,
-            te.category,
-            te.enrichment_score,
-            te.llm_confidence,
-            te.admin_approved,
-            te.admin_label_tr,
-            te.admin_notes,
-            te.last_enriched_at,
-            te.version
-        FROM ds_db_objects o
-        LEFT JOIN ds_table_enrichments te 
-          ON o.source_id = te.source_id 
-         AND COALESCE(o.schema_name, '') = COALESCE(te.schema_name, '') 
-         AND o.object_name = te.table_name
-        WHERE o.source_id = %s AND o.object_type IN ('table', 'view')
-        ORDER BY 
-            CASE WHEN te.id IS NULL THEN 0 ELSE 1 END,
-            te.enrichment_score ASC,
-            o.object_name
+        SELECT DISTINCT o.schema_name
+        FROM ds_db_samples s
+        JOIN ds_db_objects o ON s.object_id = o.id
+        WHERE o.source_id = %s AND o.schema_name IS NOT NULL
     """, (source_id,))
+    sampled_schemas = [row[0] if not isinstance(row, dict) else row["schema_name"] for row in cur.fetchall()]
+
+    if sampled_schemas:
+        # Sadece örneklenmiş schema'lardaki tabloları getir
+        format_strings = ','.join(['%s'] * len(sampled_schemas))
+        cur.execute(f"""
+            SELECT
+                o.id as object_id,
+                o.schema_name,
+                o.object_name as table_name,
+                o.object_type,
+                te.id as enrichment_id,
+                te.business_name_tr,
+                te.description_tr,
+                te.category,
+                te.enrichment_score,
+                te.llm_confidence,
+                te.admin_approved,
+                te.admin_label_tr,
+                te.admin_notes,
+                te.last_enriched_at,
+                te.version
+            FROM ds_db_objects o
+            LEFT JOIN ds_table_enrichments te
+              ON o.source_id = te.source_id
+             AND COALESCE(o.schema_name, '') = COALESCE(te.schema_name, '')
+             AND o.object_name = te.table_name
+            WHERE o.source_id = %s AND o.object_type IN ('table', 'view')
+              AND o.schema_name IN ({format_strings})
+            ORDER BY
+                CASE WHEN te.id IS NULL THEN 0 ELSE 1 END,
+                te.enrichment_score ASC,
+                o.object_name
+        """, [source_id] + sampled_schemas)
+    else:
+        # Fallback: Henüz sampling yapılmamışsa tüm tabloları göster
+        cur.execute("""
+            SELECT
+                o.id as object_id,
+                o.schema_name,
+                o.object_name as table_name,
+                o.object_type,
+                te.id as enrichment_id,
+                te.business_name_tr,
+                te.description_tr,
+                te.category,
+                te.enrichment_score,
+                te.llm_confidence,
+                te.admin_approved,
+                te.admin_label_tr,
+                te.admin_notes,
+                te.last_enriched_at,
+                te.version
+            FROM ds_db_objects o
+            LEFT JOIN ds_table_enrichments te
+              ON o.source_id = te.source_id
+             AND COALESCE(o.schema_name, '') = COALESCE(te.schema_name, '')
+             AND o.object_name = te.table_name
+            WHERE o.source_id = %s AND o.object_type IN ('table', 'view')
+            ORDER BY
+                CASE WHEN te.id IS NULL THEN 0 ELSE 1 END,
+                te.enrichment_score ASC,
+                o.object_name
+        """, (source_id,))
     
     rows = cur.fetchall()
     results = []
@@ -771,29 +821,67 @@ def approve_enrichment(vyra_conn, enrichment_id: int, user_id: int,
 
 
 def get_enrichment_stats(vyra_conn, source_id: int) -> dict:
-    """Kaynak için enrichment istatistikleri döner."""
+    """
+    Kaynak için enrichment istatistikleri döner.
+
+    v3.14.0: Sadece örneklenmiş schema'lardaki tabloları sayar.
+    """
     cur = vyra_conn.cursor()
     try:
+        # v3.14.0: Örneklenmiş schema'ları bul
         cur.execute("""
-            WITH ObjectStats AS (
-                SELECT COUNT(*) as total_db_tables
-                FROM ds_db_objects
-                WHERE source_id = %s AND object_type IN ('table', 'view')
-            ),
-            EnrichmentStats AS (
-                SELECT
-                    COUNT(*) AS total,
-                    COUNT(*) FILTER (WHERE admin_approved = TRUE) AS approved,
-                    COUNT(*) FILTER (WHERE admin_approved = FALSE) AS pending_review,
-                    0 AS auto_approved,
-                    COALESCE(AVG(enrichment_score), 0) AS avg_score,
-                    MAX(last_enriched_at) AS last_enriched
-                FROM ds_table_enrichments
-                WHERE source_id = %s AND is_active = TRUE
-            )
-            SELECT e.total, e.approved, e.pending_review, e.auto_approved, e.avg_score, e.last_enriched, o.total_db_tables
-            FROM EnrichmentStats e CROSS JOIN ObjectStats o
-        """, (source_id, source_id))
+            SELECT DISTINCT o.schema_name
+            FROM ds_db_samples s
+            JOIN ds_db_objects o ON s.object_id = o.id
+            WHERE o.source_id = %s AND o.schema_name IS NOT NULL
+        """, (source_id,))
+        sampled_schemas = [row[0] if not isinstance(row, dict) else row["schema_name"] for row in cur.fetchall()]
+
+        if sampled_schemas:
+            format_strings = ','.join(['%s'] * len(sampled_schemas))
+            cur.execute(f"""
+                WITH ObjectStats AS (
+                    SELECT COUNT(*) as total_db_tables
+                    FROM ds_db_objects
+                    WHERE source_id = %s AND object_type IN ('table', 'view')
+                      AND schema_name IN ({format_strings})
+                ),
+                EnrichmentStats AS (
+                    SELECT
+                        COUNT(*) AS total,
+                        COUNT(*) FILTER (WHERE admin_approved = TRUE) AS approved,
+                        COUNT(*) FILTER (WHERE admin_approved = FALSE) AS pending_review,
+                        0 AS auto_approved,
+                        COALESCE(AVG(enrichment_score), 0) AS avg_score,
+                        MAX(last_enriched_at) AS last_enriched
+                    FROM ds_table_enrichments
+                    WHERE source_id = %s AND is_active = TRUE
+                      AND schema_name IN ({format_strings})
+                )
+                SELECT e.total, e.approved, e.pending_review, e.auto_approved, e.avg_score, e.last_enriched, o.total_db_tables
+                FROM EnrichmentStats e CROSS JOIN ObjectStats o
+            """, [source_id] + sampled_schemas + [source_id] + sampled_schemas)
+        else:
+            cur.execute("""
+                WITH ObjectStats AS (
+                    SELECT COUNT(*) as total_db_tables
+                    FROM ds_db_objects
+                    WHERE source_id = %s AND object_type IN ('table', 'view')
+                ),
+                EnrichmentStats AS (
+                    SELECT
+                        COUNT(*) AS total,
+                        COUNT(*) FILTER (WHERE admin_approved = TRUE) AS approved,
+                        COUNT(*) FILTER (WHERE admin_approved = FALSE) AS pending_review,
+                        0 AS auto_approved,
+                        COALESCE(AVG(enrichment_score), 0) AS avg_score,
+                        MAX(last_enriched_at) AS last_enriched
+                    FROM ds_table_enrichments
+                    WHERE source_id = %s AND is_active = TRUE
+                )
+                SELECT e.total, e.approved, e.pending_review, e.auto_approved, e.avg_score, e.last_enriched, o.total_db_tables
+                FROM EnrichmentStats e CROSS JOIN ObjectStats o
+            """, (source_id, source_id))
 
         row = cur.fetchone()
         if not row:

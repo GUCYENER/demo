@@ -476,8 +476,12 @@ window.DialogChatModule = (function () {
             return;
         }
 
-        // Duplicate önleme: HTTP response bekliyoruz
-        isWaitingForResponse = true;
+        // v3.14.0: DB modunda paralel sorgu desteği — isWaitingForResponse engelleme
+        // DB sorguları eşzamanlı çalışabilir, diğer modlarda sıralı kalır
+        const isDbMode = chatMode === 'db';
+        if (!isDbMode) {
+            isWaitingForResponse = true;
+        }
 
         // ⏱️ Response time ölçümü başla
         const startTime = performance.now();
@@ -642,6 +646,58 @@ window.DialogChatModule = (function () {
                                 return;
                             }
 
+                            // v3.14.0: Asenkron DB sorgu — job başlatıldı
+                            case 'job_queued': {
+                                const { job_id: jqId, query_text_short: jqShort } = eventData;
+                                if (!streamingEl) {
+                                    streamingEl = createStreamingMessage();
+                                }
+                                // XSS-safe: DOM API ile oluştur
+                                const mentionDiv = document.createElement('div');
+                                mentionDiv.className = 'db-query-mention';
+                                mentionDiv.dataset.jobId = jqId;
+
+                                const iconSpan = document.createElement('span');
+                                iconSpan.className = 'db-query-mention-icon';
+                                iconSpan.textContent = '💬';
+
+                                const textSpan = document.createElement('span');
+                                textSpan.className = 'db-query-mention-text';
+                                textSpan.textContent = jqShort; // Auto-escaped
+
+                                const statusSpan = document.createElement('span');
+                                statusSpan.className = 'db-query-status';
+                                statusSpan.id = `dbqs_${jqId}`;
+                                statusSpan.textContent = '⏳ Çalışıyor...';
+
+                                mentionDiv.appendChild(iconSpan);
+                                mentionDiv.appendChild(textSpan);
+                                mentionDiv.appendChild(statusSpan);
+
+                                // streamingEl'in content alanına ekle
+                                const contentEl = streamingEl.querySelector('.message-content') || streamingEl;
+                                contentEl.appendChild(mentionDiv);
+                                break;
+                            }
+
+                            // v3.14.0: Progressive Timeout — sorgu devam ediyor bildirimi
+                            case 'timeout_warning': {
+                                const { message: twMsg, elapsed: twElapsed, estimate: twEst } = eventData;
+                                if (!streamingEl) {
+                                    streamingEl = createStreamingMessage();
+                                }
+                                const waitHtml = `<div class="db-timeout-info">
+                                    <div class="db-timeout-icon">⏳</div>
+                                    <div class="db-timeout-text">${twMsg}</div>
+                                    <div class="db-timeout-progress">
+                                        <div class="db-timeout-bar" style="animation: db-timeout-fill ${twEst || 30}s linear forwards"></div>
+                                    </div>
+                                    <div class="db-timeout-hint">Sorgu arka planda çalışmaya devam ediyor...</div>
+                                </div>`;
+                                appendStreamToken(streamingEl, waitHtml);
+                                break;
+                            }
+
                             // v4.0: Follow-up önerileri
                             case 'followup': {
                                 const { suggestions: fuSugg } = eventData;
@@ -650,10 +706,10 @@ window.DialogChatModule = (function () {
                                         fuSugg,
                                         (q) => {
                                             // Kullanıcı follow-up seçti — normal DB sorgusu gönder
-                                            const inputEl = document.getElementById('messageInput');
+                                            const inputEl = document.getElementById('dialogInput');
                                             if (inputEl) {
                                                 inputEl.value = q;
-                                                sendMessage();
+                                                handleSendMessage();
                                             }
                                         }
                                     );
@@ -850,7 +906,7 @@ window.DialogChatModule = (function () {
         showTypingIndicator();
         isWaitingForResponse = true;
 
-        const token = localStorage.getItem('token') || sessionStorage.getItem('token') || '';
+        const token = localStorage.getItem('access_token');
         const body = {
             content: query,
             source_type: 'db',
@@ -910,7 +966,7 @@ window.DialogChatModule = (function () {
                                 const { suggestions: fs } = ev.data;
                                 if (fs?.length) {
                                     const fHtml = window.DialogChatUtils.renderFollowUpChips(fs,
-                                        (q) => { const inp = document.getElementById('messageInput'); if (inp) { inp.value = q; sendMessage(); } });
+                                        (q) => { const inp = document.getElementById('dialogInput'); if (inp) { inp.value = q; handleSendMessage(); } });
                                     _insertInteractiveBlock(fHtml);
                                 }
                                 break;
@@ -2325,7 +2381,7 @@ window.DBExportHandler = (function () {
     }
 
     function _getToken() {
-        return localStorage.getItem('token') || sessionStorage.getItem('token') || '';
+        return localStorage.getItem('access_token') || '';
     }
 
     async function _doExport(barId, format) {

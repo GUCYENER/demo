@@ -75,6 +75,23 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.14.0 (2026-05-14) - Text-to-SQL Pipeline Overhaul & Async DB Queries
+- ✅ **Chain-of-Thought Prompting:** LLM SQL yazmadan önce adım adım düşünme (tablo seçimi → JOIN stratejisi → filtre → gruplama).
+- ✅ **FKGraph Multi-Hop BFS:** FK ilişkilerinde 1-hop → 3-hop derinlik. Steiner tree ile 5+ tablo JOIN otomatik keşfi.
+- ✅ **Entity Resolution:** Deterministik tablo/kolon eşleştirme (fuzzy + synonym). ML aramasından önce çalışır.
+- ✅ **Column Pruning:** Akıllı kolon seçimi — sadece PK/FK + soruyla ilgili kolonlar LLM'e gönderilir.
+- ✅ **Golden SQL Store:** Doğrulanmış sorgu-SQL çiftleri saklanır, benzer sorularda few-shot örnek veya direkt çalıştırma.
+- ✅ **Value Retrieval:** Soruda geçen isim/numara/ID'leri tablolarda arar, LLM'e ipucu olarak ekler.
+- ✅ **Proaktif Sorgu Önerileri:** `GET /suggested-queries` endpoint — öğrenilmiş tablolardan otomatik rapor önerileri.
+- ✅ **Progressive Timeout:** Sorgu kesilmez, arka planda devam eder. 15sn sonra kullanıcıya progress bar gösterilir.
+- ✅ **Asenkron DB Sorguları:** Paralel soru sorma desteği, WebSocket ile bildirim, soru mention kartı.
+- ✅ **Enriched-Only Fallback:** ML eşleşme bulunamazsa sadece öğrenilmiş tablolar LLM'e gönderilir.
+- ✅ **Tablo Etiketleme Filtresi:** Panel sadece örneklenmiş schema'ları gösterir (3240 → 383 tablo).
+- ✅ **FK Refresh:** Partial enrichment sırasında FK ilişkileri yeniden keşfedilir.
+- ✅ **Follow-up Önerileri:** Kural + şema + LLM bazlı en az 3 kontekstüel öneri.
+- ✅ **Self-Correction:** 7 adımlı hata analiz rehberi ile SQL düzeltme.
+- ✅ **Post-Implementation Review:** TYCHE + ARES zorunlu code review protokolü (Bölüm 5b).
+
 ### 🆕 v3.11.0 (2026-05-12) - Multi-Platform Deployment, Oracle DB & UI İyileştirmeleri
 - ✅ **Oracle DB Desteği:** `cx_Oracle` → `oracledb` geçişi. Thick mode (Instant Client) ile eski password verifier desteği.
 - ✅ **Oracle Obje Keşfi:** `detect_objects`'e Oracle branch eklendi (tablo, view, kolon, PK, FK keşfi). Toplu sorgu optimizasyonu (1355 → 5 SQL).

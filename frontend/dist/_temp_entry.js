@@ -1126,6 +1126,11 @@ window.NgssNotification = NgssNotification;
                 handleDialogTyping(data);
                 break;
 
+            // === v3.14.0: Asenkron DB Sorgu Tamamlandı ===
+            case 'db_query_complete':
+                handleDbQueryComplete(data);
+                break;
+
             // === RAG UPLOAD BİLDİRİMLERİ (v2.39.0) ===
             case 'rag_upload_progress':
                 handleRagUploadProgress(data);
@@ -1300,6 +1305,62 @@ window.NgssNotification = NgssNotification;
         // Global event dispatch
         window.dispatchEvent(new CustomEvent('vyra:dialog_message', {
             detail: { dialog_id: dialogId, message, quick_reply: quickReply }
+        }));
+    }
+
+    // === v3.14.0: Asenkron DB Sorgu Tamamlandı Handler ===
+    function handleDbQueryComplete(data) {
+        const { dialog_id: dialogId, job_id: jobId, query_text_short: shortQ,
+                result_summary: summary, message_id: msgId, message } = data;
+
+        console.log('[NGSSAI-WS] 📊 DB sorgu tamamlandı:', shortQ, '→', summary);
+
+        // 1. Chat'te placeholder kartı güncelle (kullanıcı hala aynı sayfadaysa)
+        const statusEl = document.getElementById(`dbqs_${jobId}`);
+        if (statusEl) {
+            statusEl.textContent = `✅ ${summary}`;
+            statusEl.classList.add('db-query-done');
+        }
+
+        // 2. Mesajı dialog'a ekle (SSE ile zaten eklenmediyse)
+        if (msgId) {
+            const existing = document.querySelector(`[data-message-id="${msgId}"]`);
+            if (!existing && window.DialogChatModule && typeof DialogChatModule.addMessageFromWS === 'function') {
+                DialogChatModule.addMessageFromWS(message);
+            }
+        }
+
+        // 3. Bildirim — soru bazlı, tıklayınca ilgili mesaja gider
+        if (typeof NgssNotification !== 'undefined') {
+            const appName = window.BrandingEngine ? BrandingEngine.getAppName() : 'VYRA';
+            NgssNotification.add(
+                'success',
+                `📊 ${shortQ}`,
+                `✅ ${summary}`,
+                dialogId
+            );
+        }
+
+        // 4. Browser notification (sayfa gizliyse)
+        if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+            try {
+                const notif = new Notification(`📊 ${shortQ}`, {
+                    body: `✅ ${summary}`,
+                    icon: '/assets/images/vyra_logo.png',
+                    tag: `db-query-${jobId}`,
+                });
+                notif.onclick = () => {
+                    window.focus();
+                    if (typeof NgssNotification !== 'undefined') {
+                        NgssNotification.navigateToDialog(dialogId);
+                    }
+                };
+            } catch (e) { /* Browser notification hatası */ }
+        }
+
+        // 5. Global event
+        window.dispatchEvent(new CustomEvent('vyra:db_query_complete', {
+            detail: { dialog_id: dialogId, job_id: jobId, summary, message_id: msgId }
         }));
     }
 
@@ -7110,6 +7171,7 @@ window.DialogVoiceModule = (function () {
 
     // State
     let recognition = null;
+    let isRecording = false;
     let finalTranscript = '';
     let isSpeaking = false;
     let activeSpeakBtn = null;
@@ -7164,7 +7226,9 @@ window.DialogVoiceModule = (function () {
             if (input) {
                 // Anlık + final sonuçları birleştir
                 input.value = (finalTranscript + interimTranscript).trim();
-                updateSendButtonState();
+                // Send buton state'ini güncelle
+                const sendBtn = document.getElementById('dialogSendBtn');
+                if (sendBtn) sendBtn.disabled = !input.value.trim();
                 console.log('[DialogChat] STT:', finalTranscript + interimTranscript);
             }
         };
@@ -8357,8 +8421,12 @@ window.DialogChatModule = (function () {
             return;
         }
 
-        // Duplicate önleme: HTTP response bekliyoruz
-        isWaitingForResponse = true;
+        // v3.14.0: DB modunda paralel sorgu desteği — isWaitingForResponse engelleme
+        // DB sorguları eşzamanlı çalışabilir, diğer modlarda sıralı kalır
+        const isDbMode = chatMode === 'db';
+        if (!isDbMode) {
+            isWaitingForResponse = true;
+        }
 
         // ⏱️ Response time ölçümü başla
         const startTime = performance.now();
@@ -8521,6 +8589,58 @@ window.DialogChatModule = (function () {
                                 isWaitingForResponse = false;
                                 hideTypingIndicator();
                                 return;
+                            }
+
+                            // v3.14.0: Asenkron DB sorgu — job başlatıldı
+                            case 'job_queued': {
+                                const { job_id: jqId, query_text_short: jqShort } = eventData;
+                                if (!streamingEl) {
+                                    streamingEl = createStreamingMessage();
+                                }
+                                // XSS-safe: DOM API ile oluştur
+                                const mentionDiv = document.createElement('div');
+                                mentionDiv.className = 'db-query-mention';
+                                mentionDiv.dataset.jobId = jqId;
+
+                                const iconSpan = document.createElement('span');
+                                iconSpan.className = 'db-query-mention-icon';
+                                iconSpan.textContent = '💬';
+
+                                const textSpan = document.createElement('span');
+                                textSpan.className = 'db-query-mention-text';
+                                textSpan.textContent = jqShort; // Auto-escaped
+
+                                const statusSpan = document.createElement('span');
+                                statusSpan.className = 'db-query-status';
+                                statusSpan.id = `dbqs_${jqId}`;
+                                statusSpan.textContent = '⏳ Çalışıyor...';
+
+                                mentionDiv.appendChild(iconSpan);
+                                mentionDiv.appendChild(textSpan);
+                                mentionDiv.appendChild(statusSpan);
+
+                                // streamingEl'in content alanına ekle
+                                const contentEl = streamingEl.querySelector('.message-content') || streamingEl;
+                                contentEl.appendChild(mentionDiv);
+                                break;
+                            }
+
+                            // v3.14.0: Progressive Timeout — sorgu devam ediyor bildirimi
+                            case 'timeout_warning': {
+                                const { message: twMsg, elapsed: twElapsed, estimate: twEst } = eventData;
+                                if (!streamingEl) {
+                                    streamingEl = createStreamingMessage();
+                                }
+                                const waitHtml = `<div class="db-timeout-info">
+                                    <div class="db-timeout-icon">⏳</div>
+                                    <div class="db-timeout-text">${twMsg}</div>
+                                    <div class="db-timeout-progress">
+                                        <div class="db-timeout-bar" style="animation: db-timeout-fill ${twEst || 30}s linear forwards"></div>
+                                    </div>
+                                    <div class="db-timeout-hint">Sorgu arka planda çalışmaya devam ediyor...</div>
+                                </div>`;
+                                appendStreamToken(streamingEl, waitHtml);
+                                break;
                             }
 
                             // v4.0: Follow-up önerileri

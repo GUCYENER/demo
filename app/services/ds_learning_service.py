@@ -1013,6 +1013,110 @@ def _serialize_value(val):
 # Job Yönetimi
 # =====================================================
 
+
+def _refresh_relationships_for_tables(vyra_conn, source: dict, source_id: int, table_names: set):
+    """
+    v3.14.0: Belirli tablolar için FK ilişkilerini kaynak DB'den yeniden keşfeder.
+    Partial enrichment sırasında yeni eklenen tabloların FK'ları güncel kalır.
+
+    Mevcut ilişkileri silmez — sadece yeni bulunan ilişkileri ekler (UPSERT).
+    """
+    db_type = (source.get("db_type") or "").lower()
+    remote_conn = None
+
+    try:
+        password = _decrypt_password(source.get("db_password_encrypted", ""))
+        remote_conn, _ = _get_db_connector(source, password)
+        if not remote_conn:
+            return
+
+        remote_cur = remote_conn.cursor()
+        new_rels = []
+
+        if db_type == "oracle":
+            for tname in table_names:
+                try:
+                    remote_cur.execute("""
+                        SELECT a.owner, a.table_name, a.column_name,
+                               c_pk.owner AS r_owner, c_pk.table_name AS r_table_name,
+                               b.column_name AS r_column_name,
+                               a.constraint_name
+                        FROM all_cons_columns a
+                        JOIN all_constraints c ON a.constraint_name = c.constraint_name AND a.owner = c.owner
+                        JOIN all_constraints c_pk ON c.r_constraint_name = c_pk.constraint_name AND c.r_owner = c_pk.owner
+                        JOIN all_cons_columns b ON c_pk.constraint_name = b.constraint_name AND c_pk.owner = b.owner
+                        WHERE c.constraint_type = 'R'
+                          AND (UPPER(a.table_name) = UPPER(:1) OR UPPER(c_pk.table_name) = UPPER(:2))
+                    """, [tname, tname])
+                    for row in remote_cur.fetchall():
+                        new_rels.append({
+                            "from_schema": row[0], "from_table": row[1], "from_column": row[2],
+                            "to_schema": row[3], "to_table": row[4], "to_column": row[5],
+                            "constraint_name": row[6],
+                        })
+                except Exception:
+                    pass
+
+        elif db_type == "postgresql":
+            for tname in table_names:
+                try:
+                    remote_cur.execute("""
+                        SELECT kcu.table_schema, kcu.table_name, kcu.column_name,
+                               ccu.table_schema, ccu.table_name, ccu.column_name,
+                               kcu.constraint_name
+                        FROM information_schema.key_column_usage kcu
+                        JOIN information_schema.referential_constraints rc
+                            ON kcu.constraint_name = rc.constraint_name
+                        JOIN information_schema.constraint_column_usage ccu
+                            ON rc.unique_constraint_name = ccu.constraint_name
+                        WHERE LOWER(kcu.table_name) = LOWER(%s)
+                           OR LOWER(ccu.table_name) = LOWER(%s)
+                    """, [tname, tname])
+                    for row in remote_cur.fetchall():
+                        new_rels.append({
+                            "from_schema": row[0], "from_table": row[1], "from_column": row[2],
+                            "to_schema": row[3], "to_table": row[4], "to_column": row[5],
+                            "constraint_name": row[6],
+                        })
+                except Exception:
+                    pass
+
+        # Mevcut ilişkilerle UPSERT (duplicate'ları atla)
+        if new_rels:
+            vyra_cur = vyra_conn.cursor()
+            for rel in new_rels:
+                try:
+                    # COALESCE ile NULL schema'ları boş string'e çevir (unique index uyumu)
+                    from_sch = rel.get("from_schema") or ""
+                    to_sch = rel.get("to_schema") or ""
+                    vyra_cur.execute("""
+                        INSERT INTO ds_db_relationships
+                            (source_id, from_schema, from_table, from_column,
+                             to_schema, to_table, to_column, constraint_name)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (source_id, from_schema, from_table, from_column,
+                                     to_schema, to_table, to_column) DO NOTHING
+                    """, (
+                        source_id,
+                        from_sch, rel["from_table"], rel["from_column"],
+                        to_sch, rel["to_table"], rel["to_column"],
+                        rel.get("constraint_name", ""),
+                    ))
+                except Exception:
+                    pass
+            vyra_conn.commit()
+            logger.info("[DSLearning] %d yeni FK ilişkisi eklendi", len(new_rels))
+
+    except Exception as e:
+        logger.warning("[DSLearning] FK refresh hatası: %s", str(e)[:200])
+    finally:
+        if remote_conn:
+            try:
+                remote_conn.close()
+            except Exception:
+                pass
+
+
 def check_running_job(vyra_conn, source_id: int) -> dict:
     """
     Bu kaynak için çalışan (running) bir iş var mı kontrol eder.
@@ -1473,13 +1577,22 @@ def run_partial_enrichment(source: dict, object_ids: list, vyra_conn, user_id: i
                     s_data = []
             samples_map[obj_id] = s_data if isinstance(s_data, list) else []
             
+        # v3.14.0: Partial enrichment'ta FK ilişkilerini yeniden keşfet
+        # Yeni eklenen tablolar mevcut tablolarla FK ilişkisi olabilir
+        try:
+            new_table_names = {o.get("object_name", "") for o in objects}
+            _refresh_relationships_for_tables(vyra_conn, source, source_id, new_table_names)
+            logger.info("[DSLearning] FK ilişkileri yenilendi: %s tablo", len(new_table_names))
+        except Exception as fk_err:
+            logger.warning("[DSLearning] FK yenileme hatası (devam ediliyor): %s", str(fk_err)[:200])
+
         cur.execute("""
             SELECT from_schema, from_table, from_column,
                    to_schema, to_table, to_column, constraint_name
             FROM ds_db_relationships WHERE source_id = %s
         """, (source_id,))
         relationships = [dict(row) if hasattr(row, 'keys') else dict(zip([c[0] for c in cur.description], row)) for row in cur.fetchall()]
-        
+
         enrichment_result = ds_enrichment_service.enrich_tables_batch(
             vyra_conn, source_id, company_id,
             objects, samples_map, relationships

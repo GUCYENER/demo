@@ -1997,6 +1997,36 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 yield {"type": "done", "data": {"content": msg, "metadata": {"db_only": True}}}
                 return
 
+            # ── 1b. Golden SQL kontrolü — doğrulanmış sorgu varsa direkt kullan ──
+            golden_hit = None
+            golden_examples = []
+            try:
+                from app.services.text_to_sql import search_golden_sql
+                if sources:
+                    golden_results = search_golden_sql(
+                        query, sources[0]["id"], company_id, min_score=0.80, max_results=3
+                    )
+                    if golden_results:
+                        best = golden_results[0]
+                        if best["score"] >= 0.95:
+                            # Direkt çalıştır — LLM bypass
+                            golden_hit = best
+                            log_system_event(
+                                "INFO",
+                                f"DB-Only: Golden SQL hit (score={best['score']}): {best['question_text'][:60]}",
+                                "deep_think", user_id
+                            )
+                        else:
+                            # Few-shot örnek olarak kullan
+                            golden_examples = golden_results
+                            log_system_event(
+                                "INFO",
+                                f"DB-Only: {len(golden_results)} Golden SQL few-shot örneği bulundu",
+                                "deep_think", user_id
+                            )
+            except Exception as gs_err:
+                log_warning(f"DB-Only Golden SQL hatası: {gs_err}", "deep_think")
+
             # ── 2. ML öğrenilmiş şema bilgisini getir (schema_record) ──────
             ml_context = ""
             ml_matched_tables = []
@@ -2031,17 +2061,60 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
 
             # ── 3. Schema context'i al ────────────────────────────────────
             from app.services.text_to_sql import get_schema_context
+
+            # v3.14.0: Entity Resolution — ML'den önce deterministik eşleştirme
+            entity_matched_tables = []
+            try:
+                from app.services.text_to_sql import resolve_entities, get_schema_context as _get_ctx
+                # Hızlı entity resolution için enriched tabloları çek
+                for s in sources:
+                    try:
+                        er_ctx = _get_ctx(s["id"], enriched_only=True)
+                        if er_ctx and er_ctx.get("tables"):
+                            entity_matched_tables = resolve_entities(query, er_ctx["tables"])
+                            if entity_matched_tables:
+                                log_system_event(
+                                    "INFO",
+                                    f"DB-Only Entity Resolution: {len(entity_matched_tables)} tablo eşleşti: "
+                                    f"{entity_matched_tables[:5]}",
+                                    "deep_think", user_id
+                                )
+                            break
+                    except Exception:
+                        pass
+            except Exception as er_err:
+                log_warning(f"DB-Only Entity Resolution hatası: {er_err}", "deep_think")
+
+            # ML + Entity Resolution sonuçlarını birleştir
+            combined_matched = list(set(ml_matched_tables + entity_matched_tables))
+
+            # v3.14.0: ML eşleşme varsa tüm tabloları al (pruning yapılacak),
+            # ML eşleşme yoksa sadece enriched tabloları al (gereksiz tabloları LLM'e gönderme)
+            use_enriched_only = not combined_matched
             schema_ctx = None
             source = None
             for s in sources:
                 try:
-                    ctx = get_schema_context(s["id"])
+                    ctx = get_schema_context(s["id"], enriched_only=use_enriched_only)
                     if ctx and ctx.get("tables"):
                         schema_ctx = ctx
                         source = s
                         break
                 except Exception as schema_err:
                     log_warning(f"DB-Only: Kaynak '{s['name']}' şema yüklenemedi: {schema_err}", "deep_think")
+
+            # v3.14.0: enriched_only ile tablo bulunamazsa, tüm tablolarla tekrar dene (fallback)
+            if not schema_ctx and use_enriched_only:
+                log_warning("DB-Only: Enriched tablo bulunamadı, tüm tablolarla deneniyor", "deep_think")
+                for s in sources:
+                    try:
+                        ctx = get_schema_context(s["id"], enriched_only=False)
+                        if ctx and ctx.get("tables"):
+                            schema_ctx = ctx
+                            source = s
+                            break
+                    except Exception:
+                        pass
 
             if not schema_ctx:
                 yield {"type": "done", "data": {
@@ -2055,20 +2128,46 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             if ml_context:
                 schema_ctx_with_ml["extra_context"] = ml_context
 
-            if ml_matched_tables and schema_ctx_with_ml.get("tables"):
+            if combined_matched and schema_ctx_with_ml.get("tables"):
                 pruned_tables = _prune_schema_tables(
                     all_tables=schema_ctx_with_ml["tables"],
-                    matched_tables=ml_matched_tables,
+                    matched_tables=combined_matched,
                     relationships=schema_ctx_with_ml.get("relationships", []),
                 )
                 if pruned_tables:
                     log_system_event(
                         "INFO",
                         f"DB-Only Schema Pruning: {len(schema_ctx_with_ml['tables'])} → {len(pruned_tables)} tablo "
-                        f"(ML match: {ml_matched_tables})",
+                        f"(ML: {ml_matched_tables}, Entity: {entity_matched_tables[:5]})",
                         "deep_think", user_id
                     )
                     schema_ctx_with_ml["tables"] = pruned_tables
+                else:
+                    # v3.14.0: Pruning eşleşme bulamadı — enriched tablolara fallback
+                    enriched_fallback = [
+                        t for t in schema_ctx_with_ml["tables"]
+                        if t.get("business_name_tr") or t.get("category")
+                    ]
+                    if enriched_fallback:
+                        log_system_event(
+                            "INFO",
+                            f"DB-Only: Pruning eşleşme bulamadı, enriched fallback: "
+                            f"{len(schema_ctx_with_ml['tables'])} → {len(enriched_fallback)} tablo",
+                            "deep_think", user_id
+                        )
+                        schema_ctx_with_ml["tables"] = enriched_fallback
+                    else:
+                        log_warning(
+                            "DB-Only: Pruning ve enriched fallback boş — tüm tablolar kullanılacak",
+                            "deep_think"
+                        )
+            elif use_enriched_only and schema_ctx_with_ml.get("tables"):
+                log_system_event(
+                    "INFO",
+                    f"DB-Only: ML eşleşme yok, sadece enriched tablolar kullanılıyor: "
+                    f"{len(schema_ctx_with_ml['tables'])} tablo",
+                    "deep_think", user_id
+                )
 
             # ── 4b. v4.0: schema_hint ile tablo önceliklendirme ───────────
             if schema_hint:
@@ -2137,9 +2236,24 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 # Kullanıcı rapor şablonu seçti — şablonu sorguya ekle
                 query = f"{query}\n\n[Rapor Yaklaşımı: {report_template}]"
 
+            # ── 4e. v3.14.0: Value Retrieval — soruda geçen spesifik değerleri tespit et ──
+            try:
+                from app.services.text_to_sql import value_retrieval
+                value_hints = value_retrieval(query, source["id"], schema_ctx_with_ml.get("tables", []))
+                if value_hints:
+                    vr_block = "\nDEĞER İPUÇLARI (kullanıcının bahsettiği spesifik değerler):\n"
+                    for vh in value_hints[:5]:
+                        vr_block += f"- '{vh['value']}' → {vh['schema']}.{vh['table']}.{vh['column']} kolonunda aranabilir\n"
+                    if schema_ctx_with_ml.get("extra_context"):
+                        schema_ctx_with_ml["extra_context"] += vr_block
+                    else:
+                        schema_ctx_with_ml["extra_context"] = vr_block
+            except Exception:
+                pass
+
             # ── 5. LLM Text-to-SQL üret (ML bağlamı + şema) ─────────────
             from app.services.text_to_sql import generate_sql, generate_sql_with_retry
-            from app.services.safe_sql_executor import SafeSQLExecutor
+            from app.services.safe_sql_executor import SafeSQLExecutor, SQLResult
 
             dialect = schema_ctx.get("dialect", "mssql")
 
@@ -2156,7 +2270,27 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                     "from_cache": True,
                 }
                 log_system_event("INFO", f"DB-Only: Cache'den SQL kullanılıyor: {cached['sql'][:80]}", "deep_think", user_id)
+            elif golden_hit:
+                # v3.14.0: Golden SQL hit — LLM bypass, doğrulanmış SQL direkt kullan
+                sql_result = {
+                    "success": True,
+                    "sql": golden_hit["sql_query"],
+                    "explanation": f"Önceki doğrulanmış sorgu kullanılıyor (benzerlik: {golden_hit['score']}).",
+                    "error": None,
+                    "from_golden": True,
+                }
+                log_system_event("INFO", f"DB-Only: Golden SQL kullanılıyor: {golden_hit['sql_query'][:80]}", "deep_think", user_id)
             else:
+                # v3.14.0: Golden SQL few-shot örneklerini schema context'e ekle
+                if golden_examples:
+                    gs_block = "\n\nÖNCEKİ DOĞRULANMIŞ SORGULAR (referans olarak kullan):\n"
+                    for ge in golden_examples[:3]:
+                        gs_block += f"Soru: {ge['question_text']}\n```sql\n{ge['sql_query']}\n```\n\n"
+                    if schema_ctx_with_ml.get("extra_context"):
+                        schema_ctx_with_ml["extra_context"] += gs_block
+                    else:
+                        schema_ctx_with_ml["extra_context"] = gs_block
+
                 sql_result = generate_sql(
                     query=query,
                     schema_context=schema_ctx_with_ml,
@@ -2204,13 +2338,50 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 }}
                 return
 
-            # ── 6. SQL'i güvenli çalıştır + Self-Healing Retry ──────────
-            exec_result = executor.execute(
-                sql=sql,
-                source=source,
-                dialect=dialect,
-                allowed_tables=allowed_tables,
+            # ── 6. SQL'i güvenli çalıştır (Progressive Timeout) ──────────
+
+            # v3.14.0: Tahmini süre hesapla
+            time_estimate = executor.estimate_query_time(schema_ctx_with_ml, sql)
+            if time_estimate["complexity"] in ("medium", "high"):
+                yield {"type": "status", "data": f"⏳ {time_estimate['reason']} — tahmini süre ~{time_estimate['estimate_seconds']}sn"}
+
+            # v3.14.0: Non-blocking execution — sorguyu arka planda çalıştır
+            result_holder, result_event, exec_thread = executor.execute_async(
+                sql=sql, source=source, dialect=dialect, allowed_tables=allowed_tables,
             )
+
+            # İlk bekleme periyodu (15sn)
+            INITIAL_WAIT = 15
+            got_result = result_event.wait(timeout=INITIAL_WAIT)
+
+            if not got_result:
+                # Timeout — ama sorguyu KESMİYORUZ, arka planda devam ediyor
+                elapsed_so_far = INITIAL_WAIT
+                yield {"type": "timeout_warning", "data": {
+                    "message": "⏳ Sorgu devam ediyor, büyük tablolarda biraz daha zaman alabilir...",
+                    "elapsed": elapsed_so_far,
+                    "estimate": time_estimate["estimate_seconds"],
+                }}
+
+                # Progressive bekleme: 15sn daha, sonra 30sn daha (toplam max 120sn)
+                extra_waits = [15, 30, 45]
+                for extra in extra_waits:
+                    got_result = result_event.wait(timeout=extra)
+                    elapsed_so_far += extra
+                    if got_result:
+                        break
+                    if elapsed_so_far >= 105:
+                        # Toplam 105sn beklendi, son şans
+                        yield {"type": "status", "data": f"⏳ {elapsed_so_far}sn geçti, son bekleme..."}
+
+            exec_result = result_holder.get("result")
+            if exec_result is None:
+                # Hala sonuç yok — gerçek timeout
+                exec_result = SQLResult(
+                    success=False,
+                    error=f"Sorgu 120 saniye içinde tamamlanamadı",
+                    sql_executed=sql[:200],
+                )
 
             # v3.9.0: Self-Healing — execution hatası varsa LLM ile düzeltme
             if not exec_result.success and exec_result.error:
@@ -2264,6 +2435,19 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 )
             except Exception:
                 pass
+
+            # v3.14.0: Başarılı sorguyuGolden SQL'e kaydet (arka planda)
+            if exec_result.success and not sql_result.get("from_cache") and not sql_result.get("from_golden"):
+                try:
+                    from app.services.text_to_sql import save_golden_sql
+                    import threading
+                    threading.Thread(
+                        target=save_golden_sql,
+                        args=(source["id"], company_id, query, sql, None, dialect, user_id),
+                        daemon=True
+                    ).start()
+                except Exception:
+                    pass
 
             if not exec_result.success:
                 # v3.8.0 Error Sanitization: DB hata detaylarını loglayıp kullanıcıya genel mesaj göster
@@ -2500,63 +2684,171 @@ def invalidate_sql_cache(company_id: int = None, source_id: int = None):
 
 
 # =====================================================
-# Schema Pruning & Error Sanitization Helpers (v3.8.0)
+# FKGraph & Schema Pruning Helpers (v3.14.0)
 # =====================================================
+
+class FKGraph:
+    """
+    v3.14.0: FK ilişkilerinden bidirectional graf oluşturur.
+    Multi-hop BFS ile seed tablolardan N-derinliğe kadar bağlı tabloları bulur.
+    Steiner tree yaklaşımıyla birden fazla seed tabloyu birleştiren ara tabloları keşfeder.
+    """
+
+    def __init__(self, relationships: list):
+        from collections import defaultdict
+        self.adj = defaultdict(set)          # table -> {neighbor_tables}
+        self.adj_full = defaultdict(set)      # schema.table -> {schema.neighbor_tables}
+        self.edge_details = {}                # (from_table, to_table) -> FK detail
+
+        for rel in relationships:
+            from_parts = rel.get("from", "").lower().split(".")
+            to_parts = rel.get("to", "").lower().split(".")
+
+            from_table = from_parts[1] if len(from_parts) >= 2 else from_parts[0]
+            to_table = to_parts[1] if len(to_parts) >= 2 else to_parts[0]
+            from_full = f"{from_parts[0]}.{from_table}" if len(from_parts) >= 2 else from_table
+            to_full = f"{to_parts[0]}.{to_table}" if len(to_parts) >= 2 else to_table
+
+            # Bidirectional edges (short name)
+            self.adj[from_table].add(to_table)
+            self.adj[to_table].add(from_table)
+            # Bidirectional edges (full name)
+            self.adj_full[from_full].add(to_full)
+            self.adj_full[to_full].add(from_full)
+            # Edge details
+            self.edge_details[(from_table, to_table)] = rel
+            self.edge_details[(to_table, from_table)] = rel
+
+    def bfs_expand(self, seed_tables: set, max_depth: int = 3) -> set:
+        """
+        Seed tablolardan BFS ile max_depth hop'a kadar bağlı tabloları bulur.
+
+        Args:
+            seed_tables: Başlangıç tabloları (short veya full name)
+            max_depth: Maksimum derinlik (default: 3)
+
+        Returns:
+            Seed + komşu tabloların seti
+        """
+        # Normalize seed tables
+        normalized_seeds = set()
+        for s in seed_tables:
+            s_lower = s.lower().strip()
+            normalized_seeds.add(s_lower)
+            if "." in s_lower:
+                normalized_seeds.add(s_lower.split(".")[-1])
+
+        visited = set(normalized_seeds)
+        queue = [(t, 0) for t in normalized_seeds]
+
+        while queue:
+            table, depth = queue.pop(0)
+            if depth >= max_depth:
+                continue
+            # Short name neighbors
+            for neighbor in self.adj.get(table, set()):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append((neighbor, depth + 1))
+            # Full name neighbors
+            for neighbor in self.adj_full.get(table, set()):
+                n_short = neighbor.split(".")[-1] if "." in neighbor else neighbor
+                if n_short not in visited and neighbor not in visited:
+                    visited.add(n_short)
+                    visited.add(neighbor)
+                    queue.append((n_short, depth + 1))
+
+        return visited
+
+    def find_join_path(self, table_a: str, table_b: str, max_depth: int = 5) -> list:
+        """
+        İki tablo arasındaki en kısa FK yolunu bulur (BFS shortest path).
+
+        Returns:
+            [table_a, intermediate1, intermediate2, table_b] veya [] (yol yoksa)
+        """
+        a = table_a.lower().split(".")[-1] if "." in table_a else table_a.lower()
+        b = table_b.lower().split(".")[-1] if "." in table_b else table_b.lower()
+
+        if a == b:
+            return [a]
+
+        visited = {a}
+        queue = [(a, [a])]
+
+        while queue:
+            current, path = queue.pop(0)
+            if len(path) > max_depth:
+                continue
+            for neighbor in self.adj.get(current, set()):
+                if neighbor == b:
+                    return path + [b]
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append((neighbor, path + [neighbor]))
+
+        return []
+
+    def steiner_tree(self, required_tables: list, max_depth: int = 5) -> set:
+        """
+        Birden fazla seed tabloyu birleştiren minimum tablo seti (Steiner tree approximation).
+        Gerekli tüm tabloları FK path'leri üzerinden bağlar.
+
+        Returns:
+            Tüm gerekli tablolar + ara tablolar
+        """
+        if len(required_tables) <= 1:
+            return set(t.lower().split(".")[-1] for t in required_tables)
+
+        # Normalize
+        tables = [t.lower().split(".")[-1] if "." in t else t.lower() for t in required_tables]
+        result = set(tables)
+
+        # Her ardışık çift arasında yol bul, ara tabloları ekle
+        for i in range(len(tables) - 1):
+            path = self.find_join_path(tables[i], tables[i + 1], max_depth)
+            result.update(path)
+
+        return result
+
 
 def _prune_schema_tables(
     all_tables: list,
     matched_tables: list,
     relationships: list,
+    max_depth: int = 3,
 ) -> list:
     """
-    ML match sonuçlarına göre şema tablosu listesini budar (prune).
-    
-    Sadece eşleşen tabloları VE FK ilişkisi olan komşu tabloları döndürür.
-    Bu sayede LLM'e gereksiz 30+ tablo yerine sadece ilgili 3-5 tablo gönderilir.
-    
+    v3.14.0: Multi-hop BFS ile şema tablosu listesini budar.
+
+    Sadece eşleşen tabloları VE FK ilişkisi olan N-hop komşu tabloları döndürür.
+    Eski 1-hop yaklaşım yerine FKGraph ile derinlemesine bağlantı keşfi yapar.
+
     Args:
         all_tables: Tüm keşfedilmiş tablolar
         matched_tables: ML'den eşleşen tablo isimleri (schema.table veya table)
         relationships: FK ilişki listesi [{from: "s.t.c", to: "s.t.c"}, ...]
-    
+        max_depth: Maksimum FK hop derinliği (default: 3)
+
     Returns:
-        Budanmış tablo listesi (en az matched + FK komşuları)
+        Budanmış tablo listesi
     """
     if not matched_tables or not all_tables:
         return all_tables
 
-    # Normalize match isimleri (hem "schema.table" hem "table" formatını destekle)
-    match_set = set()
-    for mt in matched_tables:
-        mt_lower = mt.lower().strip()
-        match_set.add(mt_lower)
-        # "schema.table" formatından sadece table kısmını da ekle
-        if "." in mt_lower:
-            match_set.add(mt_lower.split(".")[-1])
+    # FKGraph oluştur ve multi-hop BFS uygula
+    fk_graph = FKGraph(relationships)
 
-    # FK ilişkilerinden komşu tabloları bul
-    neighbor_tables = set()
-    for rel in relationships:
-        from_parts = rel.get("from", "").lower().split(".")
-        to_parts = rel.get("to", "").lower().split(".")
+    # Steiner tree ile tüm matched tabloları birbirine bağla (ara tabloları da dahil et)
+    steiner_set = fk_graph.steiner_tree(matched_tables)
 
-        from_table = from_parts[1] if len(from_parts) >= 2 else ""
-        to_table = to_parts[1] if len(to_parts) >= 2 else ""
-        from_full = f"{from_parts[0]}.{from_table}" if len(from_parts) >= 2 else ""
-        to_full = f"{to_parts[0]}.{to_table}" if len(to_parts) >= 2 else ""
+    # BFS ile her seed'den max_depth hop'a kadar genişlet
+    bfs_set = fk_graph.bfs_expand(set(matched_tables), max_depth=max_depth)
 
-        # Eşleşen tablo FK'nın bir tarafında mı?
-        if from_table in match_set or from_full in match_set:
-            neighbor_tables.add(to_table)
-            if to_full:
-                neighbor_tables.add(to_full)
-        if to_table in match_set or to_full in match_set:
-            neighbor_tables.add(from_table)
-            if from_full:
-                neighbor_tables.add(from_full)
+    # İki seti birleştir
+    allowed_set = steiner_set | bfs_set
 
     # İlgili tabloları filtrele
-    allowed_set = match_set | neighbor_tables
     pruned = []
     for t in all_tables:
         table_name = (t.get("name") or "").lower()
@@ -2566,9 +2858,13 @@ def _prune_schema_tables(
         if table_name in allowed_set or full_name in allowed_set:
             pruned.append(t)
 
-    # Güvenlik: Pruning sonucu boşsa orijinal listeyi döndür (fallback)
     if not pruned:
-        return all_tables
+        log_warning(
+            f"Schema pruning: {len(matched_tables)} ML match ile {len(all_tables)} tablo arasında "
+            f"eşleşme bulunamadı (depth={max_depth}). Match: {matched_tables}",
+            "deep_think"
+        )
+        return []
 
     return pruned
 
@@ -2791,88 +3087,156 @@ def _generate_report_templates(query: str, schema_ctx: dict) -> list:
 
 def _generate_followup_suggestions(query: str, db_data: list, schema_ctx: dict) -> list:
     """
-    Sorgu sonrasında kullanıcıya proaktif follow-up önerileri üretir.
-    LLM kullanmadan kural bazlı + şema bazlı hızlı öneriler.
+    v3.14.0: Sorgu sonrasında kullanıcıya konuya uygun en az 3 follow-up önerisi üretir.
+
+    Strateji:
+    1. Kural bazlı öneriler (veri yapısından — tarih, sayı, satır sayısı)
+    2. Şema bazlı öneriler (ilişkili tablolardan derinleştirme)
+    3. Kural + şema yeterli değilse LLM ile tamamla
 
     Returns:
-        [{"text": "...", "query": "..."}, ...]  — max 3 öneri
+        [{"text": "...", "query": "..."}, ...]  — min 3, max 5 öneri
     """
     from app.core.llm import call_llm_api
 
     if not db_data:
         return []
 
-    # Kural bazlı hızlı öneriler (LLM gerektirmez)
     row_count = len(db_data)
     first_row = db_data[0] if db_data else {}
     col_names = list(first_row.keys()) if isinstance(first_row, dict) else []
 
-    quick_suggestions = []
+    suggestions = []
 
-    # Tarih kolonu varsa → trend önerisi
+    # ── 1. Kural bazlı öneriler (veri yapısından) ──────────────────────
     date_cols = [c for c in col_names if any(
-        kw in c.lower() for kw in ("tarih", "date", "time", "created", "updated", "zaman")
+        kw in c.lower() for kw in ("tarih", "date", "time", "created", "updated", "zaman", "period")
     )]
+    numeric_cols = [
+        c for c in col_names
+        if isinstance(first_row, dict) and isinstance(first_row.get(c), (int, float))
+    ]
+    status_cols = [c for c in col_names if any(
+        kw in c.lower() for kw in ("status", "durum", "stat", "state", "tip", "type", "kategori", "category")
+    )]
+
     if date_cols:
-        quick_suggestions.append({
+        suggestions.append({
             "text": "📈 Aylık trend olarak görüntüle",
             "query": f"{query} — aylık gruplama ile trend analizi"
         })
 
-    # Sayısal kolon varsa → özet önerisi
-    numeric_hint = any(
-        isinstance(v, (int, float)) for v in first_row.values()
-        if isinstance(first_row, dict)
-    ) if first_row else False
-    if numeric_hint:
-        quick_suggestions.append({
+    if numeric_cols:
+        suggestions.append({
             "text": "📊 Toplamları ve ortalamaları göster",
-            "query": f"{query} — toplam ve ortalama hesapla"
+            "query": f"{query} — toplam, ortalama ve minimum/maksimum hesapla"
         })
 
-    # Çok satır varsa → filtreleme önerisi
+    if status_cols:
+        status_col = status_cols[0]
+        suggestions.append({
+            "text": f"📋 {status_col} bazında dağılım göster",
+            "query": f"{query} — {status_col} kolonuna göre grupla ve sayıları göster"
+        })
+
     if row_count >= 10:
-        quick_suggestions.append({
-            "text": f"🔍 En son {min(10, row_count)} kaydı göster",
-            "query": f"{query} — en son 10 kayıt"
+        suggestions.append({
+            "text": "🔝 En yüksek 10 kaydı sırala",
+            "query": f"{query} — en yüksek değerlere göre ilk 10"
         })
 
-    if quick_suggestions:
-        return quick_suggestions[:3]
+    if date_cols and numeric_cols:
+        suggestions.append({
+            "text": "📅 Son 7 günlük karşılaştırma",
+            "query": f"{query} — son 7 günle önceki 7 günü karşılaştır"
+        })
 
-    # Kural bazlı yeterli değilse LLM ile 2 öneri üret
-    try:
-        col_sample = ", ".join(col_names[:8])
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "Sen bir veri asistanısın. Kullanıcının DB sorgusuna ilişkin "
-                    "2 adet kısa follow-up soru öner. Doğal dilde, Türkçe. "
-                    "YANIT FORMATI — JSON array:\n"
-                    '[{"text":"📋 Kısa buton etiketi","query":"Tam sorgu metni"},...]\n'
-                    "Sadece JSON döndür."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Kullanıcının sorusu: {query}\n"
-                    f"Dönen veri kolonları: {col_sample}\n"
-                    f"Satır sayısı: {row_count}"
-                ),
-            },
-        ]
-        raw = call_llm_api(messages, temperature=0.3)
-        if raw:
-            import json as _json
-            match = re.search(r'\[.*\]', raw, re.DOTALL)
-            if match:
-                return _json.loads(match.group(0))[:2]
-    except Exception as e:
-        log_warning(f"_generate_followup_suggestions LLM hata: {e}", "deep_think")
+    # ── 2. Şema bazlı öneriler (ilişkili tablolardan) ──────────────────
+    if schema_ctx and len(suggestions) < 4:
+        tables = schema_ctx.get("tables", [])
+        rels = schema_ctx.get("relationships", [])
 
-    return []
+        # Kullanılan tablo isimlerini tespit et (col_names'den)
+        used_tables = set()
+        for t in tables:
+            t_name = (t.get("name") or "").lower()
+            for col in col_names:
+                if col.lower() in [c.get("name", "").lower() for c in t.get("columns", [])]:
+                    used_tables.add(t_name)
+                    break
+
+        # FK komşuları üzerinden derinleştirme önerisi
+        for rel in rels[:20]:
+            from_parts = rel.get("from", "").lower().split(".")
+            to_parts = rel.get("to", "").lower().split(".")
+            from_table = from_parts[1] if len(from_parts) >= 2 else from_parts[0]
+            to_table = to_parts[1] if len(to_parts) >= 2 else to_parts[0]
+
+            related_table = None
+            if from_table in used_tables and to_table not in used_tables:
+                related_table = to_table
+            elif to_table in used_tables and from_table not in used_tables:
+                related_table = from_table
+
+            if related_table:
+                # İlişkili tablonun iş adını bul
+                bname = related_table
+                for t in tables:
+                    if (t.get("name") or "").lower() == related_table:
+                        bname = t.get("admin_label_tr") or t.get("business_name_tr") or related_table
+                        break
+                suggestions.append({
+                    "text": f"🔗 {bname} detayıyla birleştir",
+                    "query": f"{query} — {bname} tablosu ile JOIN yaparak detay ekle"
+                })
+                if len(suggestions) >= 5:
+                    break
+
+    # ── 3. LLM ile tamamla (min 3'e ulaşamadıysa) ─────────────────────
+    if len(suggestions) < 3:
+        try:
+            col_sample = ", ".join(col_names[:8])
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "Sen bir veri analisti asistansın. Kullanıcının veritabanı sorgusuna "
+                        f"ilişkin {3 - len(suggestions)} adet kısa follow-up soru öner. "
+                        "Sorular kullanıcının konusuyla doğrudan ilgili, farklı açılardan "
+                        "analiz yapacak nitelikte olmalı. Türkçe.\n"
+                        "YANIT FORMATI — JSON array:\n"
+                        '[{"text":"📋 Kısa buton etiketi (max 6 kelime)","query":"Tam sorgu metni"},...]\n'
+                        "Sadece JSON döndür."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Kullanıcının sorusu: {query}\n"
+                        f"Dönen veri kolonları: {col_sample}\n"
+                        f"Satır sayısı: {row_count}"
+                    ),
+                },
+            ]
+            raw = call_llm_api(messages, temperature=0.3)
+            if raw:
+                import json as _json
+                match = re.search(r'\[.*\]', raw, re.DOTALL)
+                if match:
+                    llm_suggestions = _json.loads(match.group(0))
+                    suggestions.extend(llm_suggestions[:3 - len(suggestions)])
+        except Exception as e:
+            log_warning(f"_generate_followup_suggestions LLM hata: {e}", "deep_think")
+
+    # Deduplicate ve sınırla
+    seen = set()
+    unique = []
+    for s in suggestions:
+        key = s.get("text", "")
+        if key not in seen:
+            seen.add(key)
+            unique.append(s)
+    return unique[:5]
 
 
 # Fallback Prompt

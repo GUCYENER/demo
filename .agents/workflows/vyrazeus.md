@@ -67,35 +67,47 @@ Kullanıcının TEK muhatabısın. Tüm ajan kararları sende. Şeffaf konsey ra
    - Wing `vyra` hedefleniyor mu? Değilse hata ver
    - Dönen bağlam son commit hash'ini içeriyor mu? İçermiyorsa bayat, uyar
 
-2. **Servis Durumu Kontrol:**
-   - PostgreSQL (port 5005) çalışıyor mu?
-   - Redis (port 6379/6380) çalışıyor mu?
-   - Backend uvicorn (port 8002) çalışıyor mu?
-   - Nginx (port 8000) çalışıyor mu?
-   - Oracle Test DB container (vyra-oracle-test, port 1521) çalışıyor mu?
-   - Çalışmayanları `start.ps1` mantığıyla başlat
+2. **Servis Durumu Kontrol & Otomatik Başlatma:**
 
-2. **Git Durumu:**
+   Her servis için port kontrolü yap. Kapalıysa aşağıdaki komutla başlat, açıksa atla.
+
+   **Port kontrol yöntemi (PowerShell):**
+   ```powershell
+   Get-NetTCPConnection -LocalPort <PORT> -ErrorAction SilentlyContinue | Where-Object State -eq 'Listen'
+   ```
+
+   | Sıra | Servis | Port | Kontrol & Başlatma |
+   |------|--------|------|--------------------|
+   | 1 | PostgreSQL | 5005 | `pgsql\bin\pg_ctl.exe -D "pgsql\data" -l "pgsql\data\server.log" start` — 8 sn bekle |
+   | 2 | Redis | 6379 | `redis\redis-cli.exe ping` → PONG ise atla. Değilse: `Start-Process redis\redis-server.exe "redis\redis.windows.conf" -WorkingDirectory redis -WindowStyle Hidden` — sonra `redis-cli CONFIG SET maxmemory 128mb` + `maxmemory-policy allkeys-lru` |
+   | 3 | Backend | 8002 | `Start-Process powershell "-NoExit -Command cd 'D:\demo_vyra'; & 'python\Scripts\python.exe' -m uvicorn app.api.main:app --host 0.0.0.0 --port 8002"` — 3 sn bekle |
+   | 4 | Nginx | 8000 | `tasklist /fi "imagename eq nginx.exe"` → çalışıyorsa `nginx.exe -s reload`. Çalışmıyorsa: `Start-Process nginx\nginx.exe -WorkingDirectory nginx -WindowStyle Hidden` |
+   | 5 | Oracle DB | 1521 | `docker ps --filter "name=vyra-oracle-test"` → Up ise atla. Durmuşsa: `docker start vyra-oracle-test`. Yoksa: `docker compose -f oracle_local_test/docker-compose.yml up -d`. Docker yoksa atla |
+
+   > **Kural:** Başlatma sırası yukarıdaki gibidir (PG → Redis → Backend → Nginx → Oracle). Backend, PG ve Redis'e bağımlıdır.
+   > **Hata:** Servis 2 denemede başlamazsa → kullanıcıya bildir, oturumu engelleme.
+
+3. **Git Durumu:**
    - Branch, status, son 5 commit
    - `main` branch'taysa feature branch öner
 
-3. **Proje Durumu:**
+4. **Proje Durumu:**
    - `.env` oku — DB bağlantı, LLM provider
    - `README.md`'den versiyon oku
    - Açık hatalar veya TODO'lar varsa listele
 
-4. **Oturum Hazır Raporu:**
+5. **Oturum Hazır Raporu:**
 ```
 🏛️ VYRA — Oturum Hazır
 
 📌 Branch     : [branch] ⚠️ main ise feature branch öner
 📦 Versiyon   : [version]
 🔄 Son Commit : [hash mesaj]
-🟢 PostgreSQL : [port 5005 — çalışıyor/kapalı]
-🟢 Redis      : [port 6380 — çalışıyor/kapalı]
-🟢 Backend    : [port 8002 — çalışıyor/kapalı]
-🟢 Nginx      : [port 8000 — çalışıyor/kapalı]
-🟠 Oracle DB  : [port 1521 — çalışıyor/kapalı/docker yok]
+🟢/🔵/🔴 PostgreSQL : [port 5005 — zaten çalışıyor 🟢 / başlatıldı 🔵 / başlatılamadı 🔴]
+🟢/🔵/🔴 Redis      : [port 6379 — zaten çalışıyor 🟢 / başlatıldı 🔵 / başlatılamadı 🔴]
+🟢/🔵/🔴 Backend    : [port 8002 — zaten çalışıyor 🟢 / başlatıldı 🔵 / başlatılamadı 🔴]
+🟢/🔵/🔴 Nginx      : [port 8000 — zaten çalışıyor 🟢 / başlatıldı 🔵 / başlatılamadı 🔴]
+🟢/🔵/🟠 Oracle DB  : [port 1521 — zaten çalışıyor 🟢 / başlatıldı 🔵 / docker yok 🟠]
 ⚠️ Açık Sorun : [varsa]
 
 Görev nedir?
@@ -130,7 +142,8 @@ Mevcut kod üzerinde küçük, 1-3 dosya değişiklik:
 3. **Belirsizlik kontrolü:** %70 altı güvende tahmin etme → kullanıcıya sor
 4. Alternatif çözüm varsa artı/eksilerini sun — en iyisini öner ama karar kullanıcıda
 5. Kodu yaz
-6. Backend değiştiyse uvicorn restart hatırlat
+6. **🧪 ZORUNLU: Post-Implementation Review** (bkz. Bölüm 5b)
+7. Backend değiştiyse uvicorn restart hatırlat
 
 ---
 
@@ -166,7 +179,60 @@ Yeni özellik, çok-dosya değişiklik, yeni endpoint, DB migration, yeni entegr
 4. **150 satır chunk kuralı:**
    - 150+ satır tek seferde yazılmaz
    - Önce plan/iskelet → kullanıcı onayı → implementasyon
-5. Test ve doğrulama
+5. Kodu yaz
+6. **🧪 ZORUNLU: Post-Implementation Review** (bkz. Bölüm 5b)
+
+---
+
+## 5b. POST-IMPLEMENTATION REVIEW PROTOKOLÜ — ZORUNLU
+
+> **KESİN KURAL:** Kod yazıldıktan sonra kullanıcıya "bitti" demeden ÖNCE bu kontroller tamamlanmalıdır.
+> Hatalı kod kullanıcıya teslim edilemez. Bu adım atlanamaz.
+
+**Ne zaman çalışır:** MOD 2 ve MOD 3 görevlerde, tüm dosya düzenlemeleri bittikten sonra.
+
+### Adım 1: Syntax Doğrulama (Otomatik)
+```bash
+python -c "import py_compile; py_compile.compile('<dosya>', doraise=True)"
+```
+Tüm değişen `.py` dosyaları derlenmelidir. Hata varsa düzelt, tekrar derle.
+
+### Adım 2: TYCHE Review (QA & Hata Tarama)
+🧪 **TYCHE** şu kontrolleri yapar:
+- **Tanımsız değişken:** Kullanılan her değişken tanımlı mı? (`isRecording`, `combined_matched` vb.)
+- **Eksik import:** `from X import Y` — X modülü ve Y fonksiyonu gerçekten var mı?
+- **Circular import:** Modül kendini import ediyor mu?
+- **Thread safety:** Paylaşılan değişkenler thread-safe mi? (dict/list shared across threads)
+- **None/null kontrol:** `.get()` sonucu None olabilir mi? Caller handle ediyor mu?
+- **Mevcut caller uyumu:** Fonksiyon imzası değiştiyse, tüm caller'lar güncellendi mi?
+- **DB sorgu güvenliği:** SQL sorgusunda format string var mı? (parametre kullanılmalı)
+- **Error path:** except bloğunda connection/cursor kapatılıyor mu?
+- **Edge case:** Boş liste, None, 0 satır — her biri için fonksiyon doğru davranıyor mu?
+
+### Adım 3: ARES Review (Güvenlik)
+🔐 **ARES** şu kontrolleri yapar:
+- SQL injection riski (f-string ile SQL oluşturma, `format_strings` kullanımı)
+- XSS riski (HTML içeriği escape ediliyor mu?)
+- Hassas veri sızıntısı (hata mesajlarında DB host/password görünüyor mu?)
+- OWASP Top 10 kontrolleri
+
+### Adım 4: Düzeltme & Onay
+- Bulunan tüm CRITICAL ve WARNING sorunlar düzeltilir
+- Düzeltmeler sonrası Adım 1 tekrar çalıştırılır (regresyon kontrolü)
+- Temiz çıkarsa → kullanıcıya "tamamlandı" raporu sunulur
+
+### Rapor Formatı:
+```
+✅ Post-Implementation Review Tamamlandı
+
+🧪 TYCHE: X dosya kontrol edildi — Y sorun bulundu, hepsi düzeltildi
+🔐 ARES: Güvenlik taraması temiz
+📋 Değişen dosyalar: [liste]
+
+Kullanıcıya teslime hazır.
+```
+
+> **UYARI:** Bu bölüm atlanırsa veya "bitti" denip sonra hata çıkarsa, süreç ihlali sayılır.
 
 ---
 
@@ -334,9 +400,25 @@ Index            : Sık sorgulanan FK/filter kolonlarına index
 - Değişiklik elle test edildi mi?
 - Edge case'ler düşünüldü mü?
 
-**📄 KAP 8 — Dokümantasyon (HERA)**
-- `README.md` versiyon ve changelog güncellendi mi?
-- Commit mesajı conventional format'ta mı?
+**📄 KAP 8 — Versiyon, Build & Dokümantasyon (HERA)**
+
+a) **Versiyon Güncelleme (ZORUNLU):**
+   - Değişiklik tipi belirle: bugfix=patch, yeni özellik=minor, breaking=major
+   - `README.md`'deki `**Versiyon:**` satırını güncelle
+   - DB'deki `system_settings` tablosunda `app_version` değerini güncelle:
+     ```sql
+     UPDATE system_settings SET setting_value = 'X.Y.Z' WHERE setting_key = 'app_version';
+     ```
+   - `README.md` versiyon geçmişine yeni versiyon bloğu ekle (tarih + değişiklik özeti)
+
+b) **Frontend Build (JS/CSS değiştiyse ZORUNLU):**
+   - `node frontend/build.mjs` çalıştır
+   - Build çıktısındaki `dist/bundle.min.js` timestamp'ini doğrula (kaynak dosyalardan yeni mi?)
+   - Build hata verdiyse düzelt, commit'e build hatası girmesin
+
+c) **Commit Mesajı:**
+   - Conventional format: `feat(modul): açıklama` veya `fix(modul): açıklama`
+   - Versiyon tag'ı: `vX.Y.Z: kısa özet`
 
 **🧹 KAP 9 — Temizlik**
 - `Gecici_Dosyalar_Sil/` temiz mi?
@@ -380,6 +462,8 @@ git push origin [branch]
 🔒 Güvenlik  : [temiz / bulgular]
 🗄️ DB        : [temiz / migration var]
 🌐 Frontend  : [temiz / JS değişti]
+🔨 Build     : [başarılı ✅ / atlandı (JS değişmedi)]
+📦 Versiyon  : [vX.Y.Z → vX.Y.Z+1]
 🌊 Nginx     : [temiz / config değişti]
 🏃 Performans: [temiz / bulgular]
 📊 Test      : [geçti / sorunlar]
