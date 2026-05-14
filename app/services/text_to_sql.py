@@ -46,7 +46,7 @@ SQL yazmadan ÖNCE aşağıdaki adımları kısaca analiz et:
 KRİTİK KURALLAR:
 1. SADECE SELECT sorguları yaz. INSERT, UPDATE, DELETE, DROP, ALTER, CREATE gibi komutlar KESİNLİKLE YASAK.
 2. Kullanıcının isteğini karşılamak için şemada verilen tablolar arasından en uygun tabloyu veya tabloları seç. Eğer soru birden fazla tablodaki veriyi ilgilendiriyorsa, tabloları birbiriyle uygun alanlar (ID) üzerinden JOIN ile birleştirerek sorguyu oluştur. Eğer kullanıcının isteğini çözecek (örn: "son giriş tarihi") sütun/tablolar şemada HİÇ YOKSA, KESİNLİKLE SQL üretme ve sadece Nedenini 'DIAGNOSTIC:' başlığı ile açıkla.
-3. Yalnızca verilen şemadaki gerçek tablo ve sütunları kullan. Hayali sütun uydurma!
+3. KRİTİK HALÜSİNASYON YASAĞI: Yalnızca şemada YAZILI olan gerçek tablo ve sütun adlarını kullan. Şemada OLMAYAN kolon adı ASLA kullanma — tahmin etme, uydurma, benzer isim türetme. Eğer uygun sütun bulamıyorsan SQL üretme, DIAGNOSTIC yaz. Örneğin şemada "VALUE" yazıyorsa "USAGE_AMOUNT" veya "TOPLAM_KULLANIM" gibi isim UYDURMA, doğrudan "VALUE" kullan.
 4. Metin aramasında büyük/küçük harf duyarsız karşılaştırma kullan (PostgreSQL: ILIKE, Oracle: UPPER(), MSSQL: COLLATE). KESİNLİKLE eşittir (=) kullanma.
 5. Kullanıcı isim ve soyisim arıyorsa; tabloda Ad (Name) ve Soyad (Surname) kolonları AYRI ise iki sütunda da arama yap (örn: LOWER(Name) LIKE '%hakan%' AND LOWER(Surname) LIKE '%tütüncü%').
 6. {dialect_rules}
@@ -367,6 +367,11 @@ def generate_sql(
                 "error": table_error,
             }
 
+    # 6. v3.14.0: Halüsinasyon kontrolü — SQL'deki kolonları şema ile karşılaştır
+    hallucination_warning = _check_column_hallucination(sql, schema_context)
+    if hallucination_warning:
+        log_warning(f"Text-to-SQL halüsinasyon tespit: {hallucination_warning}", "hybrid_router")
+
     # Açıklamayı çıkar (SQL bloğundan önceki metin)
     explanation = _extract_explanation(llm_response)
 
@@ -381,6 +386,7 @@ def generate_sql(
         "sql": sql,
         "explanation": explanation,
         "error": None,
+        "hallucination_warning": hallucination_warning,
     }
 
 
@@ -532,6 +538,67 @@ Düzeltilmiş SQL'i ```sql ... ``` bloğu içinde yaz.
         "error": execution_error,
         "retry_count": max_retries,
     }
+
+
+def _check_column_hallucination(sql: str, schema_context: Dict[str, Any]) -> Optional[str]:
+    """
+    v3.14.0: LLM'in ürettiği SQL'deki kolon adlarını şemadaki gerçek kolonlarla karşılaştırır.
+    Halüsinasyon (uydurma kolon) tespit ederse uyarı döner.
+
+    Returns:
+        None: Sorun yok
+        str: Uyarı mesajı (şüpheli kolon listesi)
+    """
+    tables = schema_context.get("tables", [])
+    if not tables:
+        return None
+
+    # Şemadaki tüm gerçek kolon adlarını topla
+    known_columns = set()
+    for t in tables:
+        for col in t.get("columns", []):
+            col_name = col.get("name", "").upper()
+            if col_name:
+                known_columns.add(col_name)
+
+    if not known_columns:
+        return None
+
+    # SQL'den SELECT ve WHERE kısmındaki kolon referanslarını çıkar
+    # Basit regex — alias'lı kolonları da yakalar: t.column_name veya "column_name"
+    sql_upper = sql.upper()
+    # SQL fonksiyonları ve keyword'leri hariç tut
+    sql_keywords = {
+        "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "AS", "ON", "JOIN",
+        "LEFT", "RIGHT", "INNER", "OUTER", "GROUP", "BY", "ORDER", "HAVING",
+        "COUNT", "SUM", "AVG", "MIN", "MAX", "DISTINCT", "CASE", "WHEN", "THEN",
+        "ELSE", "END", "NULL", "IS", "LIKE", "BETWEEN", "EXISTS", "UNION", "ALL",
+        "FETCH", "FIRST", "ROWS", "ONLY", "TOP", "LIMIT", "DESC", "ASC", "OFFSET",
+        "COALESCE", "NVL", "UPPER", "LOWER", "TRIM", "CAST", "TO_CHAR", "TO_DATE",
+        "SYSDATE", "CURRENT_DATE", "NOW", "GETDATE", "ROWNUM", "DUAL",
+        "TOTAL_USAGE",  # aggregate alias'lar sorun yaratmasın
+    }
+
+    # Tablo.kolon pattern'ı: t.COLUMN_NAME veya "SCHEMA"."TABLE"."COLUMN"
+    col_refs = re.findall(r'["\w]+\.(["\w]+)', sql_upper)
+    # Tırnaksız referansları temizle
+    col_refs = [c.strip('"') for c in col_refs]
+
+    suspicious = []
+    for col in col_refs:
+        if col in sql_keywords:
+            continue
+        if col not in known_columns:
+            # Tablo adı olabilir — kontrol et
+            is_table = any(t.get("name", "").upper() == col for t in tables)
+            is_schema = any(t.get("schema", "").upper() == col for t in tables)
+            if not is_table and not is_schema:
+                suspicious.append(col)
+
+    if suspicious:
+        return f"Şüpheli kolon adları (şemada bulunamadı): {', '.join(suspicious[:5])}"
+
+    return None
 
 
 def _extract_explanation(llm_response: str) -> str:

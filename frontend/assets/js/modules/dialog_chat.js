@@ -581,9 +581,10 @@ window.DialogChatModule = (function () {
                                 break;
 
                             case 'status':
-                                if (streamingEl) {
-                                    updateStreamingStatus(streamingEl, `⏳ ${eventData}`);
+                                if (!streamingEl) {
+                                    streamingEl = createStreamingMessage();
                                 }
+                                updateStreamingStatus(streamingEl, `⏳ ${eventData}`);
                                 break;
 
                             case 'token':
@@ -686,15 +687,20 @@ window.DialogChatModule = (function () {
                                 if (!streamingEl) {
                                     streamingEl = createStreamingMessage();
                                 }
-                                const waitHtml = `<div class="db-timeout-info">
-                                    <div class="db-timeout-icon">⏳</div>
-                                    <div class="db-timeout-text">${twMsg}</div>
-                                    <div class="db-timeout-progress">
-                                        <div class="db-timeout-bar" style="animation: db-timeout-fill ${twEst || 30}s linear forwards"></div>
-                                    </div>
-                                    <div class="db-timeout-hint">Sorgu arka planda çalışmaya devam ediyor...</div>
-                                </div>`;
-                                appendStreamToken(streamingEl, waitHtml);
+                                // DOM API ile XSS-safe oluştur (appendStreamToken HTML'i escape eder)
+                                const twDiv = document.createElement('div');
+                                twDiv.className = 'db-timeout-info';
+                                twDiv.innerHTML =
+                                    `<div class="db-timeout-icon">⏳</div>` +
+                                    `<div class="db-timeout-text"></div>` +
+                                    `<div class="db-timeout-progress">` +
+                                    `<div class="db-timeout-bar" style="animation: db-timeout-fill ${parseInt(twEst) || 30}s linear forwards"></div>` +
+                                    `</div>` +
+                                    `<div class="db-timeout-hint">Sorgu arka planda çalışmaya devam ediyor...</div>`;
+                                // Mesaj metni XSS-safe textContent ile
+                                twDiv.querySelector('.db-timeout-text').textContent = twMsg;
+                                const twContent = streamingEl.querySelector('.message-content') || streamingEl;
+                                twContent.appendChild(twDiv);
                                 break;
                             }
 

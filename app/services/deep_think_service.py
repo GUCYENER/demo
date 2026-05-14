@@ -2340,10 +2340,9 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
 
             # ── 6. SQL'i güvenli çalıştır (Progressive Timeout) ──────────
 
-            # v3.14.0: Tahmini süre hesapla
+            # v3.14.0: Tahmini süre hesapla ve kullanıcıya göster
             time_estimate = executor.estimate_query_time(schema_ctx_with_ml, sql)
-            if time_estimate["complexity"] in ("medium", "high"):
-                yield {"type": "status", "data": f"⏳ {time_estimate['reason']} — tahmini süre ~{time_estimate['estimate_seconds']}sn"}
+            yield {"type": "status", "data": f"🔍 Sorgu çalıştırılıyor... ({time_estimate['reason']}, ~{time_estimate['estimate_seconds']}sn)"}
 
             # v3.14.0: Non-blocking execution — sorguyu arka planda çalıştır
             result_holder, result_event, exec_thread = executor.execute_async(

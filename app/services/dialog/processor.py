@@ -592,6 +592,7 @@ def process_user_message_stream(
         final_metadata = None
         
         # v3.14.0: DB sorguları için pending_db_queries kaydı oluştur
+        # Tablo yoksa (migration çalışmamışsa) sessizce atla — pipeline'ı bozma
         pending_query_id = None
         if source_type == 'db':
             _pq_conn = None
@@ -599,26 +600,41 @@ def process_user_message_stream(
                 from app.core.db import get_db_conn
                 _pq_conn = get_db_conn()
                 _pq_cur = _pq_conn.cursor()
-                short_text = (search_query[:77] + "...") if len(search_query) > 80 else search_query
-                _pq_cur.execute("""
-                    INSERT INTO pending_db_queries
-                        (dialog_id, user_id, company_id, query_text, query_text_short, status)
-                    VALUES (%s, %s, %s, %s, %s, 'running')
-                    RETURNING id
-                """, (dialog_id, user_id, company_id or 1, search_query, short_text))
-                row = _pq_cur.fetchone()
-                pending_query_id = row[0] if row else None
-                _pq_conn.commit()
 
-                # Frontend'e job_queued event gönder
-                if pending_query_id:
-                    yield {"type": "job_queued", "data": {
-                        "job_id": pending_query_id,
-                        "query_text": search_query,
-                        "query_text_short": short_text,
-                    }}
+                # Tablo var mı kontrol et (her sorguda exception almayı önle)
+                _pq_cur.execute("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.tables
+                        WHERE table_name = 'pending_db_queries'
+                    )
+                """)
+                table_exists = _pq_cur.fetchone()[0]
+
+                if table_exists:
+                    short_text = (search_query[:77] + "...") if len(search_query) > 80 else search_query
+                    _pq_cur.execute("""
+                        INSERT INTO pending_db_queries
+                            (dialog_id, user_id, company_id, query_text, query_text_short, status)
+                        VALUES (%s, %s, %s, %s, %s, 'running')
+                        RETURNING id
+                    """, (dialog_id, user_id, company_id or 1, search_query, short_text))
+                    row = _pq_cur.fetchone()
+                    pending_query_id = row[0] if row else None
+                    _pq_conn.commit()
+
+                    if pending_query_id:
+                        yield {"type": "job_queued", "data": {
+                            "job_id": pending_query_id,
+                            "query_text": search_query,
+                            "query_text_short": short_text,
+                        }}
             except Exception as pq_err:
                 log_warning(f"pending_db_queries kayıt hatası: {str(pq_err)[:200]}", "dialog")
+                if _pq_conn:
+                    try:
+                        _pq_conn.rollback()
+                    except Exception:
+                        pass
             finally:
                 if _pq_conn:
                     try:
@@ -757,6 +773,11 @@ def process_user_message_stream(
                         log_warning(f"WebSocket push hatası: {str(ws_err)[:200]}", "dialog")
                 except Exception as pq_err2:
                     log_warning(f"pending_db_queries güncelleme hatası: {str(pq_err2)[:200]}", "dialog")
+                    if _pq_conn2:
+                        try:
+                            _pq_conn2.rollback()
+                        except Exception:
+                            pass
                 finally:
                     if _pq_conn2:
                         try:
@@ -775,6 +796,7 @@ def process_user_message_stream(
         log_error(f"Streaming orchestrator hatası: {e}", "dialog")
         # v3.14.0: Hata durumunda pending_db_queries güncelle
         if pending_query_id:
+            _pq_err_conn = None
             try:
                 from app.core.db import get_db_conn
                 _pq_err_conn = get_db_conn()
@@ -784,9 +806,18 @@ def process_user_message_stream(
                     WHERE id = %s
                 """, (str(e)[:500], pending_query_id))
                 _pq_err_conn.commit()
-                _pq_err_conn.close()
             except Exception:
-                pass
+                if _pq_err_conn:
+                    try:
+                        _pq_err_conn.rollback()
+                    except Exception:
+                        pass
+            finally:
+                if _pq_err_conn:
+                    try:
+                        _pq_err_conn.close()
+                    except Exception:
+                        pass
         yield {"type": "error", "data": str(e)}
 
 

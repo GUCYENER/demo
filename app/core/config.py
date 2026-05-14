@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.14.0"  # Text-to-SQL pipeline overhaul, async DB queries, Golden SQL, FKGraph
+    APP_VERSION: str = "3.14.3"  # Pending table existence check, timeout HTML DOM fix, hallucination guard
 
     # Frontend & API prefix
     api_prefix: str = "/api"

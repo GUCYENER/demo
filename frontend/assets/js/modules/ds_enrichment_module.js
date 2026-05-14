@@ -1008,6 +1008,8 @@ const DSEnrichmentModule = (() => {
             const data = await res.json();
             if (data.success) {
                 _showToast(data.message || `${toDiscover.length} tablo için arkada keşif başlatıldı. Birazdan liste yeşillenecek.`, 'success');
+                // v3.14.0: Seçili satırların İŞLEM kolonunu "Devam Ediyor" olarak güncelle
+                _updateActionStatus(toDiscover, 'discovering');
             } else {
                 _showToast(data.message || 'Keşif başlatılamadı.', 'error');
             }
@@ -1045,6 +1047,8 @@ const DSEnrichmentModule = (() => {
             const data = await res.json();
             if (data.success) {
                 _showToast(data.message || `${unprocessed.length} tablo için keşif başlatıldı. Liste otomatik güncellenecek.`, 'success');
+                // v3.14.0: Tüm satırların İŞLEM kolonunu "Devam Ediyor" olarak güncelle
+                _updateActionStatus(unprocessed, 'discovering');
             } else {
                 _showToast(data.message || 'Keşif başlatılamadı.', 'warning');
             }
@@ -1264,6 +1268,31 @@ const DSEnrichmentModule = (() => {
                 `;
             }
         }
+    }
+
+    /**
+     * v3.14.0: Keşif başlatılan satırların İŞLEM kolonunu "Devam Ediyor" olarak günceller.
+     * Polling (10sn) sonucunda enrichment_id gelince otomatik "Onay Bekliyor"ya döner.
+     */
+    function _updateActionStatus(objectIds, status) {
+        const idSet = new Set(objectIds.map(String));
+        document.querySelectorAll('tr[data-id]').forEach(tr => {
+            const objId = tr.dataset.id;
+            if (!idSet.has(objId)) return;
+
+            const actionCell = tr.querySelector('.ds-action-cell');
+            if (!actionCell) return;
+
+            if (status === 'discovering') {
+                const actionsDiv = actionCell.querySelector('.ds-enrich-actions');
+                if (actionsDiv) {
+                    actionsDiv.innerHTML = `
+                        <span class="ds-status-badge ds-status-discovering">
+                            <i class="fa-solid fa-spinner fa-spin"></i> Devam Ediyor
+                        </span>`;
+                }
+            }
+        });
     }
 
     function _showToast(message, type) {

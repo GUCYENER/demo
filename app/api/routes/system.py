@@ -51,6 +51,9 @@ async def reset_system(
     - ML modelleri ve eğitim (ml_models, ml_training_jobs, ml_training_samples, ml_training_schedules)
     - Öğrenilmiş cevaplar (learned_answers)
     - DS Öğrenme Verileri (ds_learning_results, ds_db_samples, ds_db_objects, ds_db_relationships, ds_discovery_jobs, ds_learning_schedules)
+    - Golden SQL (golden_sql)
+    - İş Süreci Şablonları (business_process_templates)
+    - Bekleyen DB Sorguları (pending_db_queries)
     - SQL Audit Logları (sql_audit_log)
     - Sistem logları (system_logs)
     - Admin olmayan kullanıcılar
@@ -107,6 +110,13 @@ async def reset_system(
             deleted_counts["tickets"] = cur.fetchone()["cnt"]
             cur.execute("DELETE FROM tickets")
         
+        # 4️⃣b Bekleyen DB Sorgularını sil (FK: dialog_messages, dialogs → pending_db_queries)
+        # pending_db_queries.result_message_id → dialog_messages(id) FK var,
+        # dialog_messages silinmeden ÖNCE pending_db_queries silinmeli
+        cur.execute("SELECT COUNT(*) as cnt FROM pending_db_queries")
+        deleted_counts["pending_db_queries"] = cur.fetchone()["cnt"]
+        cur.execute("DELETE FROM pending_db_queries")
+
         # 5️⃣ Dialog mesajlarını sil (FK: dialogs -> dialog_messages)
         if company_id is not None:
             cur.execute("SELECT COUNT(*) as cnt FROM dialog_messages WHERE dialog_id IN (SELECT id FROM dialogs WHERE user_id IN (SELECT id FROM users WHERE company_id = %s))", co_params)
@@ -243,7 +253,17 @@ async def reset_system(
         cur.execute("SELECT COUNT(*) as cnt FROM ds_learning_schedules")
         deleted_counts["ds_learning_schedules"] = cur.fetchone()["cnt"]
         cur.execute("DELETE FROM ds_learning_schedules")
-        
+
+        # v3.14.0: Golden SQL Store
+        cur.execute("SELECT COUNT(*) as cnt FROM golden_sql")
+        deleted_counts["golden_sql"] = cur.fetchone()["cnt"]
+        cur.execute("DELETE FROM golden_sql")
+
+        # v3.14.0: İş Süreci Şablonları
+        cur.execute("SELECT COUNT(*) as cnt FROM business_process_templates")
+        deleted_counts["business_process_templates"] = cur.fetchone()["cnt"]
+        cur.execute("DELETE FROM business_process_templates")
+
         # SQL Audit Logları (v2.58.0)
         cur.execute("SELECT COUNT(*) as cnt FROM sql_audit_log")
         deleted_counts["sql_audit_log"] = cur.fetchone()["cnt"]
