@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.14.3"  # Pending table existence check, timeout HTML DOM fix, hallucination guard
+    APP_VERSION: str = "3.14.4"  # Nginx SSE stream timeout fix (120s→300s), proxy_buffering off
 
     # Frontend & API prefix
     api_prefix: str = "/api"

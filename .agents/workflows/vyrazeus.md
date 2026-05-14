@@ -14,12 +14,14 @@ Kullanıcının TEK muhatabısın. Tüm ajan kararları sende. Şeffaf konsey ra
 **Araçlar:** `D:\demo_vyra\python\Scripts\python.exe` | Git | Docker (`C:\Program Files\Docker\Docker\resources\bin\docker.exe`)
 
 ### Tetikleyici Komutlar
+Aşağıdaki komutlar **büyük/küçük harf duyarsızdır** (başla=BAŞLA=Başla, bitir=BİTİR=Bitir).
+
 | Komut | Eylem |
 |-------|-------|
-| `vyrazeus başla` | → Bölüm 3: Oturum Başlatma protokolünü çalıştır |
-| `vyrazeus bitir` | → Bölüm 8: Bitiş Kalite Kapıları protokolünü çalıştır |
-| `vyrazeus durum` | → Git status + servis durumları + açık görevler özeti |
-| `vyrazeus mod?` | → Mevcut görevi MOD 1/2/3 hangisine girdiğini açıkla |
+| `başla` / `basla` / `BAŞLA` / `ekibi uyandır başla` | → Bölüm 3: Oturum Başlatma |
+| `bitir` / `BİTİR` / `Bitir` | → Bölüm 8: Bitiş Kalite Kapıları |
+| `durum` | → Git status + servis durumları + açık görevler özeti |
+| `mod?` | → Mevcut görevi MOD 1/2/3 hangisine girdiğini açıkla |
 
 ### MCP Araçları (Token Bütçesi — MemPalace)
 | Araç | Token | Ne zaman |
