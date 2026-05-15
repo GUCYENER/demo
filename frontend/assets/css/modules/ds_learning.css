@@ -1420,3 +1420,130 @@
     color: var(--gold, #fbbf24);
     opacity: 0.8;
 }
+
+/* ========================================
+   Schema Seçim Adımı (Adım 2 → Adım 3)
+   v3.12.1 — collect-samples 504 fix
+======================================== */
+
+.ds-schema-selection {
+    margin-top: 1rem;
+    animation: fadeInUp 0.25s ease;
+}
+
+.ds-schema-loading {
+    text-align: center;
+    padding: 1rem;
+    color: var(--text-secondary, rgba(255,255,255,0.5));
+    font-size: 0.9rem;
+}
+
+.ds-schema-select-box {
+    background: var(--surface-secondary, rgba(255,255,255,0.04));
+    border: 1px solid var(--border-color, rgba(255,255,255,0.08));
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+}
+
+.ds-schema-select-header {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+    margin-bottom: 0.75rem;
+    color: var(--accent-primary, #6366f1);
+    font-size: 1.1rem;
+}
+
+.ds-schema-select-header strong {
+    display: block;
+    color: var(--text-primary, #e2e8f0);
+    font-size: 0.95rem;
+    margin-bottom: 0.15rem;
+}
+
+.ds-schema-select-hint {
+    color: var(--text-secondary, rgba(255,255,255,0.5));
+    font-size: 0.8rem;
+    margin: 0;
+    line-height: 1.4;
+}
+
+.ds-schema-list {
+    max-height: 220px;
+    overflow-y: auto;
+    border: 1px solid var(--border-color, rgba(255,255,255,0.06));
+    border-radius: 8px;
+    padding: 0.4rem;
+    margin-bottom: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.ds-schema-check {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.45rem 0.6rem;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s;
+    font-size: 0.88rem;
+}
+
+.ds-schema-check:hover {
+    background: var(--surface-hover, rgba(255,255,255,0.05));
+}
+
+.ds-schema-check input[type="checkbox"] {
+    accent-color: var(--accent-primary, #6366f1);
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+}
+
+.ds-schema-name {
+    flex: 1;
+    color: var(--text-primary, #e2e8f0);
+    font-family: monospace;
+    font-size: 0.85rem;
+}
+
+.ds-schema-count {
+    color: var(--text-secondary, rgba(255,255,255,0.4));
+    font-size: 0.78rem;
+    background: var(--surface-hover, rgba(255,255,255,0.06));
+    padding: 1px 6px;
+    border-radius: 4px;
+}
+
+.ds-schema-select-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+    font-size: 0.82rem;
+}
+
+.ds-schema-link {
+    color: var(--accent-primary, #6366f1);
+    text-decoration: none;
+    cursor: pointer;
+}
+.ds-schema-link:hover { text-decoration: underline; }
+
+.ds-schema-link-sep {
+    color: var(--text-secondary, rgba(255,255,255,0.3));
+}
+
+.ds-schema-selected-count {
+    margin-left: auto;
+    color: var(--text-secondary, rgba(255,255,255,0.5));
+    font-size: 0.8rem;
+}
+
+.ds-polling-status {
+    margin-top: 0.75rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary, rgba(255,255,255,0.4));
+}

@@ -75,6 +75,38 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.16.0 (2026-05-15) - DB Modu Follow-up Bağlamı
+- ✅ **Önceki sorgu üzerinde devam:** DB modunda cevap aldıktan sonra follow-up chip listesinin başında "🔗 Önceki konu ile ilgili soru sor" badge görünür. Tıklanınca bir sonraki mesaj önceki SQL üzerinde modifikasyon olarak işlenir (yeni kolon ekle, filtre değiştir, sırala vb.).
+- ✅ **Backend prompt mühendisliği:** `text_to_sql.build_text_to_sql_prompt` `follow_up_context` parametresi alır. Mevcutsa prev_sql + prev_columns prompt'a enjekte edilir, "aynı FROM/JOIN/WHERE'i koru, sadece istenen değişikliği uygula" kuralı eklenir. Temperature 0.05'e düşer (minimal modifikasyon).
+- ✅ **Pipeline bypass:** Follow-up modunda SQL cache ve Golden SQL bypass — kullanıcı bilinçli olarak farklı sonuç istiyor.
+- ✅ **Ownership guard:** `processor.py` follow-up mesaj id'sini çekerken `dialog_id` eşleşmesi + `role=assistant` kontrolü yapar. Cross-user/cross-dialog replay reddedilir.
+- ✅ **One-shot davranış:** Frontend anchor POST'tan önce consume edilir → error/timeout/iptal yollarında sızıntı yapmaz.
+- ✅ **Mode switch guard:** RAG/LLM moduna geçişte pending anchor temizlenir.
+
+### 🆕 v3.15.6 (2026-05-15) - Bekleme Kartında SQL Görüntüle
+- ✅ Uzun süren DB sorgularında timeout_warning kartına "SQL Görüntüle" butonu eklendi. Kullanıcı backend'in ürettiği SQL'i bekleme sırasında kontrol edebilir.
+- ✅ `deep_think_service.timeout_warning` payload'ı artık `sql` alanı içerir.
+
+### 🆕 v3.15.5 (2026-05-15) - DB Modu Toast Bastırma
+- ✅ Veritabanı arama bölümündeyken bildirim toast popup'ı görünmez (kullanıcı sonucu zaten ekranda görüyor). Bell ikonunda nokta hâlâ artar.
+- ✅ Farklı menüdeyken DB cevabı toast olarak gelir (kullanıcı uyarısı için).
+- ✅ `NgssNotification.add()` 6. parametre `options.suppressToast` desteği.
+
+### 🆕 v3.15.4 (2026-05-15) - Sürüm Bazlı Oturum Geçersizleştirme
+- ✅ JWT payload'ına `ver` claim eklendi. Backend `decode_token` mismatch'te `version_mismatch` ile reddeder.
+- ✅ WebSocket token doğrulamasında ver kontrolü.
+- ✅ Frontend `home_page.js` authGuard `/api/auth/me` ile sunucu doğrulama yapar; mismatch'te localStorage temizler, "Sürüm güncellendi" mesajıyla login'e yönlendirir.
+- 🔧 **Çözülen sorun:** APP_VERSION değiştiğinde tarayıcıda eski token kalıyordu; artık otomatik yeniden login.
+
+### 🆕 v3.14.5 (2026-05-15) - SSE Keep-Alive & Long-Query End-to-End Fix
+- ✅ **Backend SSE heartbeat:** `event_generator` artık arka plan thread + queue pattern kullanıyor; pipeline 15sn sessiz kalırsa `:` (SSE comment frame) yayınlayarak Nginx/proxy/AV idle timeout'larını engelliyor.
+- ✅ **Deep Think progress_tick:** SQL bekleme döngüsü 15→15→30→45 yerine her 10 saniyede `progress_tick` event'i yayıyor (max 120sn). Frontend artık 90sn aralıksız sessizlik görmez.
+- ✅ **Frontend idle watchdog:** `dialog_chat.js` 90sn boyunca byte gelmezse stream'i kapatır ve kullanıcıya net hata mesajı verir (önceki "❌ Bağlantı hatası" generic değil).
+- ✅ **Nginx SSE bloğu (aktif):** `nginx/conf/conf.d/vyra.conf`'a SSE location bloğu eklendi (önce sadece deploy template'inde vardı). `proxy_read_timeout 600s`, `proxy_buffering off`, `gzip off`, `chunked_transfer_encoding on`.
+- ✅ **Uvicorn keep-alive:** `--timeout-keep-alive 30 → 300` (Nginx 600s ile uyumlu).
+- ✅ **Yeni event tipi:** `progress_tick` — frontend bunu yakalıyor ve mevcut timeout_warning kartını günceller.
+- 🔧 **Çözülen sorun:** 148B+ satırlı tablolarda 60sn+ süren sorgular `ERR_INCOMPLETE_CHUNKED_ENCODING` ile düşüyordu. Kök neden: v3.14.4 sadece Nginx timeout'unu uzattı, ama backend keep-alive frame yayımlamıyordu.
+
 ### 🆕 v3.14.0 (2026-05-14) - Text-to-SQL Pipeline Overhaul & Async DB Queries
 - ✅ **Chain-of-Thought Prompting:** LLM SQL yazmadan önce adım adım düşünme (tablo seçimi → JOIN stratejisi → filtre → gruplama).
 - ✅ **FKGraph Multi-Hop BFS:** FK ilişkilerinde 1-hop → 3-hop derinlik. Steiner tree ile 5+ tablo JOIN otomatik keşfi.
@@ -3509,7 +3541,7 @@ netstat -an | findstr "5005"
 
 **Geliştirici:** Yasın Fazlıoğlu  
 **E-posta:** yasin.fazlioglu@consultant.turkcell.com.tr  
-**Versiyon:** 3.4.2 (Enhance Görsel Koruması + Heading False-Positive Filtresi)
+**Versiyon:** 3.16.0 (DB Modu Follow-up Bağlamı — Önceki Sorgu Üzerinde Devam)
 
 ---
 

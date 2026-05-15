@@ -36,6 +36,19 @@ window.DialogChatModule = (function () {
     let selectedCardIds = []; // Çoklu kart seçimi için
     let chatMode = 'rag'; // v3.6.0: 'rag', 'db' veya 'llm' - sohbet modu
 
+    // v3.15.1: Aktif uzun-süren DB sorgu job_id'leri — "Yeni Soru Sor" tıklanınca
+    // veya sayfa kapatılınca toplu iptal için. Set, dialog süresince birikir;
+    // her job tamamlandığında (done/error) silinir.
+    const activeJobs = new Set();
+
+    // v3.16.0: DB modunda son asistan mesajının id'si — "Önceki konu ile ilgili" follow-up
+    // çıpası olarak kullanılır. 'saved' eventinden assistant id alınır.
+    let lastDbAssistantMessageId = null;
+    // v3.16.0: Kullanıcının "Önceki konu ile ilgili soru sor" badge'ine tıkladığı an
+    // ayarlanır; sonraki POST'da follow_up_message_id olarak gönderilir.
+    // Tek seferlik (one-shot): mesaj gönderildikten sonra null'a düşürülür.
+    let pendingFollowupAnchorId = null;
+
     const API_BASE = (window.API_BASE_URL || 'http://localhost:8002') + '/api';
 
     // v3.1.1: Parametrik firma adı — BrandingEngine'den oku
@@ -85,7 +98,29 @@ window.DialogChatModule = (function () {
     }
 
     function showNotification(title, body) {
-        // Sadece sayfa aktif değilse notification göster
+        // v3.14.6: Uygulama içi bildirim merkezine HER zaman ekle (zil ikonu badge'i),
+        // böylece kullanıcı başka menüdeyken sorgu bittiğini görebilir.
+        //
+        // v3.15.5: DB modunda iken kullanıcı zaten dialog ekranında oturuyorsa
+        // sonucu doğrudan göreceği için sağdan akan toast gereksiz — bastır.
+        // Farklı bir menüde ise (örn. parametreler, geçmiş) toast gösterilir.
+        // Zil badge'i her durumda güncellenir.
+        let suppressToast = false;
+        try {
+            const dialogSection = document.getElementById('sectionDialog');
+            const dialogVisible = dialogSection && !dialogSection.classList.contains('hidden');
+            if (dialogVisible && chatMode === 'db') {
+                suppressToast = true;
+            }
+        } catch (_) { /* DOM erişim hatası — toast yine de görünebilir */ }
+
+        try {
+            if (window.NgssNotification && typeof window.NgssNotification.add === 'function') {
+                window.NgssNotification.add('success', title, body, _getDialogIdSafe(), null, { suppressToast });
+            }
+        } catch (e) { /* sessiz başarısızlık */ }
+
+        // Sadece sayfa görünmüyorsa browser-level notification göster
         if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
             const notification = new Notification(title, {
                 body: body,
@@ -105,6 +140,10 @@ window.DialogChatModule = (function () {
             // 10 saniye sonra otomatik kapat
             setTimeout(() => notification.close(), 10000);
         }
+    }
+
+    function _getDialogIdSafe() {
+        try { return currentDialogId; } catch (_) { return null; }
     }
 
     function navigateToDialogTab() {
@@ -189,34 +228,28 @@ window.DialogChatModule = (function () {
 
     /**
      * Modül pasife çekildiğinde (tab değişimi vb.) çağrılır.
-     * Aktif dialog'u kapatır (status='closed').
+     * v3.15.1: Artık dialog'u KAPATMAZ ve DOM'u temizlemez —
+     * kullanıcı başka menüye geçip geri döndüğünde soruları/yanıtları görsün.
+     * Yalnızca "Yeni Soru Sor" tıklanınca dialog kapatılır + iptal edilir.
      */
     async function deactivate() {
         if (!currentDialogId) return;
-
-        console.log(`[DialogChat] Modül deactive ediliyor, dialog #${currentDialogId} kapatılıyor...`);
-
-        try {
-            const token = localStorage.getItem('access_token');
-            if (token) {
-                // Sadece server-side kapatma isteği gönder, UI temizliği sonra yapılır
-                await fetch(`${API_BASE}/dialogs/${currentDialogId}/close`, {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-            }
-        } catch (error) {
-            console.error('[DialogChat] Deactivate sırasında hata:', error);
-        }
-
-        currentDialogId = null;
-        const container = document.getElementById('dialogMessages');
-        if (container) container.innerHTML = '';
+        // No-op: state ve DOM korunur. Backend tarafındaki inactivity scheduler
+        // (SCHEDULER_INTERVAL_SECONDS) yeterince uzun süre kullanılmayan dialog'u kapatır.
+        console.log(`[DialogChat] Menü geçişi: dialog #${currentDialogId} state korunuyor.`);
     }
 
     async function loadActiveDialog() {
-        // v2.21.12: UI'ı temizle (duplicate mesaj önleme)
         const container = document.getElementById('dialogMessages');
+
+        // v3.15.1: Eğer halihazırda bir dialog açık ve DOM doluysa (kullanıcı sadece
+        // başka menüye gidip geri geldi), hiçbir şey yapma — state'i koru.
+        if (currentDialogId && container && container.children.length > 0) {
+            console.log(`[DialogChat] Dialog #${currentDialogId} state korunmuş, yeniden yükleme atlanıyor.`);
+            return;
+        }
+
+        // v2.21.12: UI'ı temizle (duplicate mesaj önleme)
         if (container) {
             container.innerHTML = '';
         }
@@ -326,6 +359,21 @@ window.DialogChatModule = (function () {
     async function startNewDialog() {
         try {
             const token = localStorage.getItem('access_token');
+
+            // v3.15.1: Önce devam eden uzun DB sorgularını iptal et — sistemi yormayalım.
+            // Fire-and-forget: hata olsa bile yeni dialog açma işlemini bloklamasın.
+            if (activeJobs.size > 0 && currentDialogId) {
+                console.log(`[DialogChat] ${activeJobs.size} aktif DB sorgu iptal ediliyor...`);
+                const jobsToCancel = Array.from(activeJobs);
+                activeJobs.clear();
+                const cancelHeaders = token ? { 'Authorization': `Bearer ${token}` } : {};
+                jobsToCancel.forEach((jId) => {
+                    fetch(`${API_BASE}/dialogs/${currentDialogId}/jobs/${encodeURIComponent(jId)}/cancel`, {
+                        method: 'POST',
+                        headers: cancelHeaders,
+                    }).catch(() => { /* sessiz başarısızlık — registry'de yoksa zaten bitmiştir */ });
+                });
+            }
 
             // v2.25.1: Önce mevcut aktif dialog'u kapat
             if (currentDialogId) {
@@ -483,6 +531,15 @@ window.DialogChatModule = (function () {
             isWaitingForResponse = true;
         }
 
+        // v3.16.0: Follow-up anchor'ı POST'tan ÖNCE yerel değişkene al ve modül state'ini
+        // anında temizle. Bu, error/timeout/iptal gibi yollardan biten istekler için de
+        // anchor'ın sızıntı yapmamasını garanti eder. Truly one-shot davranış.
+        const followupAnchorForThisSend = (isDbMode && pendingFollowupAnchorId) ? pendingFollowupAnchorId : null;
+        if (followupAnchorForThisSend) {
+            pendingFollowupAnchorId = null;
+            _hideFollowupIndicator();
+        }
+
         // ⏱️ Response time ölçümü başla
         const startTime = performance.now();
 
@@ -516,7 +573,12 @@ window.DialogChatModule = (function () {
                 body: JSON.stringify({
                     content: content || '[Görsel]',
                     images: pendingImages.map(img => img.base64),
-                    source_type: chatMode === 'db' ? 'db' : 'rag'
+                    source_type: chatMode === 'db' ? 'db' : 'rag',
+                    // v3.16.0: Follow-up çıpası bu istek için consume edilmiş (state
+                    // zaten temizlendi); body'ye yerel snapshot'ı yaz.
+                    ...(followupAnchorForThisSend
+                        ? { follow_up_message_id: followupAnchorForThisSend }
+                        : {})
                 })
             });
 
@@ -550,9 +612,54 @@ window.DialogChatModule = (function () {
             let buffer = '';
             let firstChunkReceived = false;
 
+            // v3.14.5: Idle watchdog — 90sn boyunca hiçbir byte gelmezse stream'i kapat
+            // Backend her 15sn'de heartbeat (`:` comment frame) yolluyor, normalde tetiklenmez.
+            const IDLE_TIMEOUT_MS = 90000;
+            let watchdogTimer = null;
+            let watchdogTripped = false;
+            const resetWatchdog = () => {
+                if (watchdogTimer) clearTimeout(watchdogTimer);
+                watchdogTimer = setTimeout(() => {
+                    watchdogTripped = true;
+                    console.warn(`[DialogChat] SSE stream ${IDLE_TIMEOUT_MS / 1000}sn boyunca sessiz — kapatılıyor.`);
+                    try { reader.cancel(); } catch (_) { /* noop */ }
+                }, IDLE_TIMEOUT_MS);
+            };
+            resetWatchdog();
+
+            // v3.14.6: Bekleyen DB sorgusu için 1 saniyelik gerçek-zamanlı sayaç.
+            // timeout_warning geldiğinde start, done/error/stream-end'de stop.
+            // v3.15.0: 60sn üzerinde "Xdk Ys" formatı + activeJobId iptal için.
+            let elapsedTickHandle = null;
+            let elapsedSeconds = 0;
+            let activeJobId = null;
+            const _formatElapsed = (sec) => {
+                const s = Math.max(0, parseInt(sec) || 0);
+                if (s < 60) return `${s}s`;
+                const m = Math.floor(s / 60);
+                const r = s % 60;
+                return `${m}dk ${r}s`;
+            };
+            const startElapsedTicker = () => {
+                if (elapsedTickHandle) return;
+                elapsedTickHandle = setInterval(() => {
+                    elapsedSeconds += 1;
+                    if (!streamingEl) return;
+                    const counterEl = streamingEl.querySelector('.db-timeout-elapsed');
+                    if (counterEl) counterEl.textContent = _formatElapsed(elapsedSeconds);
+                }, 1000);
+            };
+            const stopElapsedTicker = () => {
+                if (elapsedTickHandle) {
+                    clearInterval(elapsedTickHandle);
+                    elapsedTickHandle = null;
+                }
+            };
+
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
+                resetWatchdog(); // her byte geldiğinde watchdog sıfırla
 
                 // Backend ilk veriyi gönderdi, uçan daktilo bekleme modunu kapat!
                 if (!firstChunkReceived) {
@@ -608,6 +715,12 @@ window.DialogChatModule = (function () {
                             case 'saved':
                                 savedMessageId = eventData.message_id;
                                 savedQuickReply = eventData.quick_reply;
+                                // v3.16.0: DB modunda son asistan mesajının id'sini
+                                // hatırla — sonraki follow-up için çıpa olacak.
+                                // Anchor zaten POST'tan önce consume edildi.
+                                if (isDbMode && savedMessageId) {
+                                    lastDbAssistantMessageId = savedMessageId;
+                                }
                                 break;
 
                             // v4.0: Disambiguation — aynı isimde çoklu tablo
@@ -683,28 +796,128 @@ window.DialogChatModule = (function () {
 
                             // v3.14.0: Progressive Timeout — sorgu devam ediyor bildirimi
                             case 'timeout_warning': {
-                                const { message: twMsg, elapsed: twElapsed, estimate: twEst } = eventData;
+                                const { message: twMsg, elapsed: twElapsed, estimate: twEst, job_id: twJob, max_wait: twMaxWait, sql: twSql } = eventData;
                                 if (!streamingEl) {
                                     streamingEl = createStreamingMessage();
+                                }
+                                // v3.15.0: aktif job_id'yi yakala (iptal butonu için)
+                                // v3.15.1: modül seviyesinde activeJobs Set'ine ekle —
+                                // "Yeni Soru Sor" tıklanınca toplu iptal için.
+                                if (twJob) {
+                                    activeJobId = twJob;
+                                    activeJobs.add(twJob);
                                 }
                                 // DOM API ile XSS-safe oluştur (appendStreamToken HTML'i escape eder)
                                 const twDiv = document.createElement('div');
                                 twDiv.className = 'db-timeout-info';
+                                // v3.14.6: gerçek-zamanlı sayaç (.db-timeout-elapsed) eklendi
+                                // v3.15.0: max_wait bilgisi + İptal Et butonu
+                                // v3.15.6: "SQL Görüntüle" butonu — kullanıcı beklerken
+                                // backend'in ürettiği SQL'i kontrol edebilsin.
+                                const _maxWaitMin = twMaxWait ? Math.max(1, Math.floor(parseInt(twMaxWait) / 60)) : null;
+                                const _hasSql = !!(twSql && String(twSql).trim());
                                 twDiv.innerHTML =
                                     `<div class="db-timeout-icon">⏳</div>` +
                                     `<div class="db-timeout-text"></div>` +
+                                    `<div class="db-timeout-elapsed-wrap"><span class="db-timeout-elapsed">0s</span> geçti` +
+                                    (_maxWaitMin ? ` <span class="db-timeout-maxwait">/ maks ${_maxWaitMin}dk</span>` : '') +
+                                    `</div>` +
                                     `<div class="db-timeout-progress">` +
                                     `<div class="db-timeout-bar" style="animation: db-timeout-fill ${parseInt(twEst) || 30}s linear forwards"></div>` +
                                     `</div>` +
-                                    `<div class="db-timeout-hint">Sorgu arka planda çalışmaya devam ediyor...</div>`;
+                                    `<div class="db-timeout-hint">Sorgu arka planda çalışmaya devam ediyor...</div>` +
+                                    `<div class="db-timeout-actions">` +
+                                    (_hasSql ? `<button type="button" class="db-timeout-sql-btn" title="Çalıştırılan SQL'i görüntüle"><i class="fa-solid fa-code"></i> SQL Görüntüle</button>` : '') +
+                                    `<button type="button" class="db-timeout-cancel-btn">🛑 İptal Et</button>` +
+                                    `</div>`;
                                 // Mesaj metni XSS-safe textContent ile
                                 twDiv.querySelector('.db-timeout-text').textContent = twMsg;
+                                // v3.15.6: SQL butonu — DialogChatUtils.showSQLModal mevcut, onu kullan.
+                                if (_hasSql) {
+                                    const sqlBtn = twDiv.querySelector('.db-timeout-sql-btn');
+                                    if (sqlBtn) {
+                                        sqlBtn.addEventListener('click', () => {
+                                            try {
+                                                if (window.DialogChatUtils && typeof window.DialogChatUtils.showSQLModal === 'function') {
+                                                    window.DialogChatUtils.showSQLModal(String(twSql));
+                                                }
+                                            } catch (_e) { /* sessiz */ }
+                                        });
+                                    }
+                                }
+                                // v3.15.0: İptal butonu click handler
+                                const cancelBtn = twDiv.querySelector('.db-timeout-cancel-btn');
+                                if (cancelBtn) {
+                                    cancelBtn.addEventListener('click', async () => {
+                                        if (!activeJobId) return;
+                                        cancelBtn.disabled = true;
+                                        cancelBtn.textContent = '⏳ İptal ediliyor...';
+                                        try {
+                                            const dlgId = _getDialogIdSafe();
+                                            if (!dlgId) {
+                                                cancelBtn.textContent = '⚠️ Diyalog bulunamadı';
+                                                return;
+                                            }
+                                            const token = localStorage.getItem('access_token');
+                                            const headers = { 'Content-Type': 'application/json' };
+                                            if (token) headers['Authorization'] = `Bearer ${token}`;
+                                            const resp = await fetch(`/api/dialogs/${dlgId}/jobs/${encodeURIComponent(activeJobId)}/cancel`, {
+                                                method: 'POST',
+                                                headers,
+                                            });
+                                            if (resp.ok) {
+                                                cancelBtn.textContent = '✓ İptal sinyali gönderildi';
+                                            } else {
+                                                cancelBtn.textContent = '⚠️ İptal başarısız';
+                                                cancelBtn.disabled = false;
+                                            }
+                                        } catch (_e) {
+                                            cancelBtn.textContent = '⚠️ Bağlantı hatası';
+                                            cancelBtn.disabled = false;
+                                        }
+                                    });
+                                }
                                 const twContent = streamingEl.querySelector('.message-content') || streamingEl;
                                 twContent.appendChild(twDiv);
+                                // v3.14.6: sayacı başlat ve mevcut elapsed'ten devam ettir
+                                elapsedSeconds = parseInt(twElapsed) || 0;
+                                const initialCounter = twDiv.querySelector('.db-timeout-elapsed');
+                                if (initialCounter) initialCounter.textContent = _formatElapsed(elapsedSeconds);
+                                startElapsedTicker();
+                                break;
+                            }
+
+                            // v3.14.5: Periyodik progress tick — sorgu bekleme süresince her 10sn
+                            case 'progress_tick': {
+                                const { elapsed: ptElapsed, max_wait: ptMax, message: ptMsg, job_id: ptJob } = eventData;
+                                if (!streamingEl) {
+                                    streamingEl = createStreamingMessage();
+                                }
+                                if (ptJob) {
+                                    activeJobId = ptJob;
+                                    activeJobs.add(ptJob);
+                                }
+                                const existing = streamingEl.querySelector('.db-timeout-info .db-timeout-text');
+                                if (existing) {
+                                    existing.textContent = ptMsg || `⏳ ${ptElapsed}sn — sorgu devam ediyor...`;
+                                } else {
+                                    updateStreamingStatus(streamingEl, ptMsg || `⏳ ${ptElapsed}sn — sorgu devam ediyor...`);
+                                }
+                                // v3.14.6: backend tarafından gelen elapsed ile sayacı senkronize et
+                                if (typeof ptElapsed === 'number' && ptElapsed > elapsedSeconds) {
+                                    elapsedSeconds = ptElapsed;
+                                }
+                                const counterEl = streamingEl.querySelector('.db-timeout-elapsed');
+                                if (counterEl) counterEl.textContent = _formatElapsed(elapsedSeconds);
+                                if (!elapsedTickHandle) startElapsedTicker();
                                 break;
                             }
 
                             // v4.0: Follow-up önerileri
+                            // v3.16.0: DB modunda chip listesinin EN BAŞINA
+                            // "🔗 Önceki konu ile ilgili soru sor" badge eklenir.
+                            // Kullanıcı tıklayınca pendingFollowupAnchorId ayarlanır,
+                            // textarea'ya odaklanılır, placeholder güncellenir.
                             case 'followup': {
                                 const { suggestions: fuSugg } = eventData;
                                 if (fuSugg?.length) {
@@ -719,7 +932,33 @@ window.DialogChatModule = (function () {
                                             }
                                         }
                                     );
-                                    _insertInteractiveBlock(fuHtml);
+                                    // v3.16.0: DB modunda badge'i chip listesinin başına ekle.
+                                    let prefixHtml = '';
+                                    if (isDbMode && lastDbAssistantMessageId) {
+                                        prefixHtml = `<button type="button" class="db-followup-anchor-badge" data-anchor-id="${lastDbAssistantMessageId}" title="Bir sonraki mesajın önceki sorgu üzerinde değişiklik olduğunu belirt"><i class="fa-solid fa-link"></i> Önceki konu ile ilgili soru sor</button>`;
+                                    }
+                                    _insertInteractiveBlock(prefixHtml + fuHtml);
+                                    // Badge tıklama handler'ı
+                                    if (prefixHtml) {
+                                        try {
+                                            const badges = document.querySelectorAll('.db-followup-anchor-badge[data-anchor-id]');
+                                            badges.forEach((btn) => {
+                                                if (btn.dataset.bound === '1') return;
+                                                btn.dataset.bound = '1';
+                                                btn.addEventListener('click', () => {
+                                                    const aid = parseInt(btn.dataset.anchorId, 10);
+                                                    if (!aid) return;
+                                                    pendingFollowupAnchorId = aid;
+                                                    _showFollowupIndicator(aid);
+                                                    const inp = document.getElementById('dialogInput');
+                                                    if (inp) {
+                                                        inp.placeholder = '↪ Önceki sorgu üzerinde değişiklik isteyin...';
+                                                        inp.focus();
+                                                    }
+                                                });
+                                            });
+                                        } catch (_e) { /* sessiz */ }
+                                    }
                                 }
                                 break;
                             }
@@ -734,6 +973,18 @@ window.DialogChatModule = (function () {
                         console.warn('[DialogChat] SSE parse error:', parseErr);
                     }
                 }
+            }
+
+            // v3.14.5: Stream bitti — idle watchdog'u temizle
+            if (watchdogTimer) { clearTimeout(watchdogTimer); watchdogTimer = null; }
+            // v3.14.6: gerçek-zamanlı sayaç da durdurulur
+            stopElapsedTicker();
+
+            // v3.14.5: Watchdog tetiklendiyse kullanıcıya net hata mesajı ver
+            if (watchdogTripped && !finalContent) {
+                if (streamingEl) streamingEl.remove();
+                addSystemMessage('⏱️ Sunucu yanıt vermedi (90sn sessizlik). Sorgu çok uzun sürüyor olabilir — daha dar bir kapsamla tekrar deneyin.');
+                return;
             }
 
             // ⏱️ Response time hesapla
@@ -803,15 +1054,37 @@ window.DialogChatModule = (function () {
             hideTypingIndicator();
             console.error('[DialogChat] Mesaj gönderilemedi:', error);
 
-            // Network hatası - VPN kontrolü
+            // v3.14.5/3.14.6: Network hatası türünü ayrıştır — INCOMPLETE_CHUNKED/timeout için özel mesaj
             const errorMsg = error?.message || String(error);
-            if (window.isVPNNetworkError && window.isVPNNetworkError(errorMsg)) {
+            const lowerMsg = errorMsg.toLowerCase();
+            const isChunkedErr = lowerMsg.includes('incomplete') || lowerMsg.includes('chunked');
+            const isAbortErr = lowerMsg.includes('abort') || lowerMsg.includes('cancel');
+            // v3.14.6: TypeError 'Failed to fetch' / 'NetworkError' / 'Load failed' tarayıcıya göre değişir
+            const isLongRunningNetErr = lowerMsg.includes('failed to fetch') ||
+                                        lowerMsg.includes('network error') ||
+                                        lowerMsg.includes('load failed') ||
+                                        lowerMsg.includes('err_incomplete') ||
+                                        lowerMsg.includes('err_empty_response');
+
+            if (isChunkedErr || isAbortErr || isLongRunningNetErr) {
+                addSystemMessage('⏱️ Sunucu bağlantısı uzun süre yanıt vermediği için kesildi. Sorgu çok uzun sürüyor olabilir — daha dar bir kapsamla tekrar deneyin veya sorguyu daraltın.');
+            } else if (window.isVPNNetworkError && window.isVPNNetworkError(errorMsg)) {
                 if (window.showVPNErrorPopup) window.showVPNErrorPopup();
                 addSystemMessage('🌐 Bağlantı hatası. VPN veya internet bağlantınızı kontrol edin.');
             } else {
-                addSystemMessage('❌ Bağlantı hatası.');
+                // v3.14.6: errorMsg ham haliyle DOM'a basılamaz (addSystemMessage innerHTML kullanıyor — XSS riski).
+                // Detay zaten console.error ile loglandı (line 845).
+                addSystemMessage('❌ Bağlantı hatası. Tarayıcı konsolundan detay görebilirsiniz.');
             }
         } finally {
+            // v3.14.5: Watchdog timer'ı her durumda temizle (memory leak engeli)
+            // Not: watchdogTimer 'let' ile içeride bildirildiği için TDZ riski olabilir;
+            // try-catch ile sarmalanmış erişim güvenli.
+            try { if (watchdogTimer) clearTimeout(watchdogTimer); } catch (_) { /* TDZ */ }
+            // v3.14.6: gerçek-zamanlı sayacı da temizle
+            try { if (elapsedTickHandle) clearInterval(elapsedTickHandle); } catch (_) { /* TDZ */ }
+            // v3.15.1: job tamamlandı → activeJobs Set'inden sil
+            try { if (typeof activeJobId !== 'undefined' && activeJobId) activeJobs.delete(activeJobId); } catch (_) { /* TDZ */ }
             isWaitingForResponse = false;
         }
 
@@ -899,6 +1172,42 @@ window.DialogChatModule = (function () {
         wrap.innerHTML = html;
         container.appendChild(wrap);
         container.scrollTop = container.scrollHeight;
+    }
+
+    // v3.16.0: Follow-up çıpası aktifken textarea üstünde gösterilen rozet.
+    // Kullanıcı çıpadan vazgeçerse X ile kapatabilir.
+    function _showFollowupIndicator(anchorId) {
+        try {
+            let ind = document.getElementById('dbFollowupIndicator');
+            const input = document.getElementById('dialogInput');
+            if (!input) return;
+            const host = input.parentElement || input;
+            if (!ind) {
+                ind = document.createElement('div');
+                ind.id = 'dbFollowupIndicator';
+                ind.className = 'db-followup-indicator';
+                ind.innerHTML = `<span class="dfi-text"><i class="fa-solid fa-link"></i> Önceki konu ile ilgili sor</span><button type="button" class="dfi-clear" title="Vazgeç" aria-label="Vazgeç">×</button>`;
+                host.insertBefore(ind, input);
+                const clearBtn = ind.querySelector('.dfi-clear');
+                if (clearBtn) clearBtn.addEventListener('click', () => {
+                    pendingFollowupAnchorId = null;
+                    _hideFollowupIndicator();
+                });
+            }
+            ind.dataset.anchorId = String(anchorId);
+            ind.style.display = '';
+        } catch (_e) { /* sessiz */ }
+    }
+
+    function _hideFollowupIndicator() {
+        try {
+            const ind = document.getElementById('dbFollowupIndicator');
+            if (ind) ind.remove();
+            const inp = document.getElementById('dialogInput');
+            if (inp && inp.placeholder && inp.placeholder.startsWith('↪')) {
+                inp.placeholder = 'Mesajınızı yazın...';
+            }
+        } catch (_e) { /* sessiz */ }
     }
 
     /**
@@ -2321,6 +2630,8 @@ window.DialogChatModule = (function () {
             }
         },
         switchToLlmMode: () => {
+            // v3.16.0: DB→başka moda geçişte follow-up anchor'ı temizle
+            if (pendingFollowupAnchorId) { pendingFollowupAnchorId = null; _hideFollowupIndicator(); }
             chatMode = 'llm';
             updateChatModeUI();
             updateHeaderModeBtn();
@@ -2334,6 +2645,8 @@ window.DialogChatModule = (function () {
             addSystemMessage('💬 ' + _appName() + ' ile sohbet moduna geçildi.');
         },
         switchToRagMode: () => {
+            // v3.16.0: DB→başka moda geçişte follow-up anchor'ı temizle
+            if (pendingFollowupAnchorId) { pendingFollowupAnchorId = null; _hideFollowupIndicator(); }
             chatMode = 'rag';
             updateChatModeUI();
             updateHeaderModeBtn();

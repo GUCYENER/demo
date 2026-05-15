@@ -365,6 +365,25 @@
 
     // ---- Check Auth ----
     function checkExistingAuth() {
+        // v3.15.4: home.html → version_mismatch nedeniyle login'e atıldıysa
+        // bir bilgilendirme mesajı göster ve auto-redirect yapma.
+        try {
+            const reason = sessionStorage.getItem('vyra_relogin_reason');
+            if (reason === 'version_mismatch') {
+                sessionStorage.removeItem('vyra_relogin_reason');
+                showError(
+                    "login-error",
+                    "Sürüm güncellendi. Lütfen yeniden giriş yapın."
+                );
+                // Eski tokenler zaten home_page.js tarafından temizlenmiştir;
+                // yine de güvence olarak temizle.
+                localStorage.removeItem("access_token");
+                localStorage.removeItem("refresh_token");
+                localStorage.removeItem("session_start_time");
+                return;
+            }
+        } catch (_) { /* sessionStorage erişim hatası — kritik değil */ }
+
         const token = localStorage.getItem("access_token");
         if (token) {
             // Verify token is still valid
@@ -373,9 +392,27 @@
                     "Authorization": `Bearer ${token}`
                 }
             })
-                .then(response => {
+                .then(async response => {
                     if (response.ok) {
                         window.location.href = "home.html";
+                        return;
+                    }
+                    // v3.15.4: 401 + version_mismatch → kullanıcıyı bilgilendir
+                    if (response.status === 401) {
+                        let detail = '';
+                        try {
+                            const body = await response.json();
+                            detail = (body && body.detail) || '';
+                        } catch (_) { /* parse hatası önemsiz */ }
+                        localStorage.removeItem("access_token");
+                        localStorage.removeItem("refresh_token");
+                        localStorage.removeItem("session_start_time");
+                        if (detail === 'version_mismatch') {
+                            showError(
+                                "login-error",
+                                "Sürüm güncellendi. Lütfen yeniden giriş yapın."
+                            );
+                        }
                     }
                 })
                 .catch(() => {

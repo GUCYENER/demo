@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.14.4"  # Nginx SSE stream timeout fix (120s→300s), proxy_buffering off
+    APP_VERSION: str = "3.16.0"  # DB modunda follow-up bağlam — önceki sorgu üzerinde devam etme
 
     # Frontend & API prefix
     api_prefix: str = "/api"
@@ -150,6 +150,12 @@ class Settings(BaseSettings):
     # 🆕 v2.57.0: Hybrid Router & Safe SQL Executor
     SQL_EXEC_TIMEOUT: int = 5       # SQL sorgu timeout (saniye)
     SQL_MAX_ROWS: int = 100         # Maksimum döndürülen satır sayısı
+
+    # v3.15.0: Long-running DB query — kullanıcı beklemek istediği sürece sabretmek için
+    # SSE wait-loop maks bekleme süresi (saniye). Bu süre dolunca kullanıcıya
+    # "X dakika içinde tamamlanamadı" mesajı gösterilir; SQL hala arka planda kalmaz
+    # (executor thread bırakılır). Nginx proxy_read_timeout bunun üzerinde olmalı.
+    DB_QUERY_MAX_WAIT_SECONDS: int = 900  # 15 dakika
     
     # -------------------------------------------------
     #  Scheduler & System Ayarları (v2.27.2)

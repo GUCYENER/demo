@@ -322,7 +322,7 @@ if !WORKER_IDX! geq %WORKERS% goto workers_started
 set /a "WPORT=%BACKEND_PORT% + !WORKER_IDX!"
 set /a "WIDX=!WORKER_IDX! + 1"
 echo    [ADIM] Worker !WIDX!/%WORKERS% baslatiliyor (port !WPORT!)...
-start "VYRA-Worker-!WIDX!" /MIN powershell -NoExit -Command "cd '%PROJECT_ROOT%'; $env:PYTHONPATH='%PROJECT_ROOT%'; & '%VENV_PYTHON%' -m uvicorn app.api.main:app --host 0.0.0.0 --port !WPORT! --workers 1 --limit-concurrency 100 --timeout-keep-alive 30 --no-server-header --log-level info"
+start "VYRA-Worker-!WIDX!" /MIN powershell -NoExit -Command "cd '%PROJECT_ROOT%'; $env:PYTHONPATH='%PROJECT_ROOT%'; & '%VENV_PYTHON%' -m uvicorn app.api.main:app --host 0.0.0.0 --port !WPORT! --workers 1 --limit-concurrency 100 --timeout-keep-alive 300 --no-server-header --log-level info"
 set /a WORKER_IDX+=1
 goto start_workers
 :workers_started

@@ -2962,6 +2962,61 @@
     transform: translateY(-1px);
 }
 
+/* v3.16.0: "Önceki konu ile ilgili" çıpa badge'i — chip listesinin başında */
+.db-followup-anchor-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(99, 102, 241, 0.12);
+    border: 1px dashed rgba(129, 140, 248, 0.55);
+    border-radius: 20px;
+    padding: 5px 12px;
+    margin: 0 6px 6px 0;
+    font-size: 12px;
+    color: #c7d2fe;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+.db-followup-anchor-badge:hover {
+    background: rgba(99, 102, 241, 0.22);
+    border-color: #818cf8;
+    border-style: solid;
+    transform: translateY(-1px);
+}
+.db-followup-anchor-badge i { font-size: 11px; }
+
+/* v3.16.0: Textarea üstünde aktif çıpa rozeti */
+.db-followup-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 6px 0;
+    padding: 6px 12px;
+    background: rgba(99, 102, 241, 0.10);
+    border: 1px solid rgba(129, 140, 248, 0.45);
+    border-radius: 8px;
+    font-size: 12px;
+    color: #c7d2fe;
+}
+.db-followup-indicator .dfi-text {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.db-followup-indicator .dfi-clear {
+    background: transparent;
+    border: none;
+    color: #c7d2fe;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    padding: 0 4px;
+    opacity: 0.75;
+}
+.db-followup-indicator .dfi-clear:hover { opacity: 1; }
+
 @keyframes fadeInUp {
     from { opacity: 0; transform: translateY(8px); }
     to   { opacity: 1; transform: translateY(0);   }
@@ -3008,6 +3063,69 @@
     font-size: 0.78em;
     color: rgba(255, 255, 255, 0.45);
     text-align: center;
+}
+/* v3.14.6: Bekleyen sorgu gerçek-zamanlı sayaç */
+.db-timeout-elapsed-wrap {
+    font-size: 0.85em;
+    color: rgba(255, 255, 255, 0.6);
+    text-align: center;
+    margin-bottom: 8px;
+    font-variant-numeric: tabular-nums;
+}
+.db-timeout-elapsed {
+    color: #f5a623;
+    font-weight: 600;
+    margin-right: 2px;
+}
+/* v3.15.0: maks bekleme bilgisi + İptal Et butonu */
+.db-timeout-maxwait {
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 0.92em;
+    margin-left: 4px;
+}
+.db-timeout-actions {
+    text-align: center;
+    margin-top: 10px;
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+/* v3.15.6: SQL Görüntüle — beklerken SQL'i kontrol etmek için */
+.db-timeout-sql-btn {
+    background: rgba(99, 102, 241, 0.12);
+    border: 1px solid rgba(99, 102, 241, 0.35);
+    color: #c7d2fe;
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 0.82em;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.db-timeout-sql-btn:hover {
+    background: rgba(99, 102, 241, 0.22);
+    color: #e0e7ff;
+}
+.db-timeout-cancel-btn {
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    color: #fca5a5;
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 0.82em;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+.db-timeout-cancel-btn:hover:not(:disabled) {
+    background: rgba(239, 68, 68, 0.22);
+    color: #fecaca;
+}
+.db-timeout-cancel-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
 }
 
 /* ── v3.14.0: Asenkron DB Sorgu Mention Kartı ── */

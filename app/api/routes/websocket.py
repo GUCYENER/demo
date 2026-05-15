@@ -19,13 +19,23 @@ router = APIRouter(tags=["websocket"])
 
 
 def verify_ws_token(token: str) -> dict | None:
-    """WebSocket için JWT token doğrulama."""
+    """WebSocket için JWT token doğrulama.
+
+    v3.15.4: Token'in `ver` claim'i mevcut APP_VERSION ile eşleşmiyorsa reddedilir.
+    """
     try:
         payload = jwt.decode(
-            token, 
-            settings.JWT_SECRET, 
+            token,
+            settings.JWT_SECRET,
             algorithms=[settings.JWT_ALGORITHM]
         )
+        # v3.15.4: Versiyon mismatch → token geçersiz say
+        if payload.get("ver") != settings.APP_VERSION:
+            log_error(
+                f"WebSocket version_mismatch: token_ver={payload.get('ver')} server_ver={settings.APP_VERSION}",
+                "websocket"
+            )
+            return None
         return payload
     except JWTError as e:
         log_error(f"WebSocket JWT hatası: {e}", "websocket")

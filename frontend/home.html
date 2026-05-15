@@ -219,6 +219,10 @@ body::before{
 .mc-body{flex:1;min-width:0}
 .mc-title{font-size:12.5px;font-weight:500;color:var(--text-1);letter-spacing:-.01em}
 .mc-desc{font-size:11.5px;color:var(--text-3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* v3.14.6: Compact topbar — diğer menülerde sadece bildirim + tema göster */
+.topbar.topbar-compact #chatModeToggleBtn,
+.topbar.topbar-compact #dialogTicketBtn,
+.topbar.topbar-compact #dialogNewBtn{display:none!important}
 .notif-area{display:flex;align-items:center;flex-shrink:0;position:relative}
 .notif-area .notification-center{position:relative!important;display:inline-flex!important;align-items:center}
 .notif-area .notification-bell{
@@ -607,7 +611,7 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
 @media(max-width:660px){.n-sidebar{display:none}}
 </style>
 <link rel="stylesheet" href="assets/css/mode_cards.css?v=3.6.0" />
-<link rel="stylesheet" href="dist/bundle.min.css?v=3.6.6" />
+<link rel="stylesheet" href="dist/bundle.min.css?v=3.16.0" />
 </head>
 <body>
 
@@ -705,7 +709,7 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
         Yeni Soru Sor
       </button>
       <div id="notificationArea" class="notif-area"></div>
-      <button class="theme-btn" id="themeToggleBtn">
+      <button type="button" class="theme-btn" id="themeToggleBtn">
         <svg id="theme-ico" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
       </button>
     </div>
@@ -814,7 +818,7 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
     }
 })();
 </script>
-<script defer src="dist/bundle.min.js?v=3.6.6"></script>
+<script defer src="dist/bundle.min.js?v=3.16.0"></script>
 <script>
 // v2.59.0: Favicon artık inline SVG kullanıyor, dev override gereksiz
 document.getElementById('themeToggleBtn').addEventListener('click', function(e) {

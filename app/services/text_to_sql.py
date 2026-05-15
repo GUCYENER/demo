@@ -64,6 +64,7 @@ DİALECT: {dialect}
 def build_text_to_sql_prompt(
     query: str,
     schema_context: Dict[str, Any],
+    follow_up_context: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, str]]:
     """
     LLM'e gönderilecek Text-to-SQL prompt'unu oluşturur.
@@ -72,6 +73,9 @@ def build_text_to_sql_prompt(
         query: Kullanıcı sorusu
         schema_context: Schema bilgisi (get_schema_context() çıktısı)
             extra_context anahtarı varsa (örn. ML öğrenme bilgisi) prompt başına eklenir.
+        follow_up_context: v3.16.0 — Önceki DB cevabı bağlamı:
+            {"prev_sql": str, "prev_columns": List[str], "prev_source_db": str}
+            Var ise modifikasyon prompt'u devreye girer.
 
     Returns:
         LLM messages listesi
@@ -116,7 +120,41 @@ def build_text_to_sql_prompt(
     else:
         schema_block = schema_text
 
-    user_msg = f"""VERİTABANI ŞEMASI:
+    # v3.16.0: Follow-up modu — önceki SQL'i modifiye et
+    if follow_up_context and follow_up_context.get("prev_sql"):
+        prev_sql = follow_up_context.get("prev_sql", "")
+        prev_columns = follow_up_context.get("prev_columns") or []
+        prev_cols_text = ", ".join(prev_columns[:50]) if prev_columns else "(bilinmiyor)"
+
+        user_msg = f"""VERİTABANI ŞEMASI:
+{schema_block}
+
+ÖNCEKİ SORGU (kullanıcının daha önce sorduğu ve cevap aldığı):
+```sql
+{prev_sql}
+```
+
+ÖNCEKİ SORGUNUN DÖNDÜĞÜ KOLONLAR:
+{prev_cols_text}
+
+KULLANICININ YENİ İSTEĞİ (önceki sorgu üzerinde DEĞİŞİKLİK):
+{query}
+
+FOLLOW-UP MODİFİKASYON KURALLARI:
+1. Bu bir TAKİP isteğidir — kullanıcı önceki sorgunun sonucu üzerinde değişiklik istiyor.
+2. Mümkün olduğunca aynı FROM / JOIN / WHERE yapısını KORU. Yeni bir sorgu kurgulama.
+3. Sadece kullanıcının istediği değişikliği uygula:
+   - Yeni kolon seçimi → SELECT listesini değiştir
+   - Ek filtre → WHERE'e ekle
+   - Sıralama/gruplama → ORDER BY / GROUP BY ekle
+   - Limit değişikliği → satır sayısını ayarla
+4. Şemada olmayan kolonları KESİNLİKLE kullanma. Halüsinasyon yasak.
+5. Eğer kullanıcının istediği kolon önceki sorgunun tablolarında yoksa, DIAGNOSTIC: ile açıkla.
+6. Sonucu yine ```sql ... ``` bloğu içinde döndür.
+
+Lütfen önceki sorguyu modifiye ederek yeni SELECT sorgusunu yaz."""
+    else:
+        user_msg = f"""VERİTABANI ŞEMASI:
 {schema_block}
 
 KULLANICI SORUSU:
@@ -222,6 +260,7 @@ def generate_sql(
     schema_context: Dict[str, Any],
     allowed_tables: Optional[List[str]] = None,
     schema_hint: Optional[str] = None,
+    follow_up_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     LLM kullanarak kullanıcı sorusundan SQL üretir.
@@ -257,11 +296,14 @@ def generate_sql(
         schema_context["tables"] = ctx_tables
 
     # 1. Prompt oluştur
-    messages = build_text_to_sql_prompt(query, schema_context)
+    # v3.16.0: follow_up_context varsa modifikasyon prompt'u kullanılır
+    messages = build_text_to_sql_prompt(query, schema_context, follow_up_context=follow_up_context)
 
-    # 2. LLM çağır (temperature=0.1 ile daha deterministik SQL üretimi)
+    # 2. LLM çağır
+    # v3.16.0: Follow-up modunda temperature düşürülür (0.05) — daha minimal modifikasyon.
+    _temp = 0.05 if follow_up_context else 0.1
     try:
-        llm_response = call_llm_api(messages, temperature=0.1)
+        llm_response = call_llm_api(messages, temperature=_temp)
     except Exception as e:
         log_warning(f"Text-to-SQL LLM çağrısı başarısız: {e}", "hybrid_router")
         return {

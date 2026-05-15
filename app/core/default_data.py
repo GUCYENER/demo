@@ -116,7 +116,7 @@ def insert_default_data(cur) -> None:
                 VALUES (%s, %s, %s)
             """, (admin_user_id, admin_org['id'], admin_user_id))
         
-        print("[VYRA] Default admin user created (username: admin — şifre .env veya DB'den değiştirilmeli)")
+        print("[VYRA] Default admin user created (username: admin — password should be changed via .env or DB)")
         print(f"[VYRA] Admin user assigned to ORG-ADMIN")
     
     # Default LLM Config

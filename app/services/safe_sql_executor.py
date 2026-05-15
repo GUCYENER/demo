@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 import time
 import logging
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple  # noqa: F401
 from dataclasses import dataclass, field
 
 from app.core.config import settings
@@ -56,6 +56,8 @@ class SQLResult:
     elapsed_ms: float = 0.0
     error: Optional[str] = None
     truncated: bool = False  # Row limit'ten dolayı kesildi mi
+    timeout: bool = False  # v3.15.0: SSE/wait-loop timeout'undan kesildi mi (SQL hatalı değil, sadece uzun sürdü)
+    cancelled: bool = False  # v3.15.0: Kullanıcı tarafından iptal edildi mi
 
 
 # =====================================================
@@ -287,6 +289,53 @@ def mask_sensitive_columns(
 
 
 # =====================================================
+# v3.15.0: SQL Job Registry — uzun süren async sorguların iptal edilebilmesi için
+# Süreç içi (in-process) basit kayıt — sadece kullanıcının kendi dialog'undaki
+# job'ı iptal edebilmesini sağlamak amacıyla owner_user_id ile birlikte tutulur.
+# =====================================================
+
+import threading as _registry_threading
+
+_JOB_REGISTRY_LOCK = _registry_threading.Lock()
+_SQL_JOB_REGISTRY: Dict[str, Dict[str, Any]] = {}
+
+
+def register_sql_job(job_id: str, cancel_event, owner_user_id: int, dialog_id: Optional[int] = None) -> None:
+    """Async SQL job'unu iptal edilebilir olarak kaydeder."""
+    with _JOB_REGISTRY_LOCK:
+        _SQL_JOB_REGISTRY[job_id] = {
+            "cancel_event": cancel_event,
+            "owner_user_id": owner_user_id,
+            "dialog_id": dialog_id,
+            "started_at": time.time(),
+        }
+
+
+def unregister_sql_job(job_id: str) -> None:
+    """Job tamamlandığında registry'den siler."""
+    with _JOB_REGISTRY_LOCK:
+        _SQL_JOB_REGISTRY.pop(job_id, None)
+
+
+def cancel_sql_job(job_id: str, requesting_user_id: int) -> Tuple[bool, str]:
+    """
+    Job'u iptal eder. Sadece sahibi kullanıcı iptal edebilir.
+    Returns (success, message).
+    """
+    with _JOB_REGISTRY_LOCK:
+        entry = _SQL_JOB_REGISTRY.get(job_id)
+        if entry is None:
+            return False, "Job bulunamadı veya zaten tamamlandı"
+        if int(entry["owner_user_id"]) != int(requesting_user_id):
+            return False, "Bu job'u iptal etme yetkiniz yok"
+        try:
+            entry["cancel_event"].set()
+        except Exception:
+            return False, "İptal sinyali gönderilemedi"
+    return True, "İptal sinyali gönderildi"
+
+
+# =====================================================
 # Safe SQL Executor
 # =====================================================
 
@@ -396,16 +445,23 @@ class SafeSQLExecutor:
         source: dict,
         dialect: str,
         allowed_tables: Optional[List[str]] = None,
+        timeout: Optional[int] = None,
     ):
         """
         v3.14.0: Non-blocking SQL execution — SQL'i arka plan thread'de çalıştırır.
         Caller, result_event'i periyodik olarak kontrol ederek sonucu alır.
 
+        v3.15.0: timeout parametresi eklendi (varsayılan settings.DB_QUERY_MAX_WAIT_SECONDS).
+        cancel_event döndürülür — caller set() çağırarak iptal sinyali bırakır;
+        SSE wait-loop bunu görür ve kullanıcıya "iptal edildi" mesajı basar.
+        DB-side fiili kesme (conn.cancel) ileri faz için bırakıldı.
+
         Returns:
-            (result_holder, result_event, exec_thread)
+            (result_holder, result_event, exec_thread, cancel_event)
             - result_holder: {"result": SQLResult | None}
             - result_event: threading.Event — set olunca sonuç hazır
             - exec_thread: Thread referansı
+            - cancel_event: threading.Event — caller set() ile iptal işareti bırakır
         """
         import threading
 
@@ -415,7 +471,7 @@ class SafeSQLExecutor:
             holder = {"result": SQLResult(success=False, error=f"Güvenlik: {validation_error}", sql_executed=sql[:200])}
             evt = threading.Event()
             evt.set()
-            return holder, evt, None
+            return holder, evt, None, threading.Event()
 
         if allowed_tables:
             is_allowed, table_error = check_table_whitelist(sql, allowed_tables, dialect)
@@ -423,17 +479,20 @@ class SafeSQLExecutor:
                 holder = {"result": SQLResult(success=False, error=table_error, sql_executed=sql[:200])}
                 evt = threading.Event()
                 evt.set()
-                return holder, evt, None
+                return holder, evt, None, threading.Event()
 
         # Async execution
         result_holder = {"result": None}
         result_event = threading.Event()
+        cancel_event = threading.Event()
         _max_rows = self.max_rows  # Thread'e geçmeden önce yakala
+        # v3.15.0: bg timeout — SSE wait-loop'undan biraz daha uzun olsun ki executor
+        # ile SSE eşzamanlı bitsin (executor bitmeden SSE timeout olmasın).
+        _bg_timeout = int(timeout) if timeout else int(getattr(settings, 'DB_QUERY_MAX_WAIT_SECONDS', 900))
 
         def _bg_execute():
             try:
-                # Uzun timeout ile çalıştır (max 120sn)
-                long_executor = SafeSQLExecutor(timeout=120, max_rows=_max_rows)
+                long_executor = SafeSQLExecutor(timeout=_bg_timeout, max_rows=_max_rows)
                 result_holder["result"] = long_executor.execute(
                     sql=sql, source=source, dialect=dialect, allowed_tables=allowed_tables,
                 )
@@ -446,7 +505,7 @@ class SafeSQLExecutor:
 
         exec_thread = threading.Thread(target=_bg_execute, daemon=True)
         exec_thread.start()
-        return result_holder, result_event, exec_thread
+        return result_holder, result_event, exec_thread, cancel_event
 
     def estimate_query_time(self, schema_ctx: dict, sql: str) -> dict:
         """

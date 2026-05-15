@@ -19,6 +19,7 @@ window.DSLearningModule = (function () {
     let _wizardStep = 0;  // 0: idle, 1: technology, 2: objects, 3: samples, 4: qa_generation
     let _stepResults = {};
     let _wizardTimer = null;
+    let _selectedSchemas = null;  // null = tüm şemalar, [...] = seçili şemalar
 
     // Toast helper
     function toast(type, message) {
@@ -204,19 +205,23 @@ window.DSLearningModule = (function () {
                     };
                     const label = jobLabels[check.job.job_type] || check.job.job_type;
                     toast('warning', `⚠️ Bu kaynak için "${label}" işi hâlâ çalışıyor. Tamamlanmaları beklemelisiniz.`);
-                    // Butonu geri aç
                     const startBtn = document.getElementById('dsWizardStartBtn');
                     if (startBtn) {
                         startBtn.disabled = false;
                         startBtn.classList.remove('ds-btn-disabled');
                         startBtn.innerHTML = '<i class="fa-solid fa-rocket"></i> Keşfi Başlat';
                     }
-                    return; // İşlemi engelle
+                    return;
                 }
             } catch (e) {
                 console.warn('[DSLearning] Running job kontrolü yapılamadı:', e);
-                // Kontrol başarısız olursa devam et (backend guard yakalar)
             }
+        }
+
+        // Adım 3: schema seçim ekranından geçerek arka planda çalışır
+        if (step === 3) {
+            await _showSchemaSelectionStep();
+            return;
         }
 
         _wizardStep = step;
@@ -225,13 +230,11 @@ window.DSLearningModule = (function () {
 
         const endpoints = {
             1: `/${_currentSourceId}/discover`,
-            2: `/${_currentSourceId}/detect-objects`,
-            3: `/${_currentSourceId}/collect-samples`
+            2: `/${_currentSourceId}/detect-objects`
         };
         const stepNames = {
             1: 'Teknoloji Keşfi',
-            2: 'Obje Tespiti',
-            3: 'Veri Toplama'
+            2: 'Obje Tespiti'
         };
 
         try {
@@ -242,16 +245,9 @@ window.DSLearningModule = (function () {
                 _updateStepIndicator(step, 'completed');
                 _showStepResult(step, result);
                 toast('success', `${stepNames[step]} tamamlandı`);
-
-                // Otomatik sonraki adıma geç
-                if (step < 3) {
-                    _showAutoNextButton(step);
-                } else {
-                    _showFinalResults();
-                }
+                _showAutoNextButton(step);
             } else {
                 _updateStepIndicator(step, 'failed');
-                // Backend guard mesajını göster (running_job varsa)
                 const msg = result.running_job
                     ? `Bu kaynak için "${result.running_job.job_type}" işi hâlâ çalışıyor!`
                     : (result.message || 'Bilinmeyen hata');
@@ -263,6 +259,205 @@ window.DSLearningModule = (function () {
             _showStepError(step, err.message || 'Bağlantı hatası');
             toast('error', `${stepNames[step]} sırasında hata oluştu`);
         }
+    }
+
+    // ============================================
+    // Adım 3: Schema Seçim + Arka Plan Çalıştırma
+    // ============================================
+
+    async function _showSchemaSelectionStep() {
+        if (_wizardTimer) { clearInterval(_wizardTimer); _wizardTimer = null; }
+        _wizardStep = 3;
+        _updateStepIndicator(3, 'running');
+
+        const body = document.getElementById('dsWizardBody');
+        const currentHtml = body.innerHTML;
+        body.innerHTML = currentHtml + `
+            <div class="ds-schema-selection" id="dsSchemaSelection">
+                <div class="ds-schema-loading"><i class="fa-solid fa-spinner fa-spin"></i> Şemalar yükleniyor...</div>
+            </div>
+        `;
+
+        let schemas = [];
+        try {
+            const data = await apiCall(`/${_currentSourceId}/discovered-schemas`);
+            schemas = data.schemas || [];
+        } catch (e) {
+            console.warn('[DSLearning] Schema fetch hatası:', e);
+        }
+
+        const selectionDiv = document.getElementById('dsSchemaSelection');
+        if (!selectionDiv) return;
+
+        // Tek ya da sıfır schema varsa doğrudan çalıştır
+        if (schemas.length === 0) {
+            selectionDiv.innerHTML = `<div class="ds-result-detail"><i class="fa-solid fa-info-circle"></i> Keşfedilmiş tablo yok, tüm tablolar örneklenecek.</div>`;
+            _selectedSchemas = null;
+            setTimeout(() => _runStep3Background(null), 1200);
+            return;
+        }
+        if (schemas.length === 1) {
+            _selectedSchemas = [schemas[0].schema];
+            selectionDiv.innerHTML = `<div class="ds-result-detail"><i class="fa-solid fa-layer-group"></i> Tek şema bulundu: <strong>${_escapeHtml(schemas[0].schema)}</strong> (${schemas[0].table_count} tablo)</div>`;
+            setTimeout(() => _runStep3Background(_selectedSchemas), 1200);
+            return;
+        }
+
+        // Çok şema: seçim UI'ı göster
+        const schemaListHtml = schemas.map(s => `
+            <label class="ds-schema-check">
+                <input type="checkbox" class="ds-schema-cb" value="${_escapeHtml(s.schema)}" checked>
+                <span class="ds-schema-name">${_escapeHtml(s.schema)}</span>
+                <span class="ds-schema-count">${s.table_count} tablo</span>
+            </label>
+        `).join('');
+
+        const totalTables = schemas.reduce((acc, s) => acc + s.table_count, 0);
+
+        selectionDiv.innerHTML = `
+            <div class="ds-schema-select-box">
+                <div class="ds-schema-select-header">
+                    <i class="fa-solid fa-layer-group"></i>
+                    <div>
+                        <strong>Örneklenecek Şemaları Seçin</strong>
+                        <p class="ds-schema-select-hint">Büyük veritabanlarında yalnızca ilgili şemaları seçerek zaman aşımını önleyebilirsiniz. (Toplam: ${totalTables} tablo)</p>
+                    </div>
+                </div>
+                <div class="ds-schema-list" id="dsSchemaList">${schemaListHtml}</div>
+                <div class="ds-schema-select-actions">
+                    <a href="#" id="dsSchemaSelectAll" class="ds-schema-link">Tümünü Seç</a>
+                    <span class="ds-schema-link-sep">·</span>
+                    <a href="#" id="dsSchemaDeselectAll" class="ds-schema-link">Temizle</a>
+                    <span id="dsSchemaSelectedCount" class="ds-schema-selected-count">${schemas.length} / ${schemas.length} seçili</span>
+                </div>
+                <div class="ds-wizard-auto-next">
+                    <button class="ds-wizard-btn primary" id="dsSchemaStartBtn">
+                        <i class="fa-solid fa-download"></i> Seçili Şemaları Örnekle
+                    </button>
+                    <button class="ds-wizard-btn secondary" onclick="DSLearningModule.closeWizard()">
+                        <i class="fa-solid fa-stop"></i> Durdur
+                    </button>
+                </div>
+            </div>
+        `;
+
+        // Tümünü Seç / Temizle
+        function _updateCount() {
+            const total = selectionDiv.querySelectorAll('.ds-schema-cb').length;
+            const checked = selectionDiv.querySelectorAll('.ds-schema-cb:checked').length;
+            const countEl = document.getElementById('dsSchemaSelectedCount');
+            if (countEl) countEl.textContent = `${checked} / ${total} seçili`;
+        }
+
+        document.getElementById('dsSchemaSelectAll').addEventListener('click', (e) => {
+            e.preventDefault();
+            selectionDiv.querySelectorAll('.ds-schema-cb').forEach(cb => cb.checked = true);
+            _updateCount();
+        });
+        document.getElementById('dsSchemaDeselectAll').addEventListener('click', (e) => {
+            e.preventDefault();
+            selectionDiv.querySelectorAll('.ds-schema-cb').forEach(cb => cb.checked = false);
+            _updateCount();
+        });
+        selectionDiv.querySelectorAll('.ds-schema-cb').forEach(cb => cb.addEventListener('change', _updateCount));
+
+        document.getElementById('dsSchemaStartBtn').addEventListener('click', () => {
+            const selected = [...selectionDiv.querySelectorAll('.ds-schema-cb:checked')].map(cb => cb.value);
+            if (selected.length === 0) {
+                toast('warning', 'En az bir şema seçmelisiniz');
+                return;
+            }
+            _selectedSchemas = selected;
+            _runStep3Background(selected);
+        });
+    }
+
+    async function _runStep3Background(schemas) {
+        _updateStepIndicator(3, 'running');
+        _showStepLoading(3);
+
+        try {
+            const reqBody = schemas ? { schemas } : {};
+            const result = await apiCall(`/${_currentSourceId}/collect-samples`, 'POST', reqBody);
+
+            if (!result.success) {
+                _updateStepIndicator(3, 'failed');
+                const msg = result.running_job
+                    ? `Bu kaynak için "${result.running_job.job_type}" işi hâlâ çalışıyor!`
+                    : (result.message || 'Başlatılamadı');
+                _showStepError(3, msg);
+                toast('error', 'Veri Toplama başlatılamadı: ' + msg);
+                return;
+            }
+
+            toast('info', result.message || 'Veri toplama arka planda başlatıldı...');
+            _showStep3Polling(result.job_id, schemas);
+
+        } catch (err) {
+            _updateStepIndicator(3, 'failed');
+            _showStepError(3, err.message || 'Bağlantı hatası');
+            toast('error', 'Veri Toplama sırasında hata oluştu');
+        }
+    }
+
+    function _showStep3Polling(jobId, schemas) {
+        const body = document.getElementById('dsWizardBody');
+        const schemaLabel = schemas ? schemas.join(', ') : 'tüm şemalar';
+        body.innerHTML = `
+            <div class="ds-step-loading">
+                <div class="ds-step-loading-icon">
+                    <i class="fa-solid fa-download fa-pulse"></i>
+                </div>
+                <h3>Adım 3: Veri Toplama (Arka Plan)</h3>
+                <p>Tablolardan örnek veriler toplanıyor...</p>
+                <div class="ds-result-detail" style="margin: 8px 0; font-size: 0.82rem;">
+                    <i class="fa-solid fa-layer-group"></i> Şemalar: <code>${_escapeHtml(schemaLabel)}</code>
+                </div>
+                <div class="ds-step-loading-bar"><div class="ds-step-loading-bar-inner"></div></div>
+                <div class="ds-polling-status" id="dsPollingStatus">Kontrol ediliyor...</div>
+            </div>
+        `;
+
+        let pollCount = 0;
+        _wizardTimer = setInterval(async () => {
+            pollCount++;
+            const statusEl = document.getElementById('dsPollingStatus');
+            if (statusEl) statusEl.textContent = `Kontrol: ${pollCount}. deneme (her 3s)...`;
+
+            try {
+                const check = await apiCall(`/${_currentSourceId}/check-running-job`);
+                if (!check.has_running) {
+                    clearInterval(_wizardTimer);
+                    _wizardTimer = null;
+
+                    // Job tamamlandı — discovery-status'ten sonucu al
+                    const status = await apiCall(`/${_currentSourceId}/discovery-status`);
+                    const samplesJob = status.samples || {};
+
+                    if (samplesJob.status === 'completed') {
+                        let resultData = samplesJob.result_summary || {};
+                        if (typeof resultData === 'string') {
+                            try { resultData = JSON.parse(resultData); } catch (e) { resultData = {}; }
+                        }
+                        _stepResults[3] = resultData;
+                        _updateStepIndicator(3, 'completed');
+                        _showStepResult(3, resultData);
+                        toast('success', 'Veri Toplama tamamlandı');
+                        _showFinalResults();
+                    } else if (samplesJob.status === 'failed') {
+                        _updateStepIndicator(3, 'failed');
+                        _showStepError(3, samplesJob.error_message || 'Veri toplama başarısız');
+                        toast('error', 'Veri Toplama başarısız');
+                    } else {
+                        // Beklenmeyen durum — bitiş olarak kabul et
+                        _updateStepIndicator(3, 'completed');
+                        _showFinalResults();
+                    }
+                }
+            } catch (e) {
+                console.warn('[DSLearning] Polling hatası:', e);
+            }
+        }, 3000);
     }
 
     function _updateStepIndicator(step, status) {
@@ -421,11 +616,16 @@ window.DSLearningModule = (function () {
         const currentHtml = body.innerHTML;
         const nextStep = step + 1;
         const nextNames = { 2: 'Obje Tespiti', 3: 'Veri Toplama' };
+        // Adım 2→3 geçişinde şema seçimi gerekir, auto-advance için farklı label
+        const nextLabels = {
+            2: 'Obje Tespiti Başlat',
+            3: 'Şema Seç & Örnekle'
+        };
 
         body.innerHTML = currentHtml + `
             <div class="ds-wizard-auto-next">
                 <button class="ds-wizard-btn primary ds-auto-next-btn" id="dsAutoNextBtn">
-                    <i class="fa-solid fa-arrow-right"></i> ${nextNames[nextStep]} Başlat (Adım ${nextStep})
+                    <i class="fa-solid fa-arrow-right"></i> ${nextLabels[nextStep]} (Adım ${nextStep})
                 </button>
                 <button class="ds-wizard-btn secondary" onclick="DSLearningModule.closeWizard()">
                     <i class="fa-solid fa-stop"></i> Durdur
@@ -438,26 +638,27 @@ window.DSLearningModule = (function () {
             runStep(nextStep);
         });
 
-        // 10 saniye sonra otomatik başlat (geriye sayımlı)
-        let countdown = 10;
-        const btn = document.getElementById('dsAutoNextBtn');
-        btn.innerHTML = `<i class="fa-solid fa-arrow-right"></i> ${nextNames[nextStep]} Başlat (${countdown}s)`;
+        // Sadece adım 1→2 için otomatik geri sayım (adım 2→3'te şema seçimi gerekir)
+        if (step === 1) {
+            let countdown = 10;
+            const btn = document.getElementById('dsAutoNextBtn');
+            btn.innerHTML = `<i class="fa-solid fa-arrow-right"></i> ${nextLabels[nextStep]} (${countdown}s)`;
 
-        _wizardTimer = setInterval(() => {
-            countdown--;
-            const currentBtn = document.getElementById('dsAutoNextBtn');
-            if (!currentBtn || _wizardStep !== step) {
-                clearInterval(_wizardTimer);
-                return;
-            }
-            
-            if (countdown > 0) {
-                currentBtn.innerHTML = `<i class="fa-solid fa-arrow-right"></i> ${nextNames[nextStep]} Başlat (${countdown}s)`;
-            } else {
-                clearInterval(_wizardTimer);
-                runStep(nextStep);
-            }
-        }, 1000);
+            _wizardTimer = setInterval(() => {
+                countdown--;
+                const currentBtn = document.getElementById('dsAutoNextBtn');
+                if (!currentBtn || _wizardStep !== step) {
+                    clearInterval(_wizardTimer);
+                    return;
+                }
+                if (countdown > 0) {
+                    currentBtn.innerHTML = `<i class="fa-solid fa-arrow-right"></i> ${nextLabels[nextStep]} (${countdown}s)`;
+                } else {
+                    clearInterval(_wizardTimer);
+                    runStep(nextStep);
+                }
+            }, 1000);
+        }
     }
 
     function _showFinalResults() {
@@ -502,7 +703,12 @@ window.DSLearningModule = (function () {
     }
 
     function retryStep(step) {
-        runStep(step);
+        if (step === 3) {
+            // Adım 3 yeniden denenirken schema seçimini tekrar göster
+            _showSchemaSelectionStep();
+        } else {
+            runStep(step);
+        }
     }
 
     // ============================================

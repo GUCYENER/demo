@@ -99,13 +99,18 @@
 
     function scheduleReconnect() {
         if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-            console.warn('[NGSSAI-WS] Maksimum yeniden bağlanma denemesi aşıldı');
+            // v3.14.6: Spam'i azalt — sessizce vazgeç, sonraki sayfa etkileşiminde tekrar dene
+            console.warn('[NGSSAI-WS] Bağlantı kurulamadı, WS özellikleri devre dışı (sayfa yenilenince tekrar denenir).');
             return;
         }
 
         reconnectAttempts++;
-        const delay = RECONNECT_DELAY_MS * reconnectAttempts;
-        console.log(`[NGSSAI-WS] ${delay}ms sonra yeniden bağlanılacak (deneme ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+        // v3.14.6: Üstel backoff yerine sabit + cap (max 30s); ilk deneme hemen
+        const delay = Math.min(RECONNECT_DELAY_MS * reconnectAttempts, 30000);
+        // Sadece ilk 2 denemeyi göster, gerisi info seviyesinde
+        if (reconnectAttempts <= 2) {
+            console.log(`[NGSSAI-WS] ${delay}ms sonra yeniden bağlanılacak (deneme ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+        }
 
         setTimeout(() => {
             if (!socket || socket.readyState === WebSocket.CLOSED) {

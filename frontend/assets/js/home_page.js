@@ -30,6 +30,40 @@
         window.location.href = 'login.html';
         return;
     }
+
+    // v3.15.4: Versiyon mismatch kontrolü — backend yeni APP_VERSION ile ayağa
+    // kalkmışsa /api/auth/me 401 + detail="version_mismatch" döner. Bu durumda
+    // localStorage temizlenir ve login'e yönlendirilir.
+    (async function verifyTokenWithServer() {
+        try {
+            const apiBase = window.API_BASE_URL || 'http://localhost:8002';
+            const res = await fetch(`${apiBase}/api/auth/me`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (res.status === 401) {
+                let detail = '';
+                try {
+                    const body = await res.json();
+                    detail = (body && body.detail) || '';
+                } catch (_) { /* parse hatası önemsiz */ }
+
+                const isVersionMismatch = detail === 'version_mismatch';
+                if (isVersionMismatch) {
+                    console.warn('[NGSSAI] Sürüm güncellendi (version_mismatch), yeniden giriş gerekli.');
+                    sessionStorage.setItem('vyra_relogin_reason', 'version_mismatch');
+                } else {
+                    console.warn('[NGSSAI] Token sunucu tarafında reddedildi:', detail);
+                }
+                localStorage.removeItem('access_token');
+                localStorage.removeItem('refresh_token');
+                localStorage.removeItem('session_start_time');
+                window.location.href = 'login.html';
+            }
+        } catch (e) {
+            // Ağ hatası → kullanıcıyı zorla atma; mevcut oturumla devam etsin.
+            console.warn('[NGSSAI] /auth/me doğrulaması ağ hatası:', e && e.message);
+        }
+    })();
 })();
 
 // --- VPN/NETWORK + ANİMASYON ---
@@ -215,9 +249,11 @@ function showSection(sectionName, skipLoad = false) {
     const topBar = document.getElementById("topBar");
     const showHomeElements = ["dialog", "history"].includes(sectionName);
 
+    // v3.14.6: TopBar (bildirim + tema) tüm menülerde görünsün —
+    // sadece chat-aksiyon butonları (Sohbet/Çağrı Aç/Yeni Soru Sor) gizlenir.
     if (topBar) {
-        if (showHomeElements) topBar.classList.remove("hidden");
-        else topBar.classList.add("hidden");
+        topBar.classList.remove("hidden");
+        topBar.classList.toggle("topbar-compact", !showHomeElements);
     }
     if (mainTabBar) {
         if (showHomeElements) mainTabBar.classList.remove("hidden");

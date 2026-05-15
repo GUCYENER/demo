@@ -62,6 +62,12 @@ class MessageRequest(BaseModel):
     content: str = Field(..., min_length=1, max_length=5000)
     images: Optional[List[str]] = None  # Base64 encoded images
     source_type: Optional[str] = Field(None, description="'rag', 'db' veya None — frontend mod seçimi")
+    # v4.0: DB disambiguation + rapor şablonu
+    schema_hint: Optional[str] = Field(None, description="Disambiguation: 'schema.table' — kullanıcı seçilen tablo")
+    report_template: Optional[str] = Field(None, description="Rapor yaklaşımı metni — kullanıcı seçimi")
+    # v3.16.0: DB-mode follow-up — kullanıcı önceki cevap üzerinden düzenleme istiyor.
+    # Backend bu ID'deki mesajdan prev_sql + columns alır ve LLM'e modifikasyon prompt'u kurar.
+    follow_up_message_id: Optional[int] = Field(None, description="Önceki DB cevabının mesaj ID'si — follow-up bağlam çıpası")
 
 
 class MessageResponse(BaseModel):
@@ -194,6 +200,31 @@ def close_dialog_endpoint(
             detail="Dialog bulunamadı veya zaten kapalı."
         )
     return {"message": "Dialog kapatıldı."}
+
+
+@router.post("/{dialog_id}/jobs/{job_id}/cancel")
+def cancel_sql_job_endpoint(
+    dialog_id: int,
+    job_id: str,
+    user=Depends(get_current_user),
+):
+    """
+    v3.15.0: Devam eden uzun bir DB sorgusunu iptal eder.
+
+    Frontend, timeout_warning event'inde gelen job_id ile bu endpoint'i çağırır.
+    Sadece job'un sahibi (başlatan kullanıcı) iptal edebilir.
+    İptal sinyali sonrası SSE stream "🛑 Sorgu kullanıcı tarafından iptal edildi"
+    mesajıyla kapanır; DB-side fiili kesme şu an best-effort değildir
+    (sorgu arka planda tamamlanabilir; sonucu görmezden gelinir).
+    """
+    from app.services.safe_sql_executor import cancel_sql_job
+    ok, message = cancel_sql_job(job_id, requesting_user_id=user["id"])
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND if "bulunam" in message else status.HTTP_403_FORBIDDEN,
+            detail=message,
+        )
+    return {"message": message, "job_id": job_id}
 
 
 # =============================================================================
@@ -337,36 +368,69 @@ async def send_message_stream(
         }
 
     def event_generator():
-        """SSE event stream generator."""
-        try:
-            for event in process_user_message_stream(
-                dialog_id=dialog_id,
-                user_id=user["id"],
-                content=request.content,
-                images=images,
-                widget_config=stream_widget_config,
-                source_type=request.source_type,
-                company_id=user.get("company_id"),
-            ):
-                event_type = event.get("type", "token")
-                event_data = event.get("data", "")
-                
-                # SSE format: "data: {json}\n\n"
-                payload = json.dumps({"type": event_type, "data": event_data}, ensure_ascii=False)
-                yield f"data: {payload}\n\n"
-                
-        except Exception as e:
-            log_system_event("ERROR", f"SSE stream hatası: {e}", "dialog", user["id"])
-            error_payload = json.dumps({"type": "error", "data": "Yanıt oluşturulurken bir hata oluştu."}, ensure_ascii=False)
-            yield f"data: {error_payload}\n\n"
-    
+        """
+        SSE event stream generator.
+
+        v3.14.5: Pipeline'ı arka plan thread'inde çalıştırır, ana generator
+        her HEARTBEAT_INTERVAL saniyede `:` (SSE comment frame) yayınlayarak
+        Nginx/proxy/AV idle timeout'larını engeller — INCOMPLETE_CHUNKED_ENCODING
+        hatasının kök nedeni budur.
+        """
+        import threading
+        import queue as _queue
+
+        HEARTBEAT_INTERVAL = 15  # saniye — Nginx proxy_read_timeout (600s) ile uyumlu
+        SENTINEL = object()
+        q: "_queue.Queue" = _queue.Queue()
+
+        def _producer():
+            try:
+                for event in process_user_message_stream(
+                    dialog_id=dialog_id,
+                    user_id=user["id"],
+                    content=request.content,
+                    images=images,
+                    widget_config=stream_widget_config,
+                    source_type=request.source_type,
+                    company_id=user.get("company_id"),
+                    schema_hint=request.schema_hint,
+                    report_template=request.report_template,
+                    follow_up_message_id=request.follow_up_message_id,
+                ):
+                    q.put(event)
+            except Exception as exc:
+                log_system_event("ERROR", f"SSE stream hatası: {exc}", "dialog", user["id"])
+                q.put({"type": "error", "data": "Yanıt oluşturulurken bir hata oluştu."})
+            finally:
+                q.put(SENTINEL)
+
+        producer = threading.Thread(target=_producer, daemon=True)
+        producer.start()
+
+        while True:
+            try:
+                event = q.get(timeout=HEARTBEAT_INTERVAL)
+            except _queue.Empty:
+                # Pipeline sessiz — keep-alive comment frame (SSE spec: ':' ile başlayan satır comment)
+                yield ": keepalive\n\n"
+                continue
+
+            if event is SENTINEL:
+                break
+
+            event_type = event.get("type", "token")
+            event_data = event.get("data", "")
+            payload = json.dumps({"type": event_type, "data": event_data}, ensure_ascii=False, default=str)
+            yield f"data: {payload}\n\n"
+
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"  # Nginx proxy buffering kapatma
+            "X-Accel-Buffering": "no",  # Nginx proxy buffering kapatma
+            "Content-Encoding": "identity",  # gzip vb. transform engelle
         }
     )
 

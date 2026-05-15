@@ -516,6 +516,7 @@ def process_user_message_stream(
     company_id: int = None,  # v3.8.0: Firma bazlı DB kaynağı filtresi
     schema_hint: str = None,  # v4.0: Disambiguation — kullanıcı seçilen schema.table
     report_template: str = None,  # v4.0: Rapor yaklaşımı şablonu
+    follow_up_message_id: int = None,  # v3.16.0: DB follow-up — önceki cevabın ID'si
 ):
     """
     🆕 v2.50.0: Streaming mesaj işleme orchestrator'ı.
@@ -644,11 +645,47 @@ def process_user_message_stream(
 
         # 🆕 v3.6.0: source_type bazlı pipeline seçimi
         if source_type == 'db':
+            # v3.16.0: DB follow-up bağlamı — kullanıcı önceki cevabı çıpa olarak işaretlemiş.
+            # Mesajı çek, ownership doğrula, prev_sql + columns'u text-to-sql'e ver.
+            follow_up_context = None
+            if follow_up_message_id:
+                try:
+                    from app.services.dialog.messages import get_message_by_id
+                    prev_msg = get_message_by_id(int(follow_up_message_id))
+                    if (
+                        prev_msg
+                        and prev_msg.get("dialog_id") == dialog_id
+                        and prev_msg.get("role") == "assistant"
+                    ):
+                        prev_meta = prev_msg.get("metadata") or {}
+                        prev_sql = prev_meta.get("sql_executed") or prev_meta.get("sql") or ""
+                        prev_columns = prev_meta.get("columns") or []
+                        if prev_sql:
+                            follow_up_context = {
+                                "prev_sql": prev_sql,
+                                # v3.16.0: prompt'ta zaten [:50] ile kesiliyor; burada 60 ile sınırla
+                                "prev_columns": prev_columns[:60] if isinstance(prev_columns, list) else [],
+                                "prev_source_db": prev_meta.get("source_db", ""),
+                            }
+                            log_system_event(
+                                "INFO",
+                                f"DB follow-up aktif: msg_id={follow_up_message_id} cols={len(prev_columns)}",
+                                "dialog", user_id
+                            )
+                    else:
+                        log_warning(
+                            f"DB follow-up reddedildi: msg_id={follow_up_message_id} (sahip/dialog uyumsuz)",
+                            "dialog"
+                        )
+                except Exception as fu_err:
+                    log_warning(f"DB follow-up çekim hatası: {str(fu_err)[:200]}", "dialog")
+
             stream_gen = deep_think.process_stream_db_only(
                 search_query, user_id,
                 company_id=company_id,
                 schema_hint=schema_hint,
                 report_template=report_template,
+                follow_up_context=follow_up_context,
             )
         elif source_type == 'rag':
             stream_gen = deep_think.process_stream_rag_only(search_query, user_id)

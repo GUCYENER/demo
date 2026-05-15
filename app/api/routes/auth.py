@@ -42,6 +42,9 @@ class TokenPayload(BaseModel):
     exp: int
     type: str
     role: str
+    # v3.15.4: Token, hangi APP_VERSION ile üretildiğini taşır.
+    # Versiyon bump'tan sonra eski tokenler ilk istekte 401 + "version_mismatch" alır.
+    ver: Optional[str] = None
 
 
 class UserBase(BaseModel):
@@ -97,8 +100,13 @@ def create_token(
 ) -> str:
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
-    to_encode.update({"exp": expire, "type": token_type})
-    
+    # v3.15.4: ver claim — versiyon değiştiğinde eski tokenler invalidate olur.
+    to_encode.update({
+        "exp": expire,
+        "type": token_type,
+        "ver": settings.APP_VERSION,
+    })
+
     encoded_jwt = jwt.encode(
         to_encode,
         settings.JWT_SECRET,
@@ -130,12 +138,23 @@ def decode_token(token: str) -> TokenPayload:
             settings.JWT_SECRET,
             algorithms=[settings.JWT_ALGORITHM],
         )
-        return TokenPayload(**payload)
+        token_payload = TokenPayload(**payload)
     except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Geçersiz veya süresi dolmuş token",
         )
+
+    # v3.15.4: Versiyon kontrolü — backend yeni APP_VERSION ile ayağa kalkmışsa
+    # eski tokenler reddedilir. Frontend "version_mismatch" detail'ı yakalayıp
+    # localStorage'ı temizler ve login.html'e yönlendirir.
+    if token_payload.ver != settings.APP_VERSION:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="version_mismatch",
+        )
+
+    return token_payload
 
 
 # ---------------------------------------------------------

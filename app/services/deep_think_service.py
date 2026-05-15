@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import List, Dict, Any, Optional, Generator
 import re
 
+from app.core.config import settings
 from app.core.db import get_db_conn
 from app.core.llm import call_llm_api, LLMConnectionError, LLMConfigError
 from app.services.logging_service import log_system_event, log_error, log_warning
@@ -1876,7 +1877,7 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
         return None
 
 
-    def process_stream_db_only(self, query: str, user_id: int, company_id: int = None, confirm_mode: bool = False, schema_hint: str = None, report_template: str = None) -> Generator[Dict[str, Any], None, None]:
+    def process_stream_db_only(self, query: str, user_id: int, company_id: int = None, confirm_mode: bool = False, schema_hint: str = None, report_template: str = None, follow_up_context: Optional[Dict[str, Any]] = None) -> Generator[Dict[str, Any], None, None]:
         """
         v3.10.0: DB-only pipeline — Firma bazlı DB kaynağı filtresi + Schema Pruning + Error Sanitization.
         + FAQ/Query Cache + Confirm before execute + Self-Healing.
@@ -1915,8 +1916,12 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
 
         try:
             # ── 0. FAQ/Query Cache kontrolü ────────────────────────────
+            # v3.16.0: Follow-up modunda cache ve Golden SQL atlanır — kullanıcı
+            # zaten önceki sorguyu MODIFIYE etmek istiyor; cache hit ya da Golden
+            # match aynı eski sorguyu döndürürse "değişiklik isteği" görmezden
+            # gelinmiş olur.
             cache_key = _make_cache_key(query, company_id)
-            cached = _SQL_QUERY_CACHE.get(cache_key)
+            cached = _SQL_QUERY_CACHE.get(cache_key) if not follow_up_context else None
             if cached and not confirm_mode:
                 log_system_event(
                     "INFO",
@@ -1998,11 +2003,12 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 return
 
             # ── 1b. Golden SQL kontrolü — doğrulanmış sorgu varsa direkt kullan ──
+            # v3.16.0: Follow-up modunda Golden SQL atlanır (yukarıdaki cache açıklamasıyla aynı sebep).
             golden_hit = None
             golden_examples = []
             try:
                 from app.services.text_to_sql import search_golden_sql
-                if sources:
+                if sources and not follow_up_context:
                     golden_results = search_golden_sql(
                         query, sources[0]["id"], company_id, min_score=0.80, max_results=3
                     )
@@ -2296,6 +2302,7 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                     schema_context=schema_ctx_with_ml,
                     allowed_tables=allowed_tables,
                     schema_hint=schema_hint,
+                    follow_up_context=follow_up_context,  # v3.16.0: önceki SQL modifikasyonu
                 )
 
             if not sql_result.get("success"):
@@ -2345,45 +2352,100 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             yield {"type": "status", "data": f"🔍 Sorgu çalıştırılıyor... ({time_estimate['reason']}, ~{time_estimate['estimate_seconds']}sn)"}
 
             # v3.14.0: Non-blocking execution — sorguyu arka planda çalıştır
-            result_holder, result_event, exec_thread = executor.execute_async(
+            # v3.15.0: cancel_event ile iptal mekanizması + job_id ile registry
+            MAX_WAIT = int(getattr(settings, "DB_QUERY_MAX_WAIT_SECONDS", 900))
+            result_holder, result_event, exec_thread, cancel_event = executor.execute_async(
                 sql=sql, source=source, dialect=dialect, allowed_tables=allowed_tables,
+                timeout=MAX_WAIT,
             )
 
-            # İlk bekleme periyodu (15sn)
-            INITIAL_WAIT = 15
-            got_result = result_event.wait(timeout=INITIAL_WAIT)
+            # v3.15.0: Job'u registry'e kaydet — iptal endpoint'i bunu kullanır
+            # try/finally ile sarılı: GeneratorExit / herhangi bir exception'da bile
+            # registry'den temizlenir (memory leak engellenir — TYCHE bulgusu).
+            import uuid as _uuid
+            from app.services.safe_sql_executor import register_sql_job, unregister_sql_job
+            job_id = _uuid.uuid4().hex
+            try:
+                register_sql_job(job_id, cancel_event, owner_user_id=user_id)
+            except Exception:
+                pass
 
-            if not got_result:
-                # Timeout — ama sorguyu KESMİYORUZ, arka planda devam ediyor
-                elapsed_so_far = INITIAL_WAIT
-                yield {"type": "timeout_warning", "data": {
-                    "message": "⏳ Sorgu devam ediyor, büyük tablolarda biraz daha zaman alabilir...",
-                    "elapsed": elapsed_so_far,
-                    "estimate": time_estimate["estimate_seconds"],
-                }}
+            INITIAL_WAIT = 5
+            elapsed_so_far = INITIAL_WAIT
+            user_cancelled = False
+            try:
+                # v3.14.5: İlk bekleme periyodu (5sn) — kısa, çabuk feedback
+                got_result = result_event.wait(timeout=INITIAL_WAIT)
 
-                # Progressive bekleme: 15sn daha, sonra 30sn daha (toplam max 120sn)
-                extra_waits = [15, 30, 45]
-                for extra in extra_waits:
-                    got_result = result_event.wait(timeout=extra)
-                    elapsed_so_far += extra
-                    if got_result:
-                        break
-                    if elapsed_so_far >= 105:
-                        # Toplam 105sn beklendi, son şans
-                        yield {"type": "status", "data": f"⏳ {elapsed_so_far}sn geçti, son bekleme..."}
+                if not got_result and not cancel_event.is_set():
+                    # İlk timeout uyarısı — job_id artık frontend'e gönderilir (İptal butonu için)
+                    # v3.15.6: sql payload'a eklendi — kullanıcı beklerken üretilen SQL'i
+                    # gözden geçirebilsin (doğru sorgu mu oluşmuş kontrolü için).
+                    yield {"type": "timeout_warning", "data": {
+                        "message": "⏳ Sorgu devam ediyor, büyük tablolarda biraz daha zaman alabilir...",
+                        "elapsed": elapsed_so_far,
+                        "estimate": time_estimate["estimate_seconds"],
+                        "max_wait": MAX_WAIT,
+                        "job_id": job_id,
+                        "sql": sql,
+                    }}
+
+                    # v3.14.5: Her 10 saniyede bir progress_tick — SSE keep-alive sağlar,
+                    # ara katman (Nginx/proxy/AV) idle timeout'unu tetiklemez.
+                    # v3.15.0: MAX_WAIT settings'ten gelir (varsayılan 900sn = 15dk).
+                    #          cancel_event.is_set() ise döngüden çık.
+                    TICK_INTERVAL = 10
+                    while elapsed_so_far < MAX_WAIT:
+                        if cancel_event.is_set():
+                            user_cancelled = True
+                            break
+                        remaining = MAX_WAIT - elapsed_so_far
+                        wait_for = min(TICK_INTERVAL, remaining)
+                        got_result = result_event.wait(timeout=wait_for)
+                        elapsed_so_far += wait_for
+                        if got_result:
+                            break
+                        if cancel_event.is_set():
+                            user_cancelled = True
+                            break
+                        yield {"type": "progress_tick", "data": {
+                            "elapsed": elapsed_so_far,
+                            "max_wait": MAX_WAIT,
+                            "job_id": job_id,
+                            "message": f"⏳ {elapsed_so_far}sn — sorgu devam ediyor...",
+                        }}
+            finally:
+                # v3.15.0: GeneratorExit (istemci disconnect) dahil her exit yolu
+                # registry'den siler — TYCHE-D fix.
+                try:
+                    unregister_sql_job(job_id)
+                except Exception:
+                    pass
 
             exec_result = result_holder.get("result")
-            if exec_result is None:
-                # Hala sonuç yok — gerçek timeout
+            if user_cancelled and exec_result is None:
+                # Kullanıcı iptal etti, daha sonuç gelmedi
                 exec_result = SQLResult(
                     success=False,
-                    error=f"Sorgu 120 saniye içinde tamamlanamadı",
+                    error="Sorgu kullanıcı tarafından iptal edildi",
                     sql_executed=sql[:200],
+                    cancelled=True,
+                )
+            elif exec_result is None:
+                # v3.15.0: Gerçek wait-loop timeout — SQL hala backend'de çalışıyor olabilir
+                # ancak SSE bağlantısını sonsuz açık tutmuyoruz. timeout=True flag'ı
+                # Self-Healing'in tetiklenmesini engeller (sorun süre, SQL değil).
+                _max_wait_min = max(1, MAX_WAIT // 60)
+                exec_result = SQLResult(
+                    success=False,
+                    error=f"Sorgu {_max_wait_min} dakika ({MAX_WAIT} saniye) içinde tamamlanamadı",
+                    sql_executed=sql[:200],
+                    timeout=True,
                 )
 
             # v3.9.0: Self-Healing — execution hatası varsa LLM ile düzeltme
-            if not exec_result.success and exec_result.error:
+            # v3.15.0: Timeout durumunda Self-Healing'i tetikleme — SQL yanlış değil, sadece uzun sürdü.
+            if not exec_result.success and exec_result.error and not getattr(exec_result, "timeout", False):
                 log_system_event(
                     "INFO",
                     f"DB-Only: SQL Self-Healing tetikleniyor: {exec_result.error[:100]}",
@@ -2451,13 +2513,43 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             if not exec_result.success:
                 # v3.8.0 Error Sanitization: DB hata detaylarını loglayıp kullanıcıya genel mesaj göster
                 log_warning(f"DB-Only: SQL çalıştırma hatası (retry={retry_count}): {exec_result.error}", "deep_think")
-                yield {"type": "done", "data": {
-                    "content": (
+
+                # v3.15.0: Timeout durumunda kullanıcıya özgün mesaj — sorunun "SQL yanlış" değil
+                # "süre aşıldı" olduğunu net söylüyoruz; tekrar denemesi için yönlendiriyoruz.
+                if getattr(exec_result, "timeout", False):
+                    _max_wait_min = max(1, MAX_WAIT // 60)
+                    content_msg = (
+                        f"⏱️ Sorgu **{_max_wait_min} dakika** içinde tamamlanamadı.\n\n"
+                        f"Sorgunuz veritabanında hâlâ çalışıyor olabilir ancak bağlantı süresi doldu. "
+                        f"Daha dar bir tarih aralığı veya filtre ile tekrar deneyebilir, "
+                        f"ya da sorguyu daha sade bir şekilde ifade edebilirsiniz."
+                    )
+                    error_kind = "timeout"
+                elif getattr(exec_result, "cancelled", False):
+                    content_msg = "🛑 Sorgu kullanıcı tarafından iptal edildi."
+                    error_kind = "cancelled"
+                else:
+                    content_msg = (
                         "❌ Sorgu çalıştırılırken bir hata oluştu.\n\n"
                         "Lütfen sorunuzu farklı şekilde ifade ederek tekrar deneyin. "
                         "Sorun devam ederse sistem yöneticinize başvurun."
-                    ),
-                    "metadata": {"db_only": True, "error": True, "retry_count": retry_count}
+                    )
+                    error_kind = "exec_error"
+
+                # v3.15.1: SQL'i hata yanıtına da ekle — kullanıcı "SQL" butonuyla
+                # hangi sorgunun çalıştığını/denendiğini görebilsin (troubleshooting).
+                _failed_sql = (exec_result.sql_executed or sql or "").strip()
+
+                yield {"type": "done", "data": {
+                    "content": content_msg,
+                    "metadata": {
+                        "db_only": True,
+                        "error": True,
+                        "error_kind": error_kind,
+                        "retry_count": retry_count,
+                        "elapsed_sec": int(elapsed_so_far) if 'elapsed_so_far' in locals() else None,
+                        "sql_executed": _failed_sql,
+                    }
                 }}
                 return
 

@@ -350,8 +350,10 @@ const NgssNotification = {
      * Bildirim ekle
      * v2.24.6: dialogId parametresi eklendi
      * v2.39.0: targetSection parametresi eklendi (rag, dialog vb.)
+     * v3.15.5: options.suppressToast → toast popup'ı atla (zil badge'i yine güncellenir).
+     *           Kullanıcı zaten ilgili ekranda ise toast gereksiz olur.
      */
-    add(type, title, message, dialogId = null, targetSection = null) {
+    add(type, title, message, dialogId = null, targetSection = null, options = {}) {
         const notification = {
             id: Date.now().toString(),
             type,
@@ -374,7 +376,129 @@ const NgssNotification = {
         this.renderList();
         this.updateBadge();
 
+        // v3.15.2: Sağdan akan toast popup — kullanıcı zile bakmasa bile fark etsin.
+        // v3.15.5: Çağıran "suppressToast" diyorsa atla (kullanıcı sonucu zaten ekranda görüyor).
+        if (!options || !options.suppressToast) {
+            try { this._showToastPopup(notification); } catch (_) { /* sessiz */ }
+        }
+
         return notification;
+    },
+
+    /**
+     * v3.15.2: Sağdan kayarak gelen toast bildirim. ~5 saniye sonra kaybolur.
+     * Tıklanırsa bildirim panelini açar + ilgili bildirimi okundu işaretler.
+     *
+     * v3.15.3 (TYCHE-TQ2 fix): 10+ çağrı noktası ve WS event akışı toast spam'a yol açabilir.
+     * - De-dup: son 2 saniyede aynı (type+title+message) toast varsa atla
+     * - Max stack: aynı anda en fazla 3 toast; fazlası en eskini erken kapatır
+     */
+    _showToastPopup(notification) {
+        // De-dup penceresi
+        const DEDUP_WINDOW_MS = 2000;
+        const MAX_VISIBLE = 3;
+        if (!this._toastRecent) this._toastRecent = [];
+        const now = Date.now();
+        this._toastRecent = this._toastRecent.filter(e => (now - e.t) < DEDUP_WINDOW_MS);
+        const key = `${notification.type}|${notification.title || ''}|${notification.message || ''}`;
+        if (this._toastRecent.some(e => e.k === key)) {
+            return; // yakın zamanda aynı bildirim toast olarak çıkmış — atla
+        }
+        this._toastRecent.push({ k: key, t: now });
+
+        // Konteyner — toast.js'in oluşturduğuyla aynı; yoksa oluştur.
+        let container = document.getElementById('toast-container');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'toast-container';
+            container.style.cssText = 'position:fixed;top:20px;right:20px;z-index:100002;display:flex;flex-direction:column;gap:10px;';
+            document.body.appendChild(container);
+        }
+
+        // Max görünür stack — en eski toast'ı erken kapat
+        const visibleToasts = container.querySelectorAll('.toast.toast-notif.show');
+        if (visibleToasts.length >= MAX_VISIBLE) {
+            const oldest = visibleToasts[0];
+            oldest.classList.remove('show');
+            setTimeout(() => { try { oldest.remove(); } catch (_) {} }, 300);
+        }
+
+        const iconMap = {
+            success: 'check-circle',
+            error:   'exclamation-circle',
+            warning: 'exclamation-triangle',
+            info:    'info-circle'
+        };
+        const icon = iconMap[notification.type] || iconMap.info;
+
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${notification.type} toast-notif`;
+
+        const iconEl = document.createElement('i');
+        iconEl.className = `fas fa-${icon} toast-notif-icon`;
+
+        const body = document.createElement('div');
+        body.className = 'toast-notif-body';
+
+        const titleEl = document.createElement('div');
+        titleEl.className = 'toast-notif-title';
+        titleEl.textContent = notification.title || '';
+
+        const msgEl = document.createElement('div');
+        msgEl.className = 'toast-notif-msg';
+        msgEl.textContent = notification.message || '';
+
+        body.appendChild(titleEl);
+        body.appendChild(msgEl);
+
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'toast-notif-close';
+        closeBtn.setAttribute('aria-label', 'Kapat');
+        closeBtn.textContent = '×';
+
+        toast.appendChild(iconEl);
+        toast.appendChild(body);
+        toast.appendChild(closeBtn);
+        container.appendChild(toast);
+
+        // Slide-in
+        requestAnimationFrame(() => toast.classList.add('show'));
+
+        // Otomatik kaybolma — 5sn
+        const AUTO_DISMISS_MS = 5000;
+        let timer = setTimeout(dismiss, AUTO_DISMISS_MS);
+
+        const self = this;
+        function dismiss() {
+            if (timer) { clearTimeout(timer); timer = null; }
+            toast.classList.remove('show');
+            setTimeout(() => { try { toast.remove(); } catch (_) {} }, 300);
+        }
+
+        closeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            dismiss();
+        });
+
+        // Tıklama → bildirim panelini aç, ilgili bildirimi okundu işaretle
+        toast.addEventListener('click', () => {
+            try {
+                self.markAsRead(notification.id);
+                if (self.dropdown && !self.dropdown.classList.contains('active')) {
+                    self.dropdown.classList.add('active');
+                }
+            } catch (_) { /* sessiz */ }
+            dismiss();
+        });
+
+        // Hover'da timer dursun, mouse ayrılınca yeniden başla
+        toast.addEventListener('mouseenter', () => {
+            if (timer) { clearTimeout(timer); timer = null; }
+        });
+        toast.addEventListener('mouseleave', () => {
+            if (!timer) timer = setTimeout(dismiss, AUTO_DISMISS_MS);
+        });
     },
 
     /**

@@ -78,7 +78,7 @@ if (Test-Path $redisExe) {
 
 # 3. Backend (venv python ile)
 Write-Host "[3/7] Backend baslatiliyor..." -ForegroundColor Yellow
-$backendCmd = "cd '$ProjectRoot'; & '$VenvPython' -m uvicorn app.api.main:app --host 0.0.0.0 --port 8002"
+$backendCmd = "cd '$ProjectRoot'; & '$VenvPython' -m uvicorn app.api.main:app --host 0.0.0.0 --port 8002 --timeout-keep-alive 300"
 Start-Process powershell -ArgumentList "-NoExit", "-Command", $backendCmd
 Start-Sleep -Seconds 3
 Write-Host "   [OK] Backend (port 8002)" -ForegroundColor Green
