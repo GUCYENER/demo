@@ -63,11 +63,15 @@ async def reset_system(
         raise HTTPException(status_code=403, detail="Bu işlem için admin yetkisi gerekli")
     
     deleted_counts = {}
-    
+
     conn = get_db_conn()
     try:
         cur = conn.cursor()
-        
+        # v3.20.0 Faz 1c: admin reset — ds_db_*/ds_learning_results RLS koruma altında.
+        # Bypass=True ile tüm source'lar görünür. is_local=true: TX kapsamında, conn pool'a
+        # dönerken otomatik reset olur (psycopg2 release sırasında).
+        cur.execute("SELECT set_config('app.bypass_rls', 'on', true)")
+
         # Firma bazlı filtre (varsa)
         co_filter = ""
         co_params = []
@@ -316,13 +320,16 @@ async def get_system_info(
     """Sistem bilgilerini döndürür (sıfırlama öncesi özet)"""
     if not current_user.get("is_admin"):
         raise HTTPException(status_code=403, detail="Bu işlem için admin yetkisi gerekli")
-    
+
     conn = get_db_conn()
     try:
         cur = conn.cursor()
-        
+        # v3.20.0 Faz 1c: admin info — ds_db_*/ds_learning_results RLS koruma altında.
+        # Bypass=True ile tüm source'lardan COUNT alınır (sistem geneli özet).
+        cur.execute("SELECT set_config('app.bypass_rls', 'on', true)")
+
         info = {}
-        
+
         # Korunan veriler
         cur.execute("SELECT COUNT(*) as cnt FROM users WHERE is_admin = TRUE")
         info["admin_users"] = cur.fetchone()["cnt"]
