@@ -57,6 +57,8 @@ from .nodes import (
     validate_node,
     route_after_validate,
     execute_node,
+    self_heal_node,
+    route_after_self_heal,
 )
 
 logger = logging.getLogger(__name__)
@@ -87,6 +89,7 @@ def build_query_graph(checkpointer=None):
     g.add_node("clarification", clarification_node)
     g.add_node("sql_generate", sql_generate_node)
     g.add_node("validate", validate_node)
+    g.add_node("self_heal", self_heal_node)
     g.add_node("execute", execute_node)
 
     g.add_edge(START, "intent_extract")
@@ -104,10 +107,16 @@ def build_query_graph(checkpointer=None):
 
     g.add_edge("sql_generate", "validate")
 
-    # Conditional: validate -> execute | sql_generate (self-heal)
+    # Conditional: validate -> execute | self_heal (Faz 4d)
     g.add_conditional_edges("validate", route_after_validate, {
         "execute": "execute",
+        "sql_generate": "self_heal",  # validate fail → self_heal classifies & re-routes
+    })
+    # self_heal -> sql_generate (rewrite) | execute (give up) | END (abort)
+    g.add_conditional_edges("self_heal", route_after_self_heal, {
         "sql_generate": "sql_generate",
+        "execute": "execute",
+        "abort": END,
     })
     g.add_edge("execute", END)
 
@@ -166,14 +175,24 @@ def run_pipeline(state: Dict[str, Any], mode: str = "auto") -> Dict[str, Any]:
             state["_interrupt"] = True
             return state
 
-    # SQL generate + validate + (self-heal loop)
+    # SQL generate + validate + self-heal loop (Faz 4d)
     max_retries = 2
     for attempt in range(max_retries + 1):
         state = _merge(state, sql_generate_node(state))
         state = _merge(state, validate_node(state))
-        if state.get("validation_passed") or attempt == max_retries:
+        if state.get("validation_passed"):
             break
-        state["retry_count"] = attempt + 1
+        if attempt == max_retries:
+            break
+        # Self-heal: classify error & decide
+        state = _merge(state, self_heal_node(state))
+        action = state.get("retry_action")
+        if action == "abort":
+            # Permission error vs. — execute etmeden döndür
+            return state
+        if action != "rewrite":
+            break
+        # retry_count self_heal'de zaten artırıldı
 
     state = _merge(state, execute_node(state))
     return state
@@ -192,13 +211,20 @@ def resume_pipeline(state: Dict[str, Any], user_choice: Dict[str, Any]) -> Dict[
     # clarification_node post-resume yolunu çalıştır
     state.update(clarification_node(state))
 
-    # SQL üretim ve sonrası
+    # SQL üretim ve sonrası (self-heal aware)
     max_retries = 2
     for attempt in range(max_retries + 1):
         state.update(sql_generate_node(state))
         state.update(validate_node(state))
-        if state.get("validation_passed") or attempt == max_retries:
+        if state.get("validation_passed"):
             break
-        state["retry_count"] = attempt + 1
+        if attempt == max_retries:
+            break
+        state.update(self_heal_node(state))
+        action = state.get("retry_action")
+        if action == "abort":
+            return state
+        if action != "rewrite":
+            break
     state.update(execute_node(state))
     return state

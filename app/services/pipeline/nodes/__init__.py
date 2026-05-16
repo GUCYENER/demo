@@ -23,3 +23,7 @@ from .clarification import clarification_node  # noqa: F401
 from .sql_generate import sql_generate_node  # noqa: F401
 from .validate import validate_node, route_after_validate  # noqa: F401
 from .execute import execute_node  # noqa: F401
+from .self_heal import (  # noqa: F401
+    self_heal_node, route_after_self_heal,
+    classify_error, build_retry_hint, decide_retry_action,
+)

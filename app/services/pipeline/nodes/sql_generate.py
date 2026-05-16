@@ -114,6 +114,11 @@ def sql_generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
         except Exception:
             pass
 
+    # Faz 4d — self-heal retry hint (önceki hata bilgisi)
+    retry_hint = state.get("retry_hint")
+    if retry_hint:
+        context = context + "\n\nÖnceki Deneme Notu:\n  " + retry_hint
+
     llm = state.get("_llm_callable")
     if llm is None:
         logger.warning("[sql_generate] _llm_callable yok — placeholder dönülüyor")
