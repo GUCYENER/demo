@@ -670,7 +670,9 @@ def get_discovered_schemas(
 ):
     """Adım 2 sonrası: DS_DB_OBJECTS içindeki distinct şemaları ve tablo sayılarını döner."""
     try:
-        with get_db_context() as conn:
+        # v3.20.0 Faz 1c: ds_db_objects RLS koruma altında — source_id ile scope
+        from app.core.db import get_db_context_scoped
+        with get_db_context_scoped(source_id) as conn:
             cur = conn.cursor()
             cur.execute("""
                 SELECT schema_name, COUNT(*) AS table_count
@@ -1149,7 +1151,10 @@ def approve_enrichment(
         from app.services import ds_learning_service
         label = body.admin_label_tr if body else None
         notes = body.admin_notes if body else None
-        with get_db_context() as conn:
+        # v3.20.0 Faz 1c: schema_record üretimi ds_db_objects + ds_learning_results
+        # tablolarına yazar (RLS koruma altında) → source_id ile scoped context
+        from app.core.db import get_db_context_scoped
+        with get_db_context_scoped(source_id) as conn:
             # Çalışan iş kontrolü
             running_check = ds_learning_service.check_running_job(conn, source_id)
             if running_check["has_running"]:
@@ -1384,7 +1389,9 @@ def get_suggested_queries(
     Kullanıcı 'veritabanında ara' sekmesini açtığında gösterilir.
     """
     try:
-        with get_db_context() as conn:
+        # v3.20.0 Faz 1c: ds_learning_results RLS koruma altında — source_id ile scoped
+        from app.core.db import get_db_context_scoped
+        with get_db_context_scoped(source_id) as conn:
             cur = conn.cursor()
 
             # 1. Golden SQL'den en çok kullanılan sorgular
