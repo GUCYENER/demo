@@ -17,6 +17,9 @@ Node'lar:
 """
 from .intent_extract import intent_extract_node, detect_intent  # noqa: F401
 from .load_prefs import load_prefs_node  # noqa: F401
+from .ast_query_builder import (  # noqa: F401
+    ast_query_builder_node, build_lookup_sql, is_ast_eligible,
+)
 from .retrieve import retrieve_node, query_expand_node  # noqa: F401
 from .multi_signal_rank import multi_signal_rank_node, multi_signal_rank  # noqa: F401
 from .ambiguity_gate import ambiguity_gate_node, route_after_ambiguity, detect_ambiguity  # noqa: F401

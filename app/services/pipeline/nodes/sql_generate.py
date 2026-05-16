@@ -95,11 +95,21 @@ def sql_generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
     LangGraph node — bağlam + soru → SQL.
 
     Faz 4c: few-shot örnekleri varsa bağlama enjekte edilir.
+    Faz 5d: AST yolu eligible ise LLM atlanır, deterministic SQL üretilir.
 
     Mevcut deep_think servisini DOĞRUDAN çağırmıyor; bunun yerine LLM client'ı
     state'ten alır (test edilebilirlik için). Eğer `_llm_callable` injekte
     edilmemişse — placeholder döner ve `errors`'a not düşer.
     """
+    # Faz 5d — AST shortcut
+    try:
+        from .ast_query_builder import is_ast_eligible, ast_query_builder_node
+        if is_ast_eligible(state):
+            delta = ast_query_builder_node(state)
+            if delta.get("sql"):
+                return delta
+    except Exception:
+        pass
     context = _build_context(state)
     question = state.get("question", "")
     dialect = state.get("db_dialect", "postgresql")
