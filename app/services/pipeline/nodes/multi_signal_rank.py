@@ -301,4 +301,16 @@ def multi_signal_rank_node(state: Dict[str, Any]) -> Dict[str, Any]:
         except Exception:
             pass
 
+    # Faz 5c — CatBoost inference (varsa final_score'u model skoruna swap'lar)
+    # Heuristik final_score ml öncesi `heuristic_score` adıyla korunur
+    try:
+        from app.services.ml.catboost_inference import get_active_model, apply_model_to_candidates
+        model = get_active_model(state.get("_cursor"), company_id=state.get("company_id"))
+        if model is not None:
+            tmp_state = dict(state)
+            tmp_state["ranked_candidates"] = ranked
+            ranked = apply_model_to_candidates(tmp_state, model)
+    except Exception:
+        pass
+
     return {"ranked_candidates": ranked}

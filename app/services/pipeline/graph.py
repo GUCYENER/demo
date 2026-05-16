@@ -199,7 +199,25 @@ def run_pipeline(state: Dict[str, Any], mode: str = "auto") -> Dict[str, Any]:
         # retry_count self_heal'de zaten artırıldı
 
     state = _merge(state, execute_node(state))
+
+    # Faz 5a — feedback satırlarını agentic_query_feedback'e yaz (best-effort)
+    _persist_feedback_if_possible(state)
+
     return state
+
+
+def _persist_feedback_if_possible(state: Dict[str, Any]) -> None:
+    """Pipeline sonunda feedback rows yazımı (training data). Sessizce başarısız."""
+    cur = state.get("_cursor")
+    if cur is None or not state.get("company_id"):
+        return
+    try:
+        from app.services.ml.feature_extractor import collect_feedback_rows, persist_feedback
+        rows = collect_feedback_rows(state)
+        if rows:
+            persist_feedback(cur, rows)
+    except Exception:
+        pass
 
 
 def resume_pipeline(state: Dict[str, Any], user_choice: Dict[str, Any]) -> Dict[str, Any]:
@@ -231,4 +249,8 @@ def resume_pipeline(state: Dict[str, Any], user_choice: Dict[str, Any]) -> Dict[
         if action != "rewrite":
             break
     state.update(execute_node(state))
+
+    # Faz 5a — feedback rows
+    _persist_feedback_if_possible(state)
+
     return state
