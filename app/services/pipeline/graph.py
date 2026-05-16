@@ -61,6 +61,10 @@ from .nodes import (
     self_heal_node,
     route_after_self_heal,
 )
+from .observability import (
+    ensure_run_id, instrument_node, pipeline_start, pipeline_end, emit_event,
+)
+from .result_size_predictor import predict_size_node
 
 logger = logging.getLogger(__name__)
 
@@ -156,17 +160,22 @@ def run_pipeline(state: Dict[str, Any], mode: str = "auto") -> Dict[str, Any]:
                 out[k] = v
         return out
 
-    state = _merge(state, load_prefs_node(state))
-    state = _merge(state, intent_extract_node(state))
-    state = _merge(state, query_expand_node(state))
-    state = _merge(state, retrieve_node(state))
-    state = _merge(state, multi_signal_rank_node(state))
-    state = _merge(state, ambiguity_gate_node(state))
+    import time as _t
+    _started = _t.perf_counter()
+    ensure_run_id(state)
+    pipeline_start(state, mode=mode)
+
+    state = _merge(state, instrument_node("load_prefs", load_prefs_node)(state))
+    state = _merge(state, instrument_node("intent_extract", intent_extract_node)(state))
+    state = _merge(state, instrument_node("query_expand", query_expand_node)(state))
+    state = _merge(state, instrument_node("retrieve", retrieve_node)(state))
+    state = _merge(state, instrument_node("multi_signal_rank", multi_signal_rank_node)(state))
+    state = _merge(state, instrument_node("ambiguity_gate", ambiguity_gate_node)(state))
 
     # Ambiguity routing
     route = route_after_ambiguity(state)
     if route == "clarification":
-        state = _merge(state, clarification_node(state))
+        state = _merge(state, instrument_node("clarification", clarification_node)(state))
         if mode == "force" or state.get("user_choice"):
             # force veya zaten kullanıcı seçimi var → devam et
             if not state.get("selected_tables"):
@@ -177,32 +186,39 @@ def run_pipeline(state: Dict[str, Any], mode: str = "auto") -> Dict[str, Any]:
         else:
             # Interrupt — caller SSE event göndermeli ve resume etmeli
             state["_interrupt"] = True
+            emit_event(state, "interrupt", metadata={"reason": (state.get("clarification_payload") or {}).get("reason")})
+            pipeline_end(state, int((_t.perf_counter() - _started) * 1000))
             return state
 
     # SQL generate + validate + self-heal loop (Faz 4d)
     max_retries = 2
     for attempt in range(max_retries + 1):
-        state = _merge(state, sql_generate_node(state))
-        state = _merge(state, validate_node(state))
+        state = _merge(state, instrument_node("sql_generate", sql_generate_node)(state))
+        state = _merge(state, instrument_node("validate", validate_node)(state))
         if state.get("validation_passed"):
             break
         if attempt == max_retries:
             break
         # Self-heal: classify error & decide
-        state = _merge(state, self_heal_node(state))
+        state = _merge(state, instrument_node("self_heal", self_heal_node)(state))
         action = state.get("retry_action")
         if action == "abort":
             # Permission error vs. — execute etmeden döndür
+            pipeline_end(state, int((_t.perf_counter() - _started) * 1000))
             return state
         if action != "rewrite":
             break
         # retry_count self_heal'de zaten artırıldı
 
-    state = _merge(state, execute_node(state))
+    # Faz 6a — sonuç boyut tahmini (execute öncesi)
+    state = _merge(state, instrument_node("predict_size", predict_size_node)(state))
+
+    state = _merge(state, instrument_node("execute", execute_node)(state))
 
     # Faz 5a — feedback satırlarını agentic_query_feedback'e yaz (best-effort)
     _persist_feedback_if_possible(state)
 
+    pipeline_end(state, int((_t.perf_counter() - _started) * 1000))
     return state
 
 
@@ -226,31 +242,39 @@ def resume_pipeline(state: Dict[str, Any], user_choice: Dict[str, Any]) -> Dict[
 
     user_choice: {"selected_indices": [0]} veya {"selected_tables": [...]}
     """
+    import time as _t
+    _started = _t.perf_counter()
     state = dict(state)
     state["user_choice"] = user_choice
     state.pop("_interrupt", None)
+    ensure_run_id(state)
+    emit_event(state, "resume", metadata={"selected": user_choice})
 
     # clarification_node post-resume yolunu çalıştır
-    state.update(clarification_node(state))
+    state.update(instrument_node("clarification", clarification_node)(state))
 
     # SQL üretim ve sonrası (self-heal aware)
     max_retries = 2
     for attempt in range(max_retries + 1):
-        state.update(sql_generate_node(state))
-        state.update(validate_node(state))
+        state.update(instrument_node("sql_generate", sql_generate_node)(state))
+        state.update(instrument_node("validate", validate_node)(state))
         if state.get("validation_passed"):
             break
         if attempt == max_retries:
             break
-        state.update(self_heal_node(state))
+        state.update(instrument_node("self_heal", self_heal_node)(state))
         action = state.get("retry_action")
         if action == "abort":
+            pipeline_end(state, int((_t.perf_counter() - _started) * 1000))
             return state
         if action != "rewrite":
             break
-    state.update(execute_node(state))
+
+    state.update(instrument_node("predict_size", predict_size_node)(state))
+    state.update(instrument_node("execute", execute_node)(state))
 
     # Faz 5a — feedback rows
     _persist_feedback_if_possible(state)
 
+    pipeline_end(state, int((_t.perf_counter() - _started) * 1000))
     return state
