@@ -687,6 +687,7 @@ def process_user_message_stream(
                 schema_hint=schema_hint,
                 report_template=report_template,
                 follow_up_context=follow_up_context,
+                source_id=source_id,  # v3.20.0 Faz 1c: RLS scope hedef kaynak
             )
         elif source_type == 'rag':
             stream_gen = deep_think.process_stream_rag_only(search_query, user_id)

@@ -1877,7 +1877,7 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
         return None
 
 
-    def process_stream_db_only(self, query: str, user_id: int, company_id: int = None, confirm_mode: bool = False, schema_hint: str = None, report_template: str = None, follow_up_context: Optional[Dict[str, Any]] = None) -> Generator[Dict[str, Any], None, None]:
+    def process_stream_db_only(self, query: str, user_id: int, company_id: int = None, confirm_mode: bool = False, schema_hint: str = None, report_template: str = None, follow_up_context: Optional[Dict[str, Any]] = None, source_id: int = None) -> Generator[Dict[str, Any], None, None]:
         """
         v3.10.0: DB-only pipeline — Firma bazlı DB kaynağı filtresi + Schema Pruning + Error Sanitization.
         + FAQ/Query Cache + Confirm before execute + Self-Healing.
@@ -1939,8 +1939,19 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             try:
                 cur = conn.cursor()
 
+                # v3.20.0 Faz 1c: source_id verilmişse o kaynağa kilitlen
+                if source_id is not None:
+                    cur.execute("""
+                        SELECT ds.id, ds.name, ds.db_type, ds.host, ds.port,
+                               ds.db_name, ds.db_user, ds.db_password_encrypted
+                        FROM data_sources ds
+                        WHERE ds.id = %s
+                          AND ds.source_type = 'database'
+                          AND ds.is_active = TRUE
+                        LIMIT 1
+                    """, (source_id,))
                 # v3.8.0: company_id filtresi — kullanıcının firmasına ait kaynaklar
-                if company_id:
+                elif company_id:
                     cur.execute("""
                         SELECT ds.id, ds.name, ds.db_type, ds.host, ds.port,
                                ds.db_name, ds.db_user, ds.db_password_encrypted
@@ -2038,7 +2049,8 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             ml_matched_tables = []
             try:
                 from app.services.ds_learning_service import search_db_knowledge
-                ml_results = search_db_knowledge(query, company_id=company_id, min_score=0.25, max_results=3)
+                # v3.20.0 Faz 1c: DB-only path source_id verilmişse RLS-scope edilir
+                ml_results = search_db_knowledge(query, company_id=company_id, min_score=0.25, max_results=3, source_id=source_id)
                 if ml_results:
                     schema_parts = []
                     for r in ml_results:
