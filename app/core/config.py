@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.16.0"  # DB modunda follow-up bağlam — önceki sorgu üzerinde devam etme
+    APP_VERSION: str = "3.19.3"  # Mode-switch sistem mesaj birikme fix + Geçmiş badge/filtre + fresh-login temiz state + sanitized DB err (v3.19.3)
 
     # Frontend & API prefix
     api_prefix: str = "/api"

@@ -107,6 +107,8 @@ async function loadTicketHistory(forceRefresh = false, page = 1) {
             final_solution: d.last_answer || 'Cevap yok',
             created_at: d.created_at,
             source_type: d.source_type || 'vyra_chat',
+            // v3.19.2: Son user mesajının chat mode'u — badge'i belirler (rag|db|llm)
+            effective_source_type: d.effective_source_type || null,
             _isDialog: true
         }));
 
@@ -297,11 +299,24 @@ function createAccordionItem(ticket, index) {
     // Kullanıcı sorgusu (description)
     const userQuery = ticket.description || ticket.query || 'Talep bilgisi yok';
 
-    // v2.24.0: Sadece NGSSAI'ye Sor badge'i (support ticket kaldırıldı)
+    // v3.19.1: Badge artık son user mesajının chat mode'una göre belirlenir
+    // (effective_source_type: 'rag'|'db'|'llm') — eski kayıtlar için fallback 'rag'
     const isDialog = ticket._isDialog || ticket.source_type === 'vyra_chat';
-    const badgeText = "Bilgi Tabanı";
-    const badgeClass = 'badge-vyra';
-    const badgeIcon = 'fa-robot';
+    const _mode = (ticket.effective_source_type || 'rag').toLowerCase();
+    let badgeText, badgeClass, badgeIcon;
+    if (_mode === 'db') {
+        badgeText = 'Veritabanı';
+        badgeClass = 'badge-db';
+        badgeIcon = 'fa-database';
+    } else if (_mode === 'llm') {
+        badgeText = 'VYRA Sohbet';
+        badgeClass = 'badge-llm';
+        badgeIcon = 'fa-comments';
+    } else {
+        badgeText = 'Bilgi Tabanı';
+        badgeClass = 'badge-kb';
+        badgeIcon = 'fa-book';
+    }
     const itemIcon = isDialog ? 'fa-comments' : 'fa-ticket';
     // Başlık (title veya kısaltılmış query)
     const title = ticket.title || userQuery.substring(0, 50) + (userQuery.length > 50 ? '...' : '');
@@ -514,6 +529,40 @@ if (sourceTypeFilterSelect) {
         loadTicketHistory(true, 1);
     });
 }
+
+// v3.19.0: Tür dropdown'unu kullanıcının feature_permissions'ına göre filtrele.
+// Yetkisi olmayan seçenekler gizlenir; tek seçenek "Tümü" kalırsa wrapper tamamen gizlenir.
+function _applyHistoryTypeFilterPermissions() {
+    if (!sourceTypeFilterSelect) return;
+    const perms = window.VYRA_FEATURE_PERMS;
+    if (!perms || !perms.features) return; // henüz yüklenmediyse skip — sonra tetiklenir
+    const features = perms.features || {};
+    const isAdmin  = !!perms.isAdmin;
+
+    let visibleCount = 0;
+    sourceTypeFilterSelect.querySelectorAll('option[data-feature-key]').forEach(opt => {
+        const fk = opt.getAttribute('data-feature-key');
+        const allowed = isAdmin || !!features[fk];
+        opt.hidden = !allowed;
+        opt.disabled = !allowed;
+        if (allowed) visibleCount++;
+    });
+
+    const wrapper = document.getElementById('sourceTypeWrapper');
+    if (wrapper) wrapper.style.display = (visibleCount === 0) ? 'none' : '';
+
+    // Seçili olan yetkisizse "Tümü"ye düş
+    const selectedOpt = sourceTypeFilterSelect.options[sourceTypeFilterSelect.selectedIndex];
+    if (selectedOpt && selectedOpt.disabled) {
+        sourceTypeFilterSelect.value = '';
+        _sourceTypeFilter = '';
+    }
+}
+
+// İlk çağrı — modül zaten yüklendiyse direkt uygula
+_applyHistoryTypeFilterPermissions();
+// Feature permissions modülü daha sonra yüklenirse tekrar dene
+window.addEventListener('vyra:feature-perms-ready', _applyHistoryTypeFilterPermissions);
 
 // 📅 Date Range Picker - Türkçe tarih gösterimi
 const dateRangeBtn = document.getElementById("dateRangeBtn");

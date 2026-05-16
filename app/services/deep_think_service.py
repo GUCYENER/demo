@@ -2310,8 +2310,8 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 log_warning(f"DB-Only: SQL uretimi basarisiz: {_sql_err}", "deep_think")
                 
                 # v3.8.0 Error Sanitization: Teknik detayları kullanıcıya gösterme
+                # v3.19.2: Yanlış anlaşılmaması için "problem yaşandı" başlığı kaldırıldı
                 content_msg = (
-                    "Sorgunuz oluşturulurken bir problem yaşandı:\n\n"
                     f"**Yapay Zeka Notu:**\n_{_sanitize_error_for_user(_sql_err)}_\n\n"
                     "Lütfen farklı bir şekilde sormayı deneyin."
                 )

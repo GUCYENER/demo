@@ -611,7 +611,7 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
 @media(max-width:660px){.n-sidebar{display:none}}
 </style>
 <link rel="stylesheet" href="assets/css/mode_cards.css?v=3.6.0" />
-<link rel="stylesheet" href="dist/bundle.min.css?v=3.16.0" />
+<link rel="stylesheet" href="dist/bundle.min.css?v=3.19.3" />
 </head>
 <body>
 
@@ -717,8 +717,8 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
 
   <div class="tabs-bar" id="mainTabBar">
     <button class="n-tab-btn active" id="tabDialog" data-tab="dialog">
-      <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
-      Bilgi Tabanı
+      <svg id="tabDialogIcon" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+      <span id="tabDialogLabel">Bilgi Tabanında Ara</span>
     </button>
     <button class="n-tab-btn" id="tabHistory" data-tab="history">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -730,9 +730,9 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
   <div id="homeHeader" class="hidden"></div>
 
   <section id="sectionDialog" class="chat-area">
-    <div class="mode-selector" id="modeSelectorPanel">
+    <div class="mode-selector feature-perm-pending" id="modeSelectorPanel">
       <div class="mode-cards">
-        <div class="mode-card kb selected" id="modeKb" onclick="window.selectChatMode('kb')">
+        <div class="mode-card kb selected" id="modeKb" data-feature-key="kb" onclick="window.selectChatMode('kb')">
           <div class="mc-icon">
             <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
           </div>
@@ -741,7 +741,7 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
             <div class="mc-desc">Dokümanlar, prosedürler ve makaleler</div>
           </div>
         </div>
-        <div class="mode-card db" id="modeDb" onclick="window.selectChatMode('db')">
+        <div class="mode-card db" id="modeDb" data-feature-key="db" onclick="window.selectChatMode('db')">
           <div class="mc-icon">
             <svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
           </div>
@@ -750,7 +750,7 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
             <div class="mc-desc">Tablo ve verilerde akıllı sorgulama</div>
           </div>
         </div>
-        <div class="mode-card llm" id="modeChat" onclick="window.selectChatMode('llm')">
+        <div class="mode-card llm" id="modeChat" data-feature-key="llm" onclick="window.selectChatMode('llm')">
           <div class="mc-icon">
             <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
           </div>
@@ -758,6 +758,13 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
             <div class="mc-title" id="mcChatTitle">VYRA ile Sohbet Et</div>
             <div class="mc-desc">Yapay zeka asistanıyla serbest konuşun</div>
           </div>
+        </div>
+        <div class="mode-empty hidden" id="modeAllDeniedNotice">
+          <div class="mc-empty-icon">
+            <svg viewBox="0 0 24 24" width="48" height="48"><path d="M12 9v4M12 17h.01M21 12A9 9 0 113 12a9 9 0 0118 0z" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+          </div>
+          <div class="mc-empty-title">Sistem özellikleri için yetkiniz tanımlı değil</div>
+          <div class="mc-empty-desc">Erişim için sistem yöneticinize başvurun.</div>
         </div>
       </div>
     </div>
@@ -818,7 +825,7 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
     }
 })();
 </script>
-<script defer src="dist/bundle.min.js?v=3.16.0"></script>
+<script defer src="dist/bundle.min.js?v=3.19.3"></script>
 <script>
 // v2.59.0: Favicon artık inline SVG kullanıyor, dev override gereksiz
 document.getElementById('themeToggleBtn').addEventListener('click', function(e) {
@@ -837,6 +844,10 @@ document.getElementById('themeToggleBtn').addEventListener('click', function(e) 
 });
 
 window.selectChatMode = function(mode) {
+  // v3.18.0: feature permission guard
+  if (window.VYRA_FeaturePermissions && typeof window.VYRA_FeaturePermissions.guard === 'function') {
+    if (!window.VYRA_FeaturePermissions.guard(mode)) return;
+  }
   var kb = document.getElementById('modeKb');
   var db = document.getElementById('modeDb');
   var ch = document.getElementById('modeChat');
@@ -844,18 +855,23 @@ window.selectChatMode = function(mode) {
   if (kb) kb.classList.remove('selected');
   if (db) db.classList.remove('selected');
   if (ch) ch.classList.remove('selected');
+  // v3.19.2: Sub-tab label aktif moda göre güncellenir
+  var tabLabel = document.getElementById('tabDialogLabel');
   if (mode === 'kb') {
     if (kb) kb.classList.add('selected');
+    if (tabLabel) tabLabel.textContent = 'Bilgi Tabanında Ara';
     if (window.DialogChatModule && window.DialogChatModule.switchToRagMode) {
       window.DialogChatModule.switchToRagMode();
     }
   } else if (mode === 'db') {
     if (db) db.classList.add('selected');
+    if (tabLabel) tabLabel.textContent = 'Veritabanında Ara';
     if (window.DialogChatModule && window.DialogChatModule.switchToDbMode) {
       window.DialogChatModule.switchToDbMode();
     }
   } else if (mode === 'llm') {
     if (ch) ch.classList.add('selected');
+    if (tabLabel) tabLabel.textContent = 'VYRA ile Sohbet';
     if (window.DialogChatModule && window.DialogChatModule.switchToLlmMode) {
       window.DialogChatModule.switchToLlmMode();
     }

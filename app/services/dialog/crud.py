@@ -163,15 +163,43 @@ def get_dialog_history(
     - v2.24.0: Sadece vyra_chat desteği
     - Opsiyonel source_type filtresi
     """
+    # v3.19.2: Tür filtresi — frontend'den gelen 'vyra_chat'|'vyra_db'|'vyra_llm'
+    # değerini, dialog_messages.metadata->>'source_type' alanına (rag|db|llm) eşle.
+    # NULL/eski kayıtlar 'rag' (Bilgi Tabanı) olarak değerlendirilir.
+    mode_filter_clause = ""
+    if source_type == "vyra_db":
+        mode_filter_clause = " AND lum.msg_source_type = 'db' "
+        count_mode_clause = (
+            " AND (SELECT metadata->>'source_type' FROM dialog_messages "
+            "WHERE dialog_id = d.id AND role = 'user' "
+            "ORDER BY created_at DESC LIMIT 1) = 'db' "
+        )
+    elif source_type == "vyra_llm":
+        mode_filter_clause = " AND lum.msg_source_type = 'llm' "
+        count_mode_clause = (
+            " AND (SELECT metadata->>'source_type' FROM dialog_messages "
+            "WHERE dialog_id = d.id AND role = 'user' "
+            "ORDER BY created_at DESC LIMIT 1) = 'llm' "
+        )
+    elif source_type == "vyra_chat":
+        mode_filter_clause = " AND COALESCE(lum.msg_source_type, 'rag') = 'rag' "
+        count_mode_clause = (
+            " AND COALESCE((SELECT metadata->>'source_type' FROM dialog_messages "
+            "WHERE dialog_id = d.id AND role = 'user' "
+            "ORDER BY created_at DESC LIMIT 1), 'rag') = 'rag' "
+        )
+    else:
+        count_mode_clause = ""
+
     with get_db_context() as conn:
         cur = conn.cursor()
-        
+
         # 🚀 v2.28.0: Optimize edilmiş sorgu - subquery yerine JOIN kullanıyoruz
         # Tek sorguda tüm veriler çekiliyor (N+4 → 1 sorgu)
-        
-        cur.execute("""
+
+        cur.execute(f"""
             WITH dialog_stats AS (
-                SELECT 
+                SELECT
                     dialog_id,
                     COUNT(*) as message_count,
                     MIN(CASE WHEN role = 'user' THEN created_at END) as first_user_msg_time,
@@ -181,9 +209,9 @@ def get_dialog_history(
                 HAVING COUNT(*) > 0
             ),
             first_questions AS (
-                SELECT DISTINCT ON (dialog_id) 
+                SELECT DISTINCT ON (dialog_id)
                     dialog_id, content as first_question
-                FROM dialog_messages 
+                FROM dialog_messages
                 WHERE role = 'user'
                 ORDER BY dialog_id, created_at ASC
             ),
@@ -193,32 +221,45 @@ def get_dialog_history(
                 FROM dialog_messages
                 WHERE role = 'assistant'
                 ORDER BY dialog_id, created_at DESC
+            ),
+            -- v3.19.1: Son user mesajının chat mode'u (rag|db|llm) — badge için
+            last_user_modes AS (
+                SELECT DISTINCT ON (dialog_id)
+                    dialog_id,
+                    metadata->>'source_type' AS msg_source_type
+                FROM dialog_messages
+                WHERE role = 'user'
+                ORDER BY dialog_id, created_at DESC
             )
-            SELECT 
-                d.id, d.title, d.source_type, d.status, 
+            SELECT
+                d.id, d.title, d.source_type, d.status,
                 d.created_at, d.closed_at,
                 fq.first_question,
                 la.last_answer,
-                ds.message_count
+                ds.message_count,
+                lum.msg_source_type AS effective_source_type
             FROM dialogs d
             INNER JOIN dialog_stats ds ON ds.dialog_id = d.id
             LEFT JOIN first_questions fq ON fq.dialog_id = d.id
             LEFT JOIN last_answers la ON la.dialog_id = d.id
-            WHERE d.user_id = %s 
+            LEFT JOIN last_user_modes lum ON lum.dialog_id = d.id
+            WHERE d.user_id = %s
               AND d.source_type = 'vyra_chat'
+              {mode_filter_clause}
             ORDER BY d.updated_at DESC, d.created_at DESC
             LIMIT %s OFFSET %s
         """, [user_id, limit, offset])
-        
+
         dialogs = [dict(row) for row in cur.fetchall()]
-        
+
         # Count (ayrı basit sorgu - çok hızlı)
-        cur.execute("""
-            SELECT COUNT(*) as total 
+        cur.execute(f"""
+            SELECT COUNT(*) as total
             FROM dialogs d
-            WHERE d.user_id = %s 
+            WHERE d.user_id = %s
               AND d.source_type = 'vyra_chat'
               AND EXISTS (SELECT 1 FROM dialog_messages WHERE dialog_id = d.id)
+              {count_mode_clause}
         """, [user_id])
         total = cur.fetchone()["total"]
         

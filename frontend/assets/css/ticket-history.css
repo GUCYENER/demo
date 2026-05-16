@@ -659,6 +659,23 @@
     color: #3b82f6;
 }
 
+/* v3.19.1: Chat mode badges (HEBE marka paleti) */
+.accordion-badge.badge-kb {
+    background: rgba(59, 130, 246, 0.12);
+    border-color: rgba(59, 130, 246, 0.25);
+    color: #3b82f6;
+}
+.accordion-badge.badge-db {
+    background: rgba(16, 185, 129, 0.12);
+    border-color: rgba(16, 185, 129, 0.25);
+    color: #10b981;
+}
+.accordion-badge.badge-llm {
+    background: rgba(168, 85, 247, 0.12);
+    border-color: rgba(168, 85, 247, 0.25);
+    color: #a855f7;
+}
+
 .accordion-badge i {
     font-size: 11px;
 }
