@@ -668,15 +668,15 @@ class SafeSQLExecutor:
             İzin verilen tablo adları listesi
         """
         try:
-            from app.core.db import get_db_conn
-            conn = get_db_conn()
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT object_name FROM ds_db_objects WHERE source_id = %s AND object_type = 'table'",
-                (source_id,)
-            )
-            tables = [row["object_name"] for row in cur.fetchall()]
-            conn.close()
+            # v3.20.0 Faz 1c: ds_db_objects RLS koruma altında — source_id ile scoped erişim
+            from app.core.db import get_db_context_scoped
+            with get_db_context_scoped(source_id) as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT object_name FROM ds_db_objects WHERE source_id = %s AND object_type = 'table'",
+                    (source_id,)
+                )
+                tables = [row["object_name"] for row in cur.fetchall()]
             return tables
         except Exception as e:
             log_warning(f"Tablo whitelist alınamadı: {e}", "hybrid_router")
