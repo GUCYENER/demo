@@ -25,6 +25,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.api.routes.auth import get_current_user
@@ -272,6 +273,153 @@ def run_agentic_query(
         "interrupted": interrupted,
         "state": response,
     }
+
+
+# ---------- Streaming (Faz 6d) ----------
+@router.post("/api/agentic-query/stream")
+def stream_agentic_query(
+    body: AgenticQueryIn,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """
+    SSE endpoint — pipeline state olaylarını ve sonuç satırlarını batch'ler
+    halinde stream eder.
+
+    SSE event type'ları:
+      - clarification : ambiguity'de modeli bilgilendirir, kullanıcı resume yapmalı
+      - size_prediction : execute öncesi tahmini bucket
+      - columns / rows / end : streaming_execute akışı
+      - error : hata
+      - run_summary : kapanışta node-bazlı duration özeti
+
+    Caller frontend: EventSource veya fetch+ReadableStream ile tüketir.
+    """
+    company_id = current_user.get("company_id")
+    user_id = current_user.get("id") or current_user.get("user_id")
+    if not company_id:
+        raise HTTPException(400, "company_id eksik")
+
+    def _event_stream():
+        import json
+        from app.services.pipeline.graph import run_pipeline
+        from app.services.pipeline.sse_adapter import state_to_clarification_event, format_sse
+        from app.services.pipeline.streaming_execute import stream_execute, stream_to_sse
+        from app.services.pipeline.observability import get_run_summary
+
+        with get_db_context() as conn:
+            cur = conn.cursor()
+            try:
+                state: Dict[str, Any] = {
+                    "question": body.question,
+                    "source_id": body.source_id,
+                    "company_id": company_id,
+                    "user_id": user_id,
+                    "db_dialect": body.db_dialect or "postgresql",
+                    "history": body.history or [],
+                    "_cursor": cur,
+                }
+                if body.forced_tables:
+                    state["selected_tables"] = [
+                        {"schema_name": t.get("schema"), "table_name": t.get("table")}
+                        for t in body.forced_tables
+                    ]
+                    state["force_ast"] = True
+
+                final = run_pipeline(state, mode=body.mode)
+
+                run_id = final.get("_pipeline_run_id")
+
+                # Clarification interrupt
+                if final.get("_interrupt"):
+                    yield format_sse(state_to_clarification_event(final))
+                    conn.commit()
+                    return
+
+                # Size prediction
+                pred = final.get("result_size_prediction") or {}
+                if pred:
+                    yield format_sse({"type": "size_prediction", "data": pred})
+
+                # Execute results — stream
+                exec_cb = final.get("_execute_callable")
+                sql = final.get("sql") or ""
+                if exec_cb and sql:
+                    for evt in stream_execute(exec_cb, sql, batch_size=200):
+                        yield stream_to_sse(evt)
+                else:
+                    # Buffered yedek: pipeline zaten execute etti, rows içeride
+                    cols = final.get("columns") or []
+                    rows = final.get("rows") or []
+                    if cols:
+                        yield stream_to_sse({"type": "columns", "columns": cols})
+                    bs = 200
+                    for i in range(0, len(rows), bs):
+                        yield stream_to_sse({
+                            "type": "rows",
+                            "rows": rows[i:i + bs],
+                            "batch_index": i // bs,
+                        })
+                    yield stream_to_sse({
+                        "type": "end",
+                        "row_count": final.get("row_count", len(rows)),
+                        "elapsed_ms": final.get("elapsed_ms", 0),
+                        "truncated": final.get("truncated", False),
+                    })
+
+                # Observability özeti
+                if run_id:
+                    summary = get_run_summary(cur, run_id)
+                    yield format_sse({"type": "run_summary", "data": summary})
+
+                conn.commit()
+            except Exception as e:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                logger.exception("[agentic-query/stream] hata")
+                yield f"event: error\ndata: {json.dumps({'message': str(e)}, ensure_ascii=False)}\n\n"
+            finally:
+                try:
+                    cur.close()
+                except Exception:
+                    pass
+
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # nginx buffering kapalı
+            "Connection": "keep-alive",
+        },
+    )
+
+
+# ---------- Observability ----------
+@router.get("/api/agentic-query/runs/{run_id}/summary")
+def get_pipeline_run_summary(
+    run_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Bir pipeline çalışmasının node-bazlı süre özeti."""
+    company_id = current_user.get("company_id")
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        try:
+            from app.services.pipeline.observability import get_run_summary
+            # company_id ile filtre (yetki)
+            cur.execute(
+                "SELECT 1 FROM pipeline_events WHERE run_id=%s AND "
+                "(company_id IS NULL OR company_id=%s) LIMIT 1",
+                (run_id, company_id),
+            )
+            if cur.fetchone() is None:
+                raise HTTPException(404, "Run bulunamadı")
+            summary = get_run_summary(cur, run_id)
+        finally:
+            cur.close()
+    return {"success": True, "summary": summary}
 
 
 # ---------- ML / Training ----------
