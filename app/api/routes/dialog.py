@@ -62,6 +62,10 @@ class MessageRequest(BaseModel):
     content: str = Field(..., min_length=1, max_length=5000)
     images: Optional[List[str]] = None  # Base64 encoded images
     source_type: Optional[str] = Field(None, description="'rag', 'db' veya None — frontend mod seçimi")
+    # v3.20.0 (Faz 1): DB modunda kullanıcı hangi data source'u sorguluyor?
+    # Frontend selector'dan seçilen ID. source_type='db' iken zorunlu, aksi halde yok sayılır.
+    # Backend permission kontrolü yapar ve RLS GUC (app.current_source_id) olarak set eder.
+    source_id: Optional[int] = Field(None, description="DB modunda seçili data_sources.id — frontend'den gelir")
     # v4.0: DB disambiguation + rapor şablonu
     schema_hint: Optional[str] = Field(None, description="Disambiguation: 'schema.table' — kullanıcı seçilen tablo")
     report_template: Optional[str] = Field(None, description="Rapor yaklaşımı metni — kullanıcı seçimi")
@@ -345,7 +349,22 @@ async def send_message_stream(
     import json
     from starlette.responses import StreamingResponse
     from app.services.dialog.processor import process_user_message_stream
-    
+
+    # v3.20.0 (Faz 1): DB modunda source_id zorunlu + permission kontrolü
+    if request.source_type == "db":
+        if not request.source_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Veritabanı modunda bir veri kaynağı seçmelisiniz (source_id zorunlu)."
+            )
+        from app.services.data_source_access import user_can_access_source
+        is_admin = user.get("is_admin", False) or user.get("role") == "admin"
+        if not user_can_access_source(user["id"], request.source_id, is_admin=is_admin):
+            raise HTTPException(
+                status_code=403,
+                detail="Bu veri kaynağına erişim yetkiniz yok."
+            )
+
     # Base64 görselleri decode et
     images = None
     if request.images:
@@ -357,7 +376,7 @@ async def send_message_stream(
                 images.append(base64.b64decode(img_b64))
             except Exception as e:
                 log_warning(f"Base64 görsel decode hatası: {e}", "dialog")
-    
+
     # Widget config (JWT'den)
     stream_widget_config = None
     if user.get("widget"):
@@ -392,6 +411,7 @@ async def send_message_stream(
                     images=images,
                     widget_config=stream_widget_config,
                     source_type=request.source_type,
+                    source_id=request.source_id,  # v3.20.0 (Faz 1): RLS scoping
                     company_id=user.get("company_id"),
                     schema_hint=request.schema_hint,
                     report_template=request.report_template,

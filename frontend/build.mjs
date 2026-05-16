@@ -43,6 +43,9 @@ const CSS_FILES = [
     'assets/css/modules/ds_enrichment.css',
     'assets/css/modules/theme_catalog.css',
     'assets/css/theme_picker.css',
+    'assets/css/modules/feature_permissions.css',  // v3.18.0
+    'assets/css/modules/_tooltip.css',              // v3.19.0 — CSS-only tooltip helper
+    'assets/css/modules/db_source_selector.css',    // v3.20.0 Faz 1f — DB kaynak chip selector
 ];
 
 const JS_FILES = [
@@ -72,6 +75,7 @@ const JS_FILES = [
     'assets/js/modules/dialog_voice.js',
     'assets/js/modules/dialog_images.js',
     'assets/js/modules/dialog_ticket.js',
+    'assets/js/modules/db_source_selector.js',  // v3.20.0 Faz 1f — dialog_chat'ten ÖNCE
     'assets/js/modules/dialog_chat.js',
     'assets/js/modules/permissions_manager.js',
     'assets/js/modules/file_guidelines_modal.js',
@@ -112,6 +116,7 @@ const JS_FILES = [
     'assets/js/modules/theme_catalog_module.js',
     'assets/js/modules/theme_preview_modal.js',
     'assets/js/modules/theme_picker_popup.js',
+    'assets/js/modules/feature_permissions_module.js',  // v3.18.0
     'assets/js/branding_engine.js',
 ];
 

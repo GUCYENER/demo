@@ -611,7 +611,7 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
 @media(max-width:660px){.n-sidebar{display:none}}
 </style>
 <link rel="stylesheet" href="assets/css/mode_cards.css?v=3.6.0" />
-<link rel="stylesheet" href="dist/bundle.min.css?v=3.19.3" />
+<link rel="stylesheet" href="dist/bundle.min.css?v=3.20.0" />
 </head>
 <body>
 
@@ -727,6 +727,13 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
     <div class="tabs-spacer"></div>
   </div>
 
+  <!-- v3.20.0 (Faz 1f): DB modunda kullanıcının yetkili veri kaynakları arasında tek-seçimli selector -->
+  <div class="db-source-bar" id="dbSourceBar" role="region" aria-label="Veritabanı seçimi" hidden>
+    <span class="dsb-label">Veri kaynağı:</span>
+    <div class="dsb-chips" id="dbSourceChips" role="radiogroup" aria-label="Mevcut veri kaynakları"></div>
+    <span class="dsb-status" id="dbSourceStatus" aria-live="polite"></span>
+  </div>
+
   <div id="homeHeader" class="hidden"></div>
 
   <section id="sectionDialog" class="chat-area">
@@ -825,7 +832,7 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
     }
 })();
 </script>
-<script defer src="dist/bundle.min.js?v=3.19.3"></script>
+<script defer src="dist/bundle.min.js?v=3.20.0"></script>
 <script>
 // v2.59.0: Favicon artık inline SVG kullanıyor, dev override gereksiz
 document.getElementById('themeToggleBtn').addEventListener('click', function(e) {

@@ -75,6 +75,11 @@ window.DialogChatModule = (function () {
         // Event listeners
         bindEvents();
 
+        // v3.20.0 Faz 1f: DB kaynak seçimi değişince send butonunu yenile
+        if (window.DbSourceSelector && typeof window.DbSourceSelector.onChange === 'function') {
+            window.DbSourceSelector.onChange(() => updateSendButtonState());
+        }
+
         // Speech Recognition başlat
         initSpeechRecognition();
 
@@ -510,6 +515,13 @@ window.DialogChatModule = (function () {
 
         if (!content && pendingImages.length === 0) return;
 
+        // v3.20.0 Faz 1f: DB modunda mutlaka bir veri kaynağı seçili olmalı
+        if (chatMode === 'db' && window.DbSourceSelector
+            && window.DbSourceSelector.getSelectedSourceId() == null) {
+            showToast('warning', 'Önce bir veri kaynağı seçin.');
+            return;
+        }
+
         // UI güncelle
         input.value = '';
         resetTextareaHeight(); // Textarea boyutunu resetle
@@ -583,6 +595,11 @@ window.DialogChatModule = (function () {
                     content: content || '[Görsel]',
                     images: pendingImages.map(img => img.base64),
                     source_type: chatMode === 'db' ? 'db' : 'rag',
+                    // v3.20.0 Faz 1f: DB modunda seçili veri kaynağını payload'a ekle
+                    ...(chatMode === 'db' && window.DbSourceSelector
+                        && window.DbSourceSelector.getSelectedSourceId() != null
+                        ? { source_id: window.DbSourceSelector.getSelectedSourceId() }
+                        : {}),
                     // v3.16.0: Follow-up çıpası bu istek için consume edilmiş (state
                     // zaten temizlendi); body'ye yerel snapshot'ı yaz.
                     ...(followupAnchorForThisSend
@@ -2289,14 +2306,21 @@ window.DialogChatModule = (function () {
         if (sendBtn) {
             const hasContent = input?.value?.trim().length > 0 || pendingImages.length > 0;
 
+            // v3.20.0 Faz 1f: DB modunda kaynak seçili değilse gönderim kilitli
+            const needsSource = (chatMode === 'db')
+                && !!window.DbSourceSelector
+                && window.DbSourceSelector.getSelectedSourceId() == null;
+
             // 🔧 v2.21.3: Textarea artık her zaman aktif
             // Kullanıcı seçenek kartları gösterilirken bile yeni soru yazabilir
-            sendBtn.disabled = !hasContent;
+            sendBtn.disabled = !hasContent || needsSource;
 
             // Textarea her zaman enabled
             if (input) {
                 input.disabled = false;
-                input.placeholder = 'Mesajınızı yazın...';
+                input.placeholder = needsSource
+                    ? 'Önce bir veri kaynağı seçin…'
+                    : 'Mesajınızı yazın...';
             }
         }
 
@@ -2661,6 +2685,9 @@ window.DialogChatModule = (function () {
             if (mkb) mkb.classList.remove('selected');
             if (mdb) mdb.classList.remove('selected');
             if (mch) mch.classList.add('selected');
+            // v3.20.0 Faz 1f: DB kaynak çubuğunu gizle
+            if (window.DbSourceSelector) window.DbSourceSelector.hide();
+            updateSendButtonState();
             showToast('info', '💬 ' + _appName() + ' sohbet modu aktif');
             addModeInfoMessage('💬 ' + _appName() + ' ile sohbet moduna geçildi.');
         },
@@ -2676,6 +2703,9 @@ window.DialogChatModule = (function () {
             if (mkb) mkb.classList.add('selected');
             if (mdb) mdb.classList.remove('selected');
             if (mch) mch.classList.remove('selected');
+            // v3.20.0 Faz 1f: DB kaynak çubuğunu gizle
+            if (window.DbSourceSelector) window.DbSourceSelector.hide();
+            updateSendButtonState();
             showToast('info', '📚 Bilgi tabanında arama modu aktif');
             addModeInfoMessage('📚 Bilgi tabanında arama modu aktif.');
         },
@@ -2689,6 +2719,12 @@ window.DialogChatModule = (function () {
             if (mkb) mkb.classList.remove('selected');
             if (mdb) mdb.classList.add('selected');
             if (mch) mch.classList.remove('selected');
+            // v3.20.0 Faz 1f: DB kaynak çubuğunu göster ve yetkili kaynakları yükle
+            if (window.DbSourceSelector) {
+                window.DbSourceSelector.show();
+                window.DbSourceSelector.load();
+            }
+            updateSendButtonState();
             showToast('info', '🗄️ Veritabanında arama modu aktif');
             addModeInfoMessage('🗄️ Veritabanında arama moduna geçildi. Tablolardaki verilere doğrudan sorgu atabilirsiniz.');
         },
