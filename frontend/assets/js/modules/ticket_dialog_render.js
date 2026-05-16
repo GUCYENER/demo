@@ -163,6 +163,10 @@ function renderConversationThread(messages) {
             } else {
                 content = `<span class="thread-quick-reply">${escapeHtml(content)}</span>`;
             }
+        } else if (isUser) {
+            // v3.19.2: User mesajları düz metin — formatSolution (solution_display key-value
+            // parser) "fsdfsdf" gibi serbest metni boş render edebiliyor. Sadece escape et.
+            content = `<p>${escapeHtml(content).replace(/\n/g, '<br>')}</p>`;
         } else {
             // Normal mesaj için Markdown formatla
             content = formatSolution(content);

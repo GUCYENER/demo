@@ -280,7 +280,16 @@ window.DialogChatModule = (function () {
             const token = localStorage.getItem('access_token');
             if (!token) return;
 
-            // 1️⃣ Aktif dialog'u kontrol et
+            // v3.19.2: Yeni login sonrası temiz başla — eski aktif dialog'a devam etme
+            const freshLogin = sessionStorage.getItem('vyra_fresh_login');
+            if (freshLogin) {
+                sessionStorage.removeItem('vyra_fresh_login');
+                console.log('[DialogChat] Fresh login — yeni dialog ile başlanıyor');
+                await createInitialDialogBackground();
+                return;
+            }
+
+            // 1️⃣ Aktif dialog'u kontrol et (F5/refresh durumlarında devam için)
             const checkResponse = await fetch(`${API_BASE}/dialogs/active`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
@@ -2153,12 +2162,13 @@ window.DialogChatModule = (function () {
         }
     }
 
-    function addSystemMessage(content) {
+    function addSystemMessage(content, extraClass = '') {
         const container = document.getElementById('dialogMessages');
         if (!container) return;
 
+        const rowClass = `message-row assistant${extraClass ? ' ' + extraClass : ''}`;
         const html = `
-            <div class="message-row assistant">
+            <div class="${rowClass}">
                 <div class="message-header-row">
                     <div class="message-avatar vyra">${_appInitial()}</div>
                     <span class="message-sender-name">${_appName()}</span>
@@ -2171,6 +2181,16 @@ window.DialogChatModule = (function () {
 
         container.insertAdjacentHTML('beforeend', html);
         scrollToBottom();
+    }
+
+    // v3.19.3: Mod değişim sistem mesajlarının üst üste birikmesini engelle.
+    // Önceki mode-info satırlarını temizle, sonra yenisini ekle.
+    function addModeInfoMessage(content) {
+        const container = document.getElementById('dialogMessages');
+        if (container) {
+            container.querySelectorAll('.mode-info-msg').forEach(el => el.remove());
+        }
+        addSystemMessage(content, 'mode-info-msg');
     }
 
     function clearMessages() {
@@ -2642,7 +2662,7 @@ window.DialogChatModule = (function () {
             if (mdb) mdb.classList.remove('selected');
             if (mch) mch.classList.add('selected');
             showToast('info', '💬 ' + _appName() + ' sohbet modu aktif');
-            addSystemMessage('💬 ' + _appName() + ' ile sohbet moduna geçildi.');
+            addModeInfoMessage('💬 ' + _appName() + ' ile sohbet moduna geçildi.');
         },
         switchToRagMode: () => {
             // v3.16.0: DB→başka moda geçişte follow-up anchor'ı temizle
@@ -2657,7 +2677,7 @@ window.DialogChatModule = (function () {
             if (mdb) mdb.classList.remove('selected');
             if (mch) mch.classList.remove('selected');
             showToast('info', '📚 Bilgi tabanında arama modu aktif');
-            addSystemMessage('📚 Bilgi tabanında arama modu aktif.');
+            addModeInfoMessage('📚 Bilgi tabanında arama modu aktif.');
         },
         switchToDbMode: () => {
             chatMode = 'db';
@@ -2670,7 +2690,7 @@ window.DialogChatModule = (function () {
             if (mdb) mdb.classList.add('selected');
             if (mch) mch.classList.remove('selected');
             showToast('info', '🗄️ Veritabanında arama modu aktif');
-            addSystemMessage('🗄️ Veritabanında arama moduna geçildi. Tablolardaki verilere doğrudan sorgu atabilirsiniz.');
+            addModeInfoMessage('🗄️ Veritabanında arama moduna geçildi. Tablolardaki verilere doğrudan sorgu atabilirsiniz.');
         },
         toggleChatMode: () => {
             if (chatMode === 'rag') {

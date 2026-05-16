@@ -75,6 +75,69 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.19.3 (2026-05-16) - Mode-switch sistem mesaj birikme fix + Geçmiş badge/filtre + fresh-login
+- ✅ **Sohbet alanı — sekme değişiminde sistem mesajı birikmesi giderildi:**
+  - `addSystemMessage(content, extraClass)` artık opsiyonel CSS class alıyor; yeni `addModeInfoMessage()` helper'ı önceki `.mode-info-msg` satırlarını temizleyip yenisini ekler.
+  - `switchToRagMode` / `switchToDbMode` / `switchToLlmMode` artık `addModeInfoMessage` çağırıyor → ekranda yalnızca seçili modun bilgi mesajı görünüyor; karşılama mesajı korunur.
+- ✅ **Geçmiş Çözümler — mod bazlı tür rozeti & filtre:**
+  - `app/services/dialog/crud.py`: `last_user_modes` CTE'si son user mesajının `metadata->>'source_type'` değerini çıkarır; sorgu `effective_source_type` döner.
+  - `ticket_history.js`: `effective_source_type` → rozet (KB=mavi/DB=yeşil/LLM=mor), filtre Tür değeri (`vyra_chat|vyra_db|vyra_llm`) SQL WHERE'a eşlenir.
+  - `ticket-history.css`: `badge-kb` / `badge-db` / `badge-llm` marka rengi.
+- ✅ **Sub-tab dinamik etiket:** `home.html#tabDialogLabel` aktif moda göre "Bilgi Tabanında Ara / Veritabanında Ara / Sohbet" olarak güncellenir; `feature_permissions_module._applyChatModeFallback` artık `window.selectChatMode()` üzerinden geçerek tek-yetkili kullanıcıda da label senkron kalır.
+- ✅ **Fresh login temiz state:** `login.html` token saklarken `sessionStorage.vyra_fresh_login='1'`; `dialog_chat.js` aktif dialog devamı yerine yeni dialog açar.
+- ✅ **Kullanıcı mesajı escape:** `ticket_dialog_render.renderConversationThread` user mesajlarında `formatSolution` yerine `escapeHtml` (serbest metin boş render bug fix).
+- ✅ **DB hata mesajı temizlendi:** `deep_think_service.py` — yanıltıcı "Sorgunuz oluşturulurken bir problem yaşandı:" başlığı kaldırıldı; sadece sanitize edilmiş not gösterilir.
+
+### v3.19.0 (2026-05-16) - UI/UX Polish + HEBE Pre-Plan Gate + Feature Perm Strict Mode
+- ✅ **UI/UX Polish (SaaS standardları):**
+  - `assets/css/modules/_tooltip.css` — CSS-only `[data-tooltip]` helper (top/bottom/left/right, hover + focus-visible, light theme override)
+  - Veri Kaynağı yetki modalı: ESC + click-outside + return-focus + `role="dialog"` + `aria-labelledby` + ikon butonlarında aria-label & data-tooltip
+  - Veri Kaynağı + Sistem Özelliği yetki kaydet butonu: loading state (spinner + "Kaydediliyor...")
+  - `alert()` / native dialog kullanımı kaldırıldı; tüm bildirimler `window.showToast(msg, type)`
+  - Sistem Özelliği panel kartlarına marka renk aksanları: `kb=mavi`, `db=yeşil`, `llm=mor` (3 px left-border + icon color)
+  - Kaydetme hatası mesajı insan-okuyabilir formata düzleştirildi (FastAPI 422 detail array → `field: msg`)
+- ✅ **Feature Permission Strict Mode (semantic fix):**
+  - Eski davranış: `feature_permissions` tabloda satır yoksa o feature herkese açık → admin sadece `db` atayınca kullanıcı yine `kb` ve `llm`'i de görüyordu (bug).
+  - Yeni davranış: Tabloda **en az bir kayıt** varsa **strict mode** aktif → her feature için açık izin (user-allow veya org-allow) gerekir; kayıt yoksa varsayılan gizli. Tablo tamamen boşken (ilk kurulum) eski "herkes görür" davranışı korunur. Admin her zaman hepsini görür. Panel info banner güncellendi.
+- ✅ **Geçmiş Çözümler — Tür filtresi feature-permission bazlı:**
+  - `sourceTypeFilter` dropdown'a `kb / db / llm` option'ları + `data-feature-key` eklendi
+  - Kullanıcının izinli olmadığı seçenekler `hidden + disabled` yapılır; tek seçenek "Tümü" kalırsa wrapper tamamen gizlenir
+  - `feature_permissions_module.js` `applyMyFeaturePermissions` çağrısı sonunda `vyra:feature-perms-ready` event dispatch eder; `ticket_history.js` bu event'i dinleyip dropdown'u günceller
+- ✅ **HEBE Pre-Plan UI/UX Polish Gate (workflow):**
+  - `.agents/workflows/vyrazeus.md` Bölüm 5c eklendi — UI yüzeyi dokunulan her görevde, plan/konsey kararı **öncesi** HEBE checklist (toast/modal/tooltip/aria/marka renkleri/a11y/FOUC) sessizce çalışır
+  - HEBE konsey üyesi olarak Bölüm 2 ve MOD 3 listesine eklendi
+  - Memory feedback (`feedback_ui_saas_standard.md`) güncellendi: SaaS kuralları default kabul, sapma için onay
+- ✅ **Build sistemine `_tooltip.css` ve `feature_permissions.css` eklendi**
+
+### 🆕 v3.18.0 (2026-05-16) - Sistem Özelliği Yetkilendirmesi + Permission Audit Log
+- ✅ **Yeni tablo:** `feature_permissions` (feature_key + polymorphic subject_type='user'|'org' + effect='allow|deny'). user-level DENY > org-level ALLOW.
+- ✅ **Yeni tablo:** `permission_audit_log` (data_source ve feature izin değişiklikleri için compliance/forensic log).
+- ✅ **Backend:**
+  - `GET /api/feature-permissions/my` — mevcut kullanıcının 3 mod (kb/db/llm) için görünürlüğü
+  - `GET /api/feature-permissions/admin` — admin: tüm feature → user/org atamaları
+  - `PUT /api/feature-permissions/{feature_key}` — admin: tam-replace güncelleme (user_allow/user_deny/org_allow listeleri)
+  - `GET /api/feature-permissions/audit` — admin: son N izin değişikliği log kayıdı
+  - `app/services/permission_audit.py` — generic audit helper, hem `data_source_permissions` PUT (retro-fix) hem yeni feature PUT çağrılarında kullanılır.
+- ✅ **Çözüm Mantığı:** Admin her zaman görür → user 'deny' kaydı varsa gizler → user 'allow' kaydı varsa gösterir → user'ın üye olduğu org'ta 'allow' varsa gösterir → hiç kayıt yoksa varsayılan göster (geriye uyumlu).
+- ✅ **Frontend:**
+  - Ana sayfa 3 mode-card'a `data-feature-key="kb|db|llm"` eklendi
+  - Sayfa açılırken `/api/feature-permissions/my` çağrılır, izinsiz kartlar `display:none`
+  - Hepsi yasaksa empty state: "Sistem yöneticinize başvurun"
+  - `chatMode` fallback: 'rag' yetkisi yoksa ilk izinli moda otomatik geçer
+  - `selectChatMode` guard: yetkisi olmayan moda tıklanırsa toast uyarısı
+- ✅ **Admin paneli:** Yetkilendirme → "Sistem Özellikleri" yeni sub-tab. 3 feature için 3 sekmeli kart (Org / Kullanıcı İzinli / Kullanıcı Hariç). Conflict resolution: aynı kullanıcı hem allow hem deny seçilemez (deny kazanır).
+- ✅ **FOUC önleme:** `feature-perm-pending` class'ı ile mode-cards opacity:0, izin yüklenince fade-in.
+
+### v3.17.0 (2026-05-16) - Kaynak Bazlı Kullanıcı/Org Yetkilendirme
+- ✅ **Yeni tablo:** `data_source_permissions` (polymorphic subject_type='user'|'org', subject_id, can_view, can_execute). Kaynak silinince CASCADE.
+- ✅ **Backend:**
+  - `GET /api/data-sources/{id}/permissions` — kaynağa atanmış user/org listesi (admin)
+  - `PUT /api/data-sources/{id}/permissions` — tam-replace güncelleme (user_ids/org_ids + can_execute listeleri)
+  - `GET /api/data-sources/permissions/subjects` — modal için seçilebilir user/org listesi
+  - `GET /api/data-sources/` artık admin-dışı kullanıcılar için **yalnızca yetki verilmiş kaynakları** döner. Yetki yoksa kaynak görünmez (sıkı default).
+- ✅ **Frontend:** Kaynak kartında sil ikonunun sağına kalkan (🛡) ikonu eklendi. Tıklanınca 2 sekmeli modal açılır (Kullanıcılar / Org Grupları), arama + her satırda görüntüleme/çalıştırma checkbox'ları. Çalıştırma seçildiğinde görüntüleme otomatik açılır.
+- ✅ **Güvenlik:** Yetki endpoint'leri yalnızca admin erişimine açık. `can_execute` view'ı zorunlu kılar.
+
 ### 🆕 v3.16.0 (2026-05-15) - DB Modu Follow-up Bağlamı
 - ✅ **Önceki sorgu üzerinde devam:** DB modunda cevap aldıktan sonra follow-up chip listesinin başında "🔗 Önceki konu ile ilgili soru sor" badge görünür. Tıklanınca bir sonraki mesaj önceki SQL üzerinde modifikasyon olarak işlenir (yeni kolon ekle, filtre değiştir, sırala vb.).
 - ✅ **Backend prompt mühendisliği:** `text_to_sql.build_text_to_sql_prompt` `follow_up_context` parametresi alır. Mevcutsa prev_sql + prev_columns prompt'a enjekte edilir, "aynı FROM/JOIN/WHERE'i koru, sadece istenen değişikliği uygula" kuralı eklenir. Temperature 0.05'e düşer (minimal modifikasyon).
@@ -3541,7 +3604,7 @@ netstat -an | findstr "5005"
 
 **Geliştirici:** Yasın Fazlıoğlu  
 **E-posta:** yasin.fazlioglu@consultant.turkcell.com.tr  
-**Versiyon:** 3.16.0 (DB Modu Follow-up Bağlamı — Önceki Sorgu Üzerinde Devam)
+**Versiyon:** 3.18.0 (Sistem Özelliği Yetkilendirmesi + Permission Audit Log)
 
 ---
 
