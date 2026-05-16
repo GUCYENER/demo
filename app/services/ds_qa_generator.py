@@ -485,7 +485,9 @@ def _build_column_text(table_name: str, schema: str, col: dict,
     nullable = bool(col.get("nullable", True))
 
     bname_col = enr.get("business_name_tr") or enr.get("admin_label_tr") or ""
-    description = enr.get("description_tr") or ""
+    # Faz 2f: native DB comment'i öncelikli, enrichment ikincil
+    native_comment = col.get("comment") or ""
+    description = enr.get("description_tr") or native_comment
     synonyms = enr.get("synonyms", []) or []
     semantic_type = enr.get("semantic_type") or "other"
     is_searchable = bool(enr.get("is_searchable"))
@@ -495,6 +497,9 @@ def _build_column_text(table_name: str, schema: str, col: dict,
         lines.append(f"İş Adı: {bname_col}")
     if description:
         lines.append(f"Açıklama: {description}")
+    if native_comment and enr.get("description_tr") and native_comment != enr.get("description_tr"):
+        # Hem native hem enrichment varsa, native'ı DBA bilgisi olarak ayrıca ekle
+        lines.append(f"DBA Notu: {native_comment}")
     if synonyms:
         lines.append(f"Eşanlamlılar: {', '.join(str(s) for s in synonyms[:8])}")
     lines.append(f"Semantik Tip: {semantic_type}")
@@ -650,7 +655,8 @@ def populate_column_embeddings(source_id: int, vyra_conn, emb_mgr=None) -> dict:
                 "synonyms": enr.get("synonyms", []) or [],
                 "semantic_type": enr.get("semantic_type") or "other",
                 "sample_values": hints[:8],
-                "description": enr.get("description_tr") or "",
+                # Faz 2f: native DB comment fallback
+                "description": enr.get("description_tr") or col.get("comment") or "",
                 "text": text,
             })
 

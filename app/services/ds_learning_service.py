@@ -303,6 +303,51 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                        est_row[1] if isinstance(est_row, tuple) else est_row["relname"])
                 row_estimates[key] = est_row[2] if isinstance(est_row, tuple) else est_row["n_live_tup"]
 
+            # ── Faz 2f: Native comment okuma (POSEIDON audit) ──
+            # Kolon yorumları: col_description((schema.table)::regclass, ordinal_position)
+            col_comments = {}  # (schema, table, column) → comment
+            try:
+                cur.execute("""
+                    SELECT n.nspname AS schema_name, c.relname AS table_name,
+                           a.attname AS column_name,
+                           pg_catalog.col_description(a.attrelid, a.attnum) AS comment
+                    FROM pg_catalog.pg_attribute a
+                    JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+                    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                    WHERE a.attnum > 0 AND NOT a.attisdropped
+                      AND c.relkind IN ('r','v','m','f','p')
+                      AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
+                """)
+                for r in cur.fetchall():
+                    schema_n = r[0] if isinstance(r, tuple) else r["schema_name"]
+                    table_n  = r[1] if isinstance(r, tuple) else r["table_name"]
+                    col_n    = r[2] if isinstance(r, tuple) else r["column_name"]
+                    cmt      = r[3] if isinstance(r, tuple) else r["comment"]
+                    if cmt:
+                        col_comments[(schema_n, table_n, col_n)] = cmt
+            except Exception as cmt_err:
+                logger.warning(f"[Discovery][PG] col_description okuma hata: {cmt_err}")
+
+            # Tablo yorumları: obj_description(c.oid)
+            tbl_comments = {}
+            try:
+                cur.execute("""
+                    SELECT n.nspname AS schema_name, c.relname AS table_name,
+                           pg_catalog.obj_description(c.oid) AS comment
+                    FROM pg_catalog.pg_class c
+                    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                    WHERE c.relkind IN ('r','v','m','f','p')
+                      AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
+                """)
+                for r in cur.fetchall():
+                    schema_n = r[0] if isinstance(r, tuple) else r["schema_name"]
+                    table_n  = r[1] if isinstance(r, tuple) else r["table_name"]
+                    cmt      = r[2] if isinstance(r, tuple) else r["comment"]
+                    if cmt:
+                        tbl_comments[(schema_n, table_n)] = cmt
+            except Exception as cmt_err:
+                logger.warning(f"[Discovery][PG] obj_description okuma hata: {cmt_err}")
+
             # ── Objeleri birleştir ──
             for row in tables:
                 schema_name, table_name, table_type = row[0], row[1], row[2]
@@ -315,20 +360,29 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                 pk_cols = all_pks.get(key, set())
                 for c in columns:
                     c["is_pk"] = c["name"] in pk_cols
+                    # Faz 2f: native kolon yorumu
+                    cmt = col_comments.get((schema_name, table_name, c["name"]))
+                    if cmt:
+                        c["comment"] = cmt
 
                 # Tahmini satır sayısı
                 row_estimate = 0
                 if obj_type == "table":
                     row_estimate = max(0, row_estimates.get(key, 0))
 
-                objects.append({
+                obj_entry = {
                     "schema_name": schema_name,
                     "object_name": table_name,
                     "object_type": obj_type,
                     "column_count": len(columns),
                     "row_count_estimate": row_estimate,
                     "columns_json": columns
-                })
+                }
+                # Faz 2f: native tablo yorumu
+                t_cmt = tbl_comments.get((schema_name, table_name))
+                if t_cmt:
+                    obj_entry["description"] = t_cmt
+                objects.append(obj_entry)
 
             # FK İlişkileri — pg_catalog üzerinden
             # information_schema.constraint_column_usage sadece constraint sahibine veri döndürür
@@ -470,6 +524,56 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                     all_pks[key] = set()
                 all_pks[key].add(pc)
 
+            # ── Faz 2f: Native comment okuma (MSSQL sys.extended_properties / MS_Description) ──
+            mssql_col_comments = {}
+            mssql_tbl_comments = {}
+            try:
+                cur.execute("""
+                    SELECT SCHEMA_NAME(t.schema_id) AS schema_name,
+                           t.name AS table_name,
+                           c.name AS column_name,
+                           CAST(ep.value AS NVARCHAR(MAX)) AS comment
+                    FROM sys.tables t
+                    JOIN sys.columns c ON c.object_id = t.object_id
+                    LEFT JOIN sys.extended_properties ep
+                           ON ep.major_id = c.object_id
+                          AND ep.minor_id = c.column_id
+                          AND ep.name = 'MS_Description'
+                          AND ep.class = 1
+                    WHERE ep.value IS NOT NULL
+                """)
+                for r in cur.fetchall():
+                    sch = r["schema_name"] if isinstance(r, dict) else r[0]
+                    tbl = r["table_name"] if isinstance(r, dict) else r[1]
+                    col = r["column_name"] if isinstance(r, dict) else r[2]
+                    cmt = r["comment"] if isinstance(r, dict) else r[3]
+                    if cmt:
+                        mssql_col_comments[(sch, tbl, col)] = cmt
+            except Exception as cmt_err:
+                logger.warning(f"[Discovery][MSSQL] col comment hata: {cmt_err}")
+
+            try:
+                cur.execute("""
+                    SELECT SCHEMA_NAME(t.schema_id) AS schema_name,
+                           t.name AS table_name,
+                           CAST(ep.value AS NVARCHAR(MAX)) AS comment
+                    FROM sys.tables t
+                    JOIN sys.extended_properties ep
+                           ON ep.major_id = t.object_id
+                          AND ep.minor_id = 0
+                          AND ep.name = 'MS_Description'
+                          AND ep.class = 1
+                    WHERE ep.value IS NOT NULL
+                """)
+                for r in cur.fetchall():
+                    sch = r["schema_name"] if isinstance(r, dict) else r[0]
+                    tbl = r["table_name"] if isinstance(r, dict) else r[1]
+                    cmt = r["comment"] if isinstance(r, dict) else r[2]
+                    if cmt:
+                        mssql_tbl_comments[(sch, tbl)] = cmt
+            except Exception as cmt_err:
+                logger.warning(f"[Discovery][MSSQL] tablo comment hata: {cmt_err}")
+
             # ── Objeleri birleştir ──
             for row in tables:
                 schema_name = row["TABLE_SCHEMA"] if isinstance(row, dict) else row[0]
@@ -484,15 +588,24 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                 pk_cols = all_pks.get(key, set())
                 for c in columns:
                     c["is_pk"] = c["name"] in pk_cols
+                    # Faz 2f: native kolon yorumu
+                    cmt = mssql_col_comments.get((schema_name, table_name, c["name"]))
+                    if cmt:
+                        c["comment"] = cmt
 
-                objects.append({
+                obj_entry = {
                     "schema_name": schema_name,
                     "object_name": table_name,
                     "object_type": obj_type,
                     "column_count": len(columns),
                     "row_count_estimate": 0,
                     "columns_json": columns
-                })
+                }
+                # Faz 2f: native tablo yorumu
+                t_cmt = mssql_tbl_comments.get((schema_name, table_name))
+                if t_cmt:
+                    obj_entry["description"] = t_cmt
+                objects.append(obj_entry)
 
             # MSSQL FK İlişkileri
             cur.execute("""
@@ -525,8 +638,9 @@ def detect_objects(source: dict, vyra_conn) -> dict:
 
         elif db_dialect == "mysql":
             db_name = source.get("db_name", "")
+            # Faz 2f: TABLE_COMMENT da çekiyoruz
             cur.execute("""
-                SELECT TABLE_NAME, TABLE_TYPE, TABLE_ROWS
+                SELECT TABLE_NAME, TABLE_TYPE, TABLE_ROWS, TABLE_COMMENT
                 FROM INFORMATION_SCHEMA.TABLES
                 WHERE TABLE_SCHEMA = %s
                 ORDER BY TABLE_NAME
@@ -537,10 +651,12 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                 table_name = row.get("TABLE_NAME", "") if isinstance(row, dict) else row[0]
                 table_type = row.get("TABLE_TYPE", "") if isinstance(row, dict) else row[1]
                 table_rows = row.get("TABLE_ROWS", 0) if isinstance(row, dict) else row[2]
+                table_comment = (row.get("TABLE_COMMENT", "") if isinstance(row, dict) else (row[3] if len(row) > 3 else "")) or ""
                 obj_type = "table" if table_type == "BASE TABLE" else "view"
 
+                # Faz 2f: COLUMN_COMMENT da çekiyoruz
                 cur.execute("""
-                    SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY
+                    SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY, COLUMN_COMMENT
                     FROM INFORMATION_SCHEMA.COLUMNS
                     WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s
                     ORDER BY ORDINAL_POSITION
@@ -552,21 +668,28 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                     nullable = col.get("IS_NULLABLE", "") if isinstance(col, dict) else col[2]
                     default = col.get("COLUMN_DEFAULT", None) if isinstance(col, dict) else col[3]
                     key = col.get("COLUMN_KEY", "") if isinstance(col, dict) else col[4]
-                    columns.append({
+                    col_comment = (col.get("COLUMN_COMMENT", "") if isinstance(col, dict) else (col[5] if len(col) > 5 else "")) or ""
+                    entry = {
                         "name": cn, "data_type": dt,
                         "is_nullable": nullable == "YES",
                         "default_val": str(default) if default else None,
                         "is_pk": key == "PRI"
-                    })
+                    }
+                    if col_comment:
+                        entry["comment"] = col_comment
+                    columns.append(entry)
 
-                objects.append({
+                obj_entry = {
                     "schema_name": db_name,
                     "object_name": table_name,
                     "object_type": obj_type,
                     "column_count": len(columns),
                     "row_count_estimate": table_rows or 0,
                     "columns_json": columns
-                })
+                }
+                if table_comment:
+                    obj_entry["description"] = table_comment
+                objects.append(obj_entry)
 
             # MySQL FK İlişkileri
             cur.execute("""
@@ -695,6 +818,37 @@ def detect_objects(source: dict, vyra_conn) -> dict:
             except Exception as pk_err:
                 logger.error("[DSLearning] Oracle toplu PK sorgusu hatası: %s", str(pk_err)[:300])
 
+            # ── Faz 2f: Native comment (Oracle all_col_comments / all_tab_comments) ──
+            oracle_col_comments = {}  # (owner, table, column) → comment
+            oracle_tbl_comments = {}  # (owner, table) → comment
+            try:
+                cur.execute(f"""
+                    SELECT owner, table_name, column_name, comments
+                    FROM all_col_comments
+                    WHERE owner NOT IN ({exclude_placeholders})
+                      AND comments IS NOT NULL
+                """)
+                for r in cur.fetchall():
+                    if r[3]:
+                        oracle_col_comments[(r[0], r[1], r[2])] = r[3]
+                logger.info("[DSLearning] Oracle kolon comment: %d", len(oracle_col_comments))
+            except Exception as e:
+                logger.warning("[DSLearning] Oracle all_col_comments hata: %s", str(e)[:200])
+
+            try:
+                cur.execute(f"""
+                    SELECT owner, table_name, comments
+                    FROM all_tab_comments
+                    WHERE owner NOT IN ({exclude_placeholders})
+                      AND comments IS NOT NULL
+                """)
+                for r in cur.fetchall():
+                    if r[2]:
+                        oracle_tbl_comments[(r[0], r[1])] = r[2]
+                logger.info("[DSLearning] Oracle tablo comment: %d", len(oracle_tbl_comments))
+            except Exception as e:
+                logger.warning("[DSLearning] Oracle all_tab_comments hata: %s", str(e)[:200])
+
             # ── Objeleri birleştir ──
             for row in all_objects:
                 obj_owner = row[0]
@@ -710,15 +864,24 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                 pk_cols = all_pks.get(key, set())
                 for c in columns:
                     c["is_pk"] = c["name"] in pk_cols
+                    # Faz 2f: native kolon yorumu
+                    cmt = oracle_col_comments.get((obj_owner, obj_name, c["name"]))
+                    if cmt:
+                        c["comment"] = cmt
 
-                objects.append({
+                obj_entry = {
                     "schema_name": obj_owner,
                     "object_name": obj_name,
                     "object_type": obj_type,
                     "column_count": len(columns),
                     "row_count_estimate": row_estimate,
                     "columns_json": columns
-                })
+                }
+                # Faz 2f: native tablo yorumu
+                t_cmt = oracle_tbl_comments.get((obj_owner, obj_name))
+                if t_cmt:
+                    obj_entry["description"] = t_cmt
+                objects.append(obj_entry)
 
             # Oracle FK İlişkileri
             try:
