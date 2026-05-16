@@ -75,7 +75,15 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
-### 🆕 v3.19.3 (2026-05-16) - Mode-switch sistem mesaj birikme fix + Geçmiş badge/filtre + fresh-login
+### 🆕 v3.19.4 (2026-05-17) - Faz 0: Agentic SQL Copilot Master Plan + LangGraph Pipeline İskelet (Hijyen)
+- 📋 **Master Plan oluşturuldu:** `.agents/plans/agentic_sql_copilot_master_plan.md` — 6 fazlı (RLS → column-embed/hybrid → multi-signal+LangGraph → user-pref+self-heal → CatBoost modelleri+AST+drag-drop → streaming+observability) yol haritası.
+- 🏗️ **Pipeline iskeleti (`app/services/pipeline/`):** LangGraph state machine için boş node'lar, `state.py` (TypedDict), `graph.py` (boş skeleton), `README.md` mimari doküman.
+- 🧪 **Test_Senaryolari.md:** 7 E2E senaryo + multi-dialect smoke test plan.
+- 🔍 **POSEIDON inceleme:** Discovery'de Oracle `ALL_COL_COMMENTS` / MSSQL `extended_properties` okuma durumu doğrulandı (raporu `.agents/plans/` altında).
+- 📦 **Versiyon footer:** v3.18.0 → v3.19.4 senkron (README başlık tutarlılık fix).
+- ✅ **Hiç runtime kodu değişmedi** — Faz 0 sadece doküman + iskelet. Production etkisi yok.
+
+### v3.19.3 (2026-05-16) - Mode-switch sistem mesaj birikme fix + Geçmiş badge/filtre + fresh-login
 - ✅ **Sohbet alanı — sekme değişiminde sistem mesajı birikmesi giderildi:**
   - `addSystemMessage(content, extraClass)` artık opsiyonel CSS class alıyor; yeni `addModeInfoMessage()` helper'ı önceki `.mode-info-msg` satırlarını temizleyip yenisini ekler.
   - `switchToRagMode` / `switchToDbMode` / `switchToLlmMode` artık `addModeInfoMessage` çağırıyor → ekranda yalnızca seçili modun bilgi mesajı görünüyor; karşılama mesajı korunur.
@@ -3604,7 +3612,7 @@ netstat -an | findstr "5005"
 
 **Geliştirici:** Yasın Fazlıoğlu  
 **E-posta:** yasin.fazlioglu@consultant.turkcell.com.tr  
-**Versiyon:** 3.18.0 (Sistem Özelliği Yetkilendirmesi + Permission Audit Log)
+**Versiyon:** 3.19.4 (Faz 0 — Hijyen + LangGraph Pipeline İskelet + Agentic SQL Copilot Master Plan)
 
 ---
 
