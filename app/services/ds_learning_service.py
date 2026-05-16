@@ -1433,33 +1433,48 @@ def get_job_result_stats(vyra_conn, source_id: int) -> list:
 
 
 
-def search_db_knowledge(query: str, company_id: int = None, min_score: float = 0.35, max_results: int = 3) -> list:
+def search_db_knowledge(query: str, company_id: int = None, min_score: float = 0.35, max_results: int = 3, source_id: int = None) -> list:
     """
     Önceden öğrenilmiş DB bilgilerinde cosine similarity araması yapar.
-    
+
     Args:
         query: Kullanıcı sorusu
         company_id: Firma filtresi (opsiyonel)
         min_score: Minimum benzerlik skoru
         max_results: Maksimum sonuç sayısı
-    
+        source_id: v3.20.0 Faz 1c — verilirse arama o kaynağa RLS-scope edilir.
+                   Verilmezse cross-source legacy davranış (bypass=True) sürer.
+
     Returns:
         List[dict]: [{content, score, source_name, content_type, metadata}]
     """
     try:
         from app.services.rag.embedding import EmbeddingManager
         from app.services.rag import scoring
-        from app.core.db import get_db_conn
+        # v3.20.0 Faz 1c: ds_learning_results RLS koruma altında. source_id verilmezse
+        # cross-source taranır (admin/RAG path) → bypass; verilmişse o kaynağa scope.
+        from app.core.db import get_db_context_scoped
 
         emb_mgr = EmbeddingManager()
         query_embedding = emb_mgr.get_embedding(query)
 
-        conn = get_db_conn()
-        try:
+        scoped_kwargs = {"source_id": source_id} if source_id is not None else {"bypass": True}
+        with get_db_context_scoped(**scoped_kwargs) as conn:
             cur = conn.cursor()
 
-            # source_id'leri company filtresine göre bul
-            if company_id:
+            # source_id verilmişse en spesifik filtre; yoksa company / hepsi
+            if source_id is not None:
+                cur.execute("""
+                    SELECT lr.id, lr.content_text, lr.embedding, lr.content_type, lr.metadata, lr.score AS base_score,
+                           ds.name AS source_name
+                    FROM ds_learning_results lr
+                    JOIN data_sources ds ON lr.source_id = ds.id
+                    WHERE lr.source_id = %s
+                      AND lr.embedding IS NOT NULL
+                      AND lr.is_valid = TRUE
+                      AND lr.content_type = 'schema_record'
+                """, (source_id,))
+            elif company_id:
                 cur.execute("""
                     SELECT lr.id, lr.content_text, lr.embedding, lr.content_type, lr.metadata, lr.score AS base_score,
                            ds.name AS source_name
@@ -1482,8 +1497,6 @@ def search_db_knowledge(query: str, company_id: int = None, min_score: float = 0
                 """)
 
             rows = cur.fetchall()
-        finally:
-            conn.close()
 
         if not rows:
             return []
