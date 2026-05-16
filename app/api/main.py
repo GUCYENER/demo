@@ -12,7 +12,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import auth, chat, health, rag as rag_routes, tickets, llm_config, prompts, users, system, websocket as ws_routes, organizations, feedback, dialog, permissions, assets, ldap_settings, domain_org_api, widget as widget_routes, companies, address, data_sources_api, sql_audit_api, themes, db_export
+from app.api.routes import auth, chat, health, rag as rag_routes, tickets, llm_config, prompts, users, system, websocket as ws_routes, organizations, feedback, dialog, permissions, assets, ldap_settings, domain_org_api, widget as widget_routes, companies, address, data_sources_api, sql_audit_api, themes, db_export, feature_permissions, agentic_query_api
 from app.core.config import settings
 from app.core.db import init_db
 from app.core.rate_limiter import limiter, get_rate_limit_handler, get_rate_limit_exception
@@ -274,6 +274,8 @@ def create_app() -> FastAPI:
     app.include_router(sql_audit_api.router)  # v2.58.0 - SQL Audit Dashboard
     app.include_router(themes.router)  # v2.59.0 - Company Themes Branding
     app.include_router(db_export.router)  # v4.0.0 - DB Export (Excel/Word/PDF)
+    app.include_router(feature_permissions.router)  # v3.18.0 - Feature Visibility Permissions
+    app.include_router(agentic_query_api.router)  # v3.24.0 - Faz 5f - Agentic Query / Preferences / Few-shots / ML
 
     from pathlib import Path
     from fastapi.responses import FileResponse
