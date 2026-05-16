@@ -267,15 +267,38 @@ def multi_signal_rank_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     LangGraph node fonksiyonu — `QueryState`'i okur ve günceller.
     Pure Python — LangGraph bağımlılığı yok; sadece dict in/out.
+
+    Faz 4e: scoring_weights state'te yoksa user_preferences'tan yükler;
+    sonra preferred/blacklisted table filter'ını uygular.
     """
     candidates = state.get("candidates") or []
     query = state.get("question") or ""
+
+    # Faz 4e — user_preferences entegrasyonu (best-effort)
+    weights = state.get("scoring_weights")
+    user_prefs = state.get("user_preferences")
+    if weights is None and user_prefs:
+        try:
+            from app.services.user_preferences_service import apply_weight_overrides
+            weights = apply_weight_overrides(DEFAULT_WEIGHTS, user_prefs)
+        except Exception:
+            weights = None
+
     ranked = multi_signal_rank(
         candidates, query,
         column_index=state.get("column_index"),
         centrality_index=state.get("centrality_index"),
         recency_index=state.get("recency_index"),
         freq_index=state.get("freq_index"),
-        weights=state.get("scoring_weights"),
+        weights=weights,
     )
+
+    # Faz 4e — preferred/blacklisted filter
+    if user_prefs:
+        try:
+            from app.services.user_preferences_service import apply_table_filters
+            ranked = apply_table_filters(ranked, user_prefs)
+        except Exception:
+            pass
+
     return {"ranked_candidates": ranked}

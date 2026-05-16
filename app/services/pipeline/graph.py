@@ -46,6 +46,7 @@ import logging
 
 from .state import QueryState  # noqa: F401  (re-export için)
 from .nodes import (
+    load_prefs_node,
     intent_extract_node,
     query_expand_node,
     retrieve_node,
@@ -81,6 +82,7 @@ def build_query_graph(checkpointer=None):
         )
 
     g = StateGraph(dict)  # State tipi dict (TypedDict QueryState)
+    g.add_node("load_prefs", load_prefs_node)
     g.add_node("intent_extract", intent_extract_node)
     g.add_node("query_expand", query_expand_node)
     g.add_node("retrieve", retrieve_node)
@@ -92,7 +94,8 @@ def build_query_graph(checkpointer=None):
     g.add_node("self_heal", self_heal_node)
     g.add_node("execute", execute_node)
 
-    g.add_edge(START, "intent_extract")
+    g.add_edge(START, "load_prefs")
+    g.add_edge("load_prefs", "intent_extract")
     g.add_edge("intent_extract", "query_expand")
     g.add_edge("query_expand", "retrieve")
     g.add_edge("retrieve", "multi_signal_rank")
@@ -153,6 +156,7 @@ def run_pipeline(state: Dict[str, Any], mode: str = "auto") -> Dict[str, Any]:
                 out[k] = v
         return out
 
+    state = _merge(state, load_prefs_node(state))
     state = _merge(state, intent_extract_node(state))
     state = _merge(state, query_expand_node(state))
     state = _merge(state, retrieve_node(state))
