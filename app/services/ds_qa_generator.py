@@ -452,11 +452,257 @@ def generate_enriched_qa(source_id: int, vyra_conn) -> dict:
     elapsed = int((time.time() - start) * 1000)
     logger.info("[DSSchemaLearner] Tamamlandı: %d tablo, %dms", learned, elapsed)
 
+    # Faz 2c: kolon-bazlı embedding üretimi (best-effort, hata olursa tablo seviyesi yine başarılı)
+    col_learned = 0
+    try:
+        col_result = populate_column_embeddings(source_id, vyra_conn, emb_mgr=emb_mgr)
+        col_learned = col_result.get("data", {}).get("learned_columns", 0)
+    except Exception as col_err:
+        logger.warning("[DSSchemaLearner] Kolon embedding atlandi: %s", col_err)
+
     return {
         "success": True,
         "data": {
             "learned_tables": learned,
+            "learned_columns": col_learned,
             "elapsed_ms": elapsed,
             "tables": [r["table_name"] for r in records],
         }
     }
+
+
+# =====================================================
+# Faz 2c — Kolon-bazlı Embedding (ds_column_embeddings)
+# =====================================================
+
+def _build_column_text(table_name: str, schema: str, col: dict,
+                        enr: dict, value_hints: list) -> str:
+    """Tek kolon için zengin açıklama metni — embedding ve TSV kaynağı."""
+    full_table = f"{schema}.{table_name}" if schema and schema not in ("", "public") else table_name
+    col_name = col.get("name", "")
+    data_type = col.get("data_type", "")
+    is_pk = bool(col.get("is_pk"))
+    nullable = bool(col.get("nullable", True))
+
+    bname_col = enr.get("business_name_tr") or enr.get("admin_label_tr") or ""
+    description = enr.get("description_tr") or ""
+    synonyms = enr.get("synonyms", []) or []
+    semantic_type = enr.get("semantic_type") or "other"
+    is_searchable = bool(enr.get("is_searchable"))
+
+    lines = [f"KOLON: {full_table}.{col_name}", f"Tip: {data_type}"]
+    if bname_col:
+        lines.append(f"İş Adı: {bname_col}")
+    if description:
+        lines.append(f"Açıklama: {description}")
+    if synonyms:
+        lines.append(f"Eşanlamlılar: {', '.join(str(s) for s in synonyms[:8])}")
+    lines.append(f"Semantik Tip: {semantic_type}")
+    if is_pk:
+        lines.append("Primary Key: evet")
+    if not nullable:
+        lines.append("Zorunlu: evet")
+    if is_searchable:
+        lines.append("Aranabilir: evet")
+    if value_hints:
+        lines.append(f"Örnek Değerler: {', '.join(str(v) for v in value_hints[:8])}")
+    return "\n".join(lines)
+
+
+def populate_column_embeddings(source_id: int, vyra_conn, emb_mgr=None) -> dict:
+    """
+    Onaylı tablolardaki her kolon için ayrı embedding üretir ve
+    ds_column_embeddings tablosuna UPSERT'ler.
+
+    RLS: caller'ın `app.current_source_id` veya `app.bypass_rls=on` ayarlı
+    olduğunu varsayar (Faz 1c sözleşmesi).
+    """
+    start = time.time()
+    cur = vyra_conn.cursor()
+
+    if emb_mgr is None:
+        try:
+            from app.services.rag.embedding import EmbeddingManager
+            emb_mgr = EmbeddingManager()
+        except Exception as e:
+            logger.error("[ColumnEmb] EmbeddingManager yüklenemedi: %s", e)
+            return {"success": False, "error": "embedding_manager_load_failed"}
+
+    # Onaylı tablolar + kolonları
+    cur.execute("""
+        SELECT te.id AS te_id, te.schema_name, te.table_name
+          FROM ds_table_enrichments te
+         WHERE te.source_id = %s AND te.is_active = TRUE AND te.admin_approved = TRUE
+    """, (source_id,))
+    approved = cur.fetchall()
+    if not approved:
+        return {"success": True, "data": {"learned_columns": 0, "elapsed_ms": 0}}
+
+    approved_names = {r["table_name"] for r in approved}
+
+    # Obje (columns_json)
+    cur.execute("""
+        SELECT schema_name, object_name, columns_json
+          FROM ds_db_objects
+         WHERE source_id = %s AND object_type = 'table'
+    """, (source_id,))
+    obj_map = {(r["schema_name"] or "", r["object_name"]): r for r in cur.fetchall()}
+
+    # Kolon enrichments
+    col_enr_map = {}
+    try:
+        cur.execute("""
+            SELECT ce.table_enrichment_id, ce.column_name,
+                   ce.business_name_tr, ce.admin_label_tr,
+                   ce.description_tr, ce.semantic_type,
+                   ce.is_key_column, ce.synonyms_json, ce.is_searchable
+              FROM ds_column_enrichments ce
+              JOIN ds_table_enrichments te ON te.id = ce.table_enrichment_id
+             WHERE te.source_id = %s AND te.is_active = TRUE AND te.admin_approved = TRUE
+        """, (source_id,))
+        for row in cur.fetchall():
+            te_id = row["table_enrichment_id"]
+            col_name = row["column_name"]
+            syns = []
+            raw = row.get("synonyms_json")
+            if raw:
+                try:
+                    syns = json.loads(raw) if isinstance(raw, str) else (raw or [])
+                except Exception:
+                    syns = []
+            col_enr_map.setdefault(te_id, {})[col_name] = {
+                "business_name_tr": row.get("business_name_tr") or "",
+                "admin_label_tr": row.get("admin_label_tr") or "",
+                "description_tr": row.get("description_tr") or "",
+                "semantic_type": row.get("semantic_type") or "other",
+                "is_key_column": row.get("is_key_column", False),
+                "is_searchable": row.get("is_searchable", False),
+                "synonyms": syns,
+            }
+    except Exception as e:
+        logger.warning("[ColumnEmb] col enrichment sorgusu hata: %s — bos map", e)
+        try:
+            vyra_conn.rollback()
+        except Exception:
+            pass
+
+    # Value hints (örnek veri)
+    samples_by_table = {}
+    try:
+        names = list(approved_names)
+        if names:
+            placeholders = ",".join(["%s"] * len(names))
+            cur.execute(f"""
+                SELECT o.object_name, s.sample_data
+                  FROM ds_db_samples s
+                  JOIN ds_db_objects o ON s.object_id = o.id
+                 WHERE s.source_id = %s AND o.object_name IN ({placeholders})
+            """, [source_id] + names)
+            for row in cur.fetchall():
+                s_data = row["sample_data"]
+                if isinstance(s_data, str):
+                    try:
+                        s_data = json.loads(s_data)
+                    except Exception:
+                        s_data = []
+                samples_by_table[row["object_name"]] = s_data if isinstance(s_data, list) else []
+    except Exception as e:
+        logger.warning("[ColumnEmb] sample sorgusu hata: %s", e)
+
+    # Per-column metinler
+    records = []
+    for enr_row in approved:
+        te_id = enr_row["te_id"]
+        schema = enr_row["schema_name"] or ""
+        table = enr_row["table_name"]
+        obj = obj_map.get((schema, table)) or obj_map.get(("", table)) or obj_map.get(("public", table))
+        if not obj:
+            continue
+        cols_raw = obj["columns_json"]
+        if isinstance(cols_raw, str):
+            try:
+                cols = json.loads(cols_raw)
+            except Exception:
+                cols = []
+        else:
+            cols = cols_raw or []
+
+        sample = samples_by_table.get(table, [])
+        col_names = [c.get("name", "") for c in cols if c.get("name")]
+        value_hints_all = _extract_value_hints(sample, col_names)
+
+        for col in cols:
+            col_name = col.get("name", "")
+            if not col_name:
+                continue
+            enr = (col_enr_map.get(te_id) or {}).get(col_name, {})
+            hints = value_hints_all.get(col_name, [])
+            text = _build_column_text(table, schema, col, enr, hints)
+            records.append({
+                "schema": schema,
+                "table": table,
+                "column": col_name,
+                "data_type": col.get("data_type"),
+                "is_nullable": bool(col.get("nullable", True)),
+                "is_pk": bool(col.get("is_pk")),
+                "is_fk": bool(col.get("is_fk")),
+                "business_name_tr": enr.get("business_name_tr") or enr.get("admin_label_tr") or None,
+                "synonyms": enr.get("synonyms", []) or [],
+                "semantic_type": enr.get("semantic_type") or "other",
+                "sample_values": hints[:8],
+                "description": enr.get("description_tr") or "",
+                "text": text,
+            })
+
+    if not records:
+        return {"success": True, "data": {"learned_columns": 0, "elapsed_ms": 0}}
+
+    # Batch embedding
+    try:
+        embeddings = emb_mgr.get_embeddings_batch([r["text"] for r in records])
+    except Exception as e:
+        logger.error("[ColumnEmb] batch embedding hata: %s", e)
+        return {"success": False, "error": f"embedding_failed: {e}"}
+
+    # UPSERT
+    learned = 0
+    for rec, emb in zip(records, embeddings):
+        try:
+            cur.execute("""
+                INSERT INTO ds_column_embeddings
+                    (source_id, schema_name, table_name, column_name,
+                     data_type, is_nullable, is_pk, is_fk,
+                     business_name_tr, synonyms, semantic_type,
+                     sample_values, description, embedding)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+                ON CONFLICT (source_id, schema_name, table_name, column_name)
+                DO UPDATE SET
+                    data_type = EXCLUDED.data_type,
+                    is_nullable = EXCLUDED.is_nullable,
+                    is_pk = EXCLUDED.is_pk,
+                    is_fk = EXCLUDED.is_fk,
+                    business_name_tr = EXCLUDED.business_name_tr,
+                    synonyms = EXCLUDED.synonyms,
+                    semantic_type = EXCLUDED.semantic_type,
+                    sample_values = EXCLUDED.sample_values,
+                    description = EXCLUDED.description,
+                    embedding = EXCLUDED.embedding,
+                    updated_at = NOW()
+            """, (
+                source_id, rec["schema"], rec["table"], rec["column"],
+                rec["data_type"], rec["is_nullable"], rec["is_pk"], rec["is_fk"],
+                rec["business_name_tr"], rec["synonyms"], rec["semantic_type"],
+                json.dumps(rec["sample_values"]), rec["description"], emb,
+            ))
+            learned += 1
+        except Exception as e:
+            logger.warning("[ColumnEmb] upsert hata %s.%s: %s", rec["table"], rec["column"], e)
+            try:
+                vyra_conn.rollback()
+            except Exception:
+                pass
+
+    vyra_conn.commit()
+    elapsed = int((time.time() - start) * 1000)
+    logger.info("[ColumnEmb] %d kolon embeddinglendi, %dms", learned, elapsed)
+    return {"success": True, "data": {"learned_columns": learned, "elapsed_ms": elapsed}}
