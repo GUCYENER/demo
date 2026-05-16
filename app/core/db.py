@@ -137,7 +137,7 @@ def release_db_conn(conn):
 def get_db_context() -> Generator:
     """
     Context manager ile güvenli veritabanı bağlantısı.
-    
+
     Usage:
         with get_db_context() as conn:
             cur = conn.cursor()
@@ -161,8 +161,114 @@ def get_db_context() -> Generator:
 
 
 # ===========================================================
+#  Faz 1: Row-Level Security (RLS) Scoped Context
+# ===========================================================
+
+@contextmanager
+def get_db_context_scoped(
+    source_id: Optional[int] = None,
+    *,
+    bypass: bool = False,
+) -> Generator:
+    """
+    RLS-scoped DB context manager.
+
+    Faz 1 (v3.20.0) — `ds_db_objects`, `ds_db_relationships`, `ds_db_samples`,
+    `ds_learning_results` tablolarında source-bazlı izolasyon.
+
+    Transaction kapsamında `SET LOCAL app.current_source_id = <id>` (veya
+    bypass=True ise `app.bypass_rls = 'on'`) çalıştırır. LOCAL scope sayesinde
+    pool'a dönen connection bir sonraki request için temizdir.
+
+    Args:
+        source_id: data_sources.id — RLS policy bu değerle eşleşen satırları
+            görünür kılar. `bypass=True` iken None bırakılabilir.
+        bypass: True ise admin bypass (tüm source'lar görünür). Sadece
+            admin/system endpoint'lerinde kullanılmalı.
+
+    Yields:
+        PooledConnection: SET LOCAL uygulanmış, auto-commit/rollback connection
+
+    Raises:
+        ValueError: source_id None ve bypass=False ise.
+
+    Usage (normal scoping):
+        with get_db_context_scoped(source_id=current_source_id) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM ds_db_objects")  # sadece source_id satırları
+
+    Usage (admin bypass):
+        with get_db_context_scoped(bypass=True) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM ds_db_objects")  # tüm satırlar
+    """
+    if not bypass and source_id is None:
+        raise ValueError(
+            "get_db_context_scoped: source_id zorunlu (veya bypass=True). "
+            "Kapsamsız sorgu için get_db_context() kullanın."
+        )
+
+    conn = None
+    try:
+        conn = get_db_conn()
+        cur = conn.cursor()
+        if bypass:
+            # set_config(setting, value, is_local) — parametrize-safe
+            cur.execute("SELECT set_config('app.bypass_rls', 'on', true)")
+        else:
+            cur.execute(
+                "SELECT set_config('app.current_source_id', %s, true)",
+                (str(int(source_id)),),
+            )
+        cur.close()
+        yield conn
+        conn.commit()
+    except Exception:
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if conn:
+            conn.close()
+
+
+# ===========================================================
 #  Initialization
 # ===========================================================
+
+def _warn_if_db_user_bypasses_rls() -> None:
+    """
+    Faz 1 (v3.20.0): RLS efektifliği için DB rolünün superuser veya BYPASSRLS
+    olmadığını kontrol eder. Aksi halde RLS policy'ler sessizce bypass olur.
+
+    Sadece log üretir, başlatmayı engellemez (deployment kararı).
+    Bkz: app/core/config.py:111 → DB_USER önerisi `vyra_app` (non-superuser).
+    """
+    try:
+        with get_db_context() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT rolsuper, rolbypassrls
+                FROM pg_roles
+                WHERE rolname = current_user
+            """)
+            row = cur.fetchone()
+        if not row:
+            return
+        is_super = bool(row.get("rolsuper"))
+        is_bypass = bool(row.get("rolbypassrls"))
+        if is_super or is_bypass:
+            print(
+                f"[VYRA][RLS-WARN] DB rolü '{settings.DB_USER}' "
+                f"(rolsuper={is_super}, rolbypassrls={is_bypass}) → "
+                f"Row-Level Security policy'leri OTOMATİK BYPASS olacak. "
+                f"Production'da non-superuser rol kullanın (örn. vyra_app). "
+                f"Bkz: app/core/config.py:111"
+            )
+    except Exception as e:
+        # Non-critical — RLS check başarısız olursa startup'ı engelleme
+        print(f"[VYRA][RLS-WARN] DB role kontrolü başarısız (non-critical): {e}")
+
 
 def init_db() -> None:
     """
@@ -234,6 +340,9 @@ def init_db() -> None:
                             print(f"[VYRA] DB app_version updated: {db_ver} -> {settings.APP_VERSION}")
                 except Exception as ve:
                     print(f"[VYRA] DB version sync error (non-critical): {ve}")
+
+                # v3.20.0 (Faz 1): RLS efektifliği için DB role kontrolü
+                _warn_if_db_user_bypasses_rls()
                 return
                 
             finally:
