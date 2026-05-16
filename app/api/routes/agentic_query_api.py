@@ -237,6 +237,7 @@ def run_agentic_query(
         cur = conn.cursor()
         try:
             from app.services.pipeline.graph import run_pipeline
+            from app.services.pipeline.wiring import inject_callables
 
             state: Dict[str, Any] = {
                 "question": body.question,
@@ -246,7 +247,6 @@ def run_agentic_query(
                 "db_dialect": body.db_dialect or "postgresql",
                 "history": body.history or [],
                 "_cursor": cur,
-                # LLM/execute wiring yok — geliştirme aşaması, prod'da inject edilecek
             }
             if body.forced_tables:
                 state["selected_tables"] = [
@@ -254,6 +254,9 @@ def run_agentic_query(
                     for t in body.forced_tables
                 ]
                 state["force_ast"] = True  # AST builder eligibility
+
+            # Prod wiring — LLM + execute + explain
+            inject_callables(state, llm=True, execute=True, explain=True)
 
             final = run_pipeline(state, mode=body.mode)
 
@@ -305,6 +308,7 @@ def stream_agentic_query(
         from app.services.pipeline.sse_adapter import state_to_clarification_event, format_sse
         from app.services.pipeline.streaming_execute import stream_execute, stream_to_sse
         from app.services.pipeline.observability import get_run_summary
+        from app.services.pipeline.wiring import inject_callables
 
         with get_db_context() as conn:
             cur = conn.cursor()
@@ -324,6 +328,9 @@ def stream_agentic_query(
                         for t in body.forced_tables
                     ]
                     state["force_ast"] = True
+
+                # Prod wiring
+                inject_callables(state, llm=True, execute=True, explain=True)
 
                 final = run_pipeline(state, mode=body.mode)
 
