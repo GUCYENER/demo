@@ -1,0 +1,147 @@
+/**
+ * agentic_observability.css
+ * VYRA SaaS standardı — tüm renkler var(--vyra-*) ile.
+ */
+
+.ao-header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; margin-bottom: 16px; flex-wrap: wrap;
+}
+.ao-header h2 {
+    margin: 0; font-size: 1.4rem; color: var(--vyra-text, #1f2937);
+}
+.ao-controls {
+    display: flex; align-items: center; gap: 8px;
+}
+.ao-controls label {
+    color: var(--vyra-text-muted, #6b7280); font-size: .9rem;
+}
+.ao-controls select {
+    padding: 6px 10px; border: 1px solid var(--vyra-border, #e5e7eb);
+    border-radius: 6px; background: var(--vyra-bg-card, #fff);
+    color: var(--vyra-text, #1f2937);
+}
+
+.ao-loading {
+    margin: 16px 0;
+}
+
+.ao-error {
+    padding: 12px 16px; background: var(--vyra-danger-bg, #fee2e2);
+    color: var(--vyra-danger, #991b1b);
+    border: 1px solid var(--vyra-danger-border, #fecaca);
+    border-radius: 6px; margin: 12px 0;
+}
+
+.ao-grid {
+    display: grid; gap: 12px;
+}
+.ao-grid--cards {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    margin-bottom: 24px;
+}
+.ao-grid--two {
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    margin: 16px 0;
+}
+
+.ao-card {
+    background: var(--vyra-bg-card, #fff);
+    border: 1px solid var(--vyra-border, #e5e7eb);
+    border-radius: 8px; padding: 14px 16px;
+    display: flex; flex-direction: column; gap: 6px;
+    transition: box-shadow .15s ease;
+}
+.ao-card:hover { box-shadow: var(--vyra-shadow-sm, 0 2px 6px rgba(0,0,0,0.05)); }
+.ao-card__label {
+    font-size: .82rem; color: var(--vyra-text-muted, #6b7280);
+    text-transform: uppercase; letter-spacing: .04em;
+}
+.ao-card__value {
+    font-size: 1.6rem; font-weight: 600;
+    color: var(--vyra-text, #1f2937);
+}
+.ao-card--ok .ao-card__value { color: var(--vyra-success, #059669); }
+.ao-card--err .ao-card__value { color: var(--vyra-danger, #dc2626); }
+.ao-card--warn .ao-card__value { color: var(--vyra-warning, #d97706); }
+
+.ao-panel {
+    background: var(--vyra-bg-card, #fff);
+    border: 1px solid var(--vyra-border, #e5e7eb);
+    border-radius: 8px; padding: 16px;
+    margin: 16px 0;
+}
+.ao-panel h3 {
+    margin: 0 0 12px; font-size: 1.05rem;
+    color: var(--vyra-text, #1f2937);
+}
+
+.ao-table-wrap {
+    overflow-x: auto;
+}
+.ao-table {
+    width: 100%; border-collapse: collapse; font-size: .92rem;
+}
+.ao-table th, .ao-table td {
+    padding: 8px 10px; text-align: left;
+    border-bottom: 1px solid var(--vyra-border, #e5e7eb);
+}
+.ao-table thead th {
+    background: var(--vyra-bg-muted, #f9fafb);
+    font-weight: 600; color: var(--vyra-text-muted, #6b7280);
+    position: sticky; top: 0;
+}
+.ao-table tbody tr:hover {
+    background: var(--vyra-bg-hover, #f3f4f6);
+}
+.ao-empty {
+    color: var(--vyra-text-muted, #9ca3af);
+    font-style: italic; text-align: center;
+}
+.ao-cell--err {
+    color: var(--vyra-danger, #dc2626); font-weight: 600;
+}
+.ao-status--ok    { color: var(--vyra-success, #059669); font-weight: 600; }
+.ao-status--error { color: var(--vyra-danger, #dc2626); font-weight: 600; }
+.ao-status--interrupt { color: var(--vyra-warning, #d97706); font-weight: 600; }
+
+.ao-bar-list {
+    list-style: none; margin: 0; padding: 0;
+    display: flex; flex-direction: column; gap: 8px;
+}
+.ao-bar {
+    display: grid; grid-template-columns: 120px 1fr 56px;
+    align-items: center; gap: 10px;
+}
+.ao-bar__label {
+    font-size: .9rem; color: var(--vyra-text, #1f2937);
+    text-transform: lowercase;
+}
+.ao-bar__meter {
+    height: 10px; background: var(--vyra-bg-muted, #f3f4f6);
+    border-radius: 5px; overflow: hidden; position: relative;
+}
+.ao-bar__fill {
+    display: block; height: 100%;
+    background: var(--vyra-primary, #4f46e5);
+    transition: width .2s ease;
+}
+.ao-bar__count {
+    text-align: right; font-variant-numeric: tabular-nums;
+    color: var(--vyra-text-muted, #6b7280); font-size: .88rem;
+}
+
+@media (max-width: 640px) {
+    .ao-bar { grid-template-columns: 90px 1fr 48px; }
+    .ao-card__value { font-size: 1.3rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ao-card, .ao-bar__fill { transition: none; }
+}
+
+.ao-controls button:focus-visible,
+.ao-controls select:focus-visible {
+    outline: 2px solid var(--vyra-focus, #4f46e5);
+    outline-offset: 2px;
+}

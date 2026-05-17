@@ -1,0 +1,114 @@
+<!--
+  Section: Agentic Query Observability (Admin)
+  --------------------------------------------
+  /api/agentic-query/observability/stats endpoint'inden veri çeker.
+  Yetki: is_admin.
+
+  Modülün init/refresh fonksiyonu:
+    window.AgenticObservability.init('#agenticObservabilitySection');
+-->
+<section id="agenticObservabilitySection" class="section-content" hidden aria-labelledby="ao-title">
+  <header class="ao-header">
+    <h2 id="ao-title">Agentic Pipeline Gözlemlenebilirlik</h2>
+    <div class="ao-controls">
+      <label for="aoWindow">Zaman aralığı:</label>
+      <select id="aoWindow" aria-label="Zaman aralığı">
+        <option value="1">Son 1 saat</option>
+        <option value="6">Son 6 saat</option>
+        <option value="24" selected>Son 24 saat</option>
+        <option value="168">Son 7 gün</option>
+      </select>
+      <button id="aoRefresh" type="button" class="btn btn-secondary" aria-label="Yenile">
+        <i class="fa-solid fa-rotate"></i> Yenile
+      </button>
+    </div>
+  </header>
+
+  <div id="aoLoading" class="ao-loading" hidden role="status" aria-live="polite">
+    <div class="vyra-skeleton-shimmer" style="height:96px;"></div>
+    <div class="vyra-skeleton-shimmer" style="height:240px;margin-top:12px;"></div>
+  </div>
+
+  <div id="aoError" class="ao-error" hidden role="alert"></div>
+
+  <!-- 1) Özet kartları -->
+  <div id="aoSummary" class="ao-grid ao-grid--cards" aria-label="Özet metrikler">
+    <article class="ao-card" data-metric="total">
+      <span class="ao-card__label">Toplam Çalışma</span>
+      <span class="ao-card__value" data-bind="runs.total">—</span>
+    </article>
+    <article class="ao-card ao-card--ok" data-metric="ok">
+      <span class="ao-card__label">Başarılı</span>
+      <span class="ao-card__value" data-bind="runs.ok">—</span>
+    </article>
+    <article class="ao-card ao-card--err" data-metric="err">
+      <span class="ao-card__label">Hatalı</span>
+      <span class="ao-card__value" data-bind="runs.error">—</span>
+    </article>
+    <article class="ao-card ao-card--warn" data-metric="intr">
+      <span class="ao-card__label">Kesilen</span>
+      <span class="ao-card__value" data-bind="runs.interrupted">—</span>
+    </article>
+    <article class="ao-card" data-metric="avg">
+      <span class="ao-card__label">Ortalama Süre</span>
+      <span class="ao-card__value"><span data-bind="runs.avg_total_ms">—</span> ms</span>
+    </article>
+    <article class="ao-card" data-metric="p95">
+      <span class="ao-card__label">p95 Süre</span>
+      <span class="ao-card__value"><span data-bind="runs.p95_total_ms">—</span> ms</span>
+    </article>
+  </div>
+
+  <!-- 2) Node tablosu -->
+  <section class="ao-panel" aria-labelledby="aoNodesTitle">
+    <h3 id="aoNodesTitle">Node-Bazlı Süre Dağılımı</h3>
+    <div class="ao-table-wrap">
+      <table id="aoNodesTable" class="ao-table">
+        <thead>
+          <tr>
+            <th scope="col">Node</th>
+            <th scope="col">Örnek</th>
+            <th scope="col">Avg (ms)</th>
+            <th scope="col">p50 (ms)</th>
+            <th scope="col">p95 (ms)</th>
+            <th scope="col">Hata</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 3) Dağılımlar -->
+  <div class="ao-grid ao-grid--two">
+    <section class="ao-panel" aria-labelledby="aoSrcTitle">
+      <h3 id="aoSrcTitle">SQL Kaynağı</h3>
+      <ul id="aoSqlSourceList" class="ao-bar-list"></ul>
+    </section>
+    <section class="ao-panel" aria-labelledby="aoBuckTitle">
+      <h3 id="aoBuckTitle">Sonuç Boyutu</h3>
+      <ul id="aoBucketList" class="ao-bar-list"></ul>
+    </section>
+  </div>
+
+  <!-- 4) Son run'lar -->
+  <section class="ao-panel" aria-labelledby="aoRecentTitle">
+    <h3 id="aoRecentTitle">Son 20 Çalışma</h3>
+    <div class="ao-table-wrap">
+      <table id="aoRecentTable" class="ao-table">
+        <thead>
+          <tr>
+            <th scope="col">Run ID</th>
+            <th scope="col">Durum</th>
+            <th scope="col">Süre</th>
+            <th scope="col">Kaynak</th>
+            <th scope="col">Boyut</th>
+            <th scope="col">Satır</th>
+            <th scope="col">Tarih</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+</section>

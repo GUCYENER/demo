@@ -429,6 +429,138 @@ def get_pipeline_run_summary(
     return {"success": True, "summary": summary}
 
 
+@router.get("/api/agentic-query/observability/stats")
+def get_observability_stats(
+    hours: int = 24,
+    company_id: Optional[int] = None,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """
+    Pipeline observability özet metrikleri:
+      - Toplam run sayısı, başarılı/hatalı/interrupt oranları
+      - Node-bazlı p50/p95/avg duration_ms
+      - En sık hatalı node
+      - sql_source dağılımı (ast vs llm)
+      - bucket dağılımı (small/medium/large/huge)
+    """
+    _require_admin(current_user)
+    hours = max(1, min(hours, 24 * 30))
+    co = company_id if company_id is not None else current_user.get("company_id")
+
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        try:
+            # 1) Run-level toplam
+            cur.execute(
+                """
+                SELECT
+                    COUNT(DISTINCT run_id) FILTER (WHERE event_type='pipeline_end') AS total_runs,
+                    COUNT(DISTINCT run_id) FILTER (WHERE event_type='pipeline_end' AND status='ok') AS ok_runs,
+                    COUNT(DISTINCT run_id) FILTER (WHERE event_type='pipeline_end' AND status='error') AS err_runs,
+                    COUNT(DISTINCT run_id) FILTER (WHERE event_type='pipeline_end' AND status='interrupt') AS intr_runs,
+                    AVG(duration_ms) FILTER (WHERE event_type='pipeline_end') AS avg_total_ms,
+                    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms)
+                        FILTER (WHERE event_type='pipeline_end') AS p95_total_ms
+                  FROM pipeline_events
+                 WHERE created_at >= NOW() - INTERVAL '%s hours'
+                   AND (%s::int IS NULL OR company_id = %s)
+                """,
+                (hours, co, co),
+            )
+            r = cur.fetchone() or (0, 0, 0, 0, 0, 0)
+            run_stats = {
+                "total": r[0] or 0, "ok": r[1] or 0, "error": r[2] or 0, "interrupted": r[3] or 0,
+                "avg_total_ms": int(r[4] or 0), "p95_total_ms": int(r[5] or 0),
+            }
+
+            # 2) Node-bazlı duration
+            cur.execute(
+                """
+                SELECT node_name,
+                       COUNT(*)::int AS samples,
+                       AVG(duration_ms)::int AS avg_ms,
+                       PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY duration_ms)::int AS p50_ms,
+                       PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms)::int AS p95_ms,
+                       SUM(CASE WHEN status='error' THEN 1 ELSE 0 END)::int AS error_count
+                  FROM pipeline_events
+                 WHERE event_type='node_end'
+                   AND created_at >= NOW() - INTERVAL '%s hours'
+                   AND (%s::int IS NULL OR company_id = %s)
+                   AND node_name IS NOT NULL
+                 GROUP BY node_name
+                 ORDER BY avg_ms DESC
+                """,
+                (hours, co, co),
+            )
+            nodes = [
+                {"node": x[0], "samples": x[1], "avg_ms": x[2],
+                 "p50_ms": x[3], "p95_ms": x[4], "error_count": x[5]}
+                for x in cur.fetchall()
+            ]
+
+            # 3) SQL source dağılımı (metadata->>'sql_source')
+            cur.execute(
+                """
+                SELECT COALESCE(metadata->>'sql_source','unknown') AS src, COUNT(*)::int AS n
+                  FROM pipeline_events
+                 WHERE event_type='pipeline_end'
+                   AND created_at >= NOW() - INTERVAL '%s hours'
+                   AND (%s::int IS NULL OR company_id = %s)
+                 GROUP BY 1 ORDER BY 2 DESC
+                """,
+                (hours, co, co),
+            )
+            sql_source = [{"source": x[0], "count": x[1]} for x in cur.fetchall()]
+
+            # 4) Size bucket dağılımı
+            cur.execute(
+                """
+                SELECT COALESCE(metadata->>'size_bucket','unknown') AS b, COUNT(*)::int AS n
+                  FROM pipeline_events
+                 WHERE event_type='pipeline_end'
+                   AND created_at >= NOW() - INTERVAL '%s hours'
+                   AND (%s::int IS NULL OR company_id = %s)
+                 GROUP BY 1 ORDER BY 2 DESC
+                """,
+                (hours, co, co),
+            )
+            buckets = [{"bucket": x[0], "count": x[1]} for x in cur.fetchall()]
+
+            # 5) Son 20 run
+            cur.execute(
+                """
+                SELECT run_id, status, duration_ms,
+                       metadata->>'sql_source', metadata->>'size_bucket',
+                       (metadata->>'row_count')::int, created_at
+                  FROM pipeline_events
+                 WHERE event_type='pipeline_end'
+                   AND created_at >= NOW() - INTERVAL '%s hours'
+                   AND (%s::int IS NULL OR company_id = %s)
+                 ORDER BY created_at DESC LIMIT 20
+                """,
+                (hours, co, co),
+            )
+            recent = [
+                {"run_id": str(x[0]), "status": x[1], "duration_ms": x[2],
+                 "sql_source": x[3], "size_bucket": x[4],
+                 "row_count": x[5], "created_at": x[6].isoformat() if x[6] else None}
+                for x in cur.fetchall()
+            ]
+        finally:
+            cur.close()
+
+    return {
+        "success": True,
+        "window_hours": hours,
+        "company_id": co,
+        "runs": run_stats,
+        "nodes": nodes,
+        "sql_source": sql_source,
+        "size_buckets": buckets,
+        "recent_runs": recent,
+    }
+
+
 # ---------- ML / Training ----------
 @router.post("/api/ml/train")
 def train_model(
