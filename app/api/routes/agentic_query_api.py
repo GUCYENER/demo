@@ -33,7 +33,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.api.routes.auth import get_current_user
-from app.core.db import get_db_context
+from app.core.db import get_db_context, apply_company_scope
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["agentic_query"])
@@ -251,6 +251,9 @@ def run_agentic_query(
             from app.services.pipeline.graph import run_pipeline
             from app.services.pipeline.wiring import inject_callables
 
+            # v3.26.0 Faz 1 — Migration 017 RLS tenant scope
+            apply_company_scope(cur, company_id=company_id)
+
             state: Dict[str, Any] = {
                 "question": body.question,
                 "source_id": body.source_id,
@@ -338,6 +341,9 @@ def resume_agentic_query(
             from app.services.pipeline.graph import resume_pipeline
             from app.services.pipeline.wiring import inject_callables
 
+            # v3.26.0 Faz 1 — Migration 017 RLS tenant scope
+            apply_company_scope(cur, company_id=company_id)
+
             state["_cursor"] = cur
             inject_callables(state, llm=True, execute=True, explain=True)
             final = resume_pipeline(state, user_choice)
@@ -395,6 +401,9 @@ def stream_agentic_query(
         with get_db_context() as conn:
             cur = conn.cursor()
             try:
+                # v3.26.0 Faz 1 — Migration 017 RLS tenant scope
+                apply_company_scope(cur, company_id=company_id)
+
                 state: Dict[str, Any] = {
                     "question": body.question,
                     "source_id": body.source_id,

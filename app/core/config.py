@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.25.2"  # Round 2 review: cross-tenant source leak (K7), resume _merge tutarlılığı + feedback SAVEPOINT (Ö16), predictor SAVEPOINT (Ö17), dashboard resume duplicate fix (Ö18)
+    APP_VERSION: str = "3.26.0"  # Faz 1-5: RLS+Oracle+Size CatBoost+Metric Layer+Column/Filter/Join predictors+Langfuse
 
     # Frontend & API prefix
     api_prefix: str = "/api"
@@ -168,6 +168,15 @@ class Settings(BaseSettings):
     
     # DB Connection Yönetimi
     DB_MAX_RETRIES: int = 15  # Veritabanı bağlantı deneme sayısı
+
+    # -------------------------------------------------
+    # Langfuse Observability (v3.26.0 Faz 5 P2-b — opsiyonel)
+    # -------------------------------------------------
+    # Boş bırakılırsa Langfuse devre dışı kalır. pipeline_events DB-tabanlı
+    # observability her hâlükârda çalışmaya devam eder.
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_SECRET_KEY: str = ""
+    LANGFUSE_HOST: str = "https://cloud.langfuse.com"
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -784,6 +784,66 @@ CREATE INDEX IF NOT EXISTS idx_data_sources_company ON data_sources(company_id);
 CREATE INDEX IF NOT EXISTS idx_data_sources_type ON data_sources(source_type);
 CREATE INDEX IF NOT EXISTS idx_data_sources_active ON data_sources(is_active);
 
+-- Veri Kaynağı Yetkilendirme (v3.17.0)
+-- Polymorphic: subject_type 'user' veya 'org', subject_id ilgili tablodaki id
+-- can_view: kaynağı listede görür, can_execute: SQL/içerik çalıştırabilir
+CREATE TABLE IF NOT EXISTS data_source_permissions (
+    id SERIAL PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES data_sources(id) ON DELETE CASCADE,
+    subject_type VARCHAR(10) NOT NULL CHECK (subject_type IN ('user','org')),
+    subject_id INTEGER NOT NULL,
+    can_view BOOLEAN DEFAULT TRUE,
+    can_execute BOOLEAN DEFAULT FALSE,
+    granted_at TIMESTAMP DEFAULT NOW(),
+    granted_by INTEGER REFERENCES users(id),
+    UNIQUE(source_id, subject_type, subject_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ds_perm_source ON data_source_permissions(source_id);
+CREATE INDEX IF NOT EXISTS idx_ds_perm_subject ON data_source_permissions(subject_type, subject_id);
+
+-- =====================================================
+-- Sistem Özelliği Yetkilendirme (v3.18.0)
+-- =====================================================
+-- Ana sayfadaki 3 mod (kb/db/llm) için kullanıcı/org bazlı görünürlük
+-- effect='allow' org/user için izin, effect='deny' user için override (org allow olsa bile gizler)
+-- Hiç kayıt yok = DEFAULT göster (geriye uyumlu)
+-- Admin her zaman hepsini görür (backend bypass)
+CREATE TABLE IF NOT EXISTS feature_permissions (
+    id SERIAL PRIMARY KEY,
+    feature_key VARCHAR(32) NOT NULL,
+    subject_type VARCHAR(10) NOT NULL CHECK (subject_type IN ('user','org')),
+    subject_id INTEGER NOT NULL,
+    effect VARCHAR(10) NOT NULL DEFAULT 'allow' CHECK (effect IN ('allow','deny')),
+    company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+    granted_at TIMESTAMP DEFAULT NOW(),
+    granted_by INTEGER REFERENCES users(id),
+    UNIQUE(feature_key, subject_type, subject_id)
+);
+CREATE INDEX IF NOT EXISTS idx_feat_perm_subj ON feature_permissions(subject_type, subject_id, feature_key);
+CREATE INDEX IF NOT EXISTS idx_feat_perm_feature ON feature_permissions(feature_key);
+CREATE INDEX IF NOT EXISTS idx_feat_perm_company ON feature_permissions(company_id);
+
+-- =====================================================
+-- İzin Değişiklik Audit Log (v3.18.0)
+-- =====================================================
+-- Tüm yetki değişikliklerini izler (data_source_permissions + feature_permissions)
+-- compliance ve forensic analiz için
+CREATE TABLE IF NOT EXISTS permission_audit_log (
+    id SERIAL PRIMARY KEY,
+    actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+    permission_type VARCHAR(30) NOT NULL,  -- 'data_source' | 'feature'
+    target_key VARCHAR(100) NOT NULL,      -- source_id (string) | feature_key
+    action VARCHAR(20) NOT NULL,           -- 'replace' | 'grant' | 'revoke'
+    change_payload JSONB,                  -- before/after diff
+    ip_address VARCHAR(45),
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_perm_audit_actor ON permission_audit_log(actor_user_id);
+CREATE INDEX IF NOT EXISTS idx_perm_audit_company ON permission_audit_log(company_id);
+CREATE INDEX IF NOT EXISTS idx_perm_audit_type ON permission_audit_log(permission_type, target_key);
+CREATE INDEX IF NOT EXISTS idx_perm_audit_created ON permission_audit_log(created_at DESC);
+
 -- =====================================================
 -- DB Learning / Discovery Tables (v2.56.0)
 -- =====================================================

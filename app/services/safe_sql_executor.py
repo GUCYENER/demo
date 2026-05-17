@@ -588,6 +588,16 @@ class SafeSQLExecutor:
                 elif dialect == SQLDialect.MYSQL:
                     cur.execute(f"SET SESSION MAX_EXECUTION_TIME = {self.timeout * 1000}")
                     db_native_timeout = True
+                elif dialect == SQLDialect.ORACLE:
+                    # v3.26.0 Faz 1 P0-b: oracledb connection-level call_timeout (ms)
+                    # ORA-12161 / DPI-1067 — uzun süren sorgular abort edilir.
+                    # cursor üzerinden ALTER SESSION DDL sayılır ve whitelist'i geçemez;
+                    # bu yüzden connection attribute'u kullanılır.
+                    try:
+                        conn.call_timeout = int(self.timeout * 1000)
+                        db_native_timeout = True
+                    except Exception:
+                        pass  # Driver eski sürüm → thread fallback
             except Exception as timeout_err:
                 logger.warning(f"DB-native timeout ayarlanamadı (thread fallback kullanılacak): {timeout_err}")
 

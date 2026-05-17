@@ -12,6 +12,17 @@ sqlalchemy
 alembic
 psycopg2-binary
 
+# --- Oracle DB driver (v3.26.0 Faz 1 P0-b) ---
+# Mevcut kod (ds_learning_service.py:72) `oracledb` import ediyor — requirements'a eklendi.
+# Thick mode (Instant Client gerekli) opsiyonel; thin mode default.
+oracledb>=2.0.0
+
+# --- Observability (opsiyonel — v3.26.0 Faz 5 P2-b) ---
+# Langfuse 3rd-party observability. LANGFUSE_PUBLIC_KEY/SECRET_KEY ile aktif
+# olur; aksi halde langfuse_adapter NO-OP'tur. DB-tabanlı pipeline_events
+# her hâlükârda yazılır.
+langfuse>=2.0.0; python_version >= "3.10"
+
 # --- Password & Auth ---
 bcrypt>=4.0.0
 passlib[bcrypt]

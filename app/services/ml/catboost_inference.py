@@ -79,6 +79,57 @@ def get_active_model(cur, company_id: Optional[int] = None) -> Optional[Any]:
     return load_model(info["file_path"])
 
 
+def get_active_size_model(cur, company_id: Optional[int] = None) -> Optional[Any]:
+    """v3.26.0 Faz 2 — aktif size_classifier modelini yükler. None → heuristik."""
+    if cur is None or not _HAS_CATBOOST:
+        return None
+    try:
+        from .catboost_trainer import get_active_model_info
+        info = get_active_model_info(cur, model_type="size_classifier", company_id=company_id)
+    except Exception:
+        return None
+    if not info:
+        return None
+    return load_model(info["file_path"])
+
+
+def get_active_decision_model(
+    cur, decision_type: str, company_id: Optional[int] = None,
+) -> Optional[Any]:
+    """v3.26.0 Faz 4 — column/filter/join predictor model yükleyici."""
+    if cur is None or not _HAS_CATBOOST:
+        return None
+    type_to_mt = {
+        "column": "column_predictor",
+        "filter": "filter_predictor",
+        "join": "join_predictor",
+    }
+    mt = type_to_mt.get(decision_type)
+    if not mt:
+        return None
+    try:
+        from .catboost_trainer import get_active_model_info
+        info = get_active_model_info(cur, model_type=mt, company_id=company_id)
+    except Exception:
+        return None
+    if not info:
+        return None
+    return load_model(info["file_path"])
+
+
+def predict_decision_proba(model: Any, features: Dict[str, float], feature_order: List[str]) -> Optional[float]:
+    """Tek feature vektörü için pozitif sınıf olasılığını döner. Hata → None."""
+    if model is None:
+        return None
+    try:
+        vec = [float(features.get(k, 0.0)) for k in feature_order]
+        probs = model.predict_proba([vec])
+        return float(probs[0][1])
+    except Exception as e:
+        logger.debug("[catboost_inference.decision] predict hata: %s", e)
+        return None
+
+
 def apply_model_to_candidates(
     state: Dict[str, Any],
     model: Any,

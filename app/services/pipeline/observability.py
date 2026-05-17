@@ -153,6 +153,17 @@ def instrument_node(name: str, fn: Callable[[Dict[str, Any]], Dict[str, Any]]):
                 duration_ms=elapsed_ms,
                 metadata={"errors": new_errors[:3]} if new_errors else None,
             )
+            # v3.26.0 Faz 5 — Langfuse span
+            try:
+                from .langfuse_adapter import is_enabled as _lf_on, log_span as _lf_span
+                if _lf_on():
+                    _lf_span(
+                        state.get("_pipeline_run_id") or "",
+                        name=name, duration_ms=elapsed_ms, status=status,
+                        metadata={"errors": new_errors[:3]} if new_errors else None,
+                    )
+            except Exception:
+                pass
             return delta
         except Exception as e:
             elapsed_ms = int((time.perf_counter() - started) * 1000)
@@ -160,6 +171,16 @@ def instrument_node(name: str, fn: Callable[[Dict[str, Any]], Dict[str, Any]]):
                 state, "node_end", node_name=name, status="error",
                 duration_ms=elapsed_ms, metadata={"exception": str(e)[:300]},
             )
+            try:
+                from .langfuse_adapter import is_enabled as _lf_on, log_span as _lf_span
+                if _lf_on():
+                    _lf_span(
+                        state.get("_pipeline_run_id") or "",
+                        name=name, duration_ms=elapsed_ms, status="error",
+                        metadata={"exception": str(e)[:300]},
+                    )
+            except Exception:
+                pass
             raise
 
     wrapper.__name__ = f"instrumented_{name}"
@@ -168,6 +189,7 @@ def instrument_node(name: str, fn: Callable[[Dict[str, Any]], Dict[str, Any]]):
 
 def pipeline_start(state: Dict[str, Any], mode: str = "auto") -> None:
     """run başlangıcında çağrılır."""
+    run_id = ensure_run_id(state)
     emit_event(
         state, "pipeline_start",
         metadata={
@@ -176,6 +198,23 @@ def pipeline_start(state: Dict[str, Any], mode: str = "auto") -> None:
             "db_dialect": state.get("db_dialect"),
         },
     )
+    # v3.26.0 Faz 5 — Langfuse trace (opsiyonel, no-op when disabled)
+    try:
+        from .langfuse_adapter import is_enabled, start_trace
+        if is_enabled():
+            start_trace(
+                run_id,
+                user_id=state.get("user_id"),
+                company_id=state.get("company_id"),
+                metadata={
+                    "mode": mode,
+                    "db_dialect": state.get("db_dialect"),
+                    "question_preview": (state.get("question") or "")[:160],
+                    "source_id": state.get("source_id"),
+                },
+            )
+    except Exception as e:
+        logger.debug("[langfuse] start_trace skipped: %s", e)
 
 
 def pipeline_end(state: Dict[str, Any], duration_ms: int) -> None:
@@ -183,18 +222,33 @@ def pipeline_end(state: Dict[str, Any], duration_ms: int) -> None:
     sql_source = state.get("sql_source") or ("ast" if state.get("force_ast") else "llm")
     errors = state.get("errors") or []
     interrupted = bool(state.get("_interrupt"))
+    status = ("interrupt" if interrupted else ("error" if errors else "ok"))
+    metadata = {
+        "sql_source": sql_source,
+        "row_count": state.get("row_count"),
+        "retry_count": state.get("retry_count", 0),
+        "error_count": len(errors),
+        "size_bucket": (state.get("result_size_prediction") or {}).get("bucket"),
+    }
     emit_event(
         state, "pipeline_end",
-        status=("interrupt" if interrupted else ("error" if errors else "ok")),
-        duration_ms=duration_ms,
-        metadata={
-            "sql_source": sql_source,
-            "row_count": state.get("row_count"),
-            "retry_count": state.get("retry_count", 0),
-            "error_count": len(errors),
-            "size_bucket": (state.get("result_size_prediction") or {}).get("bucket"),
-        },
+        status=status, duration_ms=duration_ms, metadata=metadata,
     )
+    # v3.26.0 Faz 5 — Langfuse trace kapanışı
+    try:
+        from .langfuse_adapter import is_enabled, end_trace
+        if is_enabled():
+            run_id = state.get("_pipeline_run_id")
+            if run_id:
+                end_trace(
+                    run_id,
+                    output={"row_count": state.get("row_count"),
+                            "sql": (state.get("sql") or "")[:500]},
+                    status=status,
+                    metadata={**metadata, "duration_ms": duration_ms},
+                )
+    except Exception as e:
+        logger.debug("[langfuse] end_trace skipped: %s", e)
 
 
 def get_run_summary(cursor, run_id: str) -> Dict[str, Any]:

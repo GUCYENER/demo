@@ -232,9 +232,110 @@ def run_pipeline(state: Dict[str, Any], mode: str = "auto") -> Dict[str, Any]:
 
     # Faz 5a — feedback satırlarını agentic_query_feedback'e yaz (best-effort)
     _persist_feedback_if_possible(state)
+    # v3.26.0 Faz 2 — size observation log (best-effort)
+    _persist_size_observation_if_possible(state)
+    # v3.26.0 Faz 4 — column/filter/join decision log (best-effort)
+    _persist_decisions_if_possible(state)
 
     pipeline_end(state, int((_t.perf_counter() - _started) * 1000))
     return state
+
+
+def _persist_size_observation_if_possible(state: Dict[str, Any]) -> None:
+    """
+    v3.26.0 Faz 2 — execute sonrası size predictor training data yazımı.
+
+    SAVEPOINT içinde sarmalı (poison-TX riski). actual_row_count yoksa atla.
+    """
+    cur = state.get("_cursor")
+    if cur is None:
+        return
+    pred = state.get("result_size_prediction") or {}
+    sql = state.get("sql")
+    actual_rows = state.get("row_count")
+    if not sql or not pred or actual_rows is None:
+        return
+    sp_name = "_size_obs"
+    try:
+        cur.execute(f"SAVEPOINT {sp_name}")
+    except Exception:
+        return
+    try:
+        import hashlib
+        import json as _json
+        from app.services.ml.size_classifier import (
+            extract_size_features, rows_to_bucket,
+        )
+        dialect = state.get("db_dialect", "postgresql")
+        feats = extract_size_features(
+            sql,
+            explain_rows=pred.get("estimated_rows") if pred.get("reason") == "explain_plan" else None,
+            reltuples=pred.get("estimated_rows") if pred.get("reason") == "table_stats" else None,
+            dialect=dialect,
+        )
+        sql_norm = " ".join(sql.split()).strip().lower()
+        sql_hash = hashlib.sha1(sql_norm.encode("utf-8")).hexdigest()
+        actual_bucket = rows_to_bucket(int(actual_rows))
+        cur.execute("""
+            INSERT INTO agentic_size_observations
+                (run_id, company_id, source_id, sql_hash, sql_text_short,
+                 features, predicted_bucket, predicted_rows, predicted_reason,
+                 actual_rows, actual_bucket, dialect)
+            VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s)
+        """, (
+            state.get("_pipeline_run_id"),
+            state.get("company_id"),
+            state.get("source_id"),
+            sql_hash,
+            sql[:500],
+            _json.dumps(feats),
+            pred.get("bucket"),
+            pred.get("estimated_rows"),
+            pred.get("reason"),
+            int(actual_rows),
+            actual_bucket,
+            dialect,
+        ))
+        cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+    except Exception:
+        try:
+            cur.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+            cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+        except Exception:
+            pass
+
+
+def _persist_decisions_if_possible(state: Dict[str, Any]) -> None:
+    """
+    v3.26.0 Faz 4 (P2-a) — Column/Filter/Join karar satırlarını yaz.
+
+    SAVEPOINT içinde sarmalı (poison-TX riski). state.sql veya selected_tables
+    yoksa atla. company_id yoksa best-effort olarak yine de logla (RLS allow).
+    """
+    cur = state.get("_cursor")
+    if cur is None:
+        return
+    if not state.get("sql"):
+        return
+    sp_name = "_qdec_persist"
+    try:
+        cur.execute(f"SAVEPOINT {sp_name}")
+    except Exception:
+        return
+    try:
+        from app.services.ml.decision_extractors import (
+            collect_decision_rows, persist_decisions,
+        )
+        rows = collect_decision_rows(state)
+        if rows:
+            persist_decisions(cur, state, rows)
+        cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+    except Exception:
+        try:
+            cur.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+            cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+        except Exception:
+            pass
 
 
 def _persist_feedback_if_possible(state: Dict[str, Any]) -> None:
@@ -307,6 +408,10 @@ def resume_pipeline(state: Dict[str, Any], user_choice: Dict[str, Any]) -> Dict[
 
     # Faz 5a — feedback rows
     _persist_feedback_if_possible(state)
+    # v3.26.0 Faz 2 — size observation (resume yolunda da yazılır, run_pipeline ile parite)
+    _persist_size_observation_if_possible(state)
+    # v3.26.0 Faz 4 — column/filter/join decisions
+    _persist_decisions_if_possible(state)
 
     pipeline_end(state, int((_t.perf_counter() - _started) * 1000))
     return state

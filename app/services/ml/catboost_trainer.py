@@ -235,6 +235,257 @@ def train_ranking_model(
     }
 
 
+def train_size_classifier(
+    cur,
+    company_id: Optional[int] = None,
+    source_id: Optional[int] = None,
+    min_samples: int = 100,
+    hyperparams: Optional[Dict[str, Any]] = None,
+    save_dir: str = "models/catboost",
+    notes: Optional[str] = None,
+    trained_by: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    v3.26.0 Faz 2 — agentic_size_observations'tan multiclass size classifier eğitir.
+
+    Label: actual_bucket (small/medium/large/huge → 0/1/2/3).
+    Features: agentic_size_observations.features JSONB → SIZE_FEATURE_ORDER.
+    """
+    if not _HAS_CATBOOST:
+        return {"error": "catboost_not_installed", "message": "pip install catboost gerekli."}
+
+    from .size_classifier import SIZE_FEATURE_ORDER, BUCKET_TO_LABEL
+
+    where_clauses = ["actual_bucket IS NOT NULL"]
+    params: List[Any] = []
+    if company_id is not None:
+        where_clauses.append("company_id = %s")
+        params.append(company_id)
+    if source_id is not None:
+        where_clauses.append("source_id = %s")
+        params.append(source_id)
+    where_sql = " AND ".join(where_clauses)
+    sql = f"""
+        SELECT features, actual_bucket
+          FROM agentic_size_observations
+         WHERE {where_sql}
+         ORDER BY created_at ASC
+         LIMIT 100000
+    """
+    cur.execute(sql, params)
+    rows = cur.fetchall()
+    if len(rows) < min_samples:
+        return {"error": "insufficient_data",
+                "message": f"En az {min_samples} kayıt gerekli, bulunan: {len(rows)}",
+                "available": len(rows)}
+
+    X: List[List[float]] = []
+    y: List[int] = []
+    for r in rows:
+        feats = r["features"] if isinstance(r, dict) else r[0]
+        bucket = r["actual_bucket"] if isinstance(r, dict) else r[1]
+        if not isinstance(feats, dict) or bucket not in BUCKET_TO_LABEL:
+            continue
+        X.append([float(feats.get(k, 0.0)) for k in SIZE_FEATURE_ORDER])
+        y.append(BUCKET_TO_LABEL[bucket])
+
+    if len(X) < min_samples:
+        return {"error": "insufficient_data", "message": f"Geçerli kayıt: {len(X)}"}
+
+    # Sınıf dengesi kontrolü — en az 2 sınıf gerekli
+    distinct_classes = len(set(y))
+    if distinct_classes < 2:
+        return {"error": "class_imbalance",
+                "message": f"Tek sınıflı veri (sınıf: {distinct_classes})"}
+
+    Xt, yt, Xv, yv = split_chronological(X, y, validation_ratio=0.2)
+
+    hp = dict(DEFAULT_HYPERPARAMS)
+    hp["loss_function"] = "MultiClass"
+    hp["eval_metric"] = "MultiClass"
+    if hyperparams:
+        hp.update(hyperparams)
+
+    try:
+        clf = CatBoostClassifier(**hp)
+        clf.fit(Xt, yt, eval_set=(Xv, yv) if Xv else None, plot=False)
+    except Exception as e:
+        return {"error": "training_failed", "message": str(e)}
+
+    train_score = clf.score(Xt, yt) if Xt else None
+    val_score = clf.score(Xv, yv) if Xv else None
+    train_metrics = {"accuracy": train_score, "size": len(Xt), "classes": len(set(yt))}
+    val_metrics = {"accuracy": val_score, "size": len(Xv), "classes": len(set(yv)) if Xv else None}
+
+    os.makedirs(save_dir, exist_ok=True)
+    version = datetime.now().strftime("%Y%m%d_%H%M%S")
+    fname = f"size_v{version}.cbm"
+    if company_id:
+        fname = f"size_c{company_id}_v{version}.cbm"
+    file_path = os.path.join(save_dir, fname)
+    try:
+        clf.save_model(file_path)
+    except Exception as e:
+        return {"error": "save_failed", "message": str(e)}
+
+    try:
+        cur.execute("""
+            INSERT INTO catboost_models
+                (model_type, version, file_path, feature_names, training_size,
+                 train_metrics, validation_metrics, hyperparameters, is_active,
+                 company_id, trained_by, notes)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s, %s, %s)
+            RETURNING id
+        """, (
+            "size_classifier", version, file_path, SIZE_FEATURE_ORDER, len(X),
+            json.dumps(train_metrics, default=str),
+            json.dumps(val_metrics, default=str),
+            json.dumps(hp, default=str),
+            company_id, trained_by, notes or f"Size classifier — {len(X)} samples",
+        ))
+        row = cur.fetchone()
+        model_id = row[0] if row else None
+    except Exception as e:
+        logger.warning("[catboost_trainer.size] DB insert hata: %s", e)
+        model_id = None
+
+    return {
+        "ok": True, "model_id": model_id, "version": version, "file_path": file_path,
+        "training_size": len(X), "validation_size": len(Xv),
+        "train_metrics": train_metrics, "validation_metrics": val_metrics,
+        "hyperparameters": hp,
+    }
+
+
+def train_decision_predictor(
+    cur,
+    decision_type: str,
+    company_id: Optional[int] = None,
+    source_id: Optional[int] = None,
+    min_samples: int = 100,
+    hyperparams: Optional[Dict[str, Any]] = None,
+    save_dir: str = "models/catboost",
+    notes: Optional[str] = None,
+    trained_by: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    v3.26.0 Faz 4 — Column / Filter / Join binary classifier (was_used hedef).
+
+    decision_type ∈ {"column", "filter", "join"} → ilgili FEATURE_ORDER + model_type
+    seçilir. Eğitim verisi: agentic_query_decisions.
+    """
+    if not _HAS_CATBOOST:
+        return {"error": "catboost_not_installed", "message": "pip install catboost gerekli."}
+    from .decision_extractors import (
+        COLUMN_FEATURE_ORDER, FILTER_FEATURE_ORDER, JOIN_FEATURE_ORDER,
+    )
+    type_to_order = {
+        "column": (COLUMN_FEATURE_ORDER, "column_predictor"),
+        "filter": (FILTER_FEATURE_ORDER, "filter_predictor"),
+        "join": (JOIN_FEATURE_ORDER, "join_predictor"),
+    }
+    if decision_type not in type_to_order:
+        return {"error": "bad_decision_type", "message": f"Bilinmeyen tip: {decision_type}"}
+    feature_order, model_type = type_to_order[decision_type]
+
+    where_clauses = ["decision_type = %s"]
+    params: List[Any] = [decision_type]
+    if company_id is not None:
+        where_clauses.append("company_id = %s")
+        params.append(company_id)
+    if source_id is not None:
+        where_clauses.append("source_id = %s")
+        params.append(source_id)
+    where_sql = " AND ".join(where_clauses)
+    sql = f"""
+        SELECT features, was_used
+          FROM agentic_query_decisions
+         WHERE {where_sql}
+         ORDER BY created_at ASC
+         LIMIT 200000
+    """
+    cur.execute(sql, params)
+    rows = cur.fetchall()
+    if len(rows) < min_samples:
+        return {"error": "insufficient_data",
+                "message": f"En az {min_samples} kayıt gerekli, bulunan: {len(rows)}",
+                "available": len(rows)}
+
+    X: List[List[float]] = []
+    y: List[int] = []
+    for r in rows:
+        feats = r["features"] if isinstance(r, dict) else r[0]
+        used = r["was_used"] if isinstance(r, dict) else r[1]
+        if not isinstance(feats, dict):
+            continue
+        X.append([float(feats.get(k, 0.0)) for k in feature_order])
+        y.append(int(bool(used)))
+
+    if len(X) < min_samples:
+        return {"error": "insufficient_data", "message": f"Geçerli kayıt: {len(X)}"}
+    pos = sum(y)
+    neg = len(y) - pos
+    if pos < 5 or neg < 5:
+        return {"error": "class_imbalance",
+                "message": f"Yeterli pozitif/negatif örnek yok (pos={pos}, neg={neg})"}
+
+    Xt, yt, Xv, yv = split_chronological(X, y, validation_ratio=0.2)
+    hp = dict(DEFAULT_HYPERPARAMS)
+    if hyperparams:
+        hp.update(hyperparams)
+
+    try:
+        clf = CatBoostClassifier(**hp)
+        clf.fit(Xt, yt, eval_set=(Xv, yv) if Xv else None, plot=False)
+    except Exception as e:
+        return {"error": "training_failed", "message": str(e)}
+
+    train_score = clf.score(Xt, yt) if Xt else None
+    val_score = clf.score(Xv, yv) if Xv else None
+    train_metrics = {"accuracy": train_score, "size": len(Xt), "positive_ratio": sum(yt) / max(len(yt), 1)}
+    val_metrics = {"accuracy": val_score, "size": len(Xv),
+                   "positive_ratio": sum(yv) / max(len(yv), 1) if Xv else None}
+
+    os.makedirs(save_dir, exist_ok=True)
+    version = datetime.now().strftime("%Y%m%d_%H%M%S")
+    fname = f"{decision_type}_v{version}.cbm"
+    if company_id:
+        fname = f"{decision_type}_c{company_id}_v{version}.cbm"
+    file_path = os.path.join(save_dir, fname)
+    try:
+        clf.save_model(file_path)
+    except Exception as e:
+        return {"error": "save_failed", "message": str(e)}
+
+    try:
+        cur.execute("""
+            INSERT INTO catboost_models
+                (model_type, version, file_path, feature_names, training_size,
+                 train_metrics, validation_metrics, hyperparameters, is_active,
+                 company_id, trained_by, notes)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s, %s, %s)
+            RETURNING id
+        """, (
+            model_type, version, file_path, feature_order, len(X),
+            json.dumps(train_metrics, default=str),
+            json.dumps(val_metrics, default=str),
+            json.dumps(hp, default=str),
+            company_id, trained_by, notes or f"{decision_type} predictor — {len(X)} samples",
+        ))
+        row = cur.fetchone()
+        model_id = row[0] if row else None
+    except Exception as e:
+        logger.warning("[catboost_trainer.%s] DB insert hata: %s", decision_type, e)
+        model_id = None
+
+    return {
+        "ok": True, "model_id": model_id, "version": version, "file_path": file_path,
+        "model_type": model_type, "training_size": len(X), "validation_size": len(Xv),
+        "train_metrics": train_metrics, "validation_metrics": val_metrics,
+        "hyperparameters": hp,
+    }
+
+
 def activate_model(cur, model_id: int) -> bool:
     """
     Modeli active olarak işaretler. Aynı (model_type, company_id) çiftindeki

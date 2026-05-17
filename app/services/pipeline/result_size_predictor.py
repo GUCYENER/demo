@@ -319,14 +319,50 @@ def predict_result_size(
 
 
 def predict_size_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """LangGraph node — sql state'inde varsa boyut tahmini ekler."""
+    """
+    LangGraph node — sql state'inde varsa boyut tahmini ekler.
+
+    v3.26.0 Faz 2: Aktif size_classifier CatBoost modeli varsa heuristik sonuca
+    ml_bucket/ml_confidence ekler. Heuristik kesin etiket (aggregate_only,
+    explicit_limit, pk_equality) varsa ML override edilmez — yüksek kesinlik.
+    Sadece "heuristic_default" durumunda ML tahminini bucket olarak benimser.
+    """
     sql = state.get("sql")
     if not sql:
         return {}
+    cursor = state.get("_cursor")
+    dialect = state.get("db_dialect", "postgresql")
     pred = predict_result_size(
-        sql,
-        dialect=state.get("db_dialect", "postgresql"),
-        cursor=state.get("_cursor"),
+        sql, dialect=dialect, cursor=cursor,
         explain_callable=state.get("_explain_callable"),
     )
+
+    # v3.26.0 Faz 2: ML overlay (best-effort)
+    try:
+        from app.services.ml.catboost_inference import get_active_size_model
+        from app.services.ml.size_classifier import (
+            extract_size_features, predict_with_model,
+        )
+        model = get_active_size_model(cursor, company_id=state.get("company_id"))
+        if model is not None:
+            feats = extract_size_features(
+                sql,
+                explain_rows=pred.get("estimated_rows") if pred.get("reason") == "explain_plan" else None,
+                reltuples=pred.get("estimated_rows") if pred.get("reason") == "table_stats" else None,
+                dialect=dialect,
+            )
+            ml_result = predict_with_model(model, feats)
+            if ml_result is not None:
+                ml_bucket, ml_conf = ml_result
+                pred["ml_bucket"] = ml_bucket
+                pred["ml_confidence"] = ml_conf
+                # Sadece heuristik fallback'inde ML bucket'ı benimse
+                if pred.get("reason") == "heuristic_default":
+                    pred["bucket"] = ml_bucket
+                    pred["reason"] = "ml_model"
+                    pred["streaming_recommended"] = ml_bucket in ("large", "huge")
+                    pred["streaming_required"] = ml_bucket == "huge"
+    except Exception:
+        pass  # Best-effort — heuristik korunur
+
     return {"result_size_prediction": pred}

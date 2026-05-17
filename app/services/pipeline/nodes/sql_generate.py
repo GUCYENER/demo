@@ -124,6 +124,22 @@ def sql_generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
         except Exception:
             pass
 
+    # v3.26.0 Faz 3 — Semantic/Metric layer: soruda eşleşen metric'leri prompt'a ekle
+    matched_metrics: List[Dict[str, Any]] = []
+    available = state.get("available_metrics") or []
+    if available:
+        try:
+            from app.services.metric_registry import (
+                resolve_metrics_in_question, format_metrics_for_prompt,
+            )
+            matched_metrics = resolve_metrics_in_question(question, available)
+            if matched_metrics:
+                block = format_metrics_for_prompt(matched_metrics, limit=5)
+                if block:
+                    context = context + "\n\n" + block
+        except Exception as e:
+            logger.debug("[sql_generate] metric resolve skipped: %s", e)
+
     # Faz 4d — self-heal retry hint (önceki hata bilgisi)
     retry_hint = state.get("retry_hint")
     if retry_hint:
@@ -149,11 +165,13 @@ def sql_generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "sql": (sql or "").strip(),
             "few_shots_used": [fs["id"] for fs in few_shots],
+            "matched_metrics": [m.get("id") for m in matched_metrics],
         }
     except Exception as e:
         logger.error("[sql_generate] LLM hata: %s", e)
         return {
             "sql": "",
             "few_shots_used": [fs["id"] for fs in few_shots],
+            "matched_metrics": [m.get("id") for m in matched_metrics],
             "errors": (state.get("errors") or []) + [f"llm_error: {e}"],
         }

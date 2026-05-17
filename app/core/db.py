@@ -233,6 +233,89 @@ def get_db_context_scoped(
 
 
 # ===========================================================
+#  v3.26.0 — Company-scoped RLS context (Migration 017)
+# ===========================================================
+
+@contextmanager
+def get_db_context_scoped_company(
+    company_id: Optional[int] = None,
+    *,
+    bypass: bool = False,
+) -> Generator:
+    """
+    Company (tenant) RLS-scoped DB context manager.
+
+    v3.26.0 (Migration 017) — `agentic_query_feedback`, `few_shot_examples`,
+    `catboost_models`, `pipeline_events` tablolarında tenant izolasyonu.
+
+    Transaction kapsamında `SET LOCAL app.current_company_id = <id>` (veya
+    bypass=True ise `app.bypass_rls = 'on'`) çalıştırır.
+
+    NOT: Migration 017 PERMISSIVE — setting boşsa passthrough. Strict policy'ye
+    geçince (018) bu helper zorunlu olur.
+
+    Args:
+        company_id: companies.id — RLS policy bu değerle eşleşen satırları görünür kılar.
+        bypass: True ise admin bypass (cross-tenant analytics endpoint'leri için).
+
+    Yields:
+        PooledConnection
+    """
+    if not bypass and company_id is None:
+        raise ValueError(
+            "get_db_context_scoped_company: company_id zorunlu (veya bypass=True)."
+        )
+    conn = None
+    try:
+        conn = get_db_conn()
+        cur = conn.cursor()
+        if bypass:
+            cur.execute("SELECT set_config('app.bypass_rls', 'on', true)")
+        else:
+            cur.execute(
+                "SELECT set_config('app.current_company_id', %s, true)",
+                (str(int(company_id)),),
+            )
+        cur.close()
+        yield conn
+        conn.commit()
+    except Exception:
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if conn:
+            conn.close()
+
+
+def apply_company_scope(cur, company_id: Optional[int] = None, *, bypass: bool = False) -> None:
+    """
+    Aktif transaction'a company scope uygular (mevcut cursor üzerinden).
+
+    Pipeline cursor'ı zaten get_db_context içinden geliyor — bu helper o cursor'a
+    SET LOCAL uygular, yeni connection açmaz.
+
+    Kullanım:
+        with get_db_context() as conn:
+            cur = conn.cursor()
+            apply_company_scope(cur, company_id=state["company_id"])
+            # ... pipeline işlemleri
+    """
+    if bypass:
+        cur.execute("SELECT set_config('app.bypass_rls', 'on', true)")
+        return
+    if company_id is None:
+        return  # PERMISSIVE policy nedeniyle güvenli; strict policy'ye geçince hata atılmalı
+    try:
+        cur.execute(
+            "SELECT set_config('app.current_company_id', %s, true)",
+            (str(int(company_id)),),
+        )
+    except Exception:
+        pass  # SAVEPOINT-style — kritik değil, app-layer filter zaten var
+
+
+# ===========================================================
 #  Initialization
 # ===========================================================
 

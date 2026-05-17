@@ -3612,7 +3612,7 @@ netstat -an | findstr "5005"
 
 **Geliştirici:** Yasın Fazlıoğlu  
 **E-posta:** yasin.fazlioglu@consultant.turkcell.com.tr  
-**Versiyon:** 3.19.4 (Faz 0 — Hijyen + LangGraph Pipeline İskelet + Agentic SQL Copilot Master Plan)
+**Versiyon:** 3.26.0 (Faz 1–5 — PG RLS tenant izolasyonu + Oracle driver dispatch + Result Size CatBoost + Semantic/Metric Layer + Column/Filter/Join predictors + Langfuse observability)
 
 ---
 
