@@ -86,17 +86,21 @@ def build_query_graph(checkpointer=None):
         )
 
     g = StateGraph(dict)  # State tipi dict (TypedDict QueryState)
-    g.add_node("load_prefs", load_prefs_node)
-    g.add_node("intent_extract", intent_extract_node)
-    g.add_node("query_expand", query_expand_node)
-    g.add_node("retrieve", retrieve_node)
-    g.add_node("multi_signal_rank", multi_signal_rank_node)
-    g.add_node("ambiguity_gate", ambiguity_gate_node)
-    g.add_node("clarification", clarification_node)
-    g.add_node("sql_generate", sql_generate_node)
-    g.add_node("validate", validate_node)
-    g.add_node("self_heal", self_heal_node)
-    g.add_node("execute", execute_node)
+    # Tüm node'lar instrument_node ile sarmalanır — sequential ve LangGraph
+    # yollarında aynı pipeline_events çıktısı üretilir. Aksi takdirde prod'da
+    # LangGraph aktifken observability sessizce devre dışı kalıyordu.
+    g.add_node("load_prefs", instrument_node("load_prefs", load_prefs_node))
+    g.add_node("intent_extract", instrument_node("intent_extract", intent_extract_node))
+    g.add_node("query_expand", instrument_node("query_expand", query_expand_node))
+    g.add_node("retrieve", instrument_node("retrieve", retrieve_node))
+    g.add_node("multi_signal_rank", instrument_node("multi_signal_rank", multi_signal_rank_node))
+    g.add_node("ambiguity_gate", instrument_node("ambiguity_gate", ambiguity_gate_node))
+    g.add_node("clarification", instrument_node("clarification", clarification_node))
+    g.add_node("sql_generate", instrument_node("sql_generate", sql_generate_node))
+    g.add_node("validate", instrument_node("validate", validate_node))
+    g.add_node("self_heal", instrument_node("self_heal", self_heal_node))
+    g.add_node("predict_size", instrument_node("predict_size", predict_size_node))
+    g.add_node("execute", instrument_node("execute", execute_node))
 
     g.add_edge(START, "load_prefs")
     g.add_edge("load_prefs", "intent_extract")
@@ -125,6 +129,9 @@ def build_query_graph(checkpointer=None):
         "execute": "execute",
         "abort": END,
     })
+    # predict_size her execute öncesinde state.result_size_prediction üretir.
+    # validate -> execute geçişinde önce predict_size çalışır.
+    # (Sequential runner aynı sıralamayı manuel uygular.)
     g.add_edge("execute", END)
 
     if checkpointer is not None:

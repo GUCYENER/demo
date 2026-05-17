@@ -23,6 +23,7 @@ window.SidebarModule = (function () {
                     knowledgeBase: document.getElementById("menuKnowledgeBase"),
                     authorization: document.getElementById("menuAuthorization"),
                     organizations: document.getElementById("menuOrganizations"),
+                    agenticObservability: document.getElementById("menuAgenticObservability"),
                     profile: document.getElementById("menuProfile"),
                     logout: document.getElementById("logoutBtn"),
                 },
@@ -39,6 +40,7 @@ window.SidebarModule = (function () {
                     knowledgeBase: document.getElementById("sectionKnowledgeBase"),
                     authorization: document.getElementById("sectionAuthorization"),
                     organizations: document.getElementById("sectionOrganizations"),
+                    agenticObservability: document.getElementById("agenticObservabilitySection"),
                     profile: document.getElementById("sectionProfile"),
                 },
                 homeHeader: document.getElementById("homeHeader"),
@@ -124,6 +126,16 @@ window.SidebarModule = (function () {
                 }
                 break;
 
+            case "agenticObservability":
+                if (el.sections.agenticObservability) {
+                    el.sections.agenticObservability.removeAttribute("hidden");
+                    el.sections.agenticObservability.classList.remove("hidden");
+                }
+                if (window.AgenticObservability && typeof window.AgenticObservability.init === "function") {
+                    window.AgenticObservability.init("#agenticObservabilitySection");
+                }
+                break;
+
             case "profile":
                 // Element'i her zaman yeniden bul (cache sorunu önleme)
                 const profileSection = document.getElementById("sectionProfile");
@@ -201,6 +213,13 @@ window.SidebarModule = (function () {
             });
         }
 
+        if (el.sidebar.agenticObservability) {
+            el.sidebar.agenticObservability.addEventListener("click", () => {
+                activateItem(el.sidebar.agenticObservability);
+                showSection("agenticObservability");
+            });
+        }
+
         if (el.sidebar.profile) {
             el.sidebar.profile.addEventListener("click", () => {
                 activateItem(el.sidebar.profile);
@@ -259,6 +278,7 @@ window.SidebarModule = (function () {
                     const el = getElements();
                     if (el.sidebar.authorization) el.sidebar.authorization.classList.remove('hidden');
                     if (el.sidebar.organizations) el.sidebar.organizations.classList.remove('hidden');
+                    if (el.sidebar.agenticObservability) el.sidebar.agenticObservability.classList.remove('hidden');
                 }
                 return;
             }
@@ -282,6 +302,7 @@ window.SidebarModule = (function () {
                 'menuKnowledgeBase': el.sidebar.knowledgeBase,
                 'menuAuthorization': el.sidebar.authorization,
                 'menuOrganizations': el.sidebar.organizations,
+                'menuAgenticObservability': el.sidebar.agenticObservability,
                 'menuProfile': el.sidebar.profile
             };
 

@@ -37,13 +37,17 @@
     }
 
     function _renderNodes(root, nodes) {
-        const tbody = _qs(root, '#aoNodesTable tbody');
+        const table = _qs(root, '#aoNodesTable');
+        const tbody = table && table.querySelector('tbody');
         if (!tbody) return;
         tbody.replaceChildren();
         if (!nodes || nodes.length === 0) {
             const tr = document.createElement('tr');
             const td = document.createElement('td');
-            td.colSpan = 6; td.className = 'ao-empty';
+            // thead'deki gerçek kolon sayısını kullan — sabit 6 yerine.
+            const cols = table.querySelectorAll('thead th').length || 1;
+            td.colSpan = Math.max(1, cols);
+            td.className = 'ao-empty';
             td.textContent = 'Veri yok';
             tr.appendChild(td); tbody.appendChild(tr);
             return;
@@ -103,13 +107,16 @@
     }
 
     function _renderRecent(root, items) {
-        const tbody = _qs(root, '#aoRecentTable tbody');
+        const table = _qs(root, '#aoRecentTable');
+        const tbody = table && table.querySelector('tbody');
         if (!tbody) return;
         tbody.replaceChildren();
         if (!items || items.length === 0) {
             const tr = document.createElement('tr');
             const td = document.createElement('td');
-            td.colSpan = 7; td.className = 'ao-empty';
+            const cols = table.querySelectorAll('thead th').length || 1;
+            td.colSpan = Math.max(1, cols);
+            td.className = 'ao-empty';
             td.textContent = 'Veri yok';
             tr.appendChild(td); tbody.appendChild(tr);
             return;
@@ -133,21 +140,40 @@
         tbody.appendChild(frag);
     }
 
-    async function _fetchAndRender(root, hours) {
+    /**
+     * Yenile butonuna hızlı arka arkaya basılınca yarışı önlemek için her
+     * istek bir AbortController üretir ve önceki istek varsa iptal edilir.
+     * Böylece "stale render" (eski cevap geç dönüp güncel olanın üstüne
+     * yazılması) mümkün olmaz.
+     */
+    async function _fetchAndRender(root, hours, state) {
         const loading = _qs(root, '#aoLoading');
         const error = _qs(root, '#aoError');
         if (loading) loading.hidden = false;
         if (error) { error.hidden = true; error.textContent = ''; }
 
+        // Önceki uçuştaki istek varsa iptal et.
+        if (state.controller) {
+            try { state.controller.abort(); } catch (_e) { /* yok say */ }
+        }
+        const controller = new AbortController();
+        state.controller = controller;
+        const seq = ++state.seq;
+
         try {
             const res = await fetch(`${ENDPOINT}?hours=${encodeURIComponent(hours)}`, {
                 headers: _authHeaders(),
+                signal: controller.signal,
             });
+            // Yeni bir istek başladıysa bu cevap eski — sessizce vazgeç.
+            if (seq !== state.seq) return;
+
             if (!res.ok) {
                 const txt = await res.text().catch(() => '');
                 throw new Error(`HTTP ${res.status}: ${txt.slice(0, 160)}`);
             }
             const json = await res.json();
+            if (seq !== state.seq) return;
             if (!json.success) throw new Error(json.detail || 'Veri çekilemedi');
 
             _bindMetrics(root, json);
@@ -156,12 +182,15 @@
             _renderBarList(_qs(root, '#aoBucketList'), json.size_buckets || [], 'bucket', 'count');
             _renderRecent(root, json.recent_runs || []);
         } catch (err) {
+            // AbortError → kasıtlı iptal, kullanıcıya gösterme.
+            if (err && err.name === 'AbortError') return;
+            if (seq !== state.seq) return;
             if (error) {
                 error.hidden = false;
                 error.textContent = `Yüklenemedi: ${err.message || err}`;
             }
         } finally {
-            if (loading) loading.hidden = true;
+            if (seq === state.seq && loading) loading.hidden = true;
         }
     }
 
@@ -171,7 +200,9 @@
         const select = _qs(root, '#aoWindow');
         const btn = _qs(root, '#aoRefresh');
 
-        const refresh = () => _fetchAndRender(root, select ? select.value : 24);
+        // Modül başına state — AbortController + sequence numarası.
+        const state = { controller: null, seq: 0 };
+        const refresh = () => _fetchAndRender(root, select ? select.value : 24, state);
 
         if (btn) btn.addEventListener('click', refresh);
         if (select) select.addEventListener('change', refresh);

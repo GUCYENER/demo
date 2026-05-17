@@ -46,6 +46,7 @@ const CSS_FILES = [
     'assets/css/modules/feature_permissions.css',  // v3.18.0
     'assets/css/modules/_tooltip.css',              // v3.19.0 — CSS-only tooltip helper
     'assets/css/modules/db_source_selector.css',    // v3.20.0 Faz 1f — DB kaynak chip selector
+    'assets/css/modules/agentic_observability.css', // v3.25.0 Faz 6g — pipeline gözlem dashboard
 ];
 
 const JS_FILES = [
@@ -117,6 +118,8 @@ const JS_FILES = [
     'assets/js/modules/theme_preview_modal.js',
     'assets/js/modules/theme_picker_popup.js',
     'assets/js/modules/feature_permissions_module.js',  // v3.18.0
+    'assets/js/modules/agentic_query_consumer.js',      // v3.25.0 Faz 6f — SSE stream consumer
+    'assets/js/modules/agentic_observability.js',       // v3.25.0 Faz 6g — admin dashboard
     'assets/js/branding_engine.js',
 ];
 

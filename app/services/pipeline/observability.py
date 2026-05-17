@@ -21,6 +21,7 @@ Public API:
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
@@ -54,6 +55,13 @@ def emit_event(
     pipeline_events tablosuna append + log.
 
     Tablo yoksa veya cursor yoksa: sadece log.
+
+    Tasarım notu: persist çağrısı SAVEPOINT içinde çalışır. INSERT başarısız
+    olursa (örn. tablo yok, deadlock, sıkı tip uyumsuzluğu) yalnızca o
+    savepoint'e rollback yapılır — pipeline'ın asıl transaction'ı kirlenmez.
+    Aksi takdirde tek bir başarısız emit, transaction'ı abort'a düşürüp
+    sonraki tüm cur.execute çağrılarını "current transaction is aborted"
+    hatasıyla bozar.
     """
     run_id = ensure_run_id(state)
     meta = metadata or {}
@@ -67,30 +75,45 @@ def emit_event(
     if cur is None:
         return
 
+    # SAVEPOINT adı çakışmayacak: run_id'nin son 8 karakteri.
+    sp_name = f"_evt_{run_id[-8:].replace('-', '_')}"
     try:
-        import json
-        cur.execute(
-            """
-            INSERT INTO pipeline_events
-                (run_id, company_id, source_id, user_id,
-                 event_type, node_name, duration_ms, status, metadata)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
-            """,
-            (
-                run_id,
-                state.get("company_id"),
-                state.get("source_id"),
-                state.get("user_id"),
-                event_type,
-                node_name,
-                duration_ms,
-                status,
-                json.dumps(meta, default=str, ensure_ascii=False),
-            ),
-        )
-    except Exception as e:
+        cur.execute(f"SAVEPOINT {sp_name}")
+        try:
+            cur.execute(
+                """
+                INSERT INTO pipeline_events
+                    (run_id, company_id, source_id, user_id,
+                     event_type, node_name, duration_ms, status, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                """,
+                (
+                    run_id,
+                    state.get("company_id"),
+                    state.get("source_id"),
+                    state.get("user_id"),
+                    event_type,
+                    node_name,
+                    duration_ms,
+                    status,
+                    json.dumps(meta, default=str, ensure_ascii=False),
+                ),
+            )
+            cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+        except Exception as inner:
+            try:
+                cur.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+                cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+            except Exception:
+                pass
+            if _SILENT_DB_ERRORS:
+                logger.debug("[pipeline.event] persist skipped: %s", inner)
+            else:
+                raise
+    except Exception as outer:
+        # SAVEPOINT açılamadı (örn. cursor zaten kapalı / transaction yok).
         if _SILENT_DB_ERRORS:
-            logger.debug("[pipeline.event] persist skipped: %s", e)
+            logger.debug("[pipeline.event] savepoint failed: %s", outer)
         else:
             raise
 
@@ -98,6 +121,10 @@ def emit_event(
 def instrument_node(name: str, fn: Callable[[Dict[str, Any]], Dict[str, Any]]):
     """
     Node fonksiyonunu sarmalar — node_start/node_end event'leri + duration.
+
+    Status hesaplaması: sadece bu node'un EKLEDİĞİ yeni hatalar bakılır.
+    Önceki node'dan birikmiş hataları "bu node hatalı" diye etiketlemek
+    dashboard'da yanlış suçlamaya yol açıyordu.
 
     Kullanım:
         instrumented = instrument_node('multi_signal_rank', multi_signal_rank_node)
@@ -107,16 +134,26 @@ def instrument_node(name: str, fn: Callable[[Dict[str, Any]], Dict[str, Any]]):
         emit_event(state, "node_start", node_name=name)
         started = time.perf_counter()
         try:
-            delta = fn(state)
+            prior_errors = list(state.get("errors") or [])
+            delta = fn(state) or {}
             elapsed_ms = int((time.perf_counter() - started) * 1000)
-            errors = (delta or {}).get("errors") or []
-            status = "error" if errors else "ok"
+
+            # Bu node tarafından eklenen YENİ hata var mı?
+            delta_errs = delta.get("errors") if isinstance(delta, dict) else None
+            new_errors: list = []
+            if isinstance(delta_errs, list):
+                # delta.errors birden çok stratejide kullanılır:
+                #  - tüm hata listesi (state'i ezer)
+                #  - sadece yeni hatalar (append intent)
+                # En güvenli yaklaşım: prior'da olmayanları yeni kabul et.
+                new_errors = [e for e in delta_errs if e not in prior_errors]
+            status = "error" if new_errors else "ok"
             emit_event(
                 state, "node_end", node_name=name, status=status,
                 duration_ms=elapsed_ms,
-                metadata={"errors": errors[:3]} if errors else None,
+                metadata={"errors": new_errors[:3]} if new_errors else None,
             )
-            return delta or {}
+            return delta
         except Exception as e:
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             emit_event(

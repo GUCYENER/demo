@@ -77,6 +77,28 @@ def _strip_comments(sql: str) -> str:
     return sql
 
 
+# String/identifier literal'leri sterilize ederken kullanılan token.
+_LITERAL_TOKEN = "''"
+_SINGLE_QUOTED_RE = re.compile(r"'(?:[^']|'')*'")  # '...' (SQL '' kaçışıyla)
+_DOUBLE_QUOTED_RE = re.compile(r'"(?:[^"]|"")*"')  # "..." identifier (PG/Oracle/MSSQL)
+
+
+def _strip_literals(sql: str) -> str:
+    """
+    SQL string/identifier literal'lerini sabit token'a indirger.
+
+    Amaç: regex tabanlı LIMIT / aggregate / PK eşitlik tespiti, literal'lerin
+    içeriğinden etkilenmesin (ör. ``WHERE name = 'limit 100'`` predictor'ı
+    yanıltmasın). PK eşitlik regex'i kendi tarafında string literal'i de
+    yakalayabildiğinden, içeriği boş literal'e indirmek yeterli.
+    """
+    if not sql:
+        return sql
+    sql = _SINGLE_QUOTED_RE.sub(_LITERAL_TOKEN, sql)
+    sql = _DOUBLE_QUOTED_RE.sub('""', sql)
+    return sql
+
+
 def _explicit_limit(sql: str) -> Optional[int]:
     """LIMIT N | FETCH FIRST N ROWS ONLY | SELECT TOP N — bulursa N döner."""
     for rx in (_LIMIT_RE, _FETCH_FIRST_RE, _TOP_RE):
@@ -102,7 +124,13 @@ def _is_aggregate_only(sql: str) -> bool:
     select_part = m.group(1)
     # Aggregate çağrılarını maskele
     masked = _AGG_RE.sub("(", select_part)
-    masked = re.sub(r"\([^()]*\)", "X", masked)  # parantez içlerini sil (1 kat)
+    # İç içe parantezleri tek tek temizle (önceki sürüm tek katmanı kaldırıyordu;
+    # `COUNT(DISTINCT (a+b))` gibi iç içe gruplar non-aggregate gibi görünüyordu).
+    while True:
+        new = re.sub(r"\([^()]*\)", "X", masked)
+        if new == masked:
+            break
+        masked = new
     # Maskelenmiş içerikte virgüllerle ayrılmış non-aggregate kolon kaldı mı?
     tokens = [t.strip() for t in masked.split(",") if t.strip()]
     non_agg = [t for t in tokens if t and t != "X" and not re.fullmatch(r"X(\s+as\s+\w+)?", t, re.IGNORECASE)]
@@ -128,20 +156,27 @@ def _extract_first_table(sql: str) -> Optional[tuple]:
 def _explain_row_estimate(
     sql: str, explain_callable: Callable[[str], Any]
 ) -> Optional[int]:
-    """EXPLAIN callable'ından satır tahmini al (best-effort)."""
+    """
+    EXPLAIN callable'ından satır tahmini al (best-effort).
+
+    Plan içinde gerçekten "Plan Rows" anahtarı yoksa None döner (eskiden 0
+    dönerek "small" yanlış-pozitifine yol açıyordu).
+    """
     try:
         plan = explain_callable(sql)
         if isinstance(plan, dict):
             # PostgreSQL EXPLAIN (FORMAT JSON) → [{"Plan": {"Plan Rows": N, ...}}]
-            if "rows" in plan:
+            if "rows" in plan and plan["rows"] is not None:
                 return int(plan["rows"])
             if "Plan" in plan and isinstance(plan["Plan"], dict):
-                return int(plan["Plan"].get("Plan Rows") or 0)
+                pr = plan["Plan"].get("Plan Rows")
+                if pr is not None:
+                    return int(pr)
         if isinstance(plan, list) and plan:
             first = plan[0]
             if isinstance(first, dict):
                 p = first.get("Plan") or first
-                if isinstance(p, dict) and "Plan Rows" in p:
+                if isinstance(p, dict) and p.get("Plan Rows") is not None:
                     return int(p["Plan Rows"])
         if isinstance(plan, str):
             # Text format'tan "rows=N" yakala
@@ -208,7 +243,9 @@ def predict_result_size(
             "streaming_recommended": False, "streaming_required": False,
         }
 
-    clean = _strip_comments(sql)
+    # Yorumları ve string/identifier literal'lerini sterilize et —
+    # ``WHERE note = 'LIMIT 100'`` gibi sorgular predictor'ı yanıltmasın.
+    clean = _strip_literals(_strip_comments(sql))
 
     # 1) Aggregate-only → 1 satır
     if _is_aggregate_only(clean):

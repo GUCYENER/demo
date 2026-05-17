@@ -2918,6 +2918,7 @@ window.SidebarModule = (function () {
                     knowledgeBase: document.getElementById("menuKnowledgeBase"),
                     authorization: document.getElementById("menuAuthorization"),
                     organizations: document.getElementById("menuOrganizations"),
+                    agenticObservability: document.getElementById("menuAgenticObservability"),
                     profile: document.getElementById("menuProfile"),
                     logout: document.getElementById("logoutBtn"),
                 },
@@ -2934,6 +2935,7 @@ window.SidebarModule = (function () {
                     knowledgeBase: document.getElementById("sectionKnowledgeBase"),
                     authorization: document.getElementById("sectionAuthorization"),
                     organizations: document.getElementById("sectionOrganizations"),
+                    agenticObservability: document.getElementById("agenticObservabilitySection"),
                     profile: document.getElementById("sectionProfile"),
                 },
                 homeHeader: document.getElementById("homeHeader"),
@@ -3019,6 +3021,16 @@ window.SidebarModule = (function () {
                 }
                 break;
 
+            case "agenticObservability":
+                if (el.sections.agenticObservability) {
+                    el.sections.agenticObservability.removeAttribute("hidden");
+                    el.sections.agenticObservability.classList.remove("hidden");
+                }
+                if (window.AgenticObservability && typeof window.AgenticObservability.init === "function") {
+                    window.AgenticObservability.init("#agenticObservabilitySection");
+                }
+                break;
+
             case "profile":
                 // Element'i her zaman yeniden bul (cache sorunu önleme)
                 const profileSection = document.getElementById("sectionProfile");
@@ -3096,6 +3108,13 @@ window.SidebarModule = (function () {
             });
         }
 
+        if (el.sidebar.agenticObservability) {
+            el.sidebar.agenticObservability.addEventListener("click", () => {
+                activateItem(el.sidebar.agenticObservability);
+                showSection("agenticObservability");
+            });
+        }
+
         if (el.sidebar.profile) {
             el.sidebar.profile.addEventListener("click", () => {
                 activateItem(el.sidebar.profile);
@@ -3154,6 +3173,7 @@ window.SidebarModule = (function () {
                     const el = getElements();
                     if (el.sidebar.authorization) el.sidebar.authorization.classList.remove('hidden');
                     if (el.sidebar.organizations) el.sidebar.organizations.classList.remove('hidden');
+                    if (el.sidebar.agenticObservability) el.sidebar.agenticObservability.classList.remove('hidden');
                 }
                 return;
             }
@@ -3177,6 +3197,7 @@ window.SidebarModule = (function () {
                 'menuKnowledgeBase': el.sidebar.knowledgeBase,
                 'menuAuthorization': el.sidebar.authorization,
                 'menuOrganizations': el.sidebar.organizations,
+                'menuAgenticObservability': el.sidebar.agenticObservability,
                 'menuProfile': el.sidebar.profile
             };
 
@@ -28833,6 +28854,452 @@ window.ThemePickerPopup = (function () {
         guard: guardChatMode,
         openAdminPanel: openAdminPanel,
     };
+})();
+
+
+/* === assets/js/modules/agentic_query_consumer.js === */
+/**
+ * agentic_query_consumer.js — Faz 6+ (Frontend SSE consumer)
+ * ----------------------------------------------------------
+ * `POST /api/agentic-query/stream` endpoint'ini tüketir.
+ *
+ * Backend SSE event'leri:
+ *   - clarification   { candidates, query, message, reason, confidence }
+ *   - size_prediction { bucket, estimated_rows, reason, streaming_recommended, ... }
+ *   - columns         { columns: [...] }
+ *   - rows            { rows: [[...]], batch_index }
+ *   - end             { row_count, elapsed_ms, truncated }
+ *   - run_summary     { run_id, nodes: [{node,duration_ms,status}], total_ms }
+ *   - error           { message }
+ *
+ * Kullanım:
+ *   const aq = window.AgenticQueryConsumer.run({
+ *     question: 'kaç müşteri var',
+ *     source_id: 12,
+ *     mode: 'auto',
+ *     on: {
+ *       clarification: (data) => {...},
+ *       columns: (cols) => {...},
+ *       rows: (rows, batchIdx) => {...},
+ *       end: (meta) => {...},
+ *       run_summary: (s) => {...},
+ *       error: (e) => {...},
+ *     }
+ *   });
+ *   aq.abort();  // istek iptal
+ */
+(function () {
+    'use strict';
+
+    const ENDPOINT = '/api/agentic-query/stream';
+
+    /**
+     * SSE wire'dan event chunk'larını parse eder.
+     * Format: "event: <type>\ndata: <json>\n\n" veya "data: <json>\n\n"
+     */
+    function parseSseChunk(buffer) {
+        const events = [];
+        const blocks = buffer.split('\n\n');
+        // Son blok eksik olabilir — caller buffer'da bırakacak
+        const tail = blocks.pop();
+        for (const block of blocks) {
+            const lines = block.split('\n');
+            let eventType = null;
+            const dataLines = [];
+            for (const line of lines) {
+                if (line.startsWith('event:')) {
+                    eventType = line.slice(6).trim();
+                } else if (line.startsWith('data:')) {
+                    dataLines.push(line.slice(5).trim());
+                }
+            }
+            const dataStr = dataLines.join('\n');
+            if (!dataStr) continue;
+            try {
+                const data = JSON.parse(dataStr);
+                // type alanı data içinde de olabilir (clarification)
+                const finalType = eventType || data.type || 'message';
+                events.push({ type: finalType, data: data.data !== undefined ? data.data : data });
+            } catch (_e) {
+                // parse hatası — sessizce atla
+            }
+        }
+        return { events, tail };
+    }
+
+    /**
+     * Tek bir agentic-query/stream çağrısı başlatır.
+     * @returns {{ abort: () => void, promise: Promise<void> }}
+     */
+    function run(opts) {
+        const { question, source_id, mode = 'auto', forced_tables, db_dialect, history, on = {} } = opts;
+        if (!question || !source_id) {
+            const err = new Error('question ve source_id zorunlu');
+            on.error && on.error({ message: err.message });
+            return { abort: () => {}, promise: Promise.reject(err) };
+        }
+
+        const controller = new AbortController();
+        const headers = { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' };
+        // Auth token (mevcut auth sistemiyle uyumlu)
+        const token = (typeof window !== 'undefined' && window.localStorage)
+            ? window.localStorage.getItem('access_token')
+            : null;
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        const body = JSON.stringify({
+            question, source_id, mode,
+            forced_tables: forced_tables || null,
+            db_dialect: db_dialect || 'postgresql',
+            history: history || [],
+        });
+
+        const promise = fetch(ENDPOINT, {
+            method: 'POST', headers, body, signal: controller.signal,
+        }).then(async (res) => {
+            if (!res.ok) {
+                const txt = await res.text().catch(() => '');
+                throw new Error(`HTTP ${res.status}: ${txt.slice(0, 200)}`);
+            }
+            const ctype = res.headers.get('content-type') || '';
+            if (!ctype.includes('text/event-stream')) {
+                throw new Error(`Beklenmedik content-type: ${ctype}`);
+            }
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder('utf-8');
+            let buffer = '';
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const { events, tail } = parseSseChunk(buffer);
+                buffer = tail;
+                for (const evt of events) {
+                    _dispatch(evt, on);
+                }
+            }
+            // Buffer'da kalan son fragment
+            if (buffer.trim()) {
+                const { events } = parseSseChunk(buffer + '\n\n');
+                for (const evt of events) _dispatch(evt, on);
+            }
+        }).catch((err) => {
+            if (err.name === 'AbortError') return;
+            on.error && on.error({ message: err.message || String(err) });
+            throw err;
+        });
+
+        return { abort: () => controller.abort(), promise };
+    }
+
+    function _dispatch(evt, handlers) {
+        const { type, data } = evt;
+        switch (type) {
+            case 'clarification':
+                handlers.clarification && handlers.clarification(data);
+                break;
+            case 'size_prediction':
+                handlers.size_prediction && handlers.size_prediction(data);
+                break;
+            case 'start':
+                handlers.start && handlers.start(data);
+                break;
+            case 'columns':
+                handlers.columns && handlers.columns(data.columns || []);
+                break;
+            case 'rows':
+                handlers.rows && handlers.rows(data.rows || [], data.batch_index || 0);
+                break;
+            case 'end':
+                handlers.end && handlers.end(data);
+                break;
+            case 'run_summary':
+                handlers.run_summary && handlers.run_summary(data);
+                break;
+            case 'error':
+                handlers.error && handlers.error(data);
+                break;
+            default:
+                handlers.unknown && handlers.unknown(type, data);
+        }
+    }
+
+    /**
+     * Basit yardımcı: bir <table> elementine satırları progresif yazar.
+     * Kullanım:
+     *   const writer = AgenticQueryConsumer.tableWriter(document.getElementById('myTbl'));
+     *   run({..., on: { columns: writer.setColumns, rows: writer.appendRows, end: writer.done }});
+     */
+    function tableWriter(tableEl) {
+        let cols = [];
+        let totalAppended = 0;
+        const thead = document.createElement('thead');
+        const tbody = document.createElement('tbody');
+        tableEl.replaceChildren(thead, tbody);
+
+        return {
+            setColumns(columns) {
+                cols = columns.slice();
+                const tr = document.createElement('tr');
+                for (const c of cols) {
+                    const th = document.createElement('th');
+                    th.textContent = c;
+                    tr.appendChild(th);
+                }
+                thead.replaceChildren(tr);
+            },
+            appendRows(rows, _batchIdx) {
+                const frag = document.createDocumentFragment();
+                for (const r of rows) {
+                    const tr = document.createElement('tr');
+                    // r dict de olabilir, array de
+                    const values = Array.isArray(r) ? r : cols.map((c) => r[c]);
+                    for (const v of values) {
+                        const td = document.createElement('td');
+                        td.textContent = v == null ? '' : String(v);
+                        tr.appendChild(td);
+                    }
+                    frag.appendChild(tr);
+                }
+                tbody.appendChild(frag);
+                totalAppended += rows.length;
+            },
+            done(meta) {
+                const tfoot = document.createElement('tfoot');
+                const tr = document.createElement('tr');
+                const td = document.createElement('td');
+                td.colSpan = cols.length || 1;
+                td.className = 'agentic-table-foot';
+                const truncatedTxt = meta && meta.truncated ? ' (kırpıldı)' : '';
+                td.textContent = `Toplam ${meta?.row_count ?? totalAppended} satır, ${meta?.elapsed_ms ?? 0} ms${truncatedTxt}`;
+                tr.appendChild(td);
+                tfoot.appendChild(tr);
+                if (tableEl.tFoot) tableEl.tFoot.remove();
+                tableEl.appendChild(tfoot);
+            },
+        };
+    }
+
+    window.AgenticQueryConsumer = { run, tableWriter, parseSseChunk };
+})();
+
+
+/* === assets/js/modules/agentic_observability.js === */
+/**
+ * agentic_observability.js
+ * ------------------------
+ * /api/agentic-query/observability/stats verisini section_agentic_observability.html
+ * partial'ında render eder. Admin sayfası.
+ *
+ * Usage:
+ *   AgenticObservability.init('#agenticObservabilitySection');
+ */
+(function () {
+    'use strict';
+
+    const ENDPOINT = '/api/agentic-query/observability/stats';
+
+    function _qs(parent, sel) { return parent.querySelector(sel); }
+    function _qsa(parent, sel) { return parent.querySelectorAll(sel); }
+
+    function _authHeaders() {
+        const h = { 'Accept': 'application/json' };
+        try {
+            const t = window.localStorage && window.localStorage.getItem('access_token');
+            if (t) h['Authorization'] = `Bearer ${t}`;
+        } catch (_e) { /* sessiz */ }
+        return h;
+    }
+
+    function _getByPath(obj, path) {
+        return path.split('.').reduce((o, k) => (o == null ? null : o[k]), obj);
+    }
+
+    function _bindMetrics(root, data) {
+        _qsa(root, '[data-bind]').forEach((el) => {
+            const path = el.dataset.bind;
+            const v = _getByPath(data, path);
+            el.textContent = v == null ? '—' : String(v);
+        });
+    }
+
+    function _renderNodes(root, nodes) {
+        const table = _qs(root, '#aoNodesTable');
+        const tbody = table && table.querySelector('tbody');
+        if (!tbody) return;
+        tbody.replaceChildren();
+        if (!nodes || nodes.length === 0) {
+            const tr = document.createElement('tr');
+            const td = document.createElement('td');
+            // thead'deki gerçek kolon sayısını kullan — sabit 6 yerine.
+            const cols = table.querySelectorAll('thead th').length || 1;
+            td.colSpan = Math.max(1, cols);
+            td.className = 'ao-empty';
+            td.textContent = 'Veri yok';
+            tr.appendChild(td); tbody.appendChild(tr);
+            return;
+        }
+        const frag = document.createDocumentFragment();
+        for (const n of nodes) {
+            const tr = document.createElement('tr');
+            const cells = [n.node, n.samples, n.avg_ms, n.p50_ms, n.p95_ms, n.error_count];
+            cells.forEach((v, i) => {
+                const td = document.createElement('td');
+                td.textContent = v == null ? '—' : String(v);
+                if (i === 5 && (n.error_count || 0) > 0) td.classList.add('ao-cell--err');
+                tr.appendChild(td);
+            });
+            frag.appendChild(tr);
+        }
+        tbody.appendChild(frag);
+    }
+
+    function _renderBarList(ulEl, items, labelKey, countKey) {
+        if (!ulEl) return;
+        ulEl.replaceChildren();
+        const max = Math.max(1, ...items.map((x) => x[countKey] || 0));
+        for (const it of items) {
+            const li = document.createElement('li');
+            li.className = 'ao-bar';
+            const pct = Math.round(((it[countKey] || 0) / max) * 100);
+
+            const lbl = document.createElement('span');
+            lbl.className = 'ao-bar__label';
+            lbl.textContent = it[labelKey] || 'unknown';
+
+            const meter = document.createElement('span');
+            meter.className = 'ao-bar__meter';
+            meter.setAttribute('role', 'progressbar');
+            meter.setAttribute('aria-valuenow', String(pct));
+            meter.setAttribute('aria-valuemin', '0');
+            meter.setAttribute('aria-valuemax', '100');
+            const fill = document.createElement('span');
+            fill.className = 'ao-bar__fill';
+            fill.style.width = pct + '%';
+            meter.appendChild(fill);
+
+            const cnt = document.createElement('span');
+            cnt.className = 'ao-bar__count';
+            cnt.textContent = String(it[countKey] || 0);
+
+            li.appendChild(lbl); li.appendChild(meter); li.appendChild(cnt);
+            ulEl.appendChild(li);
+        }
+        if (items.length === 0) {
+            const li = document.createElement('li');
+            li.className = 'ao-empty';
+            li.textContent = 'Veri yok';
+            ulEl.appendChild(li);
+        }
+    }
+
+    function _renderRecent(root, items) {
+        const table = _qs(root, '#aoRecentTable');
+        const tbody = table && table.querySelector('tbody');
+        if (!tbody) return;
+        tbody.replaceChildren();
+        if (!items || items.length === 0) {
+            const tr = document.createElement('tr');
+            const td = document.createElement('td');
+            const cols = table.querySelectorAll('thead th').length || 1;
+            td.colSpan = Math.max(1, cols);
+            td.className = 'ao-empty';
+            td.textContent = 'Veri yok';
+            tr.appendChild(td); tbody.appendChild(tr);
+            return;
+        }
+        const frag = document.createDocumentFragment();
+        for (const r of items) {
+            const tr = document.createElement('tr');
+            const shortId = (r.run_id || '').slice(0, 8);
+            const dt = r.created_at ? new Date(r.created_at).toLocaleString('tr-TR') : '—';
+            const cells = [shortId, r.status || '—', `${r.duration_ms || 0} ms`,
+                           r.sql_source || '—', r.size_bucket || '—',
+                           r.row_count == null ? '—' : String(r.row_count), dt];
+            cells.forEach((v, i) => {
+                const td = document.createElement('td');
+                td.textContent = v;
+                if (i === 1 && r.status) td.className = `ao-status ao-status--${r.status}`;
+                tr.appendChild(td);
+            });
+            frag.appendChild(tr);
+        }
+        tbody.appendChild(frag);
+    }
+
+    /**
+     * Yenile butonuna hızlı arka arkaya basılınca yarışı önlemek için her
+     * istek bir AbortController üretir ve önceki istek varsa iptal edilir.
+     * Böylece "stale render" (eski cevap geç dönüp güncel olanın üstüne
+     * yazılması) mümkün olmaz.
+     */
+    async function _fetchAndRender(root, hours, state) {
+        const loading = _qs(root, '#aoLoading');
+        const error = _qs(root, '#aoError');
+        if (loading) loading.hidden = false;
+        if (error) { error.hidden = true; error.textContent = ''; }
+
+        // Önceki uçuştaki istek varsa iptal et.
+        if (state.controller) {
+            try { state.controller.abort(); } catch (_e) { /* yok say */ }
+        }
+        const controller = new AbortController();
+        state.controller = controller;
+        const seq = ++state.seq;
+
+        try {
+            const res = await fetch(`${ENDPOINT}?hours=${encodeURIComponent(hours)}`, {
+                headers: _authHeaders(),
+                signal: controller.signal,
+            });
+            // Yeni bir istek başladıysa bu cevap eski — sessizce vazgeç.
+            if (seq !== state.seq) return;
+
+            if (!res.ok) {
+                const txt = await res.text().catch(() => '');
+                throw new Error(`HTTP ${res.status}: ${txt.slice(0, 160)}`);
+            }
+            const json = await res.json();
+            if (seq !== state.seq) return;
+            if (!json.success) throw new Error(json.detail || 'Veri çekilemedi');
+
+            _bindMetrics(root, json);
+            _renderNodes(root, json.nodes || []);
+            _renderBarList(_qs(root, '#aoSqlSourceList'), json.sql_source || [], 'source', 'count');
+            _renderBarList(_qs(root, '#aoBucketList'), json.size_buckets || [], 'bucket', 'count');
+            _renderRecent(root, json.recent_runs || []);
+        } catch (err) {
+            // AbortError → kasıtlı iptal, kullanıcıya gösterme.
+            if (err && err.name === 'AbortError') return;
+            if (seq !== state.seq) return;
+            if (error) {
+                error.hidden = false;
+                error.textContent = `Yüklenemedi: ${err.message || err}`;
+            }
+        } finally {
+            if (seq === state.seq && loading) loading.hidden = true;
+        }
+    }
+
+    function init(selector) {
+        const root = typeof selector === 'string' ? document.querySelector(selector) : selector;
+        if (!root) return null;
+        const select = _qs(root, '#aoWindow');
+        const btn = _qs(root, '#aoRefresh');
+
+        // Modül başına state — AbortController + sequence numarası.
+        const state = { controller: null, seq: 0 };
+        const refresh = () => _fetchAndRender(root, select ? select.value : 24, state);
+
+        if (btn) btn.addEventListener('click', refresh);
+        if (select) select.addEventListener('change', refresh);
+
+        // İlk yükleme
+        refresh();
+        return { refresh, root };
+    }
+
+    window.AgenticObservability = { init };
 })();
 
 

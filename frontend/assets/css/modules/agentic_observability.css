@@ -78,6 +78,10 @@
 
 .ao-table-wrap {
     overflow-x: auto;
+    /* sticky thead büyük listelerde anlamlı; max-height verince
+       overflow-y akar ve thead yapışık kalır. */
+    max-height: 480px;
+    overflow-y: auto;
 }
 .ao-table {
     width: 100%; border-collapse: collapse; font-size: .92rem;

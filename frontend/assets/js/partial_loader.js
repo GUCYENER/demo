@@ -17,6 +17,7 @@
         { slot: 'sections-slot', src: 'partials/section_auth.html' },
         { slot: 'sections-slot', src: 'partials/section_org.html' },
         { slot: 'sections-slot', src: 'partials/section_profile.html' },
+        { slot: 'sections-slot', src: 'partials/section_agentic_observability.html' },
         { slot: 'modals-slot', src: 'partials/modals.html' },
     ];
 

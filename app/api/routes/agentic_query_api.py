@@ -1,22 +1,26 @@
 """
-Agentic Query API — Faz 5f
-==========================
-Faz 4-5 servisleri için backend endpoint'leri:
+Agentic Query API — Faz 5f + Faz 6d/g
+=====================================
+Faz 4-6 servisleri için backend endpoint'leri:
 
-  GET    /api/preferences/me                 → kendi user_preferences
-  PUT    /api/preferences/me                 → upsert
-  GET    /api/few-shots                      → liste (company filter)
-  POST   /api/few-shots                      → yeni örnek ekle
-  DELETE /api/few-shots/{id}                 → sil
-  POST   /api/agentic-query                  → pipeline run (sync, mode='auto'/'force')
-  POST   /api/agentic-query/resume           → clarification sonrası resume
-  POST   /api/ml/train                       → CatBoost training trigger (admin)
-  POST   /api/ml/models/{id}/activate        → model aktifleştir (admin)
-  GET    /api/ml/models                      → liste
+  GET    /api/preferences/me                       → kendi user_preferences
+  PUT    /api/preferences/me                       → upsert
+  GET    /api/few-shots                            → liste (company filter)
+  POST   /api/few-shots                            → yeni örnek ekle
+  DELETE /api/few-shots/{id}                       → sil
+  POST   /api/agentic-query                        → pipeline run (sync, mode='auto'/'force')
+  POST   /api/agentic-query/resume                 → clarification sonrası resume
+  POST   /api/agentic-query/stream                 → SSE stream (Faz 6d)
+  GET    /api/agentic-query/runs/{run_id}/summary  → run özeti (Faz 6c)
+  GET    /api/agentic-query/observability/stats    → admin dashboard (Faz 6g)
+  POST   /api/ml/train                             → CatBoost training trigger (admin)
+  POST   /api/ml/models/{id}/activate              → model aktifleştir (admin)
+  GET    /api/ml/models                            → liste
 
 Tüm endpoint'lerin yetki kuralı:
   - me-* endpoint'ler: kullanıcı kendisi için
-  - few-shots: company_id auto
+  - few-shots: company_id auto + tenant filter
+  - agentic-query/*: tenant izolasyonu (company_id = caller's company)
   - ml/*: is_admin gerekli
 """
 from __future__ import annotations
@@ -61,7 +65,15 @@ class AgenticQueryIn(BaseModel):
 
 
 class AgenticResumeIn(BaseModel):
-    state_token: str  # opaque (caller saklar; bu prototipte session storage)
+    """
+    Clarification interrupt'tan sonra pipeline'ı sürdürmek için body.
+
+    state: önceki run'ın döndüğü serileştirilebilir state (callable/cursor hariç).
+           Caller (frontend) bunu yerel olarak saklar ve resume'da geri yollar.
+    user_choice: ya `selected_indices` (ranked_candidates'tan indeksler) ya da
+                 `selected_tables` (doğrudan {schema, table} listesi) içerir.
+    """
+    state: Dict[str, Any]
     selected_indices: Optional[List[int]] = None
     selected_tables: Optional[List[Dict[str, str]]] = None
 
@@ -278,6 +290,76 @@ def run_agentic_query(
     }
 
 
+# ---------- Resume (Faz 3f clarification) ----------
+@router.post("/api/agentic-query/resume")
+def resume_agentic_query(
+    body: AgenticResumeIn,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """
+    Clarification interrupt'tan sonra pipeline'ı sürdürür.
+
+    Tasarım: stateless — pipeline state'i frontend tarafında saklanır ve
+    resume isteğinde geri gönderilir. Tenant tutarlılığı için body.state
+    içindeki company_id, çağıran kullanıcının company_id'si ile karşılaştırılır.
+    """
+    company_id = current_user.get("company_id")
+    user_id = current_user.get("id") or current_user.get("user_id")
+    if not company_id:
+        raise HTTPException(400, "company_id eksik")
+
+    state = dict(body.state or {})
+    # Tenant izolasyonu — caller başka tenant'ın state'ini sürdüremez.
+    if state.get("company_id") not in (None, company_id):
+        raise HTTPException(403, "Bu run sizin tenant'ınıza ait değil")
+    state["company_id"] = company_id
+    state["user_id"] = user_id
+
+    # Callable / cursor alanları client'tan gelmez; yeniden enjekte edilir.
+    for k in list(state.keys()):
+        if k.startswith("_") and k not in ("_pipeline_run_id", "_interrupt"):
+            state.pop(k, None)
+    state.pop("_interrupt", None)
+
+    user_choice: Dict[str, Any] = {}
+    if body.selected_indices:
+        user_choice["selected_indices"] = body.selected_indices
+    if body.selected_tables:
+        user_choice["selected_tables"] = [
+            {"schema_name": t.get("schema"), "table_name": t.get("table")}
+            for t in body.selected_tables
+        ]
+    if not user_choice:
+        raise HTTPException(400, "selected_indices veya selected_tables zorunlu")
+
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        try:
+            from app.services.pipeline.graph import resume_pipeline
+            from app.services.pipeline.wiring import inject_callables
+
+            state["_cursor"] = cur
+            inject_callables(state, llm=True, execute=True, explain=True)
+            final = resume_pipeline(state, user_choice)
+            response = {k: v for k, v in final.items() if not k.startswith("_")}
+            conn.commit()
+        except HTTPException:
+            conn.rollback()
+            raise
+        except Exception as e:
+            conn.rollback()
+            logger.exception("[agentic-query/resume] hata")
+            raise HTTPException(500, f"Resume hata: {e}")
+        finally:
+            cur.close()
+
+    return {
+        "success": True,
+        "interrupted": bool(final.get("_interrupt")),
+        "state": response,
+    }
+
+
 # ---------- Streaming (Faz 6d) ----------
 @router.post("/api/agentic-query/stream")
 def stream_agentic_query(
@@ -415,10 +497,13 @@ def get_pipeline_run_summary(
         cur = conn.cursor()
         try:
             from app.services.pipeline.observability import get_run_summary
-            # company_id ile filtre (yetki)
+            # Tenant izolasyonu — company_id NULL kayıtları da artık ait olduğu
+            # tenant'a sızdırmaz; sadece tam eşleşme kabul edilir. Admin için
+            # _require_admin kullanılırdı ama bu endpoint normal kullanıcıya açık.
+            if company_id is None:
+                raise HTTPException(400, "company_id eksik")
             cur.execute(
-                "SELECT 1 FROM pipeline_events WHERE run_id=%s AND "
-                "(company_id IS NULL OR company_id=%s) LIMIT 1",
+                "SELECT 1 FROM pipeline_events WHERE run_id=%s AND company_id=%s LIMIT 1",
                 (run_id, company_id),
             )
             if cur.fetchone() is None:
@@ -447,12 +532,21 @@ def get_observability_stats(
     hours = max(1, min(hours, 24 * 30))
     co = company_id if company_id is not None else current_user.get("company_id")
 
+    # Pencere intervali (make_interval — string interpolation YOK).
+    # hours yukarıda max/min ile sınırlandığı için integer olduğu garanti.
+    # company_id (co) None ise tüm tenant'lara açılır (sadece admin yolu).
+    co_clause = "AND company_id = %s" if co is not None else ""
+
     with get_db_context() as conn:
         cur = conn.cursor()
         try:
             # 1) Run-level toplam
+            base_params: list = [hours]
+            if co is not None:
+                base_params.append(co)
+
             cur.execute(
-                """
+                f"""
                 SELECT
                     COUNT(DISTINCT run_id) FILTER (WHERE event_type='pipeline_end') AS total_runs,
                     COUNT(DISTINCT run_id) FILTER (WHERE event_type='pipeline_end' AND status='ok') AS ok_runs,
@@ -462,10 +556,10 @@ def get_observability_stats(
                     PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms)
                         FILTER (WHERE event_type='pipeline_end') AS p95_total_ms
                   FROM pipeline_events
-                 WHERE created_at >= NOW() - INTERVAL '%s hours'
-                   AND (%s::int IS NULL OR company_id = %s)
+                 WHERE created_at >= NOW() - make_interval(hours => %s)
+                   {co_clause}
                 """,
-                (hours, co, co),
+                tuple(base_params),
             )
             r = cur.fetchone() or (0, 0, 0, 0, 0, 0)
             run_stats = {
@@ -475,7 +569,7 @@ def get_observability_stats(
 
             # 2) Node-bazlı duration
             cur.execute(
-                """
+                f"""
                 SELECT node_name,
                        COUNT(*)::int AS samples,
                        AVG(duration_ms)::int AS avg_ms,
@@ -484,13 +578,13 @@ def get_observability_stats(
                        SUM(CASE WHEN status='error' THEN 1 ELSE 0 END)::int AS error_count
                   FROM pipeline_events
                  WHERE event_type='node_end'
-                   AND created_at >= NOW() - INTERVAL '%s hours'
-                   AND (%s::int IS NULL OR company_id = %s)
+                   AND created_at >= NOW() - make_interval(hours => %s)
+                   {co_clause}
                    AND node_name IS NOT NULL
                  GROUP BY node_name
                  ORDER BY avg_ms DESC
                 """,
-                (hours, co, co),
+                tuple(base_params),
             )
             nodes = [
                 {"node": x[0], "samples": x[1], "avg_ms": x[2],
@@ -500,45 +594,45 @@ def get_observability_stats(
 
             # 3) SQL source dağılımı (metadata->>'sql_source')
             cur.execute(
-                """
+                f"""
                 SELECT COALESCE(metadata->>'sql_source','unknown') AS src, COUNT(*)::int AS n
                   FROM pipeline_events
                  WHERE event_type='pipeline_end'
-                   AND created_at >= NOW() - INTERVAL '%s hours'
-                   AND (%s::int IS NULL OR company_id = %s)
+                   AND created_at >= NOW() - make_interval(hours => %s)
+                   {co_clause}
                  GROUP BY 1 ORDER BY 2 DESC
                 """,
-                (hours, co, co),
+                tuple(base_params),
             )
             sql_source = [{"source": x[0], "count": x[1]} for x in cur.fetchall()]
 
             # 4) Size bucket dağılımı
             cur.execute(
-                """
+                f"""
                 SELECT COALESCE(metadata->>'size_bucket','unknown') AS b, COUNT(*)::int AS n
                   FROM pipeline_events
                  WHERE event_type='pipeline_end'
-                   AND created_at >= NOW() - INTERVAL '%s hours'
-                   AND (%s::int IS NULL OR company_id = %s)
+                   AND created_at >= NOW() - make_interval(hours => %s)
+                   {co_clause}
                  GROUP BY 1 ORDER BY 2 DESC
                 """,
-                (hours, co, co),
+                tuple(base_params),
             )
             buckets = [{"bucket": x[0], "count": x[1]} for x in cur.fetchall()]
 
             # 5) Son 20 run
             cur.execute(
-                """
+                f"""
                 SELECT run_id, status, duration_ms,
                        metadata->>'sql_source', metadata->>'size_bucket',
                        (metadata->>'row_count')::int, created_at
                   FROM pipeline_events
                  WHERE event_type='pipeline_end'
-                   AND created_at >= NOW() - INTERVAL '%s hours'
-                   AND (%s::int IS NULL OR company_id = %s)
+                   AND created_at >= NOW() - make_interval(hours => %s)
+                   {co_clause}
                  ORDER BY created_at DESC LIMIT 20
                 """,
-                (hours, co, co),
+                tuple(base_params),
             )
             recent = [
                 {"run_id": str(x[0]), "status": x[1], "duration_ms": x[2],

@@ -43,6 +43,7 @@ Public API:
 """
 from __future__ import annotations
 
+import json
 import time
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
@@ -93,28 +94,38 @@ def stream_execute(
         columns_sent = False
         truncated = False
         try:
-            for chunk in gen:
-                if not isinstance(chunk, dict):
-                    continue
-                if "columns" in chunk and not columns_sent:
-                    yield {"type": "columns", "columns": list(chunk["columns"])}
-                    columns_sent = True
-                if "rows" in chunk and chunk["rows"]:
-                    rows = chunk["rows"]
-                    remaining = (max_rows - row_count) if max_rows is not None else None
-                    if remaining is not None and len(rows) > remaining:
-                        rows = rows[:remaining]
-                        truncated = True
-                    if rows:
-                        yield {"type": "rows", "rows": rows, "batch_index": batch_idx}
-                        batch_idx += 1
-                        row_count += len(rows)
-                    if truncated:
-                        break
-                # final metadata chunk
-                if "row_count" in chunk or "elapsed_ms" in chunk:
-                    pass  # son end event'inde dolduracağız
-            streamed = True
+            try:
+                for chunk in gen:
+                    if not isinstance(chunk, dict):
+                        continue
+                    if "columns" in chunk and not columns_sent:
+                        yield {"type": "columns", "columns": list(chunk["columns"])}
+                        columns_sent = True
+                    if "rows" in chunk and chunk["rows"]:
+                        rows = chunk["rows"]
+                        remaining = (max_rows - row_count) if max_rows is not None else None
+                        if remaining is not None and len(rows) > remaining:
+                            rows = rows[:remaining]
+                            truncated = True
+                        if rows:
+                            yield {"type": "rows", "rows": rows, "batch_index": batch_idx}
+                            batch_idx += 1
+                            row_count += len(rows)
+                        if truncated:
+                            break
+                    # final metadata chunk
+                    if "row_count" in chunk or "elapsed_ms" in chunk:
+                        pass  # son end event'inde dolduracağız
+                streamed = True
+            finally:
+                # Truncation / abort durumunda server-side cursor sızıntısını
+                # önlemek için iç generator'ı kapat (close → GeneratorExit).
+                close_fn = getattr(gen, "close", None)
+                if callable(close_fn):
+                    try:
+                        close_fn()
+                    except Exception:
+                        pass
         except Exception as e:
             yield {"type": "error", "message": f"stream_error: {e}"}
             return
@@ -165,7 +176,8 @@ def stream_execute(
 
 def stream_to_sse(event: Dict[str, Any]) -> str:
     """Stream event → SSE wire format. event['type'] → SSE 'event:' alanı."""
-    import json
     etype = event.get("type", "message")
     data = {k: v for k, v in event.items() if k != "type"}
+    # default=str, datetime/Decimal gibi JSON-serileştirilemeyen tiplere karşı
+    # son çare; ensure_ascii=False, Türkçe karakterler için.
     return f"event: {etype}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"

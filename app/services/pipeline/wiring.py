@@ -172,8 +172,12 @@ def make_explain_callable(
         elif d == "mysql":
             explain_sql = f"EXPLAIN FORMAT=JSON {sql.rstrip(';')}"
         elif d in ("mssql", "sqlserver"):
-            # Riskli — sadece syntax kontrolü için boş satır SELECT TOP 0 sarmalı
-            explain_sql = f"SELECT TOP 0 * FROM ({sql.rstrip(';')}) AS _t"
+            # MSSQL'de güvenli, yan etkisiz bir EXPLAIN ekvivalenti yok:
+            # `SELECT TOP 0 * FROM (<sql>) AS _t` sorguyu derleyip çalıştırır
+            # (TOP 0 olsa bile yan etkili UDF'leri tetikleyebilir) ve birden
+            # çok statement içeren bir gövdede sadece son SELECT'i sarmalar.
+            # Bu yüzden EXPLAIN devre dışı — predictor reltuples yoluna düşer.
+            return None
         elif d == "oracle":
             # Oracle için EXPLAIN PLAN ayrı bir DML — SafeSQL whitelist'i bunu reddedebilir
             # Bu yüzden None döner — predictor reltuples'a düşer
