@@ -191,10 +191,20 @@ def _explain_row_estimate(
 def _table_stat_estimate(
     cursor, schema: Optional[str], table: str, dialect: str = "postgresql"
 ) -> Optional[int]:
-    """pg_stat_user_tables / reltuples üzerinden tahmin (PG-only best-effort)."""
+    """
+    pg_stat_user_tables / reltuples üzerinden tahmin (PG-only best-effort).
+
+    SAVEPOINT içinde sarmalı: bilinmeyen tablo/şema hatası ana transaction'ı
+    abort'a düşürmesin (emit_event'in çözdüğü aynı poison-TX riski).
+    """
     if cursor is None or not table:
         return None
     if dialect.lower() not in ("postgresql", "postgres", "pg"):
+        return None
+    sp_name = "_predict_stat"
+    try:
+        cursor.execute(f"SAVEPOINT {sp_name}")
+    except Exception:
         return None
     try:
         if schema:
@@ -210,9 +220,15 @@ def _table_stat_estimate(
                 (table,),
             )
         row = cursor.fetchone()
+        cursor.execute(f"RELEASE SAVEPOINT {sp_name}")
         if row and row[0] is not None:
             return int(row[0])
     except Exception:
+        try:
+            cursor.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+            cursor.execute(f"RELEASE SAVEPOINT {sp_name}")
+        except Exception:
+            pass
         return None
     return None
 

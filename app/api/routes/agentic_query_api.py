@@ -541,23 +541,32 @@ def get_observability_stats(
         cur = conn.cursor()
         try:
             # 1) Run-level toplam
+            # Resume edilen run'larda aynı run_id için BİRDEN ÇOK pipeline_end
+            # event'i olabilir (önce status=interrupt, resume sonrası status=ok).
+            # Aynı run hem 'interrupt' hem 'ok' bucket'a sayılmasın diye her
+            # run_id için en SON pipeline_end satırını seç (DISTINCT ON).
             base_params: list = [hours]
             if co is not None:
                 base_params.append(co)
 
             cur.execute(
                 f"""
+                WITH final_ends AS (
+                    SELECT DISTINCT ON (run_id) run_id, status, duration_ms
+                      FROM pipeline_events
+                     WHERE event_type='pipeline_end'
+                       AND created_at >= NOW() - make_interval(hours => %s)
+                       {co_clause}
+                     ORDER BY run_id, created_at DESC
+                )
                 SELECT
-                    COUNT(DISTINCT run_id) FILTER (WHERE event_type='pipeline_end') AS total_runs,
-                    COUNT(DISTINCT run_id) FILTER (WHERE event_type='pipeline_end' AND status='ok') AS ok_runs,
-                    COUNT(DISTINCT run_id) FILTER (WHERE event_type='pipeline_end' AND status='error') AS err_runs,
-                    COUNT(DISTINCT run_id) FILTER (WHERE event_type='pipeline_end' AND status='interrupt') AS intr_runs,
-                    AVG(duration_ms) FILTER (WHERE event_type='pipeline_end') AS avg_total_ms,
-                    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms)
-                        FILTER (WHERE event_type='pipeline_end') AS p95_total_ms
-                  FROM pipeline_events
-                 WHERE created_at >= NOW() - make_interval(hours => %s)
-                   {co_clause}
+                    COUNT(*) AS total_runs,
+                    COUNT(*) FILTER (WHERE status='ok') AS ok_runs,
+                    COUNT(*) FILTER (WHERE status='error') AS err_runs,
+                    COUNT(*) FILTER (WHERE status='interrupt') AS intr_runs,
+                    AVG(duration_ms) AS avg_total_ms,
+                    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95_total_ms
+                  FROM final_ends
                 """,
                 tuple(base_params),
             )
@@ -593,13 +602,19 @@ def get_observability_stats(
             ]
 
             # 3) SQL source dağılımı (metadata->>'sql_source')
+            # DISTINCT ON ile resume duplicate'leri elenmiş.
             cur.execute(
                 f"""
+                WITH final_ends AS (
+                    SELECT DISTINCT ON (run_id) run_id, metadata
+                      FROM pipeline_events
+                     WHERE event_type='pipeline_end'
+                       AND created_at >= NOW() - make_interval(hours => %s)
+                       {co_clause}
+                     ORDER BY run_id, created_at DESC
+                )
                 SELECT COALESCE(metadata->>'sql_source','unknown') AS src, COUNT(*)::int AS n
-                  FROM pipeline_events
-                 WHERE event_type='pipeline_end'
-                   AND created_at >= NOW() - make_interval(hours => %s)
-                   {co_clause}
+                  FROM final_ends
                  GROUP BY 1 ORDER BY 2 DESC
                 """,
                 tuple(base_params),
@@ -609,28 +624,43 @@ def get_observability_stats(
             # 4) Size bucket dağılımı
             cur.execute(
                 f"""
+                WITH final_ends AS (
+                    SELECT DISTINCT ON (run_id) run_id, metadata
+                      FROM pipeline_events
+                     WHERE event_type='pipeline_end'
+                       AND created_at >= NOW() - make_interval(hours => %s)
+                       {co_clause}
+                     ORDER BY run_id, created_at DESC
+                )
                 SELECT COALESCE(metadata->>'size_bucket','unknown') AS b, COUNT(*)::int AS n
-                  FROM pipeline_events
-                 WHERE event_type='pipeline_end'
-                   AND created_at >= NOW() - make_interval(hours => %s)
-                   {co_clause}
+                  FROM final_ends
                  GROUP BY 1 ORDER BY 2 DESC
                 """,
                 tuple(base_params),
             )
             buckets = [{"bucket": x[0], "count": x[1]} for x in cur.fetchall()]
 
-            # 5) Son 20 run
+            # 5) Son 20 run — resume duplicate'leri elenir, son created_at'a göre.
+            # DISTINCT ON kendi ORDER BY'ını run_id ile başlatmak zorunda olduğu
+            # için en güncel 20'yi seçmek üzere alt sorguya gerek var.
             cur.execute(
                 f"""
+                WITH final_ends AS (
+                    SELECT DISTINCT ON (run_id)
+                           run_id, status, duration_ms,
+                           metadata, created_at
+                      FROM pipeline_events
+                     WHERE event_type='pipeline_end'
+                       AND created_at >= NOW() - make_interval(hours => %s)
+                       {co_clause}
+                     ORDER BY run_id, created_at DESC
+                )
                 SELECT run_id, status, duration_ms,
                        metadata->>'sql_source', metadata->>'size_bucket',
                        (metadata->>'row_count')::int, created_at
-                  FROM pipeline_events
-                 WHERE event_type='pipeline_end'
-                   AND created_at >= NOW() - make_interval(hours => %s)
-                   {co_clause}
-                 ORDER BY created_at DESC LIMIT 20
+                  FROM final_ends
+                 ORDER BY created_at DESC
+                 LIMIT 20
                 """,
                 tuple(base_params),
             )

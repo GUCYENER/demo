@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.25.1"  # Code review fixes: tenant izolasyon (K1+K5), SAVEPOINT emit_event (K3+K4), predictor literal mask (K2), observability instrument (Ö11), race condition fix (Ö15+K6)
+    APP_VERSION: str = "3.25.2"  # Round 2 review: cross-tenant source leak (K7), resume _merge tutarlılığı + feedback SAVEPOINT (Ö16), predictor SAVEPOINT (Ö17), dashboard resume duplicate fix (Ö18)
 
     # Frontend & API prefix
     api_prefix: str = "/api"

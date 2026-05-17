@@ -59,10 +59,24 @@ def make_llm_callable(temperature: float = 0.0) -> Callable[[str, Dict[str, Any]
 # Execute callable
 # ---------------------------------------------------------------------------
 
-def _load_source_dict(cursor, source_id: int) -> Optional[Dict[str, Any]]:
-    """data_sources tablosundan tek satır dict döner."""
+def _load_source_dict(
+    cursor, source_id: int, company_id: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    data_sources tablosundan tek satır dict döner.
+
+    Tenant izolasyonu: company_id verilirse WHERE company_id = %s zorlanır.
+    Caller başka tenant'ın source_id'sini gönderirse None döner (None döndüğünde
+    `_call` aşağıda RuntimeError ile pipeline'ı durdurur).
+    """
     try:
-        cursor.execute("SELECT * FROM data_sources WHERE id = %s", (source_id,))
+        if company_id is not None:
+            cursor.execute(
+                "SELECT * FROM data_sources WHERE id = %s AND company_id = %s",
+                (source_id, company_id),
+            )
+        else:
+            cursor.execute("SELECT * FROM data_sources WHERE id = %s", (source_id,))
         row = cursor.fetchone()
         if not row:
             return None
@@ -82,22 +96,26 @@ def make_execute_callable(
     allowed_tables: Optional[List[str]] = None,
     timeout: Optional[int] = None,
     max_rows: Optional[int] = None,
+    company_id: Optional[int] = None,
 ) -> Callable[[str], Dict[str, Any]]:
     """
     execute node için callable üretir. SafeSQLExecutor'u sarar.
 
     Returned imza: callable(sql) -> {rows, columns, row_count, elapsed_ms, truncated}
+
+    company_id verilirse data_sources lookup tenant izolasyonu altında yapılır
+    (cross-tenant source erişimini engeller).
     """
     from app.services.safe_sql_executor import SafeSQLExecutor
     from app.core.db import get_db_context
 
-    # Source dict bir kez yüklenir
+    # Source dict bir kez yüklenir — tenant izolasyonu altında.
     source_dict: Optional[Dict[str, Any]] = None
     try:
         with get_db_context() as conn:
             cur = conn.cursor()
             try:
-                source_dict = _load_source_dict(cur, source_id)
+                source_dict = _load_source_dict(cur, source_id, company_id=company_id)
             finally:
                 cur.close()
     except Exception as e:
@@ -135,7 +153,7 @@ def make_execute_callable(
 # ---------------------------------------------------------------------------
 
 def make_explain_callable(
-    source_id: int, dialect: str = "postgresql"
+    source_id: int, dialect: str = "postgresql", company_id: Optional[int] = None,
 ) -> Callable[[str], Any]:
     """
     validate node için EXPLAIN callable. SQL'i hedefte EXPLAIN ile döndürür.
@@ -155,7 +173,7 @@ def make_explain_callable(
         with get_db_context() as conn:
             cur = conn.cursor()
             try:
-                source_dict = _load_source_dict(cur, source_id)
+                source_dict = _load_source_dict(cur, source_id, company_id=company_id)
             finally:
                 cur.close()
     except Exception:
@@ -220,11 +238,18 @@ def inject_callables(
         run_pipeline(state, mode='auto')
     """
     source_id = state.get("source_id")
+    company_id = state.get("company_id")
     dialect = state.get("db_dialect", "postgresql")
     if llm and "_llm_callable" not in state:
         state["_llm_callable"] = make_llm_callable()
     if execute and "_execute_callable" not in state and source_id:
-        state["_execute_callable"] = make_execute_callable(source_id, dialect=dialect)
+        # company_id state'ten alınıp factory'ye geçirilir — cross-tenant
+        # source_id leak'ini engeller (K7).
+        state["_execute_callable"] = make_execute_callable(
+            source_id, dialect=dialect, company_id=company_id,
+        )
     if explain and "_explain_callable" not in state and source_id:
-        state["_explain_callable"] = make_explain_callable(source_id, dialect=dialect)
+        state["_explain_callable"] = make_explain_callable(
+            source_id, dialect=dialect, company_id=company_id,
+        )
     return state

@@ -143,6 +143,25 @@ def build_query_graph(checkpointer=None):
 # Sequential fallback runner — LangGraph YOKKEN devreye girer
 # ---------------------------------------------------------------------------
 
+def _merge_state(s: Dict[str, Any], delta: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    State + node delta birleştirici.
+
+    Özel kural: ``errors`` listesi APPEND edilir (dedup). state.update() ile
+    overwrite edilirse bir sonraki node, önceki node'un eklediği hataları
+    siler — resume/run yollarında tutarsız davranışa yol açıyordu.
+    """
+    if not delta:
+        return s
+    out = dict(s)
+    for k, v in delta.items():
+        if k == "errors" and isinstance(out.get("errors"), list) and isinstance(v, list):
+            out["errors"] = out["errors"] + [e for e in v if e not in out["errors"]]
+        else:
+            out[k] = v
+    return out
+
+
 def run_pipeline(state: Dict[str, Any], mode: str = "auto") -> Dict[str, Any]:
     """
     Pure-Python sequential pipeline.
@@ -155,18 +174,7 @@ def run_pipeline(state: Dict[str, Any], mode: str = "auto") -> Dict[str, Any]:
 
     Returns: final state dict
     """
-    def _merge(s: Dict[str, Any], delta: Dict[str, Any]) -> Dict[str, Any]:
-        if not delta:
-            return s
-        out = dict(s)
-        for k, v in delta.items():
-            # Special merge: errors listesi append
-            if k == "errors" and isinstance(out.get("errors"), list) and isinstance(v, list):
-                out["errors"] = out["errors"] + [e for e in v if e not in out["errors"]]
-            else:
-                out[k] = v
-        return out
-
+    _merge = _merge_state
     import time as _t
     _started = _t.perf_counter()
     ensure_run_id(state)
@@ -230,17 +238,33 @@ def run_pipeline(state: Dict[str, Any], mode: str = "auto") -> Dict[str, Any]:
 
 
 def _persist_feedback_if_possible(state: Dict[str, Any]) -> None:
-    """Pipeline sonunda feedback rows yazımı (training data). Sessizce başarısız."""
+    """
+    Pipeline sonunda feedback rows yazımı (training data). Sessizce başarısız.
+
+    SAVEPOINT içinde sarmalı — yoksa persist hatası ana transaction'ı abort'a
+    düşürür ve hemen ardından çağrılan pipeline_end emit_event kaybolur.
+    """
     cur = state.get("_cursor")
     if cur is None or not state.get("company_id"):
+        return
+    sp_name = "_fb_persist"
+    try:
+        cur.execute(f"SAVEPOINT {sp_name}")
+    except Exception:
+        # SAVEPOINT açılamıyor (TX yok / cursor kapalı) — atla.
         return
     try:
         from app.services.ml.feature_extractor import collect_feedback_rows, persist_feedback
         rows = collect_feedback_rows(state)
         if rows:
             persist_feedback(cur, rows)
+        cur.execute(f"RELEASE SAVEPOINT {sp_name}")
     except Exception:
-        pass
+        try:
+            cur.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+            cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+        except Exception:
+            pass
 
 
 def resume_pipeline(state: Dict[str, Any], user_choice: Dict[str, Any]) -> Dict[str, Any]:
@@ -257,19 +281,20 @@ def resume_pipeline(state: Dict[str, Any], user_choice: Dict[str, Any]) -> Dict[
     ensure_run_id(state)
     emit_event(state, "resume", metadata={"selected": user_choice})
 
-    # clarification_node post-resume yolunu çalıştır
-    state.update(instrument_node("clarification", clarification_node)(state))
+    # clarification_node post-resume yolunu çalıştır.
+    # _merge_state ile errors listesi korunur (state.update overwrite ediyordu).
+    state = _merge_state(state, instrument_node("clarification", clarification_node)(state))
 
     # SQL üretim ve sonrası (self-heal aware)
     max_retries = 2
     for attempt in range(max_retries + 1):
-        state.update(instrument_node("sql_generate", sql_generate_node)(state))
-        state.update(instrument_node("validate", validate_node)(state))
+        state = _merge_state(state, instrument_node("sql_generate", sql_generate_node)(state))
+        state = _merge_state(state, instrument_node("validate", validate_node)(state))
         if state.get("validation_passed"):
             break
         if attempt == max_retries:
             break
-        state.update(instrument_node("self_heal", self_heal_node)(state))
+        state = _merge_state(state, instrument_node("self_heal", self_heal_node)(state))
         action = state.get("retry_action")
         if action == "abort":
             pipeline_end(state, int((_t.perf_counter() - _started) * 1000))
@@ -277,8 +302,8 @@ def resume_pipeline(state: Dict[str, Any], user_choice: Dict[str, Any]) -> Dict[
         if action != "rewrite":
             break
 
-    state.update(instrument_node("predict_size", predict_size_node)(state))
-    state.update(instrument_node("execute", execute_node)(state))
+    state = _merge_state(state, instrument_node("predict_size", predict_size_node)(state))
+    state = _merge_state(state, instrument_node("execute", execute_node)(state))
 
     # Faz 5a — feedback rows
     _persist_feedback_if_possible(state)
