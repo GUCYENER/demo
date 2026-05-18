@@ -900,7 +900,11 @@ window.DataSourcesModule = (function () {
 
         container.querySelectorAll('.ds-perm-view').forEach(cb => {
             cb.addEventListener('change', (e) => {
-                const id = parseInt(e.target.value || e.target.dataset.id);
+                // FIX (v3.27.5): checkbox.value boş ise tarayıcı "on" döner → parseInt("on")=NaN
+                // → set NaN birikir → JSON.stringify(null) → backend 422 "Input should be a valid integer".
+                // Sadece data-id güvenilir kaynak.
+                const id = parseInt(e.target.dataset.id, 10);
+                if (Number.isNaN(id)) return;
                 const set = isUserTab ? permState.viewUserIds : permState.viewOrgIds;
                 const execS = isUserTab ? permState.execUserIds : permState.execOrgIds;
                 if (e.target.checked) {
@@ -915,7 +919,8 @@ window.DataSourcesModule = (function () {
         });
         container.querySelectorAll('.ds-perm-exec').forEach(cb => {
             cb.addEventListener('change', (e) => {
-                const id = parseInt(e.target.dataset.id);
+                const id = parseInt(e.target.dataset.id, 10);
+                if (Number.isNaN(id)) return;
                 const set = isUserTab ? permState.execUserIds : permState.execOrgIds;
                 const viewS = isUserTab ? permState.viewUserIds : permState.viewOrgIds;
                 if (e.target.checked) {
@@ -939,11 +944,14 @@ window.DataSourcesModule = (function () {
         }
         try {
             const token = localStorage.getItem('access_token') || '';
+            // FIX (v3.27.5): NaN/non-integer guard — JSON.stringify NaN'ı null'a çevirir,
+            // backend 422 "Input should be a valid integer" verirdi.
+            const _toIntArr = (s) => Array.from(s).filter(v => Number.isInteger(v));
             const body = {
-                user_ids: Array.from(permState.viewUserIds),
-                org_ids: Array.from(permState.viewOrgIds),
-                can_execute_user_ids: Array.from(permState.execUserIds),
-                can_execute_org_ids: Array.from(permState.execOrgIds),
+                user_ids: _toIntArr(permState.viewUserIds),
+                org_ids: _toIntArr(permState.viewOrgIds),
+                can_execute_user_ids: _toIntArr(permState.execUserIds),
+                can_execute_org_ids: _toIntArr(permState.execOrgIds),
             };
             const res = await fetch(`${API_BASE}/${permState.sourceId}/permissions`, {
                 method: 'PUT',
