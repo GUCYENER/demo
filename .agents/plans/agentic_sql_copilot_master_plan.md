@@ -308,31 +308,26 @@ Wing: `vyra` (7392 drawer). Bu plan onaylanırsa her faz sonunda `mempalace_add_
 ### 📍 Faz 5 — CatBoost Yeni Modelleri + AST Query Builder + Drag-Drop UI (2-3 hafta)
 **Hedef:** Agentic copilot vizyonunun temel parçaları.
 
-- [ ] **ARTEMIS-ML:**
-  - Table Ranker (`ml_models` üzerinde `model_name=table_ranker`)
-  - Synthetic training data: `synthetic_data.py` extend — `generate_db_query_pairs(source_id)` (tablo+sample+FK → 30-50 Q/SQL pair via LLM)
-  - Continuous learning'e yeni model job tipi eklenir
-- [ ] **ORACLE:** `app/services/pipeline/query_state.py` — AST builder
-  ```python
-  @dataclass
-  class QueryState:
-      base_tables: List[Tuple[str,str]]
-      available_columns: List[ColumnRef]
-      selected_columns: List[ColumnRef]
-      filters: List[Filter]
-      joins: List[Join]
-      order_by: List[OrderClause]
-      limit: Optional[int]
-      def to_sql(self, dialect: SQLDialect) -> str: ...
-  ```
-- [ ] **ATHENA + HEBE:** Drag-drop kolon UI
-  - Yeni komponent: `frontend/assets/js/modules/query_builder.js`
-  - CSS: `frontend/assets/css/modules/query_builder.css`
-  - Keyboard fallback (Space/Arrow/Enter), `aria-grabbed`
-  - Her kolon değişiminde backend `/api/query-state/update` POST → `to_sql()` → yeni SQL preview
+> **DURUM ÖZETİ (2026-05-18 güncel):**
+> - ✅ Column / Filter / Join Predictors → v3.26.0 Faz 4'te yapıldı (`app/services/ml/catboost_trainer.py` + `decision_extractors.py`)
+> - ✅ Result Size Predictor → `app/services/ml/size_classifier.py` + `app/services/pipeline/result_size_predictor.py`
+> - ✅ AST builder → `app/services/pipeline/nodes/ast_query_builder.py` (Faz 5d, prototype tamam)
+> - ✅ Sonuç tablosu drag-drop + visibility + localStorage persist → v3.27.2 + v3.27.3 (tüketici tarafı UI)
+> - ❌ **Table Ranker model** (ml_models entry yok) — v3.28 kapsamında
+> - ❌ **Synthetic `generate_db_query_pairs`** (tablo+FK+sample → Q/SQL pair) — v3.28 kapsamında
+> - ❌ **Sample Data Preview kartı** (`renderSampleDataPreview`) — v3.28 kapsamında
+> - ❌ **Pre-execute query builder UI** (`query_builder.js` — DRAG kolon ekleme akışı, sonuçtaki drag-drop'tan farklı) — v3.28 kapsamında
+
+- [x] **ARTEMIS-ML:** Column / Filter / Join Predictors (v3.26.0 Faz 4'te tamam)
+- [x] **ARTEMIS-ML:** Result Size Predictor (v3.26.0)
+- [ ] **ARTEMIS-ML:** Table Ranker (`ml_models` üzerinde `model_name=table_ranker`)
+- [ ] **ARTEMIS-ML:** Synthetic training data: `synthetic_data.py` extend — `generate_db_query_pairs(source_id)` (tablo+sample+FK → 30-50 Q/SQL pair via LLM)
+- [ ] **ARTEMIS-ML:** Continuous learning'e yeni model job tipi eklenir
+- [x] **ORACLE:** AST builder iskeleti — `nodes/ast_query_builder.py` (lookup intent için deterministic)
+- [ ] **ATHENA + HEBE:** Pre-execute drag-drop kolon UI (`query_builder.js`) — Keyboard fallback (Space/Arrow/Enter), `aria-grabbed`, her değişimde `/api/query-state/update` → to_sql() preview
 - [ ] **ATHENA:** Sample Data Preview kartı — `renderSampleDataPreview()` (`dialog_chat_utils.js`)
 
-**Versiyon:** v3.24.0 (büyük)
+**Versiyon:** v3.24.0 (büyük) → v3.28 olarak kapsama alındı (kalan 4 madde)
 
 ---
 

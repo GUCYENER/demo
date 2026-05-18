@@ -25,8 +25,10 @@
 - ❌ **Eksik:** `sys.extended_properties` (özellikle `MS_Description` property'si) — Türkçe açıklama
 - ❌ **Eksik:** `sys.fn_listextendedproperty()` (alternatif)
 
-### MySQL (henüz incelenmedi)
-- ⚠️ `INFORMATION_SCHEMA.COLUMNS.COLUMN_COMMENT` ve `INFORMATION_SCHEMA.TABLES.TABLE_COMMENT` direkt erişilebilir → kontrol edilmeli.
+### MySQL (✅ doğrulandı 2026-05-18)
+- ✅ `INFORMATION_SCHEMA.TABLES.TABLE_COMMENT` okunuyor (`ds_learning_service.py` satır 642-647), `obj_entry["description"]` olarak yazılıyor.
+- ✅ `INFORMATION_SCHEMA.COLUMNS.COLUMN_COMMENT` okunuyor (satır 658-663), kolon `entry["comment"]` olarak `columns_json`'a yazılıyor.
+- Faz 2f kapsamında uygulanmış — başka aksiyon gerekmiyor.
 
 ## Etki
 
@@ -112,6 +114,15 @@ Column-level embedding aşamasında (`ds_column_embeddings` tablosu) `descriptio
 
 ✅ İnceleme tamamlandı.
 ✅ Read-only — hiç kod değişmedi.
-✅ Faz 2'de çözülecek — `ds_learning_service.py` discovery query'leri 4 dialect için genişletilecek; `columns_json` schema'sına `comment` alanı eklenecek (geriye uyumlu — yoksa `null`).
+✅ Faz 2f kapsamında **4 dialect için de uygulandı** (2026-05-18 doğrulandı, `ds_learning_service.py`):
 
-> 📌 Aksiyon: Faz 2 başında bu raporu referans alacağız. Şimdilik runtime'ı bozmadığı için Faz 0'da kod değişikliği yok.
+| Dialect | Tablo yorumu | Kolon yorumu | Lokasyon |
+|---|---|---|---|
+| PostgreSQL | `obj_description(c.oid)` | `col_description(a.attrelid, a.attnum)` | satır 313, 336 |
+| MSSQL | `sys.extended_properties` (MS_Description) | aynı | satır 538, 561 |
+| Oracle | `all_tab_comments` | `all_col_comments` | satır 827, 841 |
+| MySQL | `INFORMATION_SCHEMA.TABLES.TABLE_COMMENT` | `INFORMATION_SCHEMA.COLUMNS.COLUMN_COMMENT` | satır 643, 659 |
+
+`obj_entry["description"]` (tablo) + `entry["comment"]` (kolon → `columns_json`) alanları yazılıyor. Boş comment'ler nullable olarak atlanıyor.
+
+> 📌 Audit kapatıldı. POSEIDON görevi tamamlandı.
