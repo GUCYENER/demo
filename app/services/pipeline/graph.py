@@ -291,8 +291,11 @@ def run_pipeline(state: Dict[str, Any], mode: str = "auto") -> Dict[str, Any]:
     _record_learned_query_if_possible(state)
     # v3.27.0 G4 — few_shot_examples auto-populate (cache_hit ise skip)
     _populate_few_shot_if_possible(state)
+    # v3.27.0 C.G9 — pipeline_traces yazımı (debug + ML training feature)
+    state["pipeline_elapsed_ms"] = int((_t.perf_counter() - _started) * 1000)
+    _write_trace_if_possible(state)
 
-    pipeline_end(state, int((_t.perf_counter() - _started) * 1000))
+    pipeline_end(state, state["pipeline_elapsed_ms"])
     return state
 
 
@@ -380,6 +383,31 @@ def _populate_few_shot_if_possible(state: Dict[str, Any]) -> None:
         populate_from_pipeline_state(cur, state)
         cur.execute(f"RELEASE SAVEPOINT {sp_name}")
     except Exception:
+        try:
+            cur.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+            cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+        except Exception:
+            pass
+
+
+def _write_trace_if_possible(state: Dict[str, Any]) -> None:
+    """v3.27.0 C.G9 — pipeline_traces satırı (best-effort, SAVEPOINT)."""
+    cur = state.get("_cursor")
+    if cur is None:
+        return
+    sp_name = "_trace_write"
+    try:
+        cur.execute(f"SAVEPOINT {sp_name}")
+    except Exception:
+        return
+    try:
+        from app.services.db_learning.trace_writer import write_trace
+        tid = write_trace(cur, state)
+        if tid is not None:
+            state["trace_id"] = tid
+        cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+    except Exception as e:
+        logger.debug("[trace_write] %s", e)
         try:
             cur.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
             cur.execute(f"RELEASE SAVEPOINT {sp_name}")

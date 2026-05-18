@@ -75,7 +75,14 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
-### 🆕 v3.27.0-fazB (2026-05-18) - DB Learning Loop Faz B: AST Shortcut + Schema Drift Invalidation
+### 🆕 v3.27.0 (2026-05-18) - DB Learning Loop Faz C: Result Cache + Reasoning Trace + Synonym Learner
+- ⚡ **G7 — Result Fingerprint Cache (Redis):** `app/services/db_learning/result_cache.py` — SHA256(canonical_sql)+source_id key, TTL=300sn. SafeSQLExecutor.execute() içinde pre-lookup. Sadece success+non-truncated+<1MB sonuçlar cache'lenir. `RedisCache` backend (in-memory fallback). Admin endpoints: `GET /api/data-sources/result-cache/stats`, `POST /api/data-sources/result-cache/flush`.
+- 📊 **G9 — Reasoning Trace Storage:** `trace_writer.py` her pipeline run sonunda `pipeline_traces`'a satır yazar (best-effort, SAVEPOINT). Alanlar: run_id, intent, cache_hit, ast_shortcut_used, candidates_json, few_shot_ids, sql_generated, validation_errors, self_heal_iterations, execute_success, row_count, elapsed_ms, feedback. Admin debug endpoint: `GET /api/data-sources/traces/{run_id}` (RLS scope).
+- 🔤 **G5 — Synonym Auto-Learner:** `synonym_learner.py` — cosine ∈ [0.65, 0.85) dilimindeki kullanıcı_terim ↔ kolon adı çiftleri için LLM tek-atış verdict (match/no_match/uncertain). UNIQUE (source, term, schema, table, column) → mükerrer aday `observed_count++`. Admin onay kuyruğu: `GET /api/data-sources/synonyms/pending`, `POST /api/data-sources/synonyms/{id}/review`.
+- 🗄️ **Migration 022:** `synonym_suggestions` tablosu — pending/approved/rejected workflow + RLS PERMISSIVE.
+- 🧪 **Testler:** 51 yeni unit test (14 result_cache + 16 trace_writer + 21 synonym_learner). v3.27 toplam 134 unit test — tümü yeşil.
+
+### v3.27.0-fazB (2026-05-18) - DB Learning Loop Faz B: AST Shortcut + Schema Drift Invalidation
 - ⚡ **G2 — AST Shortcut Node:** `app/services/pipeline/nodes/ast_shortcut.py` — basit sorularda LLM'i atlayan deterministik SQL üretici. Pattern detection (COUNT, TOP_N, LATEST, FILTER_EQ, GROUP_BY) + confidence ≥0.85 + tek tablo zorunlu. Dialect-aware (PG LIMIT / MSSQL TOP / Oracle FETCH FIRST). `graph.py` içinde sql_generate öncesi devrede; başarısız validate'te LLM fallback'ine düşer.
 - 🛡️ **G6 — Schema Drift Detector:** `app/services/db_learning/schema_drift_detector.py` — `ds_diff_service.create_snapshot` çıktısını tüketir, etkilenen tablolar için: `learned_db_queries.is_active=FALSE`, `few_shot_examples.success_rate *= 0.5`, silinen kolonlar için `ds_column_embeddings` DELETE. `pipeline_events` tablosuna `event_type='schema_drift'` notification.
 - 🧪 **Testler:** 37 yeni unit test (17 AST shortcut + 20 schema drift) — tümü yeşil. v3.27 toplam 83 test.

@@ -361,6 +361,7 @@ class SafeSQLExecutor:
         source: dict,
         dialect: str,
         allowed_tables: Optional[List[str]] = None,
+        use_result_cache: bool = True,
     ) -> SQLResult:
         """
         SQL sorgusunu güvenli şekilde yürütür.
@@ -403,10 +404,39 @@ class SafeSQLExecutor:
         # 4. Fonksiyon adaptasyonu
         adapted_sql = adapt_functions(limited_sql, dialect)
 
+        # 4b. v3.27.0 — Result fingerprint cache lookup (Redis, TTL=5dk)
+        _src_id = source.get("id") if isinstance(source, dict) else None
+        if use_result_cache and _src_id:
+            try:
+                from app.services.db_learning.result_cache import get_cached_result
+                cached = get_cached_result(adapted_sql, _src_id)
+                if cached is not None and isinstance(cached, SQLResult) and cached.success:
+                    elapsed = (time.time() - start) * 1000
+                    # Cache hit kopyası — elapsed güncelle, sql_executed koru
+                    return SQLResult(
+                        success=True,
+                        data=cached.data,
+                        columns=cached.columns,
+                        row_count=cached.row_count,
+                        sql_executed=cached.sql_executed,
+                        elapsed_ms=elapsed,
+                        truncated=cached.truncated,
+                    )
+            except Exception as _ce:
+                logger.debug("[result_cache] lookup err: %s", _ce)
+
         # 5. Yürütme (timeout ile)
         try:
             result = self._execute_with_timeout(adapted_sql, source, dialect)
             result.elapsed_ms = (time.time() - start) * 1000
+
+            # 5b. v3.27.0 — Başarılı + non-truncated sonuçları cache'le
+            if use_result_cache and _src_id and result.success and not result.truncated:
+                try:
+                    from app.services.db_learning.result_cache import set_cached_result
+                    set_cached_result(adapted_sql, _src_id, result)
+                except Exception as _se:
+                    logger.debug("[result_cache] set err: %s", _se)
 
             log_system_event(
                 "INFO",

@@ -334,3 +334,115 @@ def prune_few_shot_endpoint(
             return {"success": True, "summary": summary.to_dict()}
         finally:
             cur.close()
+
+
+# ─────────────────────────────────────────────────────────────
+# v3.27.0 C.G7 — Result fingerprint cache (Redis)
+# ─────────────────────────────────────────────────────────────
+
+@router.get("/result-cache/stats")
+def result_cache_stats_endpoint(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Result cache istatistikleri (admin)."""
+    if not (current_user.get("is_admin") or current_user.get("role") == "admin"):
+        raise HTTPException(status_code=403, detail="Admin yetkisi gerekli")
+    from app.services.db_learning.result_cache import stats as _stats
+    return {"success": True, "stats": _stats()}
+
+
+@router.post("/result-cache/flush")
+def result_cache_flush_endpoint(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Tüm SQL result cache'i temizle (admin only)."""
+    if not (current_user.get("is_admin") or current_user.get("role") == "admin"):
+        raise HTTPException(status_code=403, detail="Admin yetkisi gerekli")
+    from app.services.db_learning.result_cache import flush_all
+    return flush_all()
+
+
+# ─────────────────────────────────────────────────────────────
+# v3.27.0 C.G9 — Reasoning trace fetch (admin debug)
+# ─────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────
+# v3.27.0 C.G5 — Synonym suggestion review queue
+# ─────────────────────────────────────────────────────────────
+
+class SynonymReviewBody(BaseModel):
+    decision: str = Field(..., description="'approved' | 'rejected'")
+
+
+@router.get("/synonyms/pending")
+def list_synonym_pending_endpoint(
+    source_id: Optional[int] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Pending sinonim önerileri (admin onay kuyruğu)."""
+    if not (current_user.get("is_admin") or current_user.get("role") == "admin"):
+        raise HTTPException(status_code=403, detail="Admin yetkisi gerekli")
+    company_id = current_user.get("company_id")
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        try:
+            apply_company_scope(cur, company_id=company_id)
+            from app.services.db_learning.synonym_learner import list_pending
+            rows = list_pending(cur, source_id=source_id, limit=limit)
+            return {"success": True, "items": rows}
+        finally:
+            cur.close()
+
+
+@router.post("/synonyms/{sugg_id}/review")
+def review_synonym_endpoint(
+    sugg_id: int,
+    body: SynonymReviewBody,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Sinonim önerisini onayla/reddet (admin)."""
+    if not (current_user.get("is_admin") or current_user.get("role") == "admin"):
+        raise HTTPException(status_code=403, detail="Admin yetkisi gerekli")
+    if body.decision not in ("approved", "rejected"):
+        raise HTTPException(status_code=400, detail="decision must be 'approved' or 'rejected'")
+    company_id = current_user.get("company_id")
+    reviewer_id = current_user.get("id")
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        try:
+            apply_company_scope(cur, company_id=company_id)
+            from app.services.db_learning.synonym_learner import review
+            ok = review(cur, sugg_id, decision=body.decision, reviewer_user_id=reviewer_id)
+            conn.commit()
+            if not ok:
+                raise HTTPException(status_code=404, detail="Pending kayıt bulunamadı")
+            return {"success": True, "id": sugg_id, "decision": body.decision}
+        finally:
+            cur.close()
+
+
+@router.get("/traces/{run_id}")
+def get_trace_by_run_id(
+    run_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Belirli run_id için pipeline trace satırını döndür.
+
+    Tenant izolasyonu: company_id RLS scope ile filtrelenir; admin değilse
+    sadece kendi tenant'ı.
+    """
+    company_id = current_user.get("company_id")
+    is_admin = bool(current_user.get("is_admin") or current_user.get("role") == "admin")
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        try:
+            if not is_admin:
+                apply_company_scope(cur, company_id=company_id)
+            from app.services.db_learning.trace_writer import fetch_trace
+            trace = fetch_trace(cur, run_id=run_id)
+            if not trace:
+                raise HTTPException(status_code=404, detail="Trace bulunamadı")
+            return {"success": True, "trace": trace}
+        finally:
+            cur.close()
