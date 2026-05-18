@@ -220,7 +220,7 @@ def get_synthetic_status(
 def list_learned_queries_endpoint(
     source_id: int,
     only_active: bool = Query(True),
-    source_filter: Optional[str] = Query(None, regex=r"^(user|synthetic|manual)$"),
+    source_filter: Optional[str] = Query(None, pattern=r"^(user|synthetic|manual)$"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     current_user: Dict[str, Any] = Depends(get_current_user),
