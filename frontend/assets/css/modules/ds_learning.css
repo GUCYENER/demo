@@ -1547,3 +1547,158 @@
     font-size: 0.8rem;
     color: var(--text-secondary, rgba(255,255,255,0.4));
 }
+
+/* ========================================
+   DB Learning Loop (v3.27) — synthetic generation modal
+======================================== */
+
+.ds-card-dbloop-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary, #94a3b8);
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 6px;
+    font-size: 14px;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.ds-card-dbloop-btn::before {
+    font-family: "Font Awesome 6 Free";
+    font-weight: 900;
+    content: "\f544"; /* fa-robot */
+}
+.ds-card-dbloop-btn:hover {
+    color: var(--accent-primary, #6366f1);
+    background: rgba(99, 102, 241, 0.1);
+    transform: scale(1.1);
+}
+.ds-card-dbloop-btn:active { transform: scale(0.95); }
+
+.ds-dbloop-intro {
+    font-size: 0.85rem;
+    color: var(--text-secondary, rgba(255,255,255,0.65));
+    line-height: 1.45;
+    margin-bottom: 0.5rem;
+}
+.ds-dbloop-intro b { color: var(--text-primary, #e2e8f0); }
+
+.ds-dbloop-actions { align-items: center; }
+
+.ds-dbloop-status { min-height: 32px; margin-bottom: 0.75rem; }
+
+.ds-dbloop-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.65rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    border: 1px solid transparent;
+}
+.ds-dbloop-running {
+    background: rgba(59, 130, 246, 0.12);
+    color: #93c5fd;
+    border-color: rgba(59, 130, 246, 0.3);
+}
+.ds-dbloop-done {
+    background: rgba(34, 197, 94, 0.12);
+    color: #86efac;
+    border-color: rgba(34, 197, 94, 0.3);
+}
+.ds-dbloop-error {
+    background: rgba(239, 68, 68, 0.12);
+    color: #fca5a5;
+    border-color: rgba(239, 68, 68, 0.3);
+}
+.ds-dbloop-idle {
+    background: rgba(148, 163, 184, 0.1);
+    color: var(--text-secondary, #94a3b8);
+    border-color: rgba(148, 163, 184, 0.2);
+}
+
+.ds-dbloop-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 0.75rem;
+    margin-top: 0.5rem;
+    font-size: 0.78rem;
+    color: var(--text-secondary, rgba(255,255,255,0.6));
+}
+.ds-dbloop-stats span { white-space: nowrap; }
+
+.ds-dbloop-list { display: flex; flex-direction: column; gap: 0.5rem; }
+
+.ds-dbloop-empty {
+    padding: 1rem;
+    text-align: center;
+    color: var(--text-secondary, rgba(255,255,255,0.45));
+    font-size: 0.85rem;
+    border: 1px dashed var(--border-color, rgba(255,255,255,0.08));
+    border-radius: 8px;
+}
+
+.ds-dbloop-row {
+    background: rgba(255,255,255,0.02);
+    border: 1px solid var(--border-color, rgba(255,255,255,0.06));
+    border-radius: 8px;
+    padding: 0.55rem 0.75rem;
+}
+.ds-dbloop-row-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+}
+.ds-dbloop-badge {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.45rem;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.ds-dbloop-src-user      { background: rgba(99, 102, 241, 0.18); color: #a5b4fc; }
+.ds-dbloop-src-synthetic { background: rgba(217, 119, 6, 0.18);  color: #fcd34d; }
+.ds-dbloop-src-manual    { background: rgba(34, 197, 94, 0.18);  color: #86efac; }
+
+.ds-dbloop-q {
+    flex: 1;
+    font-size: 0.85rem;
+    color: var(--text-primary, #e2e8f0);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.ds-dbloop-hit {
+    font-size: 0.75rem;
+    color: var(--text-secondary, #94a3b8);
+}
+.ds-dbloop-deact {
+    background: none;
+    border: none;
+    color: var(--text-secondary, #94a3b8);
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+}
+.ds-dbloop-deact:hover { color: #fca5a5; background: rgba(239, 68, 68, 0.1); }
+
+.ds-dbloop-sql {
+    margin: 0;
+    padding: 0.5rem;
+    background: rgba(0,0,0,0.25);
+    border: 1px solid var(--border-color, rgba(255,255,255,0.05));
+    border-radius: 6px;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 0.72rem;
+    color: var(--text-secondary, rgba(255,255,255,0.7));
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 140px;
+    overflow-y: auto;
+}

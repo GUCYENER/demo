@@ -1485,6 +1485,182 @@ window.DSLearningModule = (function () {
     }
 
     // ============================================
+    // v3.27.0 — DB Öğrenme Loop (G1+G3+G4)
+    // ============================================
+
+    let _dbLoopPollTimer = null;
+
+    async function openDbLearningLoop(sourceId, sourceName) {
+        _currentSourceId = sourceId;
+        _currentSourceName = sourceName;
+
+        const existing = document.getElementById('dsDbLoopModal');
+        if (existing) existing.remove();
+
+        const modal = document.createElement('div');
+        modal.id = 'dsDbLoopModal';
+        modal.className = 'ds-wizard-overlay';
+        modal.innerHTML = `
+            <div class="ds-wizard-modal" style="max-width: 880px;">
+                <div class="ds-wizard-header">
+                    <div class="ds-wizard-title">
+                        <i class="fa-solid fa-robot"></i>
+                        <span>DB Öğrenme Loop — ${_escapeHtml(sourceName)}</span>
+                    </div>
+                    <button class="ds-wizard-close" id="dsDbLoopClose" title="Kapat">
+                        <i class="fa-solid fa-times"></i>
+                    </button>
+                </div>
+                <div class="ds-wizard-body" style="padding: 1.25rem 1.5rem;">
+                    <div class="ds-dbloop-intro">
+                        <p><strong>FK ilişkilerinden otomatik örnek üret:</strong> Her FK için 2 sentetik SQL (LOOKUP_JOIN + AGGREGATE_COUNT) hedef DB'de çalıştırılır ve <em>learned_db_queries</em> önbelleğine yazılır. Tekrar üretim yapılmaz (idempotent).</p>
+                    </div>
+                    <div class="ds-dbloop-actions" style="display:flex; gap:0.5rem; margin: 0.75rem 0 1rem;">
+                        <button class="ds-wizard-btn primary" id="dsDbLoopGenBtn">
+                            <i class="fa-solid fa-bolt"></i> Sentetik SQL Üret (FK Loop)
+                        </button>
+                        <button class="ds-wizard-btn secondary" id="dsDbLoopRefreshBtn">
+                            <i class="fa-solid fa-rotate"></i> Yenile
+                        </button>
+                    </div>
+                    <div id="dsDbLoopStatus" class="ds-dbloop-status"></div>
+                    <h4 style="margin: 1rem 0 0.5rem;">Öğrenilmiş Sorgular</h4>
+                    <div id="dsDbLoopList" class="ds-dbloop-list">
+                        <div class="ds-loading"><i class="fa-solid fa-spinner fa-spin"></i> Yükleniyor...</div>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        requestAnimationFrame(() => modal.classList.add('active'));
+
+        const closeLoop = () => {
+            if (_dbLoopPollTimer) { clearInterval(_dbLoopPollTimer); _dbLoopPollTimer = null; }
+            modal.classList.remove('active');
+            setTimeout(() => modal.remove(), 300);
+            document.removeEventListener('keydown', escH);
+        };
+        function escH(e) { if (e.key === 'Escape') closeLoop(); }
+        document.addEventListener('keydown', escH);
+        document.getElementById('dsDbLoopClose').addEventListener('click', closeLoop);
+
+        document.getElementById('dsDbLoopGenBtn').addEventListener('click', () => triggerSyntheticGeneration(sourceId));
+        document.getElementById('dsDbLoopRefreshBtn').addEventListener('click', () => {
+            loadDbLoopStatus(sourceId);
+            loadLearnedQueries(sourceId);
+        });
+
+        await loadDbLoopStatus(sourceId);
+        await loadLearnedQueries(sourceId);
+    }
+
+    async function triggerSyntheticGeneration(sourceId) {
+        const btn = document.getElementById('dsDbLoopGenBtn');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Başlatılıyor...'; }
+        try {
+            const res = await apiCall(`/${sourceId}/generate-synthetic-queries`, 'POST', { skip_existing: true });
+            if (res.success) {
+                toast('success', res.message || 'Sentetik üretim başlatıldı');
+                _startStatusPolling(sourceId);
+            } else {
+                toast('warning', res.message || 'Başlatılamadı');
+            }
+        } catch (e) {
+            toast('error', 'Hata: ' + (e.message || e));
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-bolt"></i> Sentetik SQL Üret (FK Loop)'; }
+        }
+    }
+
+    function _startStatusPolling(sourceId) {
+        if (_dbLoopPollTimer) clearInterval(_dbLoopPollTimer);
+        let ticks = 0;
+        _dbLoopPollTimer = setInterval(async () => {
+            ticks++;
+            const done = await loadDbLoopStatus(sourceId);
+            if (done || ticks > 120) { // 2 dakika cap
+                clearInterval(_dbLoopPollTimer);
+                _dbLoopPollTimer = null;
+                if (done) loadLearnedQueries(sourceId);
+            }
+        }, 1500);
+    }
+
+    async function loadDbLoopStatus(sourceId) {
+        const box = document.getElementById('dsDbLoopStatus');
+        if (!box) return false;
+        try {
+            const res = await apiCall(`/${sourceId}/synthetic-status`);
+            const job = res.job || { status: 'idle' };
+            const status = job.status || 'idle';
+            let html = '';
+            if (status === 'running') {
+                html = `<div class="ds-dbloop-pill ds-dbloop-running"><i class="fa-solid fa-spinner fa-spin"></i> Çalışıyor (dialect: ${_escapeHtml(job.dialect || '?')})</div>`;
+            } else if (status === 'done') {
+                const s = job.summary || {};
+                html = `
+                    <div class="ds-dbloop-pill ds-dbloop-done"><i class="fa-solid fa-check"></i> Tamamlandı (${s.elapsed_ms || 0} ms)</div>
+                    <div class="ds-dbloop-stats">
+                        <span>FK: <strong>${s.total_fks || 0}</strong></span>
+                        <span>Denenen: <strong>${s.total_attempts || 0}</strong></span>
+                        <span>Başarılı: <strong style="color:#16a34a;">${s.success || 0}</strong></span>
+                        <span>Atlanan: <strong>${s.skipped_existing || 0}</strong></span>
+                        <span>Hata: <strong style="color:#dc2626;">${(s.failed_execute || 0) + (s.failed_learn || 0)}</strong></span>
+                    </div>
+                `;
+            } else if (status === 'error') {
+                html = `<div class="ds-dbloop-pill ds-dbloop-error"><i class="fa-solid fa-circle-exclamation"></i> Hata: ${_escapeHtml(job.error || 'bilinmeyen')}</div>`;
+            } else {
+                html = `<div class="ds-dbloop-pill ds-dbloop-idle">Henüz çalıştırılmadı</div>`;
+            }
+            box.innerHTML = html;
+            return status === 'done' || status === 'error';
+        } catch (e) {
+            box.innerHTML = `<div class="ds-dbloop-pill ds-dbloop-error">Durum alınamadı</div>`;
+            return true;
+        }
+    }
+
+    async function loadLearnedQueries(sourceId) {
+        const list = document.getElementById('dsDbLoopList');
+        if (!list) return;
+        list.innerHTML = '<div class="ds-loading"><i class="fa-solid fa-spinner fa-spin"></i> Yükleniyor...</div>';
+        try {
+            const res = await apiCall(`/${sourceId}/learned-queries?only_active=true&limit=50`);
+            const items = (res && res.items) || [];
+            if (!items.length) {
+                list.innerHTML = '<div class="ds-dbloop-empty">Henüz öğrenilmiş sorgu yok. Yukarıdaki butonla başlat veya kullanıcı sorgusu çalıştır.</div>';
+                return;
+            }
+            list.innerHTML = items.map(it => `
+                <div class="ds-dbloop-row">
+                    <div class="ds-dbloop-row-head">
+                        <span class="ds-dbloop-badge ds-dbloop-src-${_escapeHtml(it.source || 'user')}">${_escapeHtml(it.source || 'user')}</span>
+                        <span class="ds-dbloop-q">${_escapeHtml(it.question || '')}</span>
+                        <span class="ds-dbloop-hit" title="hit_count">⚡ ${it.hit_count || 0}</span>
+                        <button class="ds-dbloop-deact" data-id="${it.id}" title="Pasifleştir"><i class="fa-solid fa-ban"></i></button>
+                    </div>
+                    <pre class="ds-dbloop-sql">${_escapeHtml((it.sql_query || '').substring(0, 400))}</pre>
+                </div>
+            `).join('');
+            list.querySelectorAll('.ds-dbloop-deact').forEach(b => {
+                b.addEventListener('click', async () => {
+                    const lid = parseInt(b.dataset.id, 10);
+                    try {
+                        await apiCall(`/${sourceId}/learned-queries/${lid}/deactivate`, 'POST');
+                        toast('success', 'Pasifleştirildi');
+                        loadLearnedQueries(sourceId);
+                    } catch (e) {
+                        toast('error', 'Hata: ' + (e.message || e));
+                    }
+                });
+            });
+        } catch (e) {
+            list.innerHTML = `<div class="ds-dbloop-empty">Liste alınamadı: ${_escapeHtml(e.message || '')}</div>`;
+        }
+    }
+
+    // ============================================
     // Schedule Modal
     // ============================================
 
@@ -1731,7 +1907,8 @@ window.DSLearningModule = (function () {
         showScheduleModal,
         showLearningHistory,
         showJobDetail,
-        showLearningResults
+        showLearningResults,
+        openDbLearningLoop
     };
 })();
 

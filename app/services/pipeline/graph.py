@@ -270,6 +270,8 @@ def run_pipeline(state: Dict[str, Any], mode: str = "auto") -> Dict[str, Any]:
     _persist_decisions_if_possible(state)
     # v3.27.0 G3/G4 — başarılı sorguyu learned_db_queries'e yaz (best-effort)
     _record_learned_query_if_possible(state)
+    # v3.27.0 G4 — few_shot_examples auto-populate (cache_hit ise skip)
+    _populate_few_shot_if_possible(state)
 
     pipeline_end(state, int((_t.perf_counter() - _started) * 1000))
     return state
@@ -329,6 +331,34 @@ def _record_learned_query_if_possible(state: Dict[str, Any]) -> None:
             source="user",
             created_by_user_id=state.get("user_id"),
         )
+        cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+    except Exception:
+        try:
+            cur.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+            cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+        except Exception:
+            pass
+
+
+def _populate_few_shot_if_possible(state: Dict[str, Any]) -> None:
+    """v3.27.0 G4 — Pipeline başarısı sonrası few_shot_examples auto-populate.
+
+    Quality gate few_shot_auto_populator.populate_from_pipeline_state içinde.
+    SAVEPOINT içinde best-effort — başarısızlık pipeline'ı bozmaz.
+    """
+    cur = state.get("_cursor")
+    if cur is None:
+        return
+    sp_name = "_fs_pop"
+    try:
+        cur.execute(f"SAVEPOINT {sp_name}")
+    except Exception:
+        return
+    try:
+        from app.services.db_learning.few_shot_auto_populator import (
+            populate_from_pipeline_state,
+        )
+        populate_from_pipeline_state(cur, state)
         cur.execute(f"RELEASE SAVEPOINT {sp_name}")
     except Exception:
         try:
@@ -534,6 +564,8 @@ def resume_pipeline(state: Dict[str, Any], user_choice: Dict[str, Any]) -> Dict[
     _persist_decisions_if_possible(state)
     # v3.27.0 G3/G4 — learned query (resume yolunda da yazılır)
     _record_learned_query_if_possible(state)
+    # v3.27.0 G4 — few_shot_examples auto-populate (cache_hit ise skip)
+    _populate_few_shot_if_possible(state)
 
     pipeline_end(state, int((_t.perf_counter() - _started) * 1000))
     return state

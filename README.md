@@ -75,7 +75,19 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
-### 🆕 v3.19.4 (2026-05-17) - Faz 0: Agentic SQL Copilot Master Plan + LangGraph Pipeline İskelet (Hijyen)
+### 🆕 v3.27.0-fazA (2026-05-18) - DB Learning Loop: Cache + FK Synthetic Generation + Few-Shot Auto-Population
+- 🧠 **G3 — DB LLM Bypass Cache:** `learned_db_queries` tablosu (pgvector + tsv); `lookup_cached_sql` 3-tier (exact → cosine ≥0.85 → FTS) ile soruyu önce cache'te arar. Cache hit → validate + execute fast-path (LLM tüm pipeline atlanır).
+- 🔁 **G1 — FK Synthetic SQL Generator:** Her FK için 2 örnek SQL (LOOKUP_JOIN + AGGREGATE_COUNT) hedef DB'de çalıştırılır, başarılı olanlar `learned_db_queries`'e yazılır. Dialect-aware (PG/Oracle/MSSQL/MySQL). Idempotent (UNIQUE constraint).
+- 🎯 **G4 — Few-Shot Auto-Population:** Pipeline başarılı tamamlanırsa kalite eşiklerini (row_count>0, latency<2sn, no negative feedback) geçen örnekler `few_shot_examples`'e UPSERT edilir. 2-katmanlı dedupe.
+- 🧹 **G4.3 — LRU Pruner:** Admin endpoint `POST /api/data-sources/few-shot/prune` — her (source_id, intent) bucket'ında top_N koruma + stale_days eski usage=0 satırları silme.
+- 🛡️ **3-Layer Dedupe Service:** SHA256(canonical_sql) + cosine(embedding)≥0.92 + Jaccard(schema_sig)≥0.85.
+- 🎨 **Frontend:** Data-sources kart üzerinde "DB Öğrenme Loop" butonu (fa-robot) → modal: sentetik üretim tetik + canlı status pill (running/done/error) + öğrenilmiş sorgu listesi (deactivate aksiyonu ile).
+- 🔌 **API:** `POST /api/data-sources/{id}/generate-synthetic-queries`, `GET /synthetic-status`, `GET/POST /learned-queries`, `POST /learned-queries/invalidate-by-table`.
+- 📡 **SSE:** `cache_hit` event'i — frontend cache hit'i ayrı renderlayabilir.
+- 🧪 **Testler:** 46 yeni unit test (dedupe / synthetic_templates / few_shot_auto_populator / few_shot_pruner) — tümü yeşil.
+- 🗄️ **Migration 021:** `learned_db_queries`, `ds_synthetic_query_runs`, `pipeline_traces` tabloları + HNSW + GIN + RLS PERMISSIVE (Migration 017 pattern).
+
+### v3.19.4 (2026-05-17) - Faz 0: Agentic SQL Copilot Master Plan + LangGraph Pipeline İskelet (Hijyen)
 - 📋 **Master Plan oluşturuldu:** `.agents/plans/agentic_sql_copilot_master_plan.md` — 6 fazlı (RLS → column-embed/hybrid → multi-signal+LangGraph → user-pref+self-heal → CatBoost modelleri+AST+drag-drop → streaming+observability) yol haritası.
 - 🏗️ **Pipeline iskeleti (`app/services/pipeline/`):** LangGraph state machine için boş node'lar, `state.py` (TypedDict), `graph.py` (boş skeleton), `README.md` mimari doküman.
 - 🧪 **Test_Senaryolari.md:** 7 E2E senaryo + multi-dialect smoke test plan.

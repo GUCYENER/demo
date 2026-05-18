@@ -12,7 +12,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import auth, chat, health, rag as rag_routes, tickets, llm_config, prompts, users, system, websocket as ws_routes, organizations, feedback, dialog, permissions, assets, ldap_settings, domain_org_api, widget as widget_routes, companies, address, data_sources_api, sql_audit_api, themes, db_export, feature_permissions, agentic_query_api, metrics_api
+from app.api.routes import auth, chat, health, rag as rag_routes, tickets, llm_config, prompts, users, system, websocket as ws_routes, organizations, feedback, dialog, permissions, assets, ldap_settings, domain_org_api, widget as widget_routes, companies, address, data_sources_api, sql_audit_api, themes, db_export, feature_permissions, agentic_query_api, metrics_api, db_learning_api
 from app.core.config import settings
 from app.core.db import init_db
 from app.core.rate_limiter import limiter, get_rate_limit_handler, get_rate_limit_exception
@@ -277,6 +277,7 @@ def create_app() -> FastAPI:
     app.include_router(feature_permissions.router)  # v3.18.0 - Feature Visibility Permissions
     app.include_router(agentic_query_api.router)  # v3.24.0 - Faz 5f - Agentic Query / Preferences / Few-shots / ML
     app.include_router(metrics_api.router)  # v3.26.0 - Faz 3 P1-b - Semantic/Metric Layer
+    app.include_router(db_learning_api.router)  # v3.27.0 - DB Learning Loop (G1+G3+G4)
 
     from pathlib import Path
     from fastapi.responses import FileResponse
