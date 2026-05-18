@@ -1,0 +1,128 @@
+/* ============================================================
+   VYRA — Session Timeout Modal (v3.28.1)
+   ============================================================
+   30 dk pasif oturum -> 15 sn countdown popup -> auto-logout
+   ya da "Devam Et" ile refresh-token üzerinden uzatma.
+   SaaS standartlarına uyumlu: role=dialog, aria-modal, focus trap,
+   reduced-motion fallback, brand-token kullanan progress bar.
+   ============================================================ */
+
+#sessionTimeoutModal {
+    /* mevcut .modal-overlay sınıfını miras alır; ek z-index emniyeti */
+    z-index: 11000;
+    /* Backdrop'a tıklamayı tüketme — dışarı tıklayarak kapatılamaz.
+       (15 sn countdown'u atlatmak güvenlik açısından istenmez) */
+    pointer-events: auto;
+}
+
+#sessionTimeoutModal[hidden] {
+    display: none !important;
+}
+
+#sessionTimeoutModal .session-timeout-box {
+    max-width: 480px;
+    width: calc(100% - 32px);
+    /* Hafif uyarı vurgusu için sol kenar aksanı */
+    border-left: 4px solid var(--accent, #f5a524);
+}
+
+#sessionTimeoutModal .modal-header h3 {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0;
+}
+
+#sessionTimeoutModal .modal-header h3 i.fa-clock {
+    color: var(--accent, #f5a524);
+}
+
+#sessionTimeoutModal .modal-body p {
+    margin: 0 0 0.75rem;
+    line-height: 1.5;
+}
+
+#sessionTimeoutModal .session-countdown-line {
+    font-size: 0.95rem;
+    color: var(--text-muted, #9ca3af);
+}
+
+#sessionTimeoutModal #sessionLogoutCountdown {
+    display: inline-block;
+    min-width: 1.6em;
+    text-align: center;
+    color: var(--accent, #f5a524);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    font-size: 1.05em;
+}
+
+/* Progress bar (15sn -> 0 doğrusal azalır) */
+#sessionTimeoutModal .session-countdown-bar {
+    margin-top: 0.5rem;
+    height: 6px;
+    width: 100%;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+#sessionTimeoutModal .session-countdown-bar-fill {
+    height: 100%;
+    width: 100%;
+    background: linear-gradient(
+        90deg,
+        var(--accent, #f5a524),
+        var(--accent-strong, #ef4444)
+    );
+    transition: width 1s linear;
+    border-radius: 999px;
+}
+
+#sessionTimeoutModal .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+}
+
+#sessionTimeoutModal #sessionContinueBtn {
+    min-width: 140px;
+}
+
+#sessionTimeoutModal #sessionContinueBtn[disabled],
+#sessionTimeoutModal #sessionContinueBtn.is-loading {
+    opacity: 0.7;
+    pointer-events: none;
+}
+
+#sessionTimeoutModal #sessionContinueBtn.is-loading i {
+    animation: sessionSpin 0.8s linear infinite;
+}
+
+@keyframes sessionSpin {
+    to { transform: rotate(360deg); }
+}
+
+/* Login banner (session_expired query'siyle gelen) */
+.session-expired-banner {
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    color: var(--accent-strong, #ef4444);
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* reduced-motion: progress bar transition kapanır */
+@media (prefers-reduced-motion: reduce) {
+    #sessionTimeoutModal .session-countdown-bar-fill {
+        transition: none;
+    }
+    #sessionTimeoutModal #sessionContinueBtn.is-loading i {
+        animation: none;
+    }
+}

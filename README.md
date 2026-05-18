@@ -75,7 +75,16 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
-### 🆕 v3.28.0 (2026-05-18) - Faz 5 G2: Synthetic DB Q/SQL Pair Generator
+### 🆕 v3.28.1 (2026-05-18) - Session Timeout UX (30dk + 15sn countdown)
+- ⏰ **30 dakikalık pasif oturum uyarısı:** `system_manager.js` içinde `SESSION_WARN_AT_SECONDS = 30*60` eşiği aşıldığında DOM'a `#sessionTimeoutModal` enjekte edilir (`_ensureWarningModal()` — bir kez). Modal a11y uyumlu: `role="dialog"`, `aria-modal="true"`, `aria-labelledby="sessionTimeoutTitle"`, focus trap (`_previousFocusEl`), reduced-motion fallback.
+- ⏳ **15 saniyelik geri sayım + progress bar:** `_showSessionWarning()` `SESSION_LOGOUT_COUNTDOWN_SECONDS = 15` ile `setInterval` başlatır — tabular-nums sayaç + lineer azalan gradient bar (`--accent → --accent-strong`). Süre dolarsa `_forceLogout()` çağrılır.
+- 🔄 **"Devam Et" → refresh token akışı:** `_onSessionContinue()` `window.VYRA_API.refreshToken()` çağırır (api_client.js:83-95). Başarılı: `session_start_time` localStorage `Date.now()` ile sıfırlanır, modal kapanır, toast onayı verilir. Başarısız: `_forceLogout()` fallback.
+- 🚪 **Auto-logout + login redirect:** `_forceLogout()` localStorage access_token + refresh_token siler, `login.html?reason=session_expired` URL'sine yönlendirir.
+- 🛡️ **Login banner:** `login.html` içinde `#sessionExpiredBanner` (role=status, aria-live=polite) — `showSessionExpiredBannerIfNeeded()` query string'i okur, `?reason=session_expired` varsa "Oturum süreniz doldu. Lütfen tekrar giriş yapın." mesajını gösterir.
+- 🎨 **CSS modülü:** `frontend/assets/css/modules/session_timeout.css` (yeni) — brand-token (`--accent`, `--accent-strong`) kullanan progress bar, spinner keyframe, `prefers-reduced-motion` fallback. `build.mjs`'ye `_tooltip.css`'ten sonra eklendi.
+- ✅ **SaaS Standartları:** HEBE checklist (toast/modal/aria/tooltip/loading-state/empty-state/brand) tüm modalda uygulandı. `data-tooltip="Oturumu uzatmak için tıklayın"`, focus-trap, ESC ile **kapatılamaz** (15sn güvenlik kontrolü), backdrop'a tıklama tüketilmez (pointer-events: auto).
+
+### v3.28.0 (2026-05-18) - Faz 5 G2: Synthetic DB Q/SQL Pair Generator
 - 🤖 **ARTEMIS-ML — Synthetic Q/SQL Generator:** `app/services/ml/synthetic_db_query_pairs.py` — onaylı tablolar için LLM-tabanlı (Türkçe NL question + dialect-aware SQL) çift üretimi. Her tablo için kompakt "table card" (kolonlar + sample 1-2 satır + FK çıkanlar) prompt'a enjekte, JSON array yanıtı parse edilir (markdown fence toleranslı). Hedef tablo: `few_shot_examples`.
 - 🛡️ **Üç Katmanlı Dedupe:**
   - **L1 — Canonical SQL SHA256:** Whitespace+case normalize + trailing-`;` strip → mevcut few-shots ile hash karşılaştırması.

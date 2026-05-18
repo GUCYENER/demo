@@ -45,6 +45,7 @@ const CSS_FILES = [
     'assets/css/theme_picker.css',
     'assets/css/modules/feature_permissions.css',  // v3.18.0
     'assets/css/modules/_tooltip.css',              // v3.19.0 — CSS-only tooltip helper
+    'assets/css/modules/session_timeout.css',       // v3.28.1 — 30dk session timeout modal
     'assets/css/modules/db_source_selector.css',    // v3.20.0 Faz 1f — DB kaynak chip selector
     'assets/css/modules/agentic_observability.css', // v3.25.0 Faz 6g — pipeline gözlem dashboard
 ];

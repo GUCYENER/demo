@@ -28,8 +28,18 @@ window.SystemManagerModule = (function () {
     // v2.53.1: Sayaç son login zamanından itibaren sayar.
     // login.js başarılı girişte session_start_time'ı set eder.
     // PC kapansa/tarayıcı kapansa bile sonraki login'de sıfırlanır.
+    // v3.28.1: 30 dk threshold -> 15 sn countdown popup -> refresh veya auto-logout.
     let sessionStartTime = null;
     let sessionTimerInterval = null;
+
+    // v3.28.1 — Session timeout config
+    const SESSION_WARN_AT_SECONDS = 30 * 60;       // 30 dakika
+    const SESSION_LOGOUT_COUNTDOWN_SECONDS = 15;   // popup içi countdown
+
+    let _sessionWarningShown = false;
+    let _logoutTimeoutId = null;
+    let _logoutCountdownInterval = null;
+    let _previousFocusEl = null;
 
     function startSessionTimer() {
         const storedStartTime = localStorage.getItem('session_start_time');
@@ -91,6 +101,157 @@ window.SystemManagerModule = (function () {
                 timerEl.classList.add('text-yellow-400');
             }
         }
+
+        // v3.28.1 — 30 dk dolunca tek-seferlik uyarı popup'ı
+        if (diff >= SESSION_WARN_AT_SECONDS && !_sessionWarningShown) {
+            _showSessionWarning();
+        }
+    }
+
+    // ============================================================
+    // v3.28.1 — Session Timeout Modal
+    // ============================================================
+    function _ensureWarningModal() {
+        if (document.getElementById('sessionTimeoutModal')) return;
+        const html = ''
+            + '<div id="sessionTimeoutModal" class="modal-overlay session-timeout-overlay" '
+            +      'role="dialog" aria-modal="true" aria-labelledby="sessionTimeoutTitle" hidden>'
+            +   '<div class="modal-box session-timeout-box">'
+            +     '<div class="modal-header">'
+            +       '<h3 id="sessionTimeoutTitle">'
+            +         '<i class="fa-solid fa-clock"></i> Oturum Süreniz Doluyor'
+            +       '</h3>'
+            +     '</div>'
+            +     '<div class="modal-body">'
+            +       '<p>30 dakikadır oturumdasınız. Oturumu sürdürmek istiyor musunuz?</p>'
+            +       '<p class="session-countdown-line">'
+            +         '<strong id="sessionLogoutCountdown">15</strong> saniye içinde otomatik çıkış yapılacak.'
+            +       '</p>'
+            +       '<div class="session-countdown-bar" aria-hidden="true">'
+            +         '<div id="sessionCountdownFill" class="session-countdown-bar-fill"></div>'
+            +       '</div>'
+            +     '</div>'
+            +     '<div class="modal-footer">'
+            +       '<button id="sessionContinueBtn" type="button" class="btn btn-primary" '
+            +               'data-tooltip="Oturumu sürdür">'
+            +         '<i class="fa-solid fa-rotate"></i> Devam Et'
+            +       '</button>'
+            +     '</div>'
+            +   '</div>'
+            + '</div>';
+        const container = document.createElement('div');
+        container.innerHTML = html.trim();
+        const modal = container.firstElementChild;
+        document.body.appendChild(modal);
+        document.getElementById('sessionContinueBtn')
+            .addEventListener('click', _onSessionContinue);
+    }
+
+    function _showSessionWarning() {
+        if (_sessionWarningShown) return;
+        _sessionWarningShown = true;
+        _previousFocusEl = document.activeElement;
+
+        _ensureWarningModal();
+        const modal = document.getElementById('sessionTimeoutModal');
+        if (!modal) return;
+        modal.hidden = false;
+        modal.classList.add('is-open');
+
+        // 15 sn countdown başlat
+        let remaining = SESSION_LOGOUT_COUNTDOWN_SECONDS;
+        const countdownEl = document.getElementById('sessionLogoutCountdown');
+        const fillEl = document.getElementById('sessionCountdownFill');
+        if (countdownEl) countdownEl.textContent = remaining;
+        if (fillEl) fillEl.style.width = '100%';
+
+        _logoutCountdownInterval = setInterval(() => {
+            remaining--;
+            const r = Math.max(0, remaining);
+            if (countdownEl) countdownEl.textContent = r;
+            if (fillEl) fillEl.style.width = ((r / SESSION_LOGOUT_COUNTDOWN_SECONDS) * 100) + '%';
+            if (r <= 0) {
+                clearInterval(_logoutCountdownInterval);
+                _logoutCountdownInterval = null;
+            }
+        }, 1000);
+
+        _logoutTimeoutId = setTimeout(_forceLogout, SESSION_LOGOUT_COUNTDOWN_SECONDS * 1000);
+
+        // A11y: focus continue button
+        setTimeout(() => {
+            const btn = document.getElementById('sessionContinueBtn');
+            if (btn) {
+                try { btn.focus(); } catch (_) {}
+            }
+        }, 50);
+    }
+
+    function _hideSessionWarning() {
+        if (_logoutTimeoutId) {
+            clearTimeout(_logoutTimeoutId);
+            _logoutTimeoutId = null;
+        }
+        if (_logoutCountdownInterval) {
+            clearInterval(_logoutCountdownInterval);
+            _logoutCountdownInterval = null;
+        }
+        const modal = document.getElementById('sessionTimeoutModal');
+        if (modal) {
+            modal.classList.remove('is-open');
+            modal.hidden = true;
+        }
+        // Return focus
+        if (_previousFocusEl && typeof _previousFocusEl.focus === 'function') {
+            try { _previousFocusEl.focus(); } catch (_) {}
+        }
+        _previousFocusEl = null;
+    }
+
+    async function _onSessionContinue() {
+        const btn = document.getElementById('sessionContinueBtn');
+        if (btn) {
+            btn.classList.add('is-loading');
+            btn.disabled = true;
+        }
+        try {
+            // Refresh token ile yeni access token al
+            if (window.VYRA_API && typeof window.VYRA_API.refreshToken === 'function') {
+                await window.VYRA_API.refreshToken();
+            }
+            // Sayacı sıfırla — yeni 30 dk window
+            sessionStartTime = new Date();
+            localStorage.setItem('session_start_time', sessionStartTime.toISOString());
+            _sessionWarningShown = false;
+            _hideSessionWarning();
+            if (window.showToast) {
+                window.showToast('Oturumunuz yenilendi.', 'success');
+            }
+        } catch (err) {
+            console.warn('[SessionTimeout] refresh hata, otomatik çıkış:', err);
+            _forceLogout();
+        } finally {
+            if (btn) {
+                btn.classList.remove('is-loading');
+                btn.disabled = false;
+            }
+        }
+    }
+
+    function _forceLogout() {
+        _hideSessionWarning();
+        try {
+            localStorage.removeItem('access_token');
+            localStorage.removeItem('refresh_token');
+            localStorage.removeItem('session_start_time');
+            localStorage.removeItem('user_data');
+        } catch (_) {}
+        if (sessionTimerInterval) {
+            clearInterval(sessionTimerInterval);
+            sessionTimerInterval = null;
+        }
+        // Login ekranı banner için query param
+        window.location.href = 'login.html?reason=session_expired';
     }
 
     // --- SİDEBAR PROFİL ---
