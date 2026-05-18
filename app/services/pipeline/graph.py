@@ -47,6 +47,8 @@ import logging
 from .state import QueryState  # noqa: F401  (re-export için)
 from .nodes import (
     load_prefs_node,
+    cache_lookup_node,
+    should_skip_after_cache_hit,
     intent_extract_node,
     query_expand_node,
     retrieve_node,
@@ -90,6 +92,7 @@ def build_query_graph(checkpointer=None):
     # yollarında aynı pipeline_events çıktısı üretilir. Aksi takdirde prod'da
     # LangGraph aktifken observability sessizce devre dışı kalıyordu.
     g.add_node("load_prefs", instrument_node("load_prefs", load_prefs_node))
+    g.add_node("cache_lookup", instrument_node("cache_lookup", cache_lookup_node))
     g.add_node("intent_extract", instrument_node("intent_extract", intent_extract_node))
     g.add_node("query_expand", instrument_node("query_expand", query_expand_node))
     g.add_node("retrieve", instrument_node("retrieve", retrieve_node))
@@ -103,7 +106,12 @@ def build_query_graph(checkpointer=None):
     g.add_node("execute", instrument_node("execute", execute_node))
 
     g.add_edge(START, "load_prefs")
-    g.add_edge("load_prefs", "intent_extract")
+    g.add_edge("load_prefs", "cache_lookup")
+    # v3.27.0 — cache_lookup: hit ise direkt validate'e atla (LLM bypass)
+    g.add_conditional_edges("cache_lookup", should_skip_after_cache_hit, {
+        "validate": "validate",
+        "intent_extract": "intent_extract",
+    })
     g.add_edge("intent_extract", "query_expand")
     g.add_edge("query_expand", "retrieve")
     g.add_edge("retrieve", "multi_signal_rank")
@@ -181,6 +189,30 @@ def run_pipeline(state: Dict[str, Any], mode: str = "auto") -> Dict[str, Any]:
     pipeline_start(state, mode=mode)
 
     state = _merge(state, instrument_node("load_prefs", load_prefs_node)(state))
+
+    # v3.27.0 — DB LLM bypass cache lookup
+    state = _merge(state, instrument_node("cache_lookup", cache_lookup_node)(state))
+    if state.get("_cache_hit"):
+        # Cache hit → validate + execute fast path (LLM tüm pipeline atlandı)
+        state = _merge(state, instrument_node("validate", validate_node)(state))
+        if state.get("validation_passed"):
+            state = _merge(state, instrument_node("predict_size", predict_size_node)(state))
+            state = _merge(state, instrument_node("execute", execute_node)(state))
+            # Başarılı execute → hit_count++ (record_successful_query yeni INSERT
+            # yapmayacak çünkü dedupe L1 SHA256 match döner — sadece hit++).
+            _record_learned_query_if_possible(state)
+            _persist_feedback_if_possible(state)
+            _persist_size_observation_if_possible(state)
+            pipeline_end(state, int((_t.perf_counter() - _started) * 1000))
+            return state
+        # validate fail (schema drift?) → cached SQL'i terk et, normal pipeline'a düş
+        state["_cache_hit"] = False
+        state.pop("sql", None)
+        state.pop("validation_passed", None)
+        state.pop("validation_errors", None)
+        # Drift'i öğrenmek için cached entry'yi failure_count++ ile işaretle
+        _record_cache_failure_if_possible(state)
+
     state = _merge(state, instrument_node("intent_extract", intent_extract_node)(state))
     state = _merge(state, instrument_node("query_expand", query_expand_node)(state))
     state = _merge(state, instrument_node("retrieve", retrieve_node)(state))
@@ -236,9 +268,97 @@ def run_pipeline(state: Dict[str, Any], mode: str = "auto") -> Dict[str, Any]:
     _persist_size_observation_if_possible(state)
     # v3.26.0 Faz 4 — column/filter/join decision log (best-effort)
     _persist_decisions_if_possible(state)
+    # v3.27.0 G3/G4 — başarılı sorguyu learned_db_queries'e yaz (best-effort)
+    _record_learned_query_if_possible(state)
 
     pipeline_end(state, int((_t.perf_counter() - _started) * 1000))
     return state
+
+
+def _record_learned_query_if_possible(state: Dict[str, Any]) -> None:
+    """v3.27.0 — Başarılı pipeline çıktısını learned_db_queries'e yaz.
+
+    SAVEPOINT içinde sarmalı (poison-TX riski). Cache hit ise dedupe L1
+    SHA256 match döner → yeni INSERT değil, hit_count++ olur.
+    """
+    cur = state.get("_cursor")
+    if cur is None:
+        return
+    sql = state.get("sql")
+    question = state.get("question")
+    source_id = state.get("source_id")
+    if not sql or not question or not source_id:
+        return
+    # Başarısız execute (rows boş + error) ise öğrenme
+    if state.get("errors") and not state.get("row_count"):
+        return
+    sp_name = "_learn_db_q"
+    try:
+        cur.execute(f"SAVEPOINT {sp_name}")
+    except Exception:
+        return
+    try:
+        from app.services.db_learning.learned_queries_service import (
+            record_successful_query,
+        )
+        tables: list = []
+        for tc in (state.get("selected_tables") or []):
+            sch = tc.get("schema_name") if isinstance(tc, dict) else None
+            tbl = tc.get("table_name") if isinstance(tc, dict) else None
+            if tbl:
+                tables.append(f"{sch}.{tbl}" if sch else tbl)
+        columns_meta = []
+        for col in (state.get("columns") or []):
+            if isinstance(col, str):
+                columns_meta.append({"name": col})
+            elif isinstance(col, dict):
+                columns_meta.append({
+                    "name": col.get("name") or col.get("column_name"),
+                    "type": col.get("type") or col.get("data_type"),
+                })
+        # Cache hit ile geldiyse source='user' yine de doğru — hit++ olacak
+        record_successful_query(
+            cur,
+            source_id=int(source_id),
+            company_id=state.get("company_id"),
+            question=str(question),
+            sql=str(sql),
+            intent=state.get("intent"),
+            tables=tables,
+            columns_meta=columns_meta,
+            source="user",
+            created_by_user_id=state.get("user_id"),
+        )
+        cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+    except Exception:
+        try:
+            cur.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+            cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+        except Exception:
+            pass
+
+
+def _record_cache_failure_if_possible(state: Dict[str, Any]) -> None:
+    """v3.27.0 — Cache'den gelen SQL validate fail → failure_count++."""
+    cur = state.get("_cursor")
+    hit_id = state.get("_cache_hit_id")
+    if cur is None or not hit_id:
+        return
+    sp_name = "_cache_fail"
+    try:
+        cur.execute(f"SAVEPOINT {sp_name}")
+    except Exception:
+        return
+    try:
+        from app.services.db_learning.learned_queries_service import record_failure
+        record_failure(cur, int(hit_id))
+        cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+    except Exception:
+        try:
+            cur.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+            cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+        except Exception:
+            pass
 
 
 def _persist_size_observation_if_possible(state: Dict[str, Any]) -> None:
@@ -412,6 +532,8 @@ def resume_pipeline(state: Dict[str, Any], user_choice: Dict[str, Any]) -> Dict[
     _persist_size_observation_if_possible(state)
     # v3.26.0 Faz 4 — column/filter/join decisions
     _persist_decisions_if_possible(state)
+    # v3.27.0 G3/G4 — learned query (resume yolunda da yazılır)
+    _record_learned_query_if_possible(state)
 
     pipeline_end(state, int((_t.perf_counter() - _started) * 1000))
     return state

@@ -433,6 +433,19 @@ def stream_agentic_query(
                     conn.commit()
                     return
 
+                # v3.27.0 — Cache hit notification ("⚡ Önceki öğrenmeden")
+                if final.get("_cache_hit"):
+                    yield format_sse({
+                        "type": "cache_hit",
+                        "data": {
+                            "id": final.get("_cache_hit_id"),
+                            "similarity": float(final.get("_cache_similarity") or 0.0),
+                            "source": final.get("_cache_source") or "user",
+                            "intent": final.get("intent"),
+                            "sql": final.get("sql"),
+                        },
+                    })
+
                 # Size prediction
                 pred = final.get("result_size_prediction") or {}
                 if pred:
