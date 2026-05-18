@@ -1016,8 +1016,109 @@ window.DBTableUI = (function () {
     let dragSrcCol = null;
     let dragTableId = null;
 
+    // v3.27.3: kolon tercihi persist (kolon-set hash → {order, hidden})
+    const STORAGE_PREFIX = 'vyra:tbl_prefs:';
+
     function _table(tableId) {
         return document.querySelector('table.db-result-table[data-table-id="' + CSS.escape(tableId) + '"]');
+    }
+
+    function _allCols(tbl) {
+        return Array.prototype.slice.call(tbl.querySelectorAll('thead th[data-col]'))
+            .map(function (th) { return th.getAttribute('data-col'); });
+    }
+
+    function _prefsKey(colsForKey) {
+        // Kolon setine bağlı stabil key — sıralı join (sıralama bağımsız hash).
+        return STORAGE_PREFIX + (colsForKey || []).slice().sort().join('|');
+    }
+
+    function _savePrefs(tableId) {
+        const tbl = _table(tableId);
+        if (!tbl) return;
+        const order = _allCols(tbl);
+        if (!order.length) return;
+        const hidden = order.filter(function (c) {
+            const th = tbl.querySelector('thead th[data-col="' + c.replace(/"/g, '\\"') + '"]');
+            return !!(th && th.style.display === 'none');
+        });
+        const payload = { order: order, hidden: hidden, v: 1, ts: Date.now() };
+        try { localStorage.setItem(_prefsKey(order), JSON.stringify(payload)); } catch (_) {}
+    }
+
+    function _loadAndApplyPrefs(tableId) {
+        const tbl = _table(tableId);
+        if (!tbl) return;
+        const current = _allCols(tbl);
+        if (!current.length) return;
+        let saved;
+        try { saved = JSON.parse(localStorage.getItem(_prefsKey(current)) || 'null'); } catch (_) { return; }
+        if (!saved || typeof saved !== 'object') return;
+
+        // 1) Sıralama: kayıtlı order'a göre DOM'da yeniden diz
+        if (Array.isArray(saved.order)) {
+            const headRow = tbl.querySelector('thead tr');
+            const bodyRows = tbl.querySelectorAll('tbody tr');
+            saved.order.forEach(function (col) {
+                if (!current.includes(col)) return; // schema değişmiş, atla
+                const th = headRow && headRow.querySelector('th[data-col="' + col.replace(/"/g, '\\"') + '"]');
+                if (th) headRow.appendChild(th);
+                bodyRows.forEach(function (tr) {
+                    const td = tr.querySelector('td[data-col="' + col.replace(/"/g, '\\"') + '"]');
+                    if (td) tr.appendChild(td);
+                });
+            });
+        }
+        // 2) Gizleme uygula
+        if (Array.isArray(saved.hidden)) {
+            const menu = document.getElementById(tableId + '_menu');
+            saved.hidden.forEach(function (col) {
+                if (!current.includes(col)) return;
+                _cellsFor(tbl, col).forEach(function (el) { el.style.display = 'none'; });
+                if (menu) {
+                    const cb = menu.querySelector('input[type="checkbox"][data-col="' + col.replace(/"/g, '\\"') + '"]');
+                    if (cb) cb.checked = false;
+                }
+            });
+        }
+    }
+
+    function getOrderedVisibleState(tableId) {
+        // v3.27.3: Export & CSV için — kullanıcının gördüğü sıra+görünür kolonlar
+        const tbl = _table(tableId);
+        if (!tbl) return null;
+        const visible = Array.prototype.slice.call(tbl.querySelectorAll('thead th[data-col]'))
+            .filter(function (th) { return th.style.display !== 'none'; })
+            .map(function (th) { return th.getAttribute('data-col'); });
+        return { columns: visible };
+    }
+
+    // Yeni eklenen tabloları otomatik mount et (MutationObserver)
+    function _initObserver() {
+        if (!('MutationObserver' in window)) return;
+        const obs = new MutationObserver(function (muts) {
+            muts.forEach(function (m) {
+                m.addedNodes && m.addedNodes.forEach(function (n) {
+                    if (!(n instanceof HTMLElement)) return;
+                    // Eklenen düğüm wrap olabilir veya alt ağaçta wrap içerebilir
+                    const wraps = n.matches && n.matches('.db-result-table-wrap[data-table-id]')
+                        ? [n]
+                        : Array.prototype.slice.call(n.querySelectorAll ? n.querySelectorAll('.db-result-table-wrap[data-table-id]') : []);
+                    wraps.forEach(function (w) {
+                        const id = w.getAttribute('data-table-id');
+                        if (id) {
+                            try { _loadAndApplyPrefs(id); } catch (_) {}
+                        }
+                    });
+                });
+            });
+        });
+        obs.observe(document.body, { childList: true, subtree: true });
+    }
+    if (typeof document !== 'undefined' && document.body) {
+        _initObserver();
+    } else if (typeof document !== 'undefined') {
+        document.addEventListener('DOMContentLoaded', _initObserver);
     }
 
     function _cellsFor(tbl, col) {
@@ -1049,6 +1150,7 @@ window.DBTableUI = (function () {
         _cellsFor(tbl, col).forEach(function (el) {
             el.style.display = visible ? '' : 'none';
         });
+        _savePrefs(tableId);
     }
 
     function allCols(tableId, visible) {
@@ -1058,8 +1160,12 @@ window.DBTableUI = (function () {
         if (!menu) return;
         menu.querySelectorAll('input[type="checkbox"][data-col]').forEach(function (cb) {
             cb.checked = !!visible;
-            toggleCol(tableId, cb.dataset.col, !!visible);
+            const t = _table(tableId);
+            if (t) _cellsFor(t, cb.dataset.col).forEach(function (el) {
+                el.style.display = visible ? '' : 'none';
+            });
         });
+        _savePrefs(tableId);
     }
 
     // ── Drag/Drop ────────────────────────────────────────────────────────────
@@ -1118,7 +1224,8 @@ window.DBTableUI = (function () {
     function _moveColumn(tbl, srcCol, tgtCol) {
         // Header
         const headRow = tbl.querySelector('thead tr');
-        if (!headRow) return;
+        if (!headRow) { return; }
+        const tableId = tbl.getAttribute('data-table-id');
         const srcTh = headRow.querySelector('th[data-col="' + srcCol.replace(/"/g, '\\"') + '"]');
         const tgtTh = headRow.querySelector('th[data-col="' + tgtCol.replace(/"/g, '\\"') + '"]');
         if (!srcTh || !tgtTh) return;
@@ -1143,6 +1250,7 @@ window.DBTableUI = (function () {
                 tgtTd.parentNode.insertBefore(srcTd, tgtTd);
             }
         });
+        if (tableId) _savePrefs(tableId);
     }
 
     return {
@@ -1155,5 +1263,7 @@ window.DBTableUI = (function () {
         onDragLeave,
         onDrop,
         onDragEnd,
+        // v3.27.3
+        getOrderedVisibleState,
     };
 })();

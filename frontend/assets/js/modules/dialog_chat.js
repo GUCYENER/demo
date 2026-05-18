@@ -2759,7 +2759,31 @@ window.DBExportHandler = (function () {
     const API_BASE = (window.API_BASE_URL || 'http://localhost:8002') + '/api';
 
     function _getData(barId) {
-        return window[barId + '_data'] || null;
+        const raw = window[barId + '_data'] || null;
+        if (!raw) return null;
+        // v3.27.3: yakındaki tablodan kullanıcının sıralayıp gizlediği state'i uygula
+        try {
+            const bar = document.getElementById(barId);
+            if (!bar) return raw;
+            const parent = bar.closest('.db-interactive-block') || bar.parentElement;
+            if (!parent) return raw;
+            const wrap = parent.querySelector('.db-result-table-wrap[data-table-id]');
+            if (!wrap) return raw;
+            const tableId = wrap.getAttribute('data-table-id');
+            if (!tableId || !window.DBTableUI || !window.DBTableUI.getOrderedVisibleState) return raw;
+            const state = window.DBTableUI.getOrderedVisibleState(tableId);
+            if (!state || !Array.isArray(state.columns) || state.columns.length === 0) return raw;
+            // Subset rows + sıraya uygun
+            const cols = state.columns;
+            const rows = (raw.rows || []).map(function (r) {
+                const out = {};
+                cols.forEach(function (c) { out[c] = r ? r[c] : undefined; });
+                return out;
+            });
+            return Object.assign({}, raw, { columns: cols, rows: rows });
+        } catch (_e) {
+            return raw;
+        }
     }
 
     function _getToken() {
