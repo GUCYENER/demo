@@ -237,10 +237,29 @@ def run_pipeline(state: Dict[str, Any], mode: str = "auto") -> Dict[str, Any]:
             pipeline_end(state, int((_t.perf_counter() - _started) * 1000))
             return state
 
+    # v3.27.0 G2 — AST shortcut (LLM atla, basit pattern'ler için)
+    try:
+        from app.services.pipeline.nodes.ast_shortcut import ast_shortcut_node
+        state = _merge(state, instrument_node("ast_shortcut", ast_shortcut_node)(state))
+    except Exception as _e:
+        logger.debug("[ast_shortcut] skip: %s", _e)
+
     # SQL generate + validate + self-heal loop (Faz 4d)
+    # NOT: ast_shortcut sql set ettiyse sql_generate_node onu overwrite etmemeli;
+    #       sql_generate_node içinde 'sql' zaten doluysa skip yapması beklenir
+    #       (mevcut implementasyon böyle; aksi halde validate aşamasında
+    #       AST SQL'i validate edilir, fail ederse self-heal LLM'i devreye sokar).
     max_retries = 2
     for attempt in range(max_retries + 1):
-        state = _merge(state, instrument_node("sql_generate", sql_generate_node)(state))
+        # attempt 0: ast_shortcut sql varsa onu kullan; sonraki denemelerde LLM'e geç
+        if attempt == 0 and state.get("sql") and state.get("sql_source") == "ast_shortcut":
+            pass  # AST SQL hazır
+        else:
+            # retry sırasında AST SQL'i temizle ki LLM yeniden üretsin
+            if attempt > 0 and state.get("sql_source") == "ast_shortcut":
+                state["sql"] = None
+                state["sql_source"] = None
+            state = _merge(state, instrument_node("sql_generate", sql_generate_node)(state))
         state = _merge(state, instrument_node("validate", validate_node)(state))
         if state.get("validation_passed"):
             break

@@ -75,7 +75,12 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
-### 🆕 v3.27.0-fazA (2026-05-18) - DB Learning Loop: Cache + FK Synthetic Generation + Few-Shot Auto-Population
+### 🆕 v3.27.0-fazB (2026-05-18) - DB Learning Loop Faz B: AST Shortcut + Schema Drift Invalidation
+- ⚡ **G2 — AST Shortcut Node:** `app/services/pipeline/nodes/ast_shortcut.py` — basit sorularda LLM'i atlayan deterministik SQL üretici. Pattern detection (COUNT, TOP_N, LATEST, FILTER_EQ, GROUP_BY) + confidence ≥0.85 + tek tablo zorunlu. Dialect-aware (PG LIMIT / MSSQL TOP / Oracle FETCH FIRST). `graph.py` içinde sql_generate öncesi devrede; başarısız validate'te LLM fallback'ine düşer.
+- 🛡️ **G6 — Schema Drift Detector:** `app/services/db_learning/schema_drift_detector.py` — `ds_diff_service.create_snapshot` çıktısını tüketir, etkilenen tablolar için: `learned_db_queries.is_active=FALSE`, `few_shot_examples.success_rate *= 0.5`, silinen kolonlar için `ds_column_embeddings` DELETE. `pipeline_events` tablosuna `event_type='schema_drift'` notification.
+- 🧪 **Testler:** 37 yeni unit test (17 AST shortcut + 20 schema drift) — tümü yeşil. v3.27 toplam 83 test.
+
+### v3.27.0-fazA (2026-05-18) - DB Learning Loop: Cache + FK Synthetic Generation + Few-Shot Auto-Population
 - 🧠 **G3 — DB LLM Bypass Cache:** `learned_db_queries` tablosu (pgvector + tsv); `lookup_cached_sql` 3-tier (exact → cosine ≥0.85 → FTS) ile soruyu önce cache'te arar. Cache hit → validate + execute fast-path (LLM tüm pipeline atlanır).
 - 🔁 **G1 — FK Synthetic SQL Generator:** Her FK için 2 örnek SQL (LOOKUP_JOIN + AGGREGATE_COUNT) hedef DB'de çalıştırılır, başarılı olanlar `learned_db_queries`'e yazılır. Dialect-aware (PG/Oracle/MSSQL/MySQL). Idempotent (UNIQUE constraint).
 - 🎯 **G4 — Few-Shot Auto-Population:** Pipeline başarılı tamamlanırsa kalite eşiklerini (row_count>0, latency<2sn, no negative feedback) geçen örnekler `few_shot_examples`'e UPSERT edilir. 2-katmanlı dedupe.

@@ -968,6 +968,29 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                 # v3.10.0: Schema değişikliği → otomatik schema_record invalidation
                 if snapshot_result.get("has_changes") and not snapshot_result.get("is_first_run"):
                     _auto_invalidate_schema_records(vyra_conn, source_id, snapshot_result.get("diff", {}))
+
+                    # v3.27.0 G6: Schema drift → learned_db_queries + few_shot_examples + col_embeddings
+                    try:
+                        from app.services.db_learning.schema_drift_detector import apply_drift
+                        drift_cur = vyra_conn.cursor()
+                        try:
+                            drift_summary = apply_drift(
+                                drift_cur,
+                                source_id=source_id,
+                                company_id=source.get("company_id"),
+                                diff=snapshot_result.get("diff", {}),
+                            )
+                            vyra_conn.commit()
+                            logger.info(
+                                "[DSLearning.drift] invalidated_learned=%d penalized_fs=%d dropped_embs=%d",
+                                drift_summary.invalidated_learned,
+                                drift_summary.penalized_few_shot,
+                                drift_summary.dropped_column_embeddings,
+                            )
+                        finally:
+                            drift_cur.close()
+                    except Exception as drift_err:
+                        logger.warning("[DSLearning.drift] hata: %s", drift_err)
             else:
                 logger.info("[DSLearning] Şemada değişiklik yok, snapshot atlandı")
         except Exception as snap_err:
