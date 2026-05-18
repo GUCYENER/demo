@@ -94,13 +94,18 @@ def _collect_removed_columns(modified: Iterable[Dict[str, Any]]) -> List[Dict[st
 # ─────────────────────────────────────────────────────────────
 
 def _invalidate_learned_for_tables(cur, source_id: int, table_keys: List[str]) -> int:
-    """schema_signature içinde herhangi bir etkilenen tablo geçen kayıtları pasifleştir."""
+    """schema_signature içinde tam token olarak etkilenen tabloyu içeren kayıtları pasifleştir.
+
+    Token-bounded match: schema_signature 'public.orders,public.items' formatında.
+    ',schema_signature,' LIKE ',key,' ile false-positive önlenir
+    (`public.orders` araması `public.orders_archive` ile eşleşmez).
+    """
     if not table_keys:
         return 0
     total = 0
     for key in table_keys:
-        # schema_signature 'schema.tableA,schema.tableB' formatında — LIKE ile içerme kontrol
-        like_pattern = f"%{key}%"
+        # build_schema_signature lowercase üretiyor — LIKE (case-sensitive) yeterli
+        bound_key = f"%,{key},%"
         try:
             cur.execute(
                 """
@@ -108,9 +113,9 @@ def _invalidate_learned_for_tables(cur, source_id: int, table_keys: List[str]) -
                 SET is_active = FALSE
                 WHERE source_id = %s
                   AND is_active = TRUE
-                  AND schema_signature ILIKE %s
+                  AND (',' || schema_signature || ',') LIKE %s
                 """,
-                (source_id, like_pattern),
+                (source_id, bound_key),
             )
             total += cur.rowcount or 0
         except Exception as e:
@@ -119,12 +124,15 @@ def _invalidate_learned_for_tables(cur, source_id: int, table_keys: List[str]) -
 
 
 def _penalize_few_shot_for_tables(cur, source_id: int, table_keys: List[str]) -> int:
-    """Etkilenen schema_signature içeren few_shot_examples.success_rate *= 0.5."""
+    """Etkilenen schema_signature içeren few_shot_examples.success_rate *= 0.5.
+
+    Token-bounded match (bkz. _invalidate_learned_for_tables).
+    """
     if not table_keys:
         return 0
     total = 0
     for key in table_keys:
-        like_pattern = f"%{key}%"
+        bound_key = f"%,{key},%"
         try:
             cur.execute(
                 """
@@ -132,9 +140,9 @@ def _penalize_few_shot_for_tables(cur, source_id: int, table_keys: List[str]) ->
                 SET success_rate = GREATEST(success_rate * 0.5, 0.0),
                     updated_at = NOW()
                 WHERE source_id = %s
-                  AND schema_signature ILIKE %s
+                  AND (',' || schema_signature || ',') LIKE %s
                 """,
-                (source_id, like_pattern),
+                (source_id, bound_key),
             )
             total += cur.rowcount or 0
         except Exception as e:

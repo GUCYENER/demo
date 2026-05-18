@@ -142,3 +142,34 @@ class TestFetchTrace:
         out = fetch_trace(cur, run_id="abc")
         assert out["run_id"] == "abc"
         assert "WHERE run_id = %s" in cur.executed[0][0]
+
+    def test_by_id_with_company_scope(self):
+        """Fix #1 (v3.27.1): company_id verildiğinde WHERE'a AND predicate eklenir.
+
+        Tenant-leak regression: admin/normal kullanıcı için fetch_trace çağrısı
+        company_id'yi WHERE clause'una bağlamalı; aksi halde RLS PERMISSIVE
+        nedeniyle null-scope altında cross-tenant satır dönebilirdi.
+        """
+        cur = _MockCursor(fetch={"id": 1, "run_id": "r1", "company_id": 5})
+        out = fetch_trace(cur, trace_id=1, company_id=5)
+        sql, params = cur.executed[0]
+        assert "WHERE id = %s" in sql
+        assert "AND company_id = %s" in sql
+        assert params == (1, 5)
+        assert out["company_id"] == 5
+
+    def test_by_run_id_with_company_scope(self):
+        cur = _MockCursor(fetch={"id": 1, "run_id": "abc", "company_id": 7})
+        out = fetch_trace(cur, run_id="abc", company_id=7)
+        sql, params = cur.executed[0]
+        assert "WHERE run_id = %s" in sql
+        assert "AND company_id = %s" in sql
+        assert params == ("abc", 7)
+
+    def test_no_company_scope_omits_predicate(self):
+        """company_id=None çağrısı AND predicate eklemez (admin override path)."""
+        cur = _MockCursor(fetch={"id": 1, "run_id": "abc"})
+        fetch_trace(cur, run_id="abc", company_id=None)
+        sql, params = cur.executed[0]
+        assert "AND company_id" not in sql
+        assert params == ("abc",)

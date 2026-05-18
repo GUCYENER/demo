@@ -363,10 +363,6 @@ def result_cache_flush_endpoint(
 
 
 # ─────────────────────────────────────────────────────────────
-# v3.27.0 C.G9 — Reasoning trace fetch (admin debug)
-# ─────────────────────────────────────────────────────────────
-
-# ─────────────────────────────────────────────────────────────
 # v3.27.0 C.G5 — Synonym suggestion review queue
 # ─────────────────────────────────────────────────────────────
 
@@ -425,22 +421,36 @@ def review_synonym_endpoint(
 @router.get("/traces/{run_id}")
 def get_trace_by_run_id(
     run_id: str,
+    company_id_override: Optional[int] = Query(None, alias="company_id"),
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     """Belirli run_id için pipeline trace satırını döndür.
 
-    Tenant izolasyonu: company_id RLS scope ile filtrelenir; admin değilse
-    sadece kendi tenant'ı.
+    Tenant izolasyonu (defense-in-depth):
+      * RLS scope HER ZAMAN set edilir (admin dahil).
+      * Admin değilse: kendi company_id'sine kilitlenir (override yok sayılır).
+      * Admin ise: opsiyonel `?company_id=N` query param ile başka tenant'ı
+        debug edebilir; verilmezse kendi company_id'si kullanılır.
+      * fetch_trace WHERE'ına da explicit `company_id` predikatı eklenir
+        (RLS PERMISSIVE policy'nin null-scope bypass'ına karşı).
     """
-    company_id = current_user.get("company_id")
+    user_company_id = current_user.get("company_id")
     is_admin = bool(current_user.get("is_admin") or current_user.get("role") == "admin")
+    # Admin override sadece admin'e açık
+    effective_company = company_id_override if is_admin else user_company_id
+    # v3.27.1 defense-in-depth: tenant scope BELİRSİZSE erişimi reddet.
+    # Aksi halde RLS PERMISSIVE policy null-scope altında cross-tenant satır dönebilir
+    # ve fetch_trace WHERE'a predikat eklemez.
+    if effective_company is None:
+        raise HTTPException(status_code=403, detail="Tenant kapsamı belirlenemedi")
+
     with get_db_context() as conn:
         cur = conn.cursor()
         try:
-            if not is_admin:
-                apply_company_scope(cur, company_id=company_id)
+            # RLS scope her zaman set — admin de olsa null-bypass'a izin verme
+            apply_company_scope(cur, company_id=effective_company)
             from app.services.db_learning.trace_writer import fetch_trace
-            trace = fetch_trace(cur, run_id=run_id)
+            trace = fetch_trace(cur, run_id=run_id, company_id=effective_company)
             if not trace:
                 raise HTTPException(status_code=404, detail="Trace bulunamadı")
             return {"success": True, "trace": trace}

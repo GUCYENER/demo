@@ -1023,6 +1023,7 @@ window.DialogChatModule = (function () {
 
             // Final mesajı AddAssistantMessage ile göster
             if (finalContent) {
+                const isDbOnly = !!finalMetadata?.db_only;
                 const msgObj = {
                     id: savedMessageId || 0,
                     role: 'assistant',
@@ -1033,10 +1034,16 @@ window.DialogChatModule = (function () {
                 };
 
                 lastAddedMessageId = savedMessageId;
-                addAssistantMessage(msgObj, savedQuickReply, true, responseTime);
+                // v3.27.1: DB sorgu sonucunda narrative stream bubble gösterme — yalnızca
+                // soru + sonuç (tablo) görünür kalsın. Stream içeriği zaten satır satır
+                // birikmiş "UpdateUserId: ..., UpdateUserTime: ..." dökümü; tablo render
+                // edildikten sonra redundant.
+                if (!isDbOnly) {
+                    addAssistantMessage(msgObj, savedQuickReply, true, responseTime);
+                }
 
                 // v4.0: DB sorgu sonucu — tablo + export bar + SQL butonu
-                if (finalMetadata?.db_only) {
+                if (isDbOnly) {
                     const cols = finalMetadata.columns || [];
                     const rows = finalMetadata.raw_data || [];
                     const sqlText = finalMetadata.sql_executed || finalMetadata.sql || '';

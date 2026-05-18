@@ -139,6 +139,63 @@ class RedisCache:
             if ttl > 0:
                 self._fallback_ttls[fk] = time.time() + ttl
     
+    def get_raw(self, key: str) -> Optional[bytes]:
+        """Pickle bypass — ham bayt oku. JSON-serialize edilmiş payload için kullanılır.
+
+        v3.27.1: result_cache pickle → JSON geçişinde RCE risk azaltma.
+        """
+        if self._using_redis:
+            try:
+                data = self._redis.get(self._full_key(key))
+                if data is None:
+                    self._stats["misses"] += 1
+                    return None
+                self._stats["hits"] += 1
+                return data if isinstance(data, (bytes, bytearray)) else None
+            except Exception as e:
+                self._stats["errors"] += 1
+                log_error(f"Redis GET_RAW hatası: {e}", "cache")
+                return None
+        else:
+            fk = self._full_key(key)
+            if fk not in self._fallback_cache:
+                self._stats["misses"] += 1
+                return None
+            expire_at = self._fallback_ttls.get(fk, 0)
+            if expire_at and time.time() > expire_at:
+                del self._fallback_cache[fk]
+                del self._fallback_ttls[fk]
+                self._stats["misses"] += 1
+                return None
+            self._stats["hits"] += 1
+            v = self._fallback_cache[fk]
+            return v if isinstance(v, (bytes, bytearray)) else None
+
+    def set_raw(self, key: str, value: bytes, ttl: int = None) -> None:
+        """Pickle bypass — ham baytı doğrudan yaz."""
+        if ttl is None:
+            ttl = self._default_ttl
+        if not isinstance(value, (bytes, bytearray)):
+            raise TypeError("set_raw requires bytes")
+        if self._using_redis:
+            try:
+                if ttl > 0:
+                    self._redis.setex(self._full_key(key), ttl, bytes(value))
+                else:
+                    self._redis.set(self._full_key(key), bytes(value))
+            except Exception as e:
+                self._stats["errors"] += 1
+                log_error(f"Redis SET_RAW hatası: {e}", "cache")
+        else:
+            fk = self._full_key(key)
+            if len(self._fallback_cache) >= self._max_size:
+                oldest_key = next(iter(self._fallback_cache))
+                del self._fallback_cache[oldest_key]
+                self._fallback_ttls.pop(oldest_key, None)
+            self._fallback_cache[fk] = bytes(value)
+            if ttl > 0:
+                self._fallback_ttls[fk] = time.time() + ttl
+
     def delete(self, key: str) -> bool:
         """Cache'den sil."""
         if self._using_redis:

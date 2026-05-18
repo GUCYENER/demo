@@ -109,7 +109,9 @@ class TestInvalidateLearned:
         sql0, params0 = cur.executed[0]
         assert "UPDATE learned_db_queries" in sql0
         assert "is_active = FALSE" in sql0
-        assert params0 == (7, "%public.orders%")
+        # token-bounded match: ',schema_signature,' LIKE ',key,'
+        assert "schema_signature" in sql0
+        assert params0 == (7, "%,public.orders,%")
 
 
 class TestPenalizeFewShot:
@@ -125,7 +127,22 @@ class TestPenalizeFewShot:
         sql, params = cur.executed[0]
         assert "UPDATE few_shot_examples" in sql
         assert "success_rate * 0.5" in sql
-        assert params == (9, "%public.orders%")
+        # token-bounded
+        assert params == (9, "%,public.orders,%")
+
+    def test_token_boundary_false_positive_excluded(self):
+        """Regression: 'public.orders' araması 'public.orders_archive' eşleştirmemeli.
+
+        Bu test SQL'in pattern formatını doğrular; gerçek false-positive'i
+        davranışsal olarak doğrulamak için integration testi gerekir, ama
+        bound-marker'ları doğru üretildiğinin garantisi yeterli.
+        """
+        cur = _MockCursor(rowcounts=[0])
+        _invalidate_learned_for_tables(cur, 1, ["public.orders"])
+        _, params = cur.executed[0]
+        # Pattern başında VE sonunda virgül olmalı — substring "orders_archive"
+        # ',public.orders,' içeremez çünkü '_archive' virgülün diğer tarafında.
+        assert params[1].startswith("%,") and params[1].endswith(",%")
 
 
 class TestDropColumnEmbeddings:

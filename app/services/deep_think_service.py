@@ -3215,43 +3215,51 @@ def _generate_followup_suggestions(query: str, db_data: list, schema_ctx: dict) 
     date_cols = [c for c in col_names if any(
         kw in c.lower() for kw in ("tarih", "date", "time", "created", "updated", "zaman", "period")
     )]
+    # v3.27.1: id/code/year gibi identifier kolonları sum/avg için anlamsız → hariç tut
+    _id_like = ("id", "code", "no", "kod", "year", "yil", "yıl")
     numeric_cols = [
         c for c in col_names
         if isinstance(first_row, dict) and isinstance(first_row.get(c), (int, float))
+        and not any(kw in c.lower() for kw in _id_like)
     ]
     status_cols = [c for c in col_names if any(
         kw in c.lower() for kw in ("status", "durum", "stat", "state", "tip", "type", "kategori", "category")
     )]
 
+    # v3.27.1: Önerileri tablo şemasına bağla — metin ve query gerçek kolon adlarını içersin.
     if date_cols:
+        dc = date_cols[0]
         suggestions.append({
-            "text": "📈 Aylık trend olarak görüntüle",
-            "query": f"{query} — aylık gruplama ile trend analizi"
+            "text": f"📈 {dc} alanına göre aylık trend",
+            "query": f"{query} — {dc} alanını aylık grupla, trend olarak göster"
         })
 
     if numeric_cols:
+        nc = numeric_cols[0]
         suggestions.append({
-            "text": "📊 Toplamları ve ortalamaları göster",
-            "query": f"{query} — toplam, ortalama ve minimum/maksimum hesapla"
+            "text": f"📊 {nc} için toplam ve ortalama",
+            "query": f"{query} — {nc} alanının toplam, ortalama, min ve max değerlerini hesapla"
         })
 
     if status_cols:
         status_col = status_cols[0]
         suggestions.append({
-            "text": f"📋 {status_col} bazında dağılım göster",
+            "text": f"📋 {status_col} bazında dağılım",
             "query": f"{query} — {status_col} kolonuna göre grupla ve sayıları göster"
         })
 
-    if row_count >= 10:
+    if row_count >= 10 and numeric_cols:
+        nc = numeric_cols[0]
         suggestions.append({
-            "text": "🔝 En yüksek 10 kaydı sırala",
-            "query": f"{query} — en yüksek değerlere göre ilk 10"
+            "text": f"🔝 {nc} alanına göre en yüksek 10 kayıt",
+            "query": f"{query} — {nc} alanına göre azalan sırala ve ilk 10'u göster"
         })
 
     if date_cols and numeric_cols:
+        dc = date_cols[0]
         suggestions.append({
-            "text": "📅 Son 7 günlük karşılaştırma",
-            "query": f"{query} — son 7 günle önceki 7 günü karşılaştır"
+            "text": f"📅 {dc} ile son 7 gün karşılaştırma",
+            "query": f"{query} — {dc} alanı üzerinden son 7 günle önceki 7 günü karşılaştır"
         })
 
     # ── 2. Şema bazlı öneriler (ilişkili tablolardan) ──────────────────
@@ -3299,16 +3307,40 @@ def _generate_followup_suggestions(query: str, db_data: list, schema_ctx: dict) 
     if len(suggestions) < 3:
         try:
             col_sample = ", ".join(col_names[:8])
+            # v3.27.1: LLM'e ana tablo adlarını ve örnek satırı ver — öneriler
+            # gerçek tabloya bağlı, generic değil olsun.
+            used_tables_list: list[str] = []
+            try:
+                if schema_ctx:
+                    tables = schema_ctx.get("tables", []) or []
+                    used_set = set()
+                    for t in tables:
+                        t_cols = {(c.get("name") or "").lower() for c in t.get("columns", [])}
+                        if any(cn.lower() in t_cols for cn in col_names):
+                            label = t.get("admin_label_tr") or t.get("business_name_tr") or t.get("name")
+                            if label:
+                                used_set.add(label)
+                    used_tables_list = sorted(used_set)[:3]
+            except Exception:
+                used_tables_list = []
+            tables_hint = ", ".join(used_tables_list) if used_tables_list else "(belirtilmedi)"
+            sample_row_str = ""
+            try:
+                if isinstance(first_row, dict):
+                    items = list(first_row.items())[:6]
+                    sample_row_str = ", ".join(f"{k}={v}" for k, v in items)
+            except Exception:
+                pass
             messages = [
                 {
                     "role": "system",
                     "content": (
                         "Sen bir veri analisti asistansın. Kullanıcının veritabanı sorgusuna "
                         f"ilişkin {3 - len(suggestions)} adet kısa follow-up soru öner. "
-                        "Sorular kullanıcının konusuyla doğrudan ilgili, farklı açılardan "
-                        "analiz yapacak nitelikte olmalı. Türkçe.\n"
+                        "Sorular kullanıcının SORGULADIĞI TABLO/KOLON adlarına doğrudan referans "
+                        "vermeli; generic 'trend göster' gibi değil, kolon adı içermeli. Türkçe.\n"
                         "YANIT FORMATI — JSON array:\n"
-                        '[{"text":"📋 Kısa buton etiketi (max 6 kelime)","query":"Tam sorgu metni"},...]\n'
+                        '[{"text":"📋 Kısa buton etiketi (max 6 kelime, kolon adı içerebilir)","query":"Tam sorgu metni"},...]\n'
                         "Sadece JSON döndür."
                     ),
                 },
@@ -3316,7 +3348,9 @@ def _generate_followup_suggestions(query: str, db_data: list, schema_ctx: dict) 
                     "role": "user",
                     "content": (
                         f"Kullanıcının sorusu: {query}\n"
+                        f"İlgili tablolar: {tables_hint}\n"
                         f"Dönen veri kolonları: {col_sample}\n"
+                        f"Örnek satır: {sample_row_str or '(boş)'}\n"
                         f"Satır sayısı: {row_count}"
                     ),
                 },

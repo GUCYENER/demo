@@ -136,18 +136,36 @@ def write_trace(cur, state: Dict[str, Any]) -> Optional[int]:
         return None
 
 
-def fetch_trace(cur, *, run_id: Optional[str] = None, trace_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
-    """Admin debug — run_id veya id ile trace çek."""
-    if not (run_id or trace_id):
+def fetch_trace(
+    cur,
+    *,
+    run_id: Optional[str] = None,
+    trace_id: Optional[int] = None,
+    company_id: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """Admin debug — run_id veya id ile trace çek.
+
+    Args:
+        company_id: ÖNERİLİR. Verilirse WHERE'a eklenir; verilmezse RLS'e
+            güvenilir (caller `apply_company_scope` çağırmış olmalı).
+            Üst katmanda explicit filter, RLS PERMISSIVE policy'nin "bypass"
+            edilmesi durumuna karşı ikinci savunma hattıdır.
+    """
+    if not (run_id or trace_id is not None):
         return None
     try:
-        if trace_id:
-            cur.execute("SELECT * FROM pipeline_traces WHERE id = %s LIMIT 1", (trace_id,))
+        # explicit tenant filter (defense-in-depth)
+        company_clause = "" if company_id is None else " AND company_id = %s"
+        if trace_id is not None:
+            sql = f"SELECT * FROM pipeline_traces WHERE id = %s{company_clause} LIMIT 1"
+            params = (trace_id,) if company_id is None else (trace_id, company_id)
         else:
-            cur.execute(
-                "SELECT * FROM pipeline_traces WHERE run_id = %s ORDER BY created_at DESC LIMIT 1",
-                (run_id,),
+            sql = (
+                f"SELECT * FROM pipeline_traces WHERE run_id = %s{company_clause} "
+                f"ORDER BY created_at DESC LIMIT 1"
             )
+            params = (run_id,) if company_id is None else (run_id, company_id)
+        cur.execute(sql, params)
         row = cur.fetchone()
         if row is None:
             return None
