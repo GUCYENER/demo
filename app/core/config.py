@@ -170,6 +170,13 @@ class Settings(BaseSettings):
     DB_MAX_RETRIES: int = 15  # Veritabanı bağlantı deneme sayısı
 
     # -------------------------------------------------
+    # Synthetic Q/SQL Generator (v3.28.0 — Faz 5 G2)
+    # -------------------------------------------------
+    # Synthetic generate_db_query_pairs günlük LLM bütçe sınırı (USD).
+    # 0 = sınırsız (önerilmez). Aşıldığında üretim erken durur.
+    MAX_LLM_DAILY_BUDGET_USD: float = 1.0
+
+    # -------------------------------------------------
     # Langfuse Observability (v3.26.0 Faz 5 P2-b — opsiyonel)
     # -------------------------------------------------
     # Boş bırakılırsa Langfuse devre dışı kalır. pipeline_events DB-tabanlı

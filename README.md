@@ -75,7 +75,19 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
-### 🆕 v3.27.5 (2026-05-18) - Yetkilendirme Modalı 422 Hatası Fix
+### 🆕 v3.28.0 (2026-05-18) - Faz 5 G2: Synthetic DB Q/SQL Pair Generator
+- 🤖 **ARTEMIS-ML — Synthetic Q/SQL Generator:** `app/services/ml/synthetic_db_query_pairs.py` — onaylı tablolar için LLM-tabanlı (Türkçe NL question + dialect-aware SQL) çift üretimi. Her tablo için kompakt "table card" (kolonlar + sample 1-2 satır + FK çıkanlar) prompt'a enjekte, JSON array yanıtı parse edilir (markdown fence toleranslı). Hedef tablo: `few_shot_examples`.
+- 🛡️ **Üç Katmanlı Dedupe:**
+  - **L1 — Canonical SQL SHA256:** Whitespace+case normalize + trailing-`;` strip → mevcut few-shots ile hash karşılaştırması.
+  - **L2 — Question Embedding Cosine:** `EmbeddingManager.get_embedding(question)` → cosine ≥ 0.92 ise drop. EmbeddingManager yüklenemezse L2 graceful-pasif.
+  - **L3 — Schema Signature Jaccard + SQL prefix:** `schema_signature` (alfabetik "schema.table,..." string) Jaccard ≥ 0.85 **VE** SQL hash prefix (12 hex) eşleşiyorsa drop — schema-bound yakın-duplicate'ler için.
+- 💰 **Günlük LLM Bütçe Capı:** `settings.MAX_LLM_DAILY_BUDGET_USD` (varsayılan $1.0) — in-process daily counter, her LLM çağrısı $0.001 tahmini cost düşer; aşıldığında üretim erken durur (`error: daily_budget_exceeded`). Test/observability için `get_budget_state()` + `reset_budget_state()`.
+- 🔌 **Admin Endpoints:** `POST /api/ml/synthetic-q/generate` (body: `source_id`, `company_id`, `target_count` 1-200, `batch_size` 1-20, `dry_run`) — `_require_admin` gate. `GET /api/ml/synthetic-q/budget` — günlük bütçe durumu.
+- 🧪 **37 unit test (tests/test_synthetic_db_query_pairs.py):** pure functions (canonical SQL, schema_signature, Jaccard, cosine, embedding parse, LLM response parse), budget state machine, end-to-end senaryolar (basic generation, dry_run, no_approved_tables, L1 dedupe hit, budget block, LLM error continues, unknown dialect fallback). LLM ve EmbeddingManager injection ile mock'lanır — gerçek API çağrısı yok.
+- ⚙️ **Graceful Fallbacks:** EmbeddingManager yüklenemezse L2 dedupe atlanır, üretim devam eder. LLM çağrısı hata verirse o tablo skip edilir, diğerlerine devam (counter `llm_errors` artar). Bilinmeyen dialect (`db_type`) → `postgresql` fallback.
+- 📋 **Plan Doc Güncellemesi:** `.agents/plans/v3.28_faz5_kalani.md` — G1 Table Ranker'ın v3.26.0'da zaten implement edildiği (`/api/ml/train` + `apply_model_to_candidates` hook'u `multi_signal_rank.py:304`'te) tespit edilince scope sadeleştirildi. v3.28.0 = G2; v3.28.1 = G3+G4 (HEBE gate ayrı doc).
+
+### v3.27.5 (2026-05-18) - Yetkilendirme Modalı 422 Hatası Fix
 - 🐛 **BUG FIX:** `data_sources_module.js` `_renderPermissionList` içindeki view checkbox handler `parseInt(e.target.value || e.target.dataset.id)` — checkbox `value` attribute'u tanımlı değildi → tarayıcı default `"on"` döndürüyordu → `parseInt("on")` = `NaN` → set'lere NaN birikiyordu → `JSON.stringify` NaN'ı `null` yapıyordu → backend "Input should be a valid integer" 422 verirdi. Yetkilendirme modalında Org Grupları veya Kullanıcılar sekmesinde herhangi bir checkbox işaretleyip Kaydet tıklandığında hata. Fix: `parseInt(e.target.dataset.id, 10)` + `Number.isNaN` guard her iki handler'da (view + exec). Defense-in-depth: `_savePermissions` payload'unda `Number.isInteger` filter.
 
 ### v3.27.4 (2026-05-18) - v3.19 UI Polish Kapanışı + Discovery Comment Audit + v3.28 Plan Doc

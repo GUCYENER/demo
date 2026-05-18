@@ -85,6 +85,15 @@ class TrainIn(BaseModel):
     notes: Optional[str] = None
 
 
+class SyntheticQIn(BaseModel):
+    """v3.28.0 G2 — synthetic Q/SQL pair generator için admin endpoint body."""
+    source_id: int
+    company_id: int
+    target_count: int = Field(30, ge=1, le=200)
+    batch_size: int = Field(5, ge=1, le=20)
+    dry_run: bool = False
+
+
 # ---------- Helpers ----------
 def _require_admin(user: Dict[str, Any]) -> None:
     if not (user.get("is_admin") or user.get("role") == "admin"):
@@ -799,4 +808,54 @@ def list_ml_models(
             }
             for r in rows
         ],
+    }
+
+
+# ---------- Synthetic Q/SQL Generator (v3.28.0 G2) ----------
+@router.post("/api/ml/synthetic-q/generate")
+def generate_synthetic_q(
+    body: SyntheticQIn,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """v3.28.0 G2 — Onaylı tablolar için LLM-tabanlı sentetik Q/SQL pair üretimi.
+
+    Üç katmanlı dedupe + günlük LLM bütçe kontrolü uygular.
+    `few_shot_examples` tablosuna INSERT eder (dry_run=False ise).
+    """
+    _require_admin(current_user)
+    user_id = current_user.get("id") or current_user.get("user_id")
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        try:
+            from app.services.ml.synthetic_db_query_pairs import generate_db_query_pairs
+            res = generate_db_query_pairs(
+                cur,
+                source_id=body.source_id,
+                company_id=body.company_id,
+                target_count=body.target_count,
+                batch_size=body.batch_size,
+                dry_run=body.dry_run,
+                created_by=user_id,
+            )
+            if res.get("success") and not body.dry_run:
+                conn.commit()
+            else:
+                conn.rollback()
+        finally:
+            cur.close()
+    return res
+
+
+@router.get("/api/ml/synthetic-q/budget")
+def get_synthetic_q_budget(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Mevcut günlük LLM bütçe durumunu döner (admin observability)."""
+    _require_admin(current_user)
+    from app.services.ml.synthetic_db_query_pairs import get_budget_state
+    from app.core.config import settings
+    return {
+        "success": True,
+        "budget_state": get_budget_state(),
+        "max_daily_budget_usd": float(getattr(settings, "MAX_LLM_DAILY_BUDGET_USD", 1.0)),
     }
