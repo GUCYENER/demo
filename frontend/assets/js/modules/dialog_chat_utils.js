@@ -648,34 +648,65 @@ window.DialogChatUtils = (function () {
         const sourceDb = meta?.source_db || '';
         const truncated = rowCount > rowsShown;
 
-        let html = `<div class="db-result-table-wrap">`;
+        // v3.27.2: drag-drop + kolon görünürlüğü için tabloyu izole tut
+        const tableId = 'dbtbl_' + Date.now().toString(36) + '_' + Math.floor(Math.random() * 1e6).toString(36);
 
-        // Meta bar
+        let html = `<div class="db-result-table-wrap" data-table-id="${tableId}">`;
+
+        // Meta bar + Kolon yönetim butonu (v3.27.2)
         html += `<div class="db-result-meta">`;
         if (sourceDb) html += `<span class="db-result-db">🗄️ ${escapeHtml(sourceDb)}</span>`;
         html += `<span class="db-result-count">📊 ${rowsShown} kayıt`;
         if (truncated) html += ` <span class="db-truncated-badge">(toplam ${rowCount})</span>`;
-        html += `</span></div>`;
+        html += `</span>`;
+        html += `<button type="button" class="db-cols-btn" onclick="window.DBTableUI.toggleColMenu('${tableId}', event)" title="Kolonları göster/gizle ve sürükleyerek yeniden sırala">⚙️ Kolonlar</button>`;
+        html += `</div>`;
+
+        // Kolon menü (gizli başlar)
+        html += `<div class="db-cols-menu" id="${tableId}_menu" hidden>`;
+        html += `<div class="db-cols-menu-head"><span>Görünür kolonlar</span><button type="button" class="db-cols-menu-close" onclick="window.DBTableUI.toggleColMenu('${tableId}')" aria-label="Kapat">×</button></div>`;
+        html += `<div class="db-cols-menu-actions">`;
+        html += `<button type="button" class="db-cols-mini" onclick="window.DBTableUI.allCols('${tableId}', true)">Tümünü göster</button>`;
+        html += `<button type="button" class="db-cols-mini" onclick="window.DBTableUI.allCols('${tableId}', false)">Tümünü gizle</button>`;
+        html += `</div>`;
+        html += `<div class="db-cols-menu-list">`;
+        columns.forEach(col => {
+            const safeCol = escapeHtml(col);
+            const colAttr = safeCol.replace(/"/g, '&quot;');
+            html += `<label class="db-col-item"><input type="checkbox" checked data-col="${colAttr}" onchange="window.DBTableUI.toggleCol('${tableId}', this.dataset.col, this.checked)"><span>${safeCol}</span></label>`;
+        });
+        html += `</div></div>`;
 
         // Tablo
-        html += `<div class="db-table-scroll"><table class="db-result-table">`;
+        html += `<div class="db-table-scroll"><table class="db-result-table" data-table-id="${tableId}">`;
 
-        // Header
+        // Header — draggable
         html += `<thead><tr>`;
         columns.forEach(col => {
-            html += `<th>${escapeHtml(col)}</th>`;
+            const safeCol = escapeHtml(col);
+            const colAttr = safeCol.replace(/"/g, '&quot;');
+            html += `<th draggable="true" data-col="${colAttr}"`
+                  + ` ondragstart="window.DBTableUI.onDragStart(event)"`
+                  + ` ondragover="window.DBTableUI.onDragOver(event)"`
+                  + ` ondragenter="window.DBTableUI.onDragEnter(event)"`
+                  + ` ondragleave="window.DBTableUI.onDragLeave(event)"`
+                  + ` ondrop="window.DBTableUI.onDrop(event)"`
+                  + ` ondragend="window.DBTableUI.onDragEnd(event)">`
+                  + `<span class="th-grip" aria-hidden="true">⋮⋮</span><span class="th-label">${safeCol}</span></th>`;
         });
         html += `</tr></thead>`;
 
-        // Body
+        // Body — her hücreye data-col
         html += `<tbody>`;
         rows.forEach((row, rowIdx) => {
             const cls = rowIdx % 2 === 0 ? '' : ' class="alt-row"';
             html += `<tr${cls}>`;
             columns.forEach(col => {
                 const val = row[col];
+                const safeCol = escapeHtml(col);
+                const colAttr = safeCol.replace(/"/g, '&quot;');
                 const display = val === null || val === undefined ? '<span class="null-val">—</span>' : escapeHtml(String(val));
-                html += `<td>${display}</td>`;
+                html += `<td data-col="${colAttr}">${display}</td>`;
             });
             html += `</tr>`;
         });
@@ -968,5 +999,161 @@ window.DialogChatUtils = (function () {
         // v4.1
         renderSQLButton,
         showSQLModal,
+    };
+})();
+
+// =============================================================================
+// v3.27.2: DB Result Table — Column Drag/Drop + Visibility Manager
+// =============================================================================
+//
+// renderSQLResultTable çıktısı için handler. State DOM içinde tutulur (data-col),
+// modül stateless. Inline event handler'lardan çağrılır (CSP açıkken çalışır
+// çünkü çağrılar tek isim üzerinden — JS dosyası dahili).
+//
+window.DBTableUI = (function () {
+    'use strict';
+
+    let dragSrcCol = null;
+    let dragTableId = null;
+
+    function _table(tableId) {
+        return document.querySelector('table.db-result-table[data-table-id="' + CSS.escape(tableId) + '"]');
+    }
+
+    function _cellsFor(tbl, col) {
+        // CSS attribute selector için tırnak escape — sadece data-col değeri
+        const sel = 'th[data-col="' + col.replace(/"/g, '\\"') + '"], td[data-col="' + col.replace(/"/g, '\\"') + '"]';
+        try { return tbl.querySelectorAll(sel); } catch (_) { return []; }
+    }
+
+    function toggleColMenu(tableId, ev) {
+        if (ev) ev.stopPropagation();
+        const menu = document.getElementById(tableId + '_menu');
+        if (!menu) return;
+        menu.hidden = !menu.hidden;
+        if (!menu.hidden) {
+            // Dış tıklamada kapat
+            const closer = function (e) {
+                if (!menu.contains(e.target) && !e.target.closest('.db-cols-btn')) {
+                    menu.hidden = true;
+                    document.removeEventListener('click', closer);
+                }
+            };
+            setTimeout(() => document.addEventListener('click', closer), 0);
+        }
+    }
+
+    function toggleCol(tableId, col, visible) {
+        const tbl = _table(tableId);
+        if (!tbl) return;
+        _cellsFor(tbl, col).forEach(function (el) {
+            el.style.display = visible ? '' : 'none';
+        });
+    }
+
+    function allCols(tableId, visible) {
+        const tbl = _table(tableId);
+        if (!tbl) return;
+        const menu = document.getElementById(tableId + '_menu');
+        if (!menu) return;
+        menu.querySelectorAll('input[type="checkbox"][data-col]').forEach(function (cb) {
+            cb.checked = !!visible;
+            toggleCol(tableId, cb.dataset.col, !!visible);
+        });
+    }
+
+    // ── Drag/Drop ────────────────────────────────────────────────────────────
+    function onDragStart(e) {
+        const th = e.target.closest('th[data-col]');
+        if (!th) return;
+        dragSrcCol = th.getAttribute('data-col');
+        const tbl = th.closest('table.db-result-table');
+        dragTableId = tbl ? tbl.getAttribute('data-table-id') : null;
+        try { e.dataTransfer.effectAllowed = 'move'; } catch (_) {}
+        try { e.dataTransfer.setData('text/plain', dragSrcCol); } catch (_) {}
+        th.classList.add('dragging');
+    }
+
+    function onDragOver(e) {
+        if (!dragSrcCol) return;
+        e.preventDefault();
+        try { e.dataTransfer.dropEffect = 'move'; } catch (_) {}
+        return false;
+    }
+
+    function onDragEnter(e) {
+        const th = e.target.closest('th[data-col]');
+        if (th && dragSrcCol && th.getAttribute('data-col') !== dragSrcCol) {
+            th.classList.add('drop-target');
+        }
+    }
+
+    function onDragLeave(e) {
+        const th = e.target.closest('th[data-col]');
+        if (th) th.classList.remove('drop-target');
+    }
+
+    function onDrop(e) {
+        e.preventDefault();
+        const targetTh = e.target.closest('th[data-col]');
+        if (!targetTh || !dragSrcCol) return false;
+        const targetCol = targetTh.getAttribute('data-col');
+        if (targetCol === dragSrcCol) return false;
+        const tbl = targetTh.closest('table.db-result-table');
+        if (!tbl || tbl.getAttribute('data-table-id') !== dragTableId) return false;
+        _moveColumn(tbl, dragSrcCol, targetCol);
+        targetTh.classList.remove('drop-target');
+        return false;
+    }
+
+    function onDragEnd(_e) {
+        document.querySelectorAll('th.dragging, th.drop-target').forEach(function (el) {
+            el.classList.remove('dragging');
+            el.classList.remove('drop-target');
+        });
+        dragSrcCol = null;
+        dragTableId = null;
+    }
+
+    function _moveColumn(tbl, srcCol, tgtCol) {
+        // Header
+        const headRow = tbl.querySelector('thead tr');
+        if (!headRow) return;
+        const srcTh = headRow.querySelector('th[data-col="' + srcCol.replace(/"/g, '\\"') + '"]');
+        const tgtTh = headRow.querySelector('th[data-col="' + tgtCol.replace(/"/g, '\\"') + '"]');
+        if (!srcTh || !tgtTh) return;
+        const headChildren = Array.prototype.slice.call(headRow.children);
+        const srcIdx = headChildren.indexOf(srcTh);
+        const tgtIdx = headChildren.indexOf(tgtTh);
+        if (srcIdx === tgtIdx) return;
+        if (srcIdx < tgtIdx) {
+            tgtTh.parentNode.insertBefore(srcTh, tgtTh.nextSibling);
+        } else {
+            tgtTh.parentNode.insertBefore(srcTh, tgtTh);
+        }
+        // Body rows — aynı index ile td'leri taşı
+        tbl.querySelectorAll('tbody tr').forEach(function (tr) {
+            const srcTd = tr.querySelector('td[data-col="' + srcCol.replace(/"/g, '\\"') + '"]');
+            const tgtTd = tr.querySelector('td[data-col="' + tgtCol.replace(/"/g, '\\"') + '"]');
+            if (!srcTd || !tgtTd || srcTd === tgtTd) return;
+            const kids = Array.prototype.slice.call(tr.children);
+            if (kids.indexOf(srcTd) < kids.indexOf(tgtTd)) {
+                tgtTd.parentNode.insertBefore(srcTd, tgtTd.nextSibling);
+            } else {
+                tgtTd.parentNode.insertBefore(srcTd, tgtTd);
+            }
+        });
+    }
+
+    return {
+        toggleColMenu,
+        toggleCol,
+        allCols,
+        onDragStart,
+        onDragOver,
+        onDragEnter,
+        onDragLeave,
+        onDrop,
+        onDragEnd,
     };
 })();
