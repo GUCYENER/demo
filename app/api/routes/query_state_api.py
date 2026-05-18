@@ -26,7 +26,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.routes.auth import get_current_user
 from app.core.db import get_db_context
@@ -49,8 +49,11 @@ class OrderByClause(BaseModel):
 
 
 class QueryStateRequest(BaseModel):
+    # `schema` BaseModel'de reserved — alias ile JSON anahtarını koruyup field adını schema_name yapıyoruz
+    model_config = ConfigDict(populate_by_name=True, protected_namespaces=())
+
     source_id: Optional[int] = Field(None, ge=1)
-    schema: Optional[str] = Field(None, max_length=63)
+    schema_name: Optional[str] = Field(None, alias="schema", max_length=63)
     table: str = Field(..., min_length=1, max_length=63)
     dialect: Optional[str] = Field(None, pattern=r"^(postgresql|mssql|mysql|oracle)$")
     selected_columns: List[str] = Field(default_factory=list)
@@ -88,7 +91,7 @@ def preview_query_state(
     dialect = _resolve_dialect(req.source_id, req.dialect)
 
     state: Dict[str, Any] = {
-        "schema": req.schema,
+        "schema": req.schema_name,
         "table": req.table,
         "dialect": dialect,
         "selected_columns": list(req.selected_columns or []),

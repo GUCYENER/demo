@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.26.0"  # Faz 1-5: RLS+Oracle+Size CatBoost+Metric Layer+Column/Filter/Join predictors+Langfuse
+    APP_VERSION: str = "3.28.5"  # v3.28: Synthetic Q/SQL + Sample Preview + Drag-Drop Query Builder + Pydantic v2 patch
 
     # Frontend & API prefix
     api_prefix: str = "/api"
