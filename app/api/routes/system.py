@@ -51,6 +51,11 @@ async def reset_system(
     - ML modelleri ve eğitim (ml_models, ml_training_jobs, ml_training_samples, ml_training_schedules)
     - Öğrenilmiş cevaplar (learned_answers)
     - DS Öğrenme Verileri (ds_learning_results, ds_db_samples, ds_db_objects, ds_db_relationships, ds_discovery_jobs, ds_learning_schedules)
+    - Agentic Query Learning (v3.21–v3.28): learned_db_queries, ds_synthetic_query_runs,
+      ds_column_embeddings, agentic_query_decisions, agentic_query_feedback,
+      agentic_size_observations, catboost_models, few_shot_examples, business_glossary,
+      metric_definitions, synonym_suggestions, pipeline_events, pipeline_traces,
+      user_preferences
     - Golden SQL (golden_sql)
     - İş Süreci Şablonları (business_process_templates)
     - Bekleyen DB Sorguları (pending_db_queries)
@@ -258,6 +263,57 @@ async def reset_system(
         deleted_counts["ds_learning_schedules"] = cur.fetchone()["cnt"]
         cur.execute("DELETE FROM ds_learning_schedules")
 
+        # ===================================================================
+        # 🧠 v3.21–v3.28: Agentic Query Learning + Discovery Embeddings
+        # ===================================================================
+        # Bu blok "temiz öğrenme" tekrarı için tüm akümüle olmuş öğrenme
+        # verilerini siler. data_sources, companies, llm_config KORUNUR.
+        # Tablo eksikse (eski deploy) UndefinedTable → tek tek try/except.
+
+        agentic_learning_tables = [
+            # (table_name, has_company_id, source_id_only)
+            ("learned_db_queries",         True,  False),  # v3.27 G3
+            ("ds_synthetic_query_runs",    True,  False),  # v3.28.0 G2
+            ("ds_column_embeddings",       False, True),   # v3.21 (source_id only)
+            ("agentic_query_decisions",    True,  False),  # v3.26
+            ("agentic_query_feedback",     True,  False),  # v3.24 CatBoost training
+            ("agentic_size_observations",  True,  False),  # v3.26
+            ("catboost_models",            True,  False),  # v3.24 (NULL=global, per-co reset = global'i koru)
+            ("few_shot_examples",          True,  False),  # v3.23
+            ("business_glossary",          True,  False),  # v3.22
+            ("metric_definitions",         True,  False),  # v3.26
+            ("synonym_suggestions",        True,  False),  # v3.27
+            ("pipeline_events",            True,  False),  # v3.25
+            ("pipeline_traces",            True,  False),  # v3.27 G2
+            ("user_preferences",           True,  False),  # v3.23
+        ]
+        for tbl, has_co, src_only in agentic_learning_tables:
+            # Eski deploy'larda tablo olmayabilir — information_schema kontrolü ile guard
+            cur.execute(
+                "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = %s",
+                (tbl,),
+            )
+            if not cur.fetchone():
+                deleted_counts[tbl] = 0
+                continue
+
+            if company_id is not None:
+                if has_co:
+                    where = "WHERE company_id = %s"
+                    params = co_params
+                elif src_only:
+                    where = "WHERE source_id IN (SELECT id FROM data_sources WHERE company_id = %s)"
+                    params = co_params
+                else:
+                    where = ""
+                    params = []
+            else:
+                where = ""
+                params = []
+            cur.execute(f"SELECT COUNT(*) AS cnt FROM {tbl} {where}", params)
+            deleted_counts[tbl] = cur.fetchone()["cnt"]
+            cur.execute(f"DELETE FROM {tbl} {where}", params)
+
         # v3.14.0: Golden SQL Store
         cur.execute("SELECT COUNT(*) as cnt FROM golden_sql")
         deleted_counts["golden_sql"] = cur.fetchone()["cnt"]
@@ -401,7 +457,25 @@ async def get_system_info(
         
         cur.execute("SELECT COUNT(*) as cnt FROM enhancement_history")
         info["enhancement_history"] = cur.fetchone()["cnt"]
-        
+
+        # 🧠 v3.21–v3.28: Agentic Query Learning + Discovery Embeddings (silinecek)
+        # Eski deploy'larda tablo eksik olabilir → information_schema guard
+        for tbl in (
+            "learned_db_queries", "ds_synthetic_query_runs", "ds_column_embeddings",
+            "agentic_query_decisions", "agentic_query_feedback", "agentic_size_observations",
+            "catboost_models", "few_shot_examples", "business_glossary", "metric_definitions",
+            "synonym_suggestions", "pipeline_events", "pipeline_traces", "user_preferences",
+        ):
+            cur.execute(
+                "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = %s",
+                (tbl,),
+            )
+            if cur.fetchone():
+                cur.execute(f"SELECT COUNT(*) as cnt FROM {tbl}")
+                info[tbl] = cur.fetchone()["cnt"]
+            else:
+                info[tbl] = 0
+
         # Korunan: Veri kaynağı tanımları
         cur.execute("SELECT COUNT(*) as cnt FROM data_sources")
         info["data_sources"] = cur.fetchone()["cnt"]
@@ -433,7 +507,22 @@ async def get_system_info(
                 "ds_discovery_jobs": info["ds_discovery_jobs"],
                 "sql_audit_log": info["sql_audit_log"],
                 "enhancement_history": info.get("enhancement_history", 0),
-                "system_logs": info["system_logs"]
+                "system_logs": info["system_logs"],
+                # 🧠 v3.21–v3.28: Agentic Query Learning
+                "learned_db_queries": info.get("learned_db_queries", 0),
+                "ds_synthetic_query_runs": info.get("ds_synthetic_query_runs", 0),
+                "ds_column_embeddings": info.get("ds_column_embeddings", 0),
+                "agentic_query_decisions": info.get("agentic_query_decisions", 0),
+                "agentic_query_feedback": info.get("agentic_query_feedback", 0),
+                "agentic_size_observations": info.get("agentic_size_observations", 0),
+                "catboost_models": info.get("catboost_models", 0),
+                "few_shot_examples": info.get("few_shot_examples", 0),
+                "business_glossary": info.get("business_glossary", 0),
+                "metric_definitions": info.get("metric_definitions", 0),
+                "synonym_suggestions": info.get("synonym_suggestions", 0),
+                "pipeline_events": info.get("pipeline_events", 0),
+                "pipeline_traces": info.get("pipeline_traces", 0),
+                "user_preferences": info.get("user_preferences", 0),
             }
         }
         

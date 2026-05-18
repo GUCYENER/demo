@@ -334,6 +334,15 @@ window.SystemManagerModule = (function () {
 
             if (deletableStats && data.to_delete) {
                 const d = data.to_delete;
+                // v3.28.4: Agentic Query Learning tabloları toplamı (v3.21-v3.28)
+                const agenticLearningTotal =
+                    (d.learned_db_queries || 0) + (d.ds_synthetic_query_runs || 0) +
+                    (d.ds_column_embeddings || 0) + (d.agentic_query_decisions || 0) +
+                    (d.agentic_query_feedback || 0) + (d.agentic_size_observations || 0) +
+                    (d.catboost_models || 0) + (d.few_shot_examples || 0) +
+                    (d.business_glossary || 0) + (d.metric_definitions || 0) +
+                    (d.synonym_suggestions || 0) + (d.pipeline_events || 0) +
+                    (d.pipeline_traces || 0) + (d.user_preferences || 0);
                 const total = (d.non_admin_users || 0) + (d.tickets || 0) + (d.dialogs || 0) +
                     (d.uploaded_files || 0) + (d.document_images || 0) + (d.rag_chunks || 0) +
                     (d.user_feedback || 0) + (d.document_topics || 0) +
@@ -342,7 +351,8 @@ window.SystemManagerModule = (function () {
                     (d.learned_answers || 0) +
                     (d.ds_learning_results || 0) + (d.ds_db_objects || 0) +
                     (d.ds_discovery_jobs || 0) + (d.sql_audit_log || 0) +
-                    (d.system_logs || 0);
+                    (d.system_logs || 0) +
+                    agenticLearningTotal;
                 deletableStats.innerHTML = `
                     <span><i class="fa-solid fa-users mr-2"></i>${d.non_admin_users || 0} kullanıcı</span>
                     <span class="ml-4"><i class="fa-solid fa-ticket mr-2"></i>${d.tickets || 0} ticket</span>
@@ -354,6 +364,7 @@ window.SystemManagerModule = (function () {
                     <span class="ml-4"><i class="fa-solid fa-magnifying-glass-chart mr-2"></i>${d.ds_learning_results || 0} QA</span>
                     <span class="ml-4"><i class="fa-solid fa-table mr-2"></i>${d.ds_db_objects || 0} keşif</span>
                     <span class="ml-4"><i class="fa-solid fa-clipboard-list mr-2"></i>${d.sql_audit_log || 0} audit</span>
+                    <span class="ml-4" data-tooltip="learned_db_queries + synthetic + embeddings + feedback + catboost + few-shot + glossary + metric + pipeline traces + user_preferences"><i class="fa-solid fa-brain mr-2"></i>${agenticLearningTotal.toLocaleString('tr-TR')} agentic öğrenme</span>
                     <div class="mt-2 text-yellow-400"><strong>Toplam ${total.toLocaleString('tr-TR')} kayıt silinecek</strong></div>
                 `;
             }
@@ -367,7 +378,7 @@ window.SystemManagerModule = (function () {
     function performSystemReset() {
         window.VyraModal.danger({
             title: "Dikkat! Bu İşlem Geri Alınamaz",
-            message: "Tüm ticket'lar, dialog'lar, RAG dosyaları, ML eğitim verileri, öğrenilmiş cevaplar, DS öğrenme verileri, SQL audit logları ve sistem logları silinecek. Kaynak tanımları, admin kullanıcılar, LLM ve Prompt ayarları korunacak.",
+            message: "Tüm ticket'lar, dialog'lar, RAG dosyaları, ML eğitim verileri, öğrenilmiş cevaplar, DS öğrenme verileri, agentic query öğrenme (learned_db_queries, synthetic, embeddings, feedback, CatBoost modelleri, few-shot, glossary, metric, pipeline traces, user prefs), SQL audit logları ve sistem logları silinecek. Kaynak tanımları, admin kullanıcılar, LLM ve Prompt ayarları korunacak.",
             confirmText: "Sistemi Sıfırla",
             cancelText: "İptal",
             onConfirm: async () => {
