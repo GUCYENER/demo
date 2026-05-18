@@ -46,6 +46,7 @@ const CSS_FILES = [
     'assets/css/modules/feature_permissions.css',  // v3.18.0
     'assets/css/modules/_tooltip.css',              // v3.19.0 — CSS-only tooltip helper
     'assets/css/modules/session_timeout.css',       // v3.28.1 — 30dk session timeout modal
+    'assets/css/modules/sample_data_preview.css',   // v3.28.2 G3 — execute öncesi aday tablo sample data kartı
     'assets/css/modules/db_source_selector.css',    // v3.20.0 Faz 1f — DB kaynak chip selector
     'assets/css/modules/agentic_observability.css', // v3.25.0 Faz 6g — pipeline gözlem dashboard
 ];
@@ -78,6 +79,7 @@ const JS_FILES = [
     'assets/js/modules/dialog_images.js',
     'assets/js/modules/dialog_ticket.js',
     'assets/js/modules/db_source_selector.js',  // v3.20.0 Faz 1f — dialog_chat'ten ÖNCE
+    'assets/js/modules/sample_data_preview.js', // v3.28.2 G3 — dialog_chat'ten ÖNCE (window.renderSampleDataPreview)
     'assets/js/modules/dialog_chat.js',
     'assets/js/modules/permissions_manager.js',
     'assets/js/modules/file_guidelines_modal.js',

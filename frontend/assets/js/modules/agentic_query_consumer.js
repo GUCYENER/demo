@@ -4,13 +4,15 @@
  * `POST /api/agentic-query/stream` endpoint'ini tüketir.
  *
  * Backend SSE event'leri:
- *   - clarification   { candidates, query, message, reason, confidence }
- *   - size_prediction { bucket, estimated_rows, reason, streaming_recommended, ... }
- *   - columns         { columns: [...] }
- *   - rows            { rows: [[...]], batch_index }
- *   - end             { row_count, elapsed_ms, truncated }
- *   - run_summary     { run_id, nodes: [{node,duration_ms,status}], total_ms }
- *   - error           { message }
+ *   - clarification        { candidates, query, message, reason, confidence }
+ *   - cache_hit            { id, similarity, source, intent, sql }
+ *   - sample_data_preview  { source_id, schema, table, business_name_tr, columns:[{name,type}], rows:[{}...], row_count, fetched_at, cached } (v3.28.2 G3)
+ *   - size_prediction      { bucket, estimated_rows, reason, streaming_recommended, ... }
+ *   - columns              { columns: [...] }
+ *   - rows                 { rows: [[...]], batch_index }
+ *   - end                  { row_count, elapsed_ms, truncated }
+ *   - run_summary          { run_id, nodes: [{node,duration_ms,status}], total_ms }
+ *   - error                { message }
  *
  * Kullanım:
  *   const aq = window.AgenticQueryConsumer.run({
@@ -137,6 +139,13 @@
         switch (type) {
             case 'clarification':
                 handlers.clarification && handlers.clarification(data);
+                break;
+            case 'cache_hit':
+                handlers.cache_hit && handlers.cache_hit(data);
+                break;
+            case 'sample_data_preview':
+                // v3.28.2 G3 — execute öncesi cached örnek satırlar
+                handlers.sample_data_preview && handlers.sample_data_preview(data);
                 break;
             case 'size_prediction':
                 handlers.size_prediction && handlers.size_prediction(data);

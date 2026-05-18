@@ -455,6 +455,35 @@ def stream_agentic_query(
                         },
                     })
 
+                # v3.28.2 G3 — Sample Data Preview (cache'ten okur; execute öncesi)
+                # Lookup intent + tek tablo + cache hit yoksa kullanıcıya aday tablo +
+                # ilk N satırı gösteririz. Hata olursa graceful: SSE event yayma.
+                try:
+                    if not final.get("_cache_hit"):
+                        from app.services.pipeline.nodes.sample_data_preview import (
+                            build_sample_preview,
+                            pick_top_table_for_preview,
+                        )
+                        pick = pick_top_table_for_preview(final)
+                        if pick and body.source_id:
+                            preview = build_sample_preview(
+                                cur,
+                                source_id=int(body.source_id),
+                                schema=pick.get("schema"),
+                                table=pick.get("table"),
+                                limit=5,
+                            )
+                            if preview:
+                                yield format_sse({
+                                    "type": "sample_data_preview",
+                                    "data": {
+                                        "source_id": int(body.source_id),
+                                        **preview,
+                                    },
+                                })
+                except Exception:
+                    logger.debug("[agentic-query/stream] sample_data_preview skipped", exc_info=True)
+
                 # Size prediction
                 pred = final.get("result_size_prediction") or {}
                 if pred:

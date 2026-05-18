@@ -2338,6 +2338,41 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             retry_count = 0
             from_cache = sql_result.get("from_cache", False)
 
+            # ── 5a.5: v3.28.2 G3 — Sample Data Preview hint ─────────────
+            # Frontend'e seçilen birincil tabloyu duyur; consumer
+            # /api/data-sources/{id}/samples'tan cached örnek satırları çeker.
+            # Hata olursa graceful: event yayma.
+            try:
+                _preview_table = None
+                _preview_schema = None
+                # 1) pruned_tables varsa ilk eleman
+                _pt = locals().get("pruned_tables")
+                if isinstance(_pt, list) and _pt:
+                    _first = _pt[0]
+                    if isinstance(_first, dict):
+                        _preview_table = (
+                            _first.get("table_name") or _first.get("name") or _first.get("table")
+                        )
+                        _preview_schema = _first.get("schema") or _first.get("schema_name")
+                # 2) combined_matched fallback
+                if not _preview_table:
+                    _cm = locals().get("combined_matched")
+                    if isinstance(_cm, list) and _cm:
+                        _first2 = _cm[0]
+                        if isinstance(_first2, dict):
+                            _preview_table = (
+                                _first2.get("table_name") or _first2.get("name") or _first2.get("table")
+                            )
+                            _preview_schema = _first2.get("schema") or _first2.get("schema_name")
+                if _preview_table and source and source.get("id"):
+                    yield {"type": "selected_table_for_preview", "data": {
+                        "source_id": int(source["id"]),
+                        "schema": _preview_schema,
+                        "table": _preview_table,
+                    }}
+            except Exception:
+                pass
+
             # ── 5b. Confirm Mode: SQL'i göster, çalıştırma ──────────────
             if confirm_mode:
                 yield {"type": "done", "data": {

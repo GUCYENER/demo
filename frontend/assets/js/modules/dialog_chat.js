@@ -820,6 +820,20 @@ window.DialogChatModule = (function () {
                                 break;
                             }
 
+                            // v3.28.2 G3: SQL üretimi sonrası — execute öncesi sample preview
+                            case 'selected_table_for_preview': {
+                                try {
+                                    if (!streamingEl) streamingEl = createStreamingMessage();
+                                    const contentEl = streamingEl.querySelector('.message-content') || streamingEl;
+                                    if (window.renderSampleDataPreview) {
+                                        window.renderSampleDataPreview(contentEl, eventData);
+                                    }
+                                } catch (e) {
+                                    console.warn('[dialog_chat] sample preview render failed:', e);
+                                }
+                                break;
+                            }
+
                             // v3.14.0: Progressive Timeout — sorgu devam ediyor bildirimi
                             case 'timeout_warning': {
                                 const { message: twMsg, elapsed: twElapsed, estimate: twEst, job_id: twJob, max_wait: twMaxWait, sql: twSql } = eventData;

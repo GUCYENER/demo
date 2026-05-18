@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from app.api.routes.auth import get_current_user
 from app.core.db import get_db_context
+from app.services.permission_audit import log_permission_change
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,14 @@ class DataSourceUpdate(BaseModel):
 
 class CollectSamplesRequest(BaseModel):
     schemas: Optional[List[str]] = None  # None = tüm şemalar, liste = belirli şemalar
+
+
+# v3.17.0: Kaynak bazlı yetkilendirme
+class DataSourcePermissionsUpdate(BaseModel):
+    user_ids: List[int] = Field(default_factory=list)
+    org_ids: List[int] = Field(default_factory=list)
+    can_execute_user_ids: List[int] = Field(default_factory=list)
+    can_execute_org_ids: List[int] = Field(default_factory=list)
 
 
 # --- Helpers ---
@@ -97,8 +106,9 @@ def list_data_sources(
 ):
     """
     Veri kaynağı listesi.
-    Admin: Tüm firmalar veya company_id ile filtreli.
-    User: Sadece kendi firması.
+    Admin: Tüm firmalar veya company_id ile filtreli (yetki kontrolü uygulanmaz).
+    User: Yalnızca kendisine veya üye olduğu org gruplarına yetki verilmiş kaynaklar.
+    (v3.17.0) Yetki listesi boş olan kaynaklar admin dışı kullanıcılara görünmez.
     """
     is_admin = current_user.get("is_admin", False) or current_user.get("role") == "admin"
 
@@ -122,16 +132,21 @@ def list_data_sources(
                     ORDER BY c.name, ds.name
                 """)
         else:
-            user_company_id = current_user.get("company_id")
-            if not user_company_id:
+            user_id = current_user.get("id")
+            if not user_id:
                 return []
+            # v3.17.0: Yetki tablosundan filtreli liste. Yetki yoksa kullanıcı hiçbir kaynağı görmez.
             cur.execute("""
-                SELECT ds.*, c.name as company_name
+                SELECT DISTINCT ds.*, c.name as company_name
                 FROM data_sources ds
                 JOIN companies c ON c.id = ds.company_id
-                WHERE ds.company_id = %s
+                JOIN data_source_permissions p ON p.source_id = ds.id AND p.can_view = TRUE
+                LEFT JOIN user_organizations uo
+                       ON uo.user_id = %s AND p.subject_type = 'org' AND uo.org_id = p.subject_id
+                WHERE (p.subject_type = 'user' AND p.subject_id = %s)
+                   OR (p.subject_type = 'org' AND uo.id IS NOT NULL)
                 ORDER BY ds.name
-            """, (user_company_id,))
+            """, (user_id, user_id))
 
         rows = cur.fetchall()
         result = []
@@ -141,6 +156,193 @@ def list_data_sources(
             item["db_password_encrypted"] = _mask_password(item.get("db_password_encrypted"))
             result.append(item)
         return result
+
+
+# v3.17.0: Kaynak bazlı yetki endpointleri
+@router.get("/{source_id}/permissions")
+def get_source_permissions(
+    source_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Kaynağa atanmış kullanıcı ve org gruplarını döner."""
+    is_admin = current_user.get("is_admin", False) or current_user.get("role") == "admin"
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="Yetki yönetimi sadece admin yapabilir.")
+
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM data_sources WHERE id = %s", (source_id,))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Veri kaynağı bulunamadı.")
+
+        cur.execute("""
+            SELECT subject_type, subject_id, can_view, can_execute
+            FROM data_source_permissions
+            WHERE source_id = %s
+        """, (source_id,))
+        rows = cur.fetchall()
+
+    user_ids: List[int] = []
+    org_ids: List[int] = []
+    can_execute_user_ids: List[int] = []
+    can_execute_org_ids: List[int] = []
+    for r in rows:
+        item = dict(r)
+        if item["subject_type"] == "user":
+            if item.get("can_view"):
+                user_ids.append(item["subject_id"])
+            if item.get("can_execute"):
+                can_execute_user_ids.append(item["subject_id"])
+        elif item["subject_type"] == "org":
+            if item.get("can_view"):
+                org_ids.append(item["subject_id"])
+            if item.get("can_execute"):
+                can_execute_org_ids.append(item["subject_id"])
+
+    return {
+        "user_ids": user_ids,
+        "org_ids": org_ids,
+        "can_execute_user_ids": can_execute_user_ids,
+        "can_execute_org_ids": can_execute_org_ids,
+    }
+
+
+@router.put("/{source_id}/permissions")
+def update_source_permissions(
+    source_id: int,
+    data: DataSourcePermissionsUpdate,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Kaynağa atanmış yetkileri tam liste replace ile günceller.
+    user_ids/org_ids → can_view; can_execute_*_ids → can_execute.
+    can_execute verilen subject otomatik view'a da sahip sayılır.
+    """
+    is_admin = current_user.get("is_admin", False) or current_user.get("role") == "admin"
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="Yetki yönetimi sadece admin yapabilir.")
+
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT id, company_id FROM data_sources WHERE id = %s", (source_id,))
+        ds_row = cur.fetchone()
+        if not ds_row:
+            raise HTTPException(status_code=404, detail="Veri kaynağı bulunamadı.")
+
+        # Audit için ÖNCEKİ durumu yakala
+        cur.execute("""
+            SELECT subject_type, subject_id, can_view, can_execute
+            FROM data_source_permissions
+            WHERE source_id = %s
+            ORDER BY subject_type, subject_id
+        """, (source_id,))
+        before_rows = [dict(r) for r in cur.fetchall()]
+
+        # Eski yetkileri temizle, yeni listeyi yaz (replace semantiği)
+        cur.execute("DELETE FROM data_source_permissions WHERE source_id = %s", (source_id,))
+
+        # can_execute olan subject'lar view'a da otomatik sahip
+        view_users = set(data.user_ids) | set(data.can_execute_user_ids)
+        view_orgs = set(data.org_ids) | set(data.can_execute_org_ids)
+        exec_users = set(data.can_execute_user_ids)
+        exec_orgs = set(data.can_execute_org_ids)
+
+        granted_by = current_user.get("id")
+        rows_to_insert = []
+        for uid in view_users:
+            rows_to_insert.append((source_id, "user", uid, True, uid in exec_users, granted_by))
+        for oid in view_orgs:
+            rows_to_insert.append((source_id, "org", oid, True, oid in exec_orgs, granted_by))
+
+        for row in rows_to_insert:
+            cur.execute("""
+                INSERT INTO data_source_permissions
+                (source_id, subject_type, subject_id, can_view, can_execute, granted_by)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, row)
+
+        # Audit log (v3.18.0 — aynı transaction içinde)
+        after_rows = [
+            {"subject_type": r[1], "subject_id": r[2], "can_view": r[3], "can_execute": r[4]}
+            for r in rows_to_insert
+        ]
+        ds_company_id = ds_row["company_id"] if isinstance(ds_row, dict) else (ds_row[1] if len(ds_row) > 1 else None)
+        log_permission_change(
+            cur,
+            actor_user_id=current_user.get("id"),
+            company_id=ds_company_id,
+            permission_type="data_source",
+            target_key=str(source_id),
+            action="replace",
+            before={"permissions": before_rows},
+            after={"permissions": after_rows},
+        )
+
+        conn.commit()
+
+    logger.info(
+        "[DataSources] Yetkiler güncellendi: source_id=%s, users=%d, orgs=%d (exec users=%d, exec orgs=%d)",
+        source_id, len(view_users), len(view_orgs), len(exec_users), len(exec_orgs)
+    )
+    return {
+        "success": True,
+        "message": "Yetkiler güncellendi.",
+        "user_count": len(view_users),
+        "org_count": len(view_orgs),
+    }
+
+
+@router.get("/permissions/subjects")
+def list_permission_subjects(
+    company_id: Optional[int] = Query(None),
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Yetki modal'ında seçim için kullanıcı ve org grubu listelerini döner.
+    Sadece admin erişebilir.
+    """
+    is_admin = current_user.get("is_admin", False) or current_user.get("role") == "admin"
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="Yetki yönetimi sadece admin yapabilir.")
+
+    with get_db_context() as conn:
+        cur = conn.cursor()
+
+        # Kullanıcılar
+        if company_id:
+            cur.execute("""
+                SELECT id, full_name, username, email, company_id
+                FROM users
+                WHERE is_approved = TRUE AND (company_id = %s OR company_id IS NULL)
+                ORDER BY full_name
+            """, (company_id,))
+        else:
+            cur.execute("""
+                SELECT id, full_name, username, email, company_id
+                FROM users
+                WHERE is_approved = TRUE
+                ORDER BY full_name
+            """)
+        users = [dict(r) for r in cur.fetchall()]
+
+        # Org grupları
+        if company_id:
+            cur.execute("""
+                SELECT id, org_code, org_name, description, company_id
+                FROM organization_groups
+                WHERE is_active = TRUE AND (company_id = %s OR company_id IS NULL)
+                ORDER BY org_code
+            """, (company_id,))
+        else:
+            cur.execute("""
+                SELECT id, org_code, org_name, description, company_id
+                FROM organization_groups
+                WHERE is_active = TRUE
+                ORDER BY org_code
+            """)
+        orgs = [dict(r) for r in cur.fetchall()]
+
+    return {"users": users, "orgs": orgs}
 
 
 @router.post("/")
@@ -690,6 +892,134 @@ def get_discovered_schemas(
     except Exception as e:
         logger.error("[DataSources] discovered-schemas hatası: %s", type(e).__name__)
         return {"success": False, "schemas": []}
+
+
+@router.get("/{source_id}/samples")
+def get_table_samples(
+    source_id: int,
+    schema: Optional[str] = Query(None, max_length=128, description="Şema adı (NULL/boş = varsayılan)"),
+    table: str = Query(..., min_length=1, max_length=256, description="Tablo adı"),
+    limit: int = Query(5, ge=1, le=50, description="Döndürülecek satır sayısı (1-50)"),
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    v3.28.2 G3 — Sample Data Preview (cached).
+
+    `ds_db_samples` cache'inden önceden toplanmış örnek satırları okur, kolon
+    tipleri için `ds_db_objects.columns_json`'a, Türkçe etiket için
+    `ds_table_enrichments.business_name_tr`'ye join atar.
+
+    Cache miss → 404 + "discover/collect-samples job çalıştırılmalı" hint'i.
+    """
+    is_admin = current_user.get("is_admin", False) or current_user.get("role") == "admin"
+    try:
+        with get_db_context() as conn:
+            cur = conn.cursor()
+
+            # Permission: source'un sahipliği (company_id) kontrol et
+            cur.execute("SELECT id, company_id FROM data_sources WHERE id = %s", (source_id,))
+            src = cur.fetchone()
+            if not src:
+                raise HTTPException(status_code=404, detail="Veri kaynağı bulunamadı.")
+            src = dict(src)
+            if not is_admin and current_user.get("company_id") != src.get("company_id"):
+                raise HTTPException(status_code=403, detail="Bu kaynağa erişim yetkiniz yok.")
+
+            # ds_db_objects ile join: schema NULL ise IS NULL match, değilse eşitlik
+            if schema is None or schema.strip() == "":
+                obj_where = "schema_name IS NULL"
+                obj_args = (source_id, table)
+            else:
+                obj_where = "schema_name = %s"
+                obj_args = (source_id, schema, table)
+
+            cur.execute(f"""
+                SELECT s.sample_data, s.row_count, s.fetched_at,
+                       o.columns_json, o.schema_name, o.object_name
+                FROM ds_db_samples s
+                JOIN ds_db_objects o ON o.id = s.object_id
+                WHERE s.source_id = %s
+                  AND o.{obj_where}
+                  AND o.object_name = %s
+                  AND o.object_type = 'table'
+                ORDER BY s.fetched_at DESC
+                LIMIT 1
+            """, obj_args)
+            row = cur.fetchone()
+
+            if not row:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Bu tablo için örnek veri bulunamadı. Yöneticinizden 'Örnek Veri Topla' job'ını çalıştırmasını isteyin."
+                )
+            row = dict(row)
+
+            sample_data = row.get("sample_data") or []
+            if not isinstance(sample_data, list):
+                sample_data = []
+
+            # Limit uygula (cache'de daha fazla olabilir)
+            rows_out = sample_data[:limit]
+
+            # Kolon meta: columns_json içindeki sırayı koru, ds_table_enrichments'ten label
+            columns_meta: List[Dict[str, Any]] = []
+            cols_json = row.get("columns_json") or []
+            if isinstance(cols_json, list):
+                col_names = []
+                for c in cols_json:
+                    if isinstance(c, dict):
+                        cname = c.get("name") or c.get("column_name")
+                        ctype = c.get("type") or c.get("data_type") or ""
+                        if cname:
+                            columns_meta.append({"name": cname, "type": str(ctype)})
+                            col_names.append(cname)
+
+            # Eğer columns_json boş ya da eksikse: sample_data'nın ilk satırından kolonları çıkar
+            if not columns_meta and rows_out:
+                first = rows_out[0] if isinstance(rows_out[0], dict) else {}
+                for k in first.keys():
+                    columns_meta.append({"name": k, "type": ""})
+
+            # ds_table_enrichments → business_name_tr
+            business_name_tr = None
+            try:
+                if row.get("schema_name") is None:
+                    cur.execute("""
+                        SELECT business_name_tr FROM ds_table_enrichments
+                        WHERE source_id = %s AND schema_name IS NULL AND table_name = %s
+                        LIMIT 1
+                    """, (source_id, row.get("object_name")))
+                else:
+                    cur.execute("""
+                        SELECT business_name_tr FROM ds_table_enrichments
+                        WHERE source_id = %s AND schema_name = %s AND table_name = %s
+                        LIMIT 1
+                    """, (source_id, row.get("schema_name"), row.get("object_name")))
+                enr = cur.fetchone()
+                if enr:
+                    business_name_tr = dict(enr).get("business_name_tr")
+            except Exception:
+                # Enrichment join opsiyonel — hata olursa label'sız döner
+                pass
+
+            return {
+                "success": True,
+                "source_id": source_id,
+                "schema": row.get("schema_name"),
+                "table": row.get("object_name"),
+                "business_name_tr": business_name_tr,
+                "columns": columns_meta,
+                "rows": rows_out,
+                "row_count": row.get("row_count") or len(rows_out),
+                "fetched_at": row.get("fetched_at").isoformat() if row.get("fetched_at") else None,
+                "cached": True,
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("[DataSources] get_table_samples hatası: %s", type(e).__name__)
+        raise HTTPException(status_code=500, detail="Örnek veri okunamadı.")
 
 
 @router.post("/{source_id}/collect-samples")
