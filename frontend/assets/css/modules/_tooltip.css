@@ -1,0 +1,139 @@
+/* =====================================================
+   VYRA CSS-only Tooltip (v3.19.0)
+   =====================================================
+   Kullanım: <button data-tooltip="Mesaj"> ya da
+            <button data-tooltip="Mesaj" data-tooltip-pos="bottom|left|right">
+   ====================================================== */
+
+[data-tooltip] {
+    position: relative;
+}
+
+[data-tooltip]::before,
+[data-tooltip]::after {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .15s ease-out, transform .15s ease-out;
+    z-index: 9999;
+}
+
+/* Tooltip metin balonu */
+[data-tooltip]::after {
+    content: attr(data-tooltip);
+    background: rgba(17, 19, 24, .96);
+    color: #f3f4f6;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.4;
+    padding: 6px 10px;
+    border-radius: 6px;
+    white-space: nowrap;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, .25);
+    border: 1px solid rgba(255, 255, 255, .06);
+    max-width: 240px;
+    /* Whitespace allow wrap for long tooltips */
+    white-space: normal;
+    width: max-content;
+    max-width: 240px;
+}
+
+/* Arrow */
+[data-tooltip]::before {
+    content: '';
+    width: 0;
+    height: 0;
+    border: 5px solid transparent;
+}
+
+/* === Default: TOP === */
+[data-tooltip]:not([data-tooltip-pos])::after,
+[data-tooltip][data-tooltip-pos="top"]::after {
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%) translateY(4px);
+}
+[data-tooltip]:not([data-tooltip-pos])::before,
+[data-tooltip][data-tooltip-pos="top"]::before {
+    bottom: calc(100% + 3px);
+    left: 50%;
+    transform: translateX(-50%) translateY(4px);
+    border-top-color: rgba(17, 19, 24, .96);
+}
+
+/* === BOTTOM === */
+[data-tooltip][data-tooltip-pos="bottom"]::after {
+    top: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%) translateY(-4px);
+}
+[data-tooltip][data-tooltip-pos="bottom"]::before {
+    top: calc(100% + 3px);
+    left: 50%;
+    transform: translateX(-50%) translateY(-4px);
+    border-bottom-color: rgba(17, 19, 24, .96);
+}
+
+/* === LEFT === */
+[data-tooltip][data-tooltip-pos="left"]::after {
+    right: calc(100% + 8px);
+    top: 50%;
+    transform: translateY(-50%) translateX(4px);
+}
+[data-tooltip][data-tooltip-pos="left"]::before {
+    right: calc(100% + 3px);
+    top: 50%;
+    transform: translateY(-50%) translateX(4px);
+    border-left-color: rgba(17, 19, 24, .96);
+}
+
+/* === RIGHT === */
+[data-tooltip][data-tooltip-pos="right"]::after {
+    left: calc(100% + 8px);
+    top: 50%;
+    transform: translateY(-50%) translateX(-4px);
+}
+[data-tooltip][data-tooltip-pos="right"]::before {
+    left: calc(100% + 3px);
+    top: 50%;
+    transform: translateY(-50%) translateX(-4px);
+    border-right-color: rgba(17, 19, 24, .96);
+}
+
+/* === HOVER / FOCUS-VISIBLE: göster === */
+[data-tooltip]:hover::before,
+[data-tooltip]:hover::after,
+[data-tooltip]:focus-visible::before,
+[data-tooltip]:focus-visible::after {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+[data-tooltip][data-tooltip-pos="left"]:hover::before,
+[data-tooltip][data-tooltip-pos="left"]:hover::after,
+[data-tooltip][data-tooltip-pos="left"]:focus-visible::before,
+[data-tooltip][data-tooltip-pos="left"]:focus-visible::after,
+[data-tooltip][data-tooltip-pos="right"]:hover::before,
+[data-tooltip][data-tooltip-pos="right"]:hover::after,
+[data-tooltip][data-tooltip-pos="right"]:focus-visible::before,
+[data-tooltip][data-tooltip-pos="right"]:focus-visible::after {
+    transform: translateY(-50%) translateX(0);
+}
+
+/* Light theme override (proje light tema kullandığında) */
+[data-theme="light"] [data-tooltip]::after {
+    background: rgba(17, 19, 24, .92);
+    color: #ffffff;
+}
+[data-theme="light"] [data-tooltip][data-tooltip-pos="top"]::before,
+[data-theme="light"] [data-tooltip]:not([data-tooltip-pos])::before {
+    border-top-color: rgba(17, 19, 24, .92);
+}
+[data-theme="light"] [data-tooltip][data-tooltip-pos="bottom"]::before {
+    border-bottom-color: rgba(17, 19, 24, .92);
+}
+[data-theme="light"] [data-tooltip][data-tooltip-pos="left"]::before {
+    border-left-color: rgba(17, 19, 24, .92);
+}
+[data-theme="light"] [data-tooltip][data-tooltip-pos="right"]::before {
+    border-right-color: rgba(17, 19, 24, .92);
+}

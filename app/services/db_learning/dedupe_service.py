@@ -174,38 +174,59 @@ def check_duplicate(
         logger.warning("[dedupe.L1] hash lookup failed: %s", e)
 
     # ─── Layer 2: embedding cosine (pgvector varsa DB-side) ───
+    # v3.29.11 guard: question_embedding kolonu `vector` tipi değilse L2'yi atla.
+    # Aksi halde `<=> ::vector` operatörü float8[]/array üzerinde patlar ve
+    # mevcut transaction'ı poison ederek sonraki INSERT/SELECT'leri de düşürür
+    # (psycopg2.errors.InFailedSqlTransaction). L1 (sql_hash) + L3 (Jaccard) yeterli fallback.
     if question_embedding is not None and len(question_embedding) > 0:
+        # Lazy import — circular dependency'yi önlemek için
         try:
-            # pgvector operator <=> = cosine distance (0 = identical)
-            # Eşik: distance <= COSINE_DUP_MAX_DISTANCE (0.08)
-            emb_str = "[" + ",".join(f"{x:.6f}" for x in question_embedding) + "]"
-            cur.execute(
-                f"""
-                SELECT id, (question_embedding <=> %s::vector) AS dist
-                FROM {table}
-                WHERE source_id = %s
-                  AND is_active = TRUE
-                  AND question_embedding IS NOT NULL
-                ORDER BY question_embedding <=> %s::vector
-                LIMIT 1
-                """,
-                (emb_str, source_id, emb_str),
+            from app.services.db_learning.learned_queries_service import (
+                _detect_embedding_column_type,
             )
-            row = cur.fetchone()
-            if row:
-                existing_id = row[0] if not hasattr(row, "get") else row.get("id", row[0])
-                dist = row[1] if not hasattr(row, "get") else row.get("dist", row[1])
-                if dist is not None and float(dist) <= COSINE_DUP_MAX_DISTANCE:
-                    similarity = 1.0 - float(dist)
-                    return DuplicateMatch(
-                        existing_id=existing_id,
-                        layer=2,
-                        similarity=similarity,
-                        reason="embedding_cosine",
-                    )
-        except Exception as e:
-            # pgvector yoksa veya float[] tip uyumsuzluğu — sessizce geç
-            logger.debug("[dedupe.L2] embedding lookup skipped: %s", e)
+            _emb_col_type = _detect_embedding_column_type(cur)
+        except Exception as _e:
+            _emb_col_type = "unknown"
+            logger.debug("[dedupe.L2] embedding column type detect failed: %s", _e)
+
+        if _emb_col_type == "vector":
+            try:
+                # pgvector operator <=> = cosine distance (0 = identical)
+                # Eşik: distance <= COSINE_DUP_MAX_DISTANCE (0.08)
+                emb_str = "[" + ",".join(f"{x:.6f}" for x in question_embedding) + "]"
+                cur.execute(
+                    f"""
+                    SELECT id, (question_embedding <=> %s::vector) AS dist
+                    FROM {table}
+                    WHERE source_id = %s
+                      AND is_active = TRUE
+                      AND question_embedding IS NOT NULL
+                    ORDER BY question_embedding <=> %s::vector
+                    LIMIT 1
+                    """,
+                    (emb_str, source_id, emb_str),
+                )
+                row = cur.fetchone()
+                if row:
+                    existing_id = row[0] if not hasattr(row, "get") else row.get("id", row[0])
+                    dist = row[1] if not hasattr(row, "get") else row.get("dist", row[1])
+                    if dist is not None and float(dist) <= COSINE_DUP_MAX_DISTANCE:
+                        similarity = 1.0 - float(dist)
+                        return DuplicateMatch(
+                            existing_id=existing_id,
+                            layer=2,
+                            similarity=similarity,
+                            reason="embedding_cosine",
+                        )
+            except Exception as e:
+                # pgvector yoksa veya float[] tip uyumsuzluğu — sessizce geç
+                logger.debug("[dedupe.L2] embedding lookup skipped: %s", e)
+        else:
+            # float8[] / array — pgvector operatörü yok, L2 atla (poison'dan kaçınmak için)
+            logger.debug(
+                "[dedupe.L2] skipped — question_embedding column type=%s (not pgvector)",
+                _emb_col_type,
+            )
 
     # ─── Layer 3: Jaccard schema_signature ─────────────────────
     if schema_signature:

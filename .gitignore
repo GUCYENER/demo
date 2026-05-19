@@ -82,3 +82,9 @@ offline_packages/
 
 # Archive
 *.7z
+
+# Local notes (personal scratch)
+bilgi.txt
+
+# Oracle test container data (binary DB files)
+oracledb/

@@ -33,6 +33,10 @@
                         <i class="fa-solid fa-shield-halved"></i>
                         Rol Yetkileri
                     </button>
+                    <button id="tabFeaturePermissions" class="sub-tab" data-tab="features">
+                        <i class="fa-solid fa-toggle-on"></i>
+                        Sistem Özellikleri
+                    </button>
                 </div>
 
                 <div id="contentUsersList" class="auth-tab-content">
@@ -141,6 +145,24 @@
                                     <i class="fa-solid fa-save"></i>
                                     Kaydet
                                 </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="contentFeaturePermissions" class="auth-tab-content hidden">
+                    <div class="card">
+                        <div class="sec-head">
+                            <div class="sec-title">
+                                <i class="fa-solid fa-toggle-on" style="color:var(--accent)"></i>
+                                Sistem Özellikleri Yetkilendirmesi
+                            </div>
+                            <p style="font-size:12px;color:var(--text-3);">Ana sayfadaki 3 modun görünürlüğünü kullanıcı ve org grubu bazında yönetin. Boş bırakılırsa tüm kullanıcılar görür.</p>
+                        </div>
+                        <div id="featurePermPanelBody" style="padding:14px 18px;">
+                            <div class="fp-loading">
+                                <i class="fa-solid fa-spinner fa-spin"></i>
+                                <span>Yükleniyor...</span>
                             </div>
                         </div>
                     </div>

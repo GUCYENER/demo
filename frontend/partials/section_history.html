@@ -23,12 +23,14 @@
                 <i class="fa-solid fa-search"></i>
                 <input type="text" id="historySearchInput" placeholder="Talep veya çözüm içinde ara..." />
             </div>
-            <!-- v2.21.1: Tür Filtresi Dropdown -->
-            <div class="source-type-wrapper">
+            <!-- v2.21.1 / v3.19.0: Tür Filtresi Dropdown — feature permission'a göre filtrelenir -->
+            <div class="source-type-wrapper" id="sourceTypeWrapper">
                 <label>Tür:</label>
                 <select id="sourceTypeFilter" class="source-type-select">
                     <option value="">Tümü</option>
-                    <option value="vyra_chat">Bilgi Tabanı</option>
+                    <option value="vyra_chat" data-feature-key="kb">Bilgi Tabanı</option>
+                    <option value="vyra_db"   data-feature-key="db">Veritabanı</option>
+                    <option value="vyra_llm"  data-feature-key="llm">VYRA Sohbet</option>
                 </select>
             </div>
             <div class="date-picker-wrapper">

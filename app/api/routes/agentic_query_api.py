@@ -927,21 +927,30 @@ def get_template_heatmap(
     with get_db_context() as conn:
         cur = conn.cursor()
         try:
-            cur.execute(
-                f"""
-                SELECT template_kind,
-                       COALESCE(complexity_score, 1) AS complexity_score,
-                       COUNT(*)::int AS run_count,
-                       AVG(CASE WHEN status='ok' THEN 1 ELSE 0 END)::float AS success_rate
-                  FROM ds_synthetic_query_runs
-                 WHERE created_at >= NOW() - make_interval(days => %s)
-                   {co_clause}
-                 GROUP BY template_kind, COALESCE(complexity_score, 1)
-                 ORDER BY template_kind, complexity_score
-                """,
-                tuple(params),
-            )
-            rows = cur.fetchall() or []
+            # v3.29.10 fix: kolon adları ds_synthetic_query_runs şemasıyla hizalandı
+            #   - created_at  →  executed_at  (021 migration)
+            #   - status='ok' →  success      (BOOLEAN, 021 migration)
+            # Migration uygulanmamışsa veya kolon yoksa boş dön (500 yerine).
+            try:
+                cur.execute(
+                    f"""
+                    SELECT template_kind,
+                           COALESCE(complexity_score, 1) AS complexity_score,
+                           COUNT(*)::int AS run_count,
+                           AVG(CASE WHEN success THEN 1.0 ELSE 0.0 END)::float AS success_rate
+                      FROM ds_synthetic_query_runs
+                     WHERE executed_at >= NOW() - make_interval(days => %s)
+                       {co_clause}
+                     GROUP BY template_kind, COALESCE(complexity_score, 1)
+                     ORDER BY template_kind, complexity_score
+                    """,
+                    tuple(params),
+                )
+                rows = cur.fetchall() or []
+            except Exception as exc:
+                logger.warning("[observability/template-heatmap] query failed: %s", exc)
+                rows = []
+
             cells = [
                 {
                     "template_kind": r[0],

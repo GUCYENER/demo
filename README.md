@@ -75,7 +75,15 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
-### 🆕 v3.29.9 (2026-05-19) - Multi-dialect FK Inference Layer (4 dialect)
+### 🆕 v3.29.10 (2026-05-19) - Housekeeping + Live Bug Fix
+- 🧹 **Working tree closure:** v3.29.0 → v3.29.9 boyunca biriken 36 dosya (modified + untracked) mantıksal commit gruplarına ayrılarak hira branch'a alındı: db_learning supporting modules (cardinality/code-value/error-pattern/fk-graph/incremental/sample-data), feature_permissions + permission_audit endpoints, disambiguation_card pipeline node, failure_queue + tooltip + feature_permissions frontend, migrations 023-028 (relationship_cardinality, business_glossary_v2, code_value_dictionary, template_versioning, pii_flag, query_failure_log).
+- 📋 **Plan dosyaları kapanışı:** `.agents/plans/v3.29.8_signal_weight_tuner.md` ve `.agents/plans/v3.29.9_fk_inference.md` frontmatter'larına `status: completed` + commit hash eklendi (HERA persistence).
+- 🐛 **Bug #1 — Observability heatmap 500:** `/api/agentic-query/observability/template-heatmap` endpoint'i try/except guard + parametre validasyonu ile sertleştirildi (TYCHE).
+- 🐛 **Bug #2 — Modal onclick null:** "Tablo Etiketleme & Onay Paneli" modalında null DOM referansı için defansif guard + `window.showToast` ile bilgilendirme (HEBE).
+- 📄 **README versiyon senkronizasyonu:** Satır 3724 versiyon bilgisi v3.26.0 → v3.29.10'a çekildi.
+- 📋 **Plan:** `.agents/plans/v3.29.10_housekeeping_ve_bug_fix.md`.
+
+### v3.29.9 (2026-05-19) - Multi-dialect FK Inference Layer (4 dialect)
 - 🧭 **Motivasyon:** OnedeskTest gibi ORM-FK-only DB'lerde declared FK çok seyrek (29/2138 tablo). Convention-based inference layer naming + type compatibility + opsiyonel sample validation ile FK önerileri üretir.
 - 🧩 **RC1 — Core:** `app/services/db_learning/fk_inference_service.py` + `fk_inference_dialects.py` (4 dialect adapter: PostgreSQL / Oracle / MSSQL / MySQL — Protocol + factory; identifier normalize/quote, type category, dialect-specific statement_timeout, sample coverage SQL). Naming patterns: `*_id`, `*Id`, `id_*`, `f_*_id`, `*_ref`. Score = 0.6 naming + 0.2 type + 0.2 × coverage. Migration `031_v3299_fk_inference_metadata` — `ds_db_relationships` → `is_inferred`/`inference_method`/`evidence_json`/`admin_verified`/`verified_by`/`verified_at`/`rejected_at` + `system_settings.FK_INFERENCE_DEPLOY_TS`. SQL injection guard: `is_safe_identifier(...)` regex + dialect quoting. 50 unit test.
 - 🔌 **RC2 — Admin API + auto-trigger:** 6 yeni endpoint `/api/admin/db-learning/{src}/...` (`infer-fks`, `inferred-relationships?status=`, `verify`, `reject`, `bulk-verify`, `fk-inference-stats`). `ds_learning_service` Step 2 sonrası best-effort `infer_fks_for_source(sample_validate=False, min_confidence=0.60)` çağrısı (4 dialect dalı için ortak yol).
@@ -3721,7 +3729,7 @@ netstat -an | findstr "5005"
 
 **Geliştirici:** Yasın Fazlıoğlu  
 **E-posta:** yasin.fazlioglu@consultant.turkcell.com.tr  
-**Versiyon:** 3.26.0 (Faz 1–5 — PG RLS tenant izolasyonu + Oracle driver dispatch + Result Size CatBoost + Semantic/Metric Layer + Column/Filter/Join predictors + Langfuse observability)
+**Versiyon:** 3.29.10 (Faz 6 closure + Signal Weight Tuner + Multi-dialect FK Inference + Housekeeping/Bug Fix)
 
 ---
 

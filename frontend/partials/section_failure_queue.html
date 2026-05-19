@@ -1,0 +1,50 @@
+<!--
+  Section: Learned Query Failure Queue (Admin)
+  --------------------------------------------
+  Backend: /api/data-sources/{source_id}/failure-queue
+           /api/data-sources/{source_id}/failures/{id}/approve
+           DELETE /api/data-sources/{source_id}/failures/{id}
+  Yetki: is_admin.
+
+  init:
+    window.FailureQueue.init('#failureQueueSection');
+-->
+<section id="failureQueueSection" class="section-content" hidden aria-labelledby="fq-title">
+  <header class="fq-header">
+    <h2 id="fq-title">Öğrenme Hata Kuyruğu</h2>
+    <div class="fq-controls">
+      <label for="fqSourceSel">Veri kaynağı:</label>
+      <select id="fqSourceSel" aria-label="Veri kaynağı seç"></select>
+      <label for="fqMinRecur">Min. tekrar:</label>
+      <input id="fqMinRecur" type="number" min="1" max="50" value="3"
+             style="width: 60px;" aria-label="Minimum tekrar sayısı">
+      <button id="fqRefresh" type="button" class="btn btn-secondary"
+              aria-label="Listeyi yenile">
+        <i class="fa-solid fa-rotate"></i> Yenile
+      </button>
+    </div>
+  </header>
+
+  <div id="fqLoading" class="fq-loading" hidden role="status" aria-live="polite">
+    Yükleniyor…
+  </div>
+  <div id="fqError" class="fq-error" hidden role="alert"></div>
+  <div id="fqEmpty" class="fq-empty" hidden>
+    Bu eşik üzerinde tekrarlanan kayıt bulunmuyor.
+  </div>
+
+  <div class="fq-table-wrap">
+    <table id="fqTable" class="fq-table" aria-describedby="fq-title">
+      <thead>
+        <tr>
+          <th scope="col">Soru</th>
+          <th scope="col">Hata Sınıfı</th>
+          <th scope="col">Tekrar</th>
+          <th scope="col">Önerilen Düzeltme</th>
+          <th scope="col">Aksiyon</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>

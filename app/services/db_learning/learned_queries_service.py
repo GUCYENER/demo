@@ -94,8 +94,20 @@ def _vector_literal(emb: List[float]) -> str:
     return "[" + ",".join(f"{x:.6f}" for x in emb) + "]"
 
 
+# v3.28.9 Paket C: kolon tipi process boyunca sabit — her INSERT'te yeniden
+# information_schema sorgulamak gereksiz IO ve potansiyel cursor state bozulması.
+_EMB_COL_TYPE_CACHE: Optional[str] = None
+
+
 def _detect_embedding_column_type(cur) -> str:
-    """question_embedding kolonu vector mi float[] mi? (migration 021 graceful)."""
+    """question_embedding kolonu vector mi float[] mi? (migration 021 graceful).
+
+    İlk başarılı tespit sonucu process boyunca cache'lenir (PostgreSQL schema
+    runtime'da değişmez varsayımı). Cache miss durumunda 'vector' güvenli default.
+    """
+    global _EMB_COL_TYPE_CACHE
+    if _EMB_COL_TYPE_CACHE is not None:
+        return _EMB_COL_TYPE_CACHE
     try:
         cur.execute("""
             SELECT udt_name
@@ -106,9 +118,10 @@ def _detect_embedding_column_type(cur) -> str:
         row = cur.fetchone()
         if row:
             udt = _row_get(row, "udt_name") or (row[0] if isinstance(row, (list, tuple)) else None)
-            return "vector" if udt == "vector" else "array"
-    except Exception:
-        pass
+            _EMB_COL_TYPE_CACHE = "vector" if udt == "vector" else "array"
+            return _EMB_COL_TYPE_CACHE
+    except Exception as e:
+        logger.debug("[learned_queries.detect_emb_col] %s", e)
     return "vector"
 
 
@@ -327,6 +340,9 @@ def record_successful_query(
     result_fingerprint: Optional[str] = None,
     source: str = "user",
     created_by_user_id: Optional[int] = None,
+    template_version: int = 1,
+    complexity_score: int = 1,
+    join_path: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Başarılı (soru, SQL) çiftini öğren — dedupe ile.
 
@@ -389,6 +405,10 @@ def record_successful_query(
 
         import json as _json
         cols_json = _json.dumps(columns_meta or [], ensure_ascii=False)
+        # v3.29.2 G3: template versioning fields (migration 026)
+        _tv = int(template_version or 1)
+        _cs = int(complexity_score or 1)
+        _jp = list(join_path or [])
 
         if emb_lit is not None and emb_col_type == "vector":
             cur.execute(
@@ -398,12 +418,14 @@ def record_successful_query(
                    question_embedding, sql_query, sql_hash, intent,
                    schema_signature, columns_meta, result_fingerprint,
                    source, hit_count, success_count, failure_count,
-                   last_used_at, is_active, created_by_user_id)
+                   last_used_at, is_active, created_by_user_id,
+                   template_version, complexity_score, join_path)
                 VALUES (%s, %s, %s, %s,
                         %s::vector, %s, %s, %s,
                         %s, %s::jsonb, %s,
                         %s, 0, 1, 0,
-                        NOW(), TRUE, %s)
+                        NOW(), TRUE, %s,
+                        %s, %s, %s)
                 ON CONFLICT (source_id, sql_hash)
                   DO UPDATE SET hit_count = {TABLE_NAME}.hit_count + 1,
                                 last_used_at = NOW()
@@ -412,7 +434,8 @@ def record_successful_query(
                 (source_id, company_id, question, q_norm,
                  emb_lit, sql, sh, intent,
                  schema_sig or None, cols_json, result_fingerprint,
-                 source, created_by_user_id),
+                 source, created_by_user_id,
+                 _tv, _cs, _jp),
             )
         else:
             cur.execute(
@@ -422,12 +445,14 @@ def record_successful_query(
                    question_embedding, sql_query, sql_hash, intent,
                    schema_signature, columns_meta, result_fingerprint,
                    source, hit_count, success_count, failure_count,
-                   last_used_at, is_active, created_by_user_id)
+                   last_used_at, is_active, created_by_user_id,
+                   template_version, complexity_score, join_path)
                 VALUES (%s, %s, %s, %s,
                         %s, %s, %s, %s,
                         %s, %s::jsonb, %s,
                         %s, 0, 1, 0,
-                        NOW(), TRUE, %s)
+                        NOW(), TRUE, %s,
+                        %s, %s, %s)
                 ON CONFLICT (source_id, sql_hash)
                   DO UPDATE SET hit_count = {TABLE_NAME}.hit_count + 1,
                                 last_used_at = NOW()
@@ -436,7 +461,8 @@ def record_successful_query(
                 (source_id, company_id, question, q_norm,
                  emb_lit, sql, sh, intent,
                  schema_sig or None, cols_json, result_fingerprint,
-                 source, created_by_user_id),
+                 source, created_by_user_id,
+                 _tv, _cs, _jp),
             )
         row = cur.fetchone()
         rid = _row_get(row, "id") if row else None
@@ -445,8 +471,14 @@ def record_successful_query(
         return {"status": "inserted", "id": int(rid) if rid else None,
                 "layer": None, "similarity": 1.0}
     except Exception as e:
-        logger.warning("[learned_queries.record.insert] %s", e)
-        return {"status": "error", "error": str(e)}
+        # v3.28.9 Paket C: tam traceback + sebep kategorize et — sentetik loop
+        # bu mesajı UI'a yansıtacak.
+        logger.exception("[learned_queries.record.insert] failed q=%s sql=%s",
+                         (question or "")[:80], (sql or "")[:80])
+        return {
+            "status": "error",
+            "error": f"{type(e).__name__}: {str(e)[:300]}",
+        }
 
 
 # ─────────────────────────────────────────────────────────────

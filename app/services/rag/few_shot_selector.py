@@ -74,6 +74,34 @@ def _priority_boost(usage_count: int, success_rate: float) -> float:
     return sat * (success_rate if success_rate is not None else 1.0)
 
 
+def _sql_complexity(sql: str) -> int:
+    """v3.29.4 G5 — SQL'in kabaca complexity_score'unu çıkar (heuristic).
+
+    1: tek tablo, JOIN yok
+    2: 1 JOIN
+    3: 2 JOIN veya basit CTE
+    4: 3+ JOIN, LATERAL veya STRING_AGG
+    5: CTE + window + STRING_AGG
+    """
+    if not sql:
+        return 1
+    s = sql.upper()
+    join_n = s.count(" JOIN ")
+    has_cte = " WITH " in (" " + s) or s.startswith("WITH ")
+    has_window = "OVER (" in s or "OVER(" in s
+    has_lateral = " LATERAL " in s
+    has_str_agg = "STRING_AGG(" in s
+    if has_cte and has_window and has_str_agg:
+        return 5
+    if join_n >= 3 or has_lateral or has_str_agg or (has_window and join_n >= 2):
+        return 4
+    if join_n >= 2 or has_cte or has_window:
+        return 3
+    if join_n >= 1:
+        return 2
+    return 1
+
+
 def select_few_shots(
     cur,
     company_id: int,
@@ -84,6 +112,8 @@ def select_few_shots(
     candidate_signature: Optional[str] = None,
     top_k: int = 3,
     max_pool: int = 25,
+    require_multi_table: bool = False,
+    min_complexity: int = 1,
 ) -> List[Dict[str, Any]]:
     """
     Few-shot örnek seçici.
@@ -185,7 +215,21 @@ def select_few_shots(
                 sig_factor = SIGNATURE_MISMATCH_PENALTY + (0.5 - SIGNATURE_MISMATCH_PENALTY) * (j / 0.5)
                 # 0.5..1.0
 
-        final_score = base * intent_factor * sig_factor
+        # v3.29.4 G5 — Complexity boost (multi-table few-shot tercih)
+        cx = _sql_complexity(sql_query)
+        cx_factor = 1.0
+        if require_multi_table:
+            # multi-table sorularda complex örnekler büyük boost
+            if cx >= 3:
+                cx_factor = 1.25
+            elif cx == 2:
+                cx_factor = 1.0
+            else:
+                cx_factor = 0.6  # tek-tablo örnek penalize
+        if cx < min_complexity:
+            cx_factor *= 0.4
+
+        final_score = base * intent_factor * sig_factor * cx_factor
 
         results.append({
             "id": rid,
@@ -199,10 +243,22 @@ def select_few_shots(
             "priority": float(prio),
             "usage_count": int(usage or 0),
             "success_rate": float(succ if succ is not None else 1.0),
+            "complexity_score": cx,
         })
 
     results.sort(key=lambda x: x["score"], reverse=True)
-    return results[:top_k]
+    # v3.29.4 G5 — multi-table garantisi: top-K içinde en az 1 complex örnek varsa
+    # olduğu gibi dön; yoksa havuzdan en yüksek skorlu complex'i ekleyip 1 tek-tablo
+    # örneği düşür.
+    top = results[:top_k]
+    if require_multi_table and top:
+        has_complex = any((r.get("complexity_score") or 1) >= 3 for r in top)
+        if not has_complex:
+            complex_pool = [r for r in results[top_k:] if (r.get("complexity_score") or 1) >= 3]
+            if complex_pool:
+                top = top[:-1] + [complex_pool[0]]
+                top.sort(key=lambda x: x["score"], reverse=True)
+    return top
 
 
 def format_examples_for_prompt(examples: List[Dict[str, Any]]) -> str:

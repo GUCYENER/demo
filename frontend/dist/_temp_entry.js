@@ -27805,13 +27805,23 @@ window.DSLearningModule = (function () {
                     const lvl = pct >= 85 ? 'high' : (pct >= 60 ? 'mid' : 'low');
                     return `<span class="ds-badge ds-badge-conf-${lvl}" data-tooltip="Analiz güveni" aria-label="Güven ${pct}%">${pct}%</span>`;
                 };
+                // v3.29.9 — Inferred / Verified / Declared rozetleri
+                const _fmtSource = (r) => {
+                    if (r.is_inferred === true) {
+                        if (r.admin_verified === true) {
+                            return '<span class="ds-badge ds-badge-conf-high" data-tooltip="Admin tarafından onaylanmış çıkarım" aria-label="Onaylanmış çıkarım">Inferred ✓</span>';
+                        }
+                        return '<span class="ds-badge ds-badge-conf-mid" data-tooltip="Convention-based çıkarım, admin onayı bekliyor" aria-label="Bekleyen çıkarım">Inferred</span>';
+                    }
+                    return '<span class="ds-badge ds-badge-conf-high" data-tooltip="DB katalogundan declared FK" aria-label="Declared FK">Declared</span>';
+                };
                 relsHtml = `
                     <div class="ds-details-section">
                         <h4><i class="fa-solid fa-link"></i> İlişkiler (${data.relationships.length})</h4>
                         <div class="ds-details-table-wrap">
                             <table class="ds-details-table">
                                 <thead>
-                                    <tr><th>Kaynak Tablo</th><th>Kaynak Sütun</th><th>Kardinalite</th><th>Hedef Tablo</th><th>Hedef Sütun</th><th>Güven</th></tr>
+                                    <tr><th>Kaynak Tablo</th><th>Kaynak Sütun</th><th>Kardinalite</th><th>Hedef Tablo</th><th>Hedef Sütun</th><th>Tür</th><th>Güven</th></tr>
                                 </thead>
                                 <tbody>
                                     ${data.relationships.map(r => `
@@ -27821,6 +27831,7 @@ window.DSLearningModule = (function () {
                                             <td>${_fmtCard(r.cardinality_from, r.cardinality_to)} <i class="fa-solid fa-arrow-right" style="color: var(--accent-primary);"></i></td>
                                             <td>${_escapeHtml(r.to_table)}</td>
                                             <td>${_escapeHtml(r.to_column)}</td>
+                                            <td>${_fmtSource(r)}</td>
                                             <td>${_fmtConf(r.confidence_score)}</td>
                                         </tr>
                                     `).join('')}
@@ -27828,6 +27839,14 @@ window.DSLearningModule = (function () {
                             </table>
                         </div>
                         <div class="ds-rel-actions" style="margin-top: 8px; display: flex; justify-content: flex-end; gap: 8px;">
+                            <button type="button"
+                                    class="btn-secondary"
+                                    id="dsInferFksBtn"
+                                    data-source-id="${sourceId}"
+                                    data-tooltip="v3.29.9 — Convention-based FK inference (naming + type + sample) çalıştır"
+                                    aria-label="FK çıkarımını yeniden çalıştır">
+                                <i class="fa-solid fa-wand-magic-sparkles"></i> FK Çıkarımını Yenile
+                            </button>
                             <button type="button"
                                     class="btn-secondary"
                                     id="dsAnalyzeCardinalityBtn"
@@ -27894,6 +27913,37 @@ window.DSLearningModule = (function () {
                 if (e.key === 'Escape') closeDetailsModal();
             }
             document.addEventListener('keydown', detailsEscHandler);
+
+            // v3.29.9 — Convention-based FK Inference yeniden çalıştır
+            const inferBtn = document.getElementById('dsInferFksBtn');
+            if (inferBtn) {
+                inferBtn.addEventListener('click', async () => {
+                    const sid = inferBtn.dataset.sourceId;
+                    if (!sid) return;
+                    const originalHtml = inferBtn.innerHTML;
+                    inferBtn.disabled = true;
+                    inferBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Çıkarılıyor…';
+                    try {
+                        const res = await apiCall(`/${sid}/infer-fks`, 'POST', {
+                            sample_validate: false,
+                            min_confidence: 0.60,
+                        });
+                        const s = (res && (res.stats || res)) || {};
+                        const added = s.inferred_added != null ? s.inferred_added : (s.added || 0);
+                        const skipped = s.skipped != null ? s.skipped : (s.duplicates || 0);
+                        toast('success',
+                            `FK çıkarımı tamamlandı — ${added} yeni öneri, ${skipped} mevcut/atlandı. ` +
+                            `Önerileri "FK Inference" sekmesinden inceleyebilirsiniz.`);
+                        closeDetailsModal();
+                        setTimeout(() => { try { showDiscoveryDetails(parseInt(sid, 10)); } catch (_) {} }, 350);
+                    } catch (err) {
+                        toast('error', 'FK çıkarımı başarısız: ' + (err && err.message ? err.message : err));
+                    } finally {
+                        inferBtn.disabled = false;
+                        inferBtn.innerHTML = originalHtml;
+                    }
+                });
+            }
 
             // v3.29.0 Faz 6 G1 — Kardinalite analizini yeniden çalıştır
             const cardBtn = document.getElementById('dsAnalyzeCardinalityBtn');
@@ -29552,7 +29602,9 @@ const DSEnrichmentModule = (() => {
                             <i class="fa-solid fa-circle-check" style="color: #4cd964;"></i>
                             <h4>Onay Bekleyen Tablo Yok</h4>
                             <p>Harika! Tespit edilen tüm tablolar incelendi ve onaylandı.</p>
-                            <button class="ds-enrich-btn" style="margin-top:20px;width:auto;padding:8px 16px;" onclick="document.querySelector('#dsShowApprovedChk').click()">
+                            <!-- v3.29.10 fix (bug #2): empty state render'da #dsShowApprovedChk DOM'da yok.
+                                 Doğrudan modül metodunu çağırarak null TypeError engellendi. -->
+                            <button class="ds-enrich-btn" style="margin-top:20px;width:auto;padding:8px 16px;" onclick="DSEnrichmentModule.toggleShowApprovedFilter(true)">
                                 Onaylıları Gözden Geçir
                             </button>
                         </div>
@@ -32329,7 +32381,11 @@ window.ThemePickerPopup = (function () {
         glossary: '/api/agentic-query/observability/glossary-usage',
     };
 
-    const TAB_IDS = ['Templates', 'Failures', 'Glossary'];
+    // v3.29.8 'Signals' (signal_weight_tuner.js kendi click handler'ı içinde
+    // veri yüklüyor) + v3.29.9 'FkInference' (fk_inference_observability.js
+    // kendi yüklemesini yapıyor). Buradaki TAB_IDS yalnız panel switching
+    // (aria-selected + hidden) için.
+    const TAB_IDS = ['Templates', 'Failures', 'Glossary', 'Signals', 'FkInference'];
 
     function _authHeaders() {
         const h = { 'Accept': 'application/json' };
@@ -32738,7 +32794,36 @@ window.ThemePickerPopup = (function () {
         }
     }
 
+    function _renderDeployBanner(data) {
+        // v3.29.9 — FK inference recent deploy banner: fk_centrality önerileri
+        // henüz olgunlaşmamış olabilir, admin'i uyar.
+        const host = document.getElementById('swtDeployBanner');
+        if (!host) return;
+        if (data && data.fk_inference_recent_deploy === true) {
+            const ageH = Number(data.fk_inference_deploy_age_hours || 0);
+            const remainingH = Math.max(0, 72 - ageH);
+            const remainingTxt = remainingH >= 24
+                ? `${(remainingH / 24).toFixed(1)} gün`
+                : `${remainingH.toFixed(0)} saat`;
+            host.innerHTML = `
+                <div class="swt-deploy-banner" role="status" aria-live="polite">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    <span>
+                        <strong>v3.29.9 FK Inference yeni devreye alındı.</strong>
+                        Deploy üzerinden ${ageH.toFixed(1)} saat geçti.
+                        <code class="swt-mono">fk_centrality</code> önerileri olgunlaşana kadar ~${remainingTxt} daha bekleyin.
+                    </span>
+                </div>
+            `;
+            host.hidden = false;
+        } else {
+            host.hidden = true;
+            host.innerHTML = '';
+        }
+    }
+
     function _renderCurrent(data) {
+        _renderDeployBanner(data);
         const tbody = document.querySelector('#swtCurrentTable tbody');
         if (!tbody) return;
         tbody.innerHTML = '';
@@ -32931,6 +33016,236 @@ window.ThemePickerPopup = (function () {
     else document.addEventListener('DOMContentLoaded', init);
 
     global.SignalWeightTuner = { init, reload: _loadCurrentAndSuggestions };
+})(window);
+
+
+/* === assets/js/modules/fk_inference_observability.js === */
+/**
+ * fk_inference_observability.js — v3.29.9
+ * =======================================
+ * "FK Inference" sekmesi: kaynak başına FK çıkarım istatistikleri ve
+ * onay bekleyen ilişkilerin listesi. Lazy load — sekme tıklanınca devreye girer.
+ *
+ * Bağımlı endpoint'ler (db_learning_api.py):
+ *   - GET /api/admin/data-sources                      → kaynak listesi
+ *   - GET /api/admin/db-learning/{src}/fk-inference-stats
+ *   - GET /api/admin/db-learning/{src}/inferred-relationships?status=pending
+ *
+ * HEBE compliance: <select> label binding, <button> default keyboard, aria-live
+ * loading, prefers-reduced-motion CSS'te.
+ */
+(function (global) {
+    'use strict';
+
+    let _initialized = false;
+    let _sourcesLoaded = false;
+    let _currentSourceId = null;
+
+    function _authHeaders() {
+        const h = { 'Accept': 'application/json' };
+        try {
+            const t = global.localStorage && global.localStorage.getItem('access_token');
+            if (t) h['Authorization'] = `Bearer ${t}`;
+        } catch (_e) { /* sessiz */ }
+        return h;
+    }
+
+    async function _fetchJson(url) {
+        const r = await fetch(url, { headers: _authHeaders(), credentials: 'include' });
+        if (!r.ok) {
+            const txt = await r.text().catch(() => '');
+            throw new Error(`HTTP ${r.status}: ${txt.slice(0, 200)}`);
+        }
+        return r.json();
+    }
+
+    function _escape(s) {
+        if (s == null) return '';
+        return String(s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function _formatDate(s) {
+        if (!s) return '—';
+        try {
+            return new Date(s).toLocaleString('tr-TR', {
+                dateStyle: 'short', timeStyle: 'short',
+            });
+        } catch (_e) { return s; }
+    }
+
+    function _formatConfidence(c) {
+        if (c == null) return '—';
+        return (Number(c) * 100).toFixed(0) + '%';
+    }
+
+    function _toast(msg, kind = 'info') {
+        if (global.showToast) global.showToast(msg, kind);
+        else console.log(`[fki:${kind}]`, msg);
+    }
+
+    async function _loadSources() {
+        if (_sourcesLoaded) return;
+        const sel = document.getElementById('aoFkiSourceSelect');
+        if (!sel) return;
+        try {
+            const data = await _fetchJson('/api/admin/data-sources');
+            const items = data.items || data.sources || data || [];
+            // Önce mevcut seçenekleri (placeholder hariç) temizle
+            for (let i = sel.options.length - 1; i >= 1; i--) sel.remove(i);
+            items.forEach((s) => {
+                const opt = document.createElement('option');
+                opt.value = String(s.id);
+                opt.textContent = `#${s.id} — ${s.name || s.connection_name || '?'}`;
+                sel.appendChild(opt);
+            });
+            _sourcesLoaded = true;
+        } catch (err) {
+            console.warn('[fki] sources load failed:', err);
+            _toast(`Kaynak listesi yüklenemedi: ${err.message}`, 'error');
+        }
+    }
+
+    function _renderStatsCards(stats) {
+        const host = document.getElementById('aoFkiStatsCards');
+        if (!host) return;
+        const total = stats.total_relationships || 0;
+        const declared = stats.declared_count || 0;
+        const inferred = stats.inferred_count || 0;
+        const verified = stats.verified_count || 0;
+        const pending = stats.pending_count || 0;
+        const rejected = stats.rejected_count || 0;
+        const avgConf = stats.avg_inferred_confidence;
+
+        host.innerHTML = `
+            <div class="fki-stat-card">
+                <div class="fki-stat-card__value">${total}</div>
+                <div class="fki-stat-card__label">Toplam ilişki</div>
+            </div>
+            <div class="fki-stat-card">
+                <div class="fki-stat-card__value">${declared}</div>
+                <div class="fki-stat-card__label">Declared (DB FK)</div>
+            </div>
+            <div class="fki-stat-card fki-stat-card--inferred">
+                <div class="fki-stat-card__value">${inferred}</div>
+                <div class="fki-stat-card__label">Inferred (çıkarım)</div>
+            </div>
+            <div class="fki-stat-card fki-stat-card--verified">
+                <div class="fki-stat-card__value">${verified}</div>
+                <div class="fki-stat-card__label">Admin onaylı</div>
+            </div>
+            <div class="fki-stat-card fki-stat-card--pending">
+                <div class="fki-stat-card__value">${pending}</div>
+                <div class="fki-stat-card__label">Onay bekleyen</div>
+            </div>
+            <div class="fki-stat-card fki-stat-card--rejected">
+                <div class="fki-stat-card__value">${rejected}</div>
+                <div class="fki-stat-card__label">Reddedilen</div>
+            </div>
+            <div class="fki-stat-card">
+                <div class="fki-stat-card__value">${_formatConfidence(avgConf)}</div>
+                <div class="fki-stat-card__label">Ort. çıkarım güveni</div>
+            </div>
+        `;
+    }
+
+    function _renderPendingTable(rows) {
+        const tbody = document.querySelector('#aoFkiPendingTable tbody');
+        const empty = document.getElementById('aoFkiEmpty');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        if (!rows || rows.length === 0) {
+            if (empty) empty.hidden = false;
+            return;
+        }
+        if (empty) empty.hidden = true;
+        rows.forEach((r) => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>${_escape(r.source_table || r.from_table || '')}</td>
+                <td class="swt-mono">${_escape(r.source_column || r.from_column || '')}</td>
+                <td>${_escape(r.target_table || r.to_table || '')}</td>
+                <td class="swt-mono">${_escape(r.target_column || r.to_column || '')}</td>
+                <td class="swt-mono">${_formatConfidence(r.confidence_score)}</td>
+                <td class="swt-mono">${_escape(r.inference_method || '—')}</td>
+                <td>${_formatDate(r.created_at || r.discovered_at)}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    async function _loadStats() {
+        if (!_currentSourceId) {
+            const empty = document.getElementById('aoFkiEmpty');
+            if (empty) { empty.hidden = false; empty.textContent = 'Bir kaynak seçin'; }
+            return;
+        }
+        const loading = document.getElementById('aoFkiLoading');
+        const empty = document.getElementById('aoFkiEmpty');
+        if (loading) loading.hidden = false;
+        if (empty) empty.hidden = true;
+        try {
+            const sid = encodeURIComponent(_currentSourceId);
+            const [stats, pending] = await Promise.all([
+                _fetchJson(`/api/admin/db-learning/${sid}/fk-inference-stats`),
+                _fetchJson(`/api/admin/db-learning/${sid}/inferred-relationships?status=pending&limit=100`),
+            ]);
+            _renderStatsCards(stats || {});
+            const rows = (pending && (pending.items || pending.relationships || pending)) || [];
+            _renderPendingTable(Array.isArray(rows) ? rows : []);
+        } catch (err) {
+            console.warn('[fki] stats load failed:', err);
+            if (empty) {
+                empty.hidden = false;
+                empty.textContent = `Yüklenemedi: ${err.message}`;
+            }
+        } finally {
+            if (loading) loading.hidden = true;
+        }
+    }
+
+    async function _onTabActivate() {
+        await _loadSources();
+        if (!_currentSourceId) {
+            const sel = document.getElementById('aoFkiSourceSelect');
+            if (sel && sel.options.length > 1) {
+                sel.selectedIndex = 1;
+                _currentSourceId = sel.value || null;
+            }
+        }
+        await _loadStats();
+    }
+
+    function init() {
+        if (_initialized) return;
+        const tabBtn = document.getElementById('aoTabBtnFkInference');
+        if (!tabBtn) return;
+        _initialized = true;
+
+        let loadedOnce = false;
+        tabBtn.addEventListener('click', () => {
+            if (!loadedOnce) {
+                loadedOnce = true;
+                _onTabActivate();
+            }
+        });
+
+        const sel = document.getElementById('aoFkiSourceSelect');
+        if (sel) {
+            sel.addEventListener('change', () => {
+                _currentSourceId = sel.value || null;
+                _loadStats();
+            });
+        }
+        const refreshBtn = document.getElementById('aoFkiRefreshBtn');
+        if (refreshBtn) refreshBtn.addEventListener('click', _loadStats);
+    }
+
+    if (document.readyState !== 'loading') init();
+    else document.addEventListener('DOMContentLoaded', init);
+
+    global.FkInferenceObservability = { init, reload: _loadStats };
 })(window);
 
 

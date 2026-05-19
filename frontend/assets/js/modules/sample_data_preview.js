@@ -128,6 +128,7 @@
         }
         html += '</tbody></table></div>';
 
+        // v3.28.7: footer — meta bilgi + "Sorguyu Özelleştir" CTA (drag-drop builder)
         const footer = `
             <div class="sample-preview-footer">
                 <span class="sample-preview-meta">
@@ -135,12 +136,68 @@
                     ${payload.row_count && payload.row_count > rows.length ? ` (cache: ${payload.row_count})` : ''}
                 </span>
                 ${payload.fetched_at ? `<span class="sample-preview-fetched" data-tooltip="Cache zamanı">⏱ ${_esc(payload.fetched_at.slice(0, 16).replace('T', ' '))}</span>` : ''}
+                <button type="button"
+                        class="sample-preview-customize-btn"
+                        aria-label="Sorguyu özelleştir — drag-drop builder aç"
+                        data-tooltip="Pre-execute drag-drop: kolon seç, filtre ekle, SQL önizle">
+                    ✏️ Sorguyu Özelleştir
+                </button>
             </div>
         `;
 
         body.innerHTML = html + footer;
         card.classList.remove('sample-preview-loading');
         card.setAttribute('aria-busy', 'false');
+
+        // CTA → QueryBuilder.open
+        const btn = card.querySelector('.sample-preview-customize-btn');
+        if (btn && window.QueryBuilder && typeof window.QueryBuilder.open === 'function') {
+            btn.addEventListener('click', () => _openQueryBuilder(card, hint, payload));
+        } else if (btn) {
+            // QueryBuilder yüklenmemişse butonu pasifleştir, sebebi tooltip'e yaz
+            btn.disabled = true;
+            btn.setAttribute('data-tooltip', 'Query Builder modülü yüklenmedi.');
+        }
+    }
+
+    /**
+     * Sample preview altına Query Builder render eder ve mevcut açık builder'ı kapatır.
+     */
+    function _openQueryBuilder(card, hint, payload) {
+        if (!window.QueryBuilder || typeof window.QueryBuilder.open !== 'function') return;
+        if (typeof window.QueryBuilder.close === 'function') {
+            try { window.QueryBuilder.close(); } catch (_) { /* sessiz */ }
+        }
+
+        // QueryBuilder'ın yerleşeceği container — sample card'ın hemen altına
+        let qbContainer = card.querySelector('.sample-preview-qb-container');
+        if (!qbContainer) {
+            qbContainer = document.createElement('div');
+            qbContainer.className = 'sample-preview-qb-container';
+            card.appendChild(qbContainer);
+        } else {
+            qbContainer.innerHTML = '';
+        }
+
+        // columns: backend [{name, type}] döner; defensif olarak string array'i de tolere et
+        const rawCols = Array.isArray(payload.columns) ? payload.columns : [];
+        const columns = rawCols.map((c) => (typeof c === 'string' ? { name: c, type: '' } : c))
+            .filter((c) => c && c.name);
+
+        window.QueryBuilder.open({
+            parentEl: qbContainer,
+            sourceId: hint.source_id,
+            schema: hint.schema || null,
+            table: hint.table,
+            columns: columns,
+            onSqlReady: (sql, params, warnings) => {
+                // Phase 1: SQL'i preview panelinde göster (QueryBuilder kendi içinde gösterir).
+                // Otomatik execute yapılmaz — kullanıcı niyet sahibi.
+                if (warnings && warnings.length) {
+                    console.info('[QueryBuilder] uyarılar:', warnings);
+                }
+            },
+        });
     }
 
     /**
