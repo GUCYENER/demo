@@ -9,7 +9,7 @@ from alembic import op
 
 # revision identifiers
 revision: str = "006_v3140_async_golden_sql"
-down_revision: Union[str, None] = "005_v344_rag_pipeline_optimization"
+down_revision: Union[str, None] = "005_v344_rag_opt"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

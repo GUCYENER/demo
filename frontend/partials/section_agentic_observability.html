@@ -1,0 +1,354 @@
+<!--
+  Section: Agentic Query Observability (Admin)
+  --------------------------------------------
+  /api/agentic-query/observability/stats endpoint'inden veri çeker.
+  Yetki: is_admin.
+
+  Modülün init/refresh fonksiyonu:
+    window.AgenticObservability.init('#agenticObservabilitySection');
+-->
+<section id="agenticObservabilitySection" class="section-content" hidden aria-labelledby="ao-title">
+  <header class="ao-header">
+    <h2 id="ao-title">Agentic Pipeline Gözlemlenebilirlik</h2>
+    <div class="ao-controls">
+      <label for="aoWindow">Zaman aralığı:</label>
+      <select id="aoWindow" aria-label="Zaman aralığı">
+        <option value="1">Son 1 saat</option>
+        <option value="6">Son 6 saat</option>
+        <option value="24" selected>Son 24 saat</option>
+        <option value="168">Son 7 gün</option>
+      </select>
+      <button id="aoRefresh" type="button" class="btn btn-secondary" aria-label="Yenile">
+        <i class="fa-solid fa-rotate"></i> Yenile
+      </button>
+    </div>
+  </header>
+
+  <div id="aoLoading" class="ao-loading" hidden role="status" aria-live="polite">
+    <div class="vyra-skeleton-shimmer" style="height:96px;"></div>
+    <div class="vyra-skeleton-shimmer" style="height:240px;margin-top:12px;"></div>
+  </div>
+
+  <div id="aoError" class="ao-error" hidden role="alert"></div>
+
+  <!-- 1) Özet kartları -->
+  <div id="aoSummary" class="ao-grid ao-grid--cards" aria-label="Özet metrikler">
+    <article class="ao-card" data-metric="total">
+      <span class="ao-card__label">Toplam Çalışma</span>
+      <span class="ao-card__value" data-bind="runs.total">—</span>
+    </article>
+    <article class="ao-card ao-card--ok" data-metric="ok">
+      <span class="ao-card__label">Başarılı</span>
+      <span class="ao-card__value" data-bind="runs.ok">—</span>
+    </article>
+    <article class="ao-card ao-card--err" data-metric="err">
+      <span class="ao-card__label">Hatalı</span>
+      <span class="ao-card__value" data-bind="runs.error">—</span>
+    </article>
+    <article class="ao-card ao-card--warn" data-metric="intr">
+      <span class="ao-card__label">Kesilen</span>
+      <span class="ao-card__value" data-bind="runs.interrupted">—</span>
+    </article>
+    <article class="ao-card" data-metric="avg">
+      <span class="ao-card__label">Ortalama Süre</span>
+      <span class="ao-card__value"><span data-bind="runs.avg_total_ms">—</span> ms</span>
+    </article>
+    <article class="ao-card" data-metric="p95">
+      <span class="ao-card__label">p95 Süre</span>
+      <span class="ao-card__value"><span data-bind="runs.p95_total_ms">—</span> ms</span>
+    </article>
+  </div>
+
+  <!-- 2) Node tablosu -->
+  <section class="ao-panel" aria-labelledby="aoNodesTitle">
+    <h3 id="aoNodesTitle">Node-Bazlı Süre Dağılımı</h3>
+    <div class="ao-table-wrap">
+      <table id="aoNodesTable" class="ao-table">
+        <thead>
+          <tr>
+            <th scope="col">Node</th>
+            <th scope="col">Örnek</th>
+            <th scope="col">Avg (ms)</th>
+            <th scope="col">p50 (ms)</th>
+            <th scope="col">p95 (ms)</th>
+            <th scope="col">Hata</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 3) Dağılımlar -->
+  <div class="ao-grid ao-grid--two">
+    <section class="ao-panel" aria-labelledby="aoSrcTitle">
+      <h3 id="aoSrcTitle">SQL Kaynağı</h3>
+      <ul id="aoSqlSourceList" class="ao-bar-list"></ul>
+    </section>
+    <section class="ao-panel" aria-labelledby="aoBuckTitle">
+      <h3 id="aoBuckTitle">Sonuç Boyutu</h3>
+      <ul id="aoBucketList" class="ao-bar-list"></ul>
+    </section>
+  </div>
+
+  <!-- v3.29.7 G5 — Faz 6 sekmeleri -->
+  <nav class="ao-tabs" role="tablist" aria-label="Faz 6 öğrenme metrikleri">
+    <button type="button" class="ao-tab ao-tab--active" role="tab" aria-selected="true"
+            aria-controls="aoTabTemplates" id="aoTabBtnTemplates"
+            data-tooltip="Template kullanım heatmap'i (kind × complexity)">
+      <i class="fa-solid fa-grip"></i> Template Kullanımı
+    </button>
+    <button type="button" class="ao-tab" role="tab" aria-selected="false"
+            aria-controls="aoTabFailures" id="aoTabBtnFailures"
+            data-tooltip="Tekrar eden hata pattern'leri">
+      <i class="fa-solid fa-triangle-exclamation"></i> Hatalar (Top-10)
+    </button>
+    <button type="button" class="ao-tab" role="tab" aria-selected="false"
+            aria-controls="aoTabGlossary" id="aoTabBtnGlossary"
+            data-tooltip="İş sözlüğü kullanım istatistikleri">
+      <i class="fa-solid fa-book"></i> Glossary Kullanımı
+    </button>
+    <button type="button" class="ao-tab" role="tab" aria-selected="false"
+            aria-controls="aoTabSignals" id="aoTabBtnSignals"
+            data-tooltip="multi_signal_rank ağırlık önerileri (v3.29.8)">
+      <i class="fa-solid fa-sliders"></i> Sinyal Ağırlıkları
+    </button>
+    <button type="button" class="ao-tab" role="tab" aria-selected="false"
+            aria-controls="aoTabFkInference" id="aoTabBtnFkInference"
+            data-tooltip="FK Inference Layer istatistikleri (v3.29.9)">
+      <i class="fa-solid fa-diagram-project"></i> FK Inference
+    </button>
+  </nav>
+
+  <!-- Tab: Template heatmap -->
+  <section class="ao-panel ao-tab-pane ao-tab-pane--active" id="aoTabTemplates"
+           role="tabpanel" aria-labelledby="aoTabBtnTemplates">
+    <h3 class="ao-tab-pane__title">Template Kullanım Heatmap (son 30 gün)</h3>
+    <div id="aoHeatmapLoading" class="ao-loading" hidden role="status" aria-live="polite">
+      <div class="vyra-skeleton-shimmer" style="height:140px;"></div>
+    </div>
+    <div id="aoHeatmapEmpty" class="ao-empty" hidden>Henüz template kullanım verisi yok</div>
+    <div class="ao-heatmap-wrap">
+      <table id="aoHeatmapTable" class="ao-heatmap-table"
+             aria-label="Template kullanım heatmap'i">
+        <thead><tr><th scope="col">Template</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Tab: Failures top-10 -->
+  <section class="ao-panel ao-tab-pane" id="aoTabFailures" role="tabpanel"
+           aria-labelledby="aoTabBtnFailures" hidden>
+    <h3 class="ao-tab-pane__title">Tekrar Eden Hatalar — Top 10</h3>
+    <div id="aoFailuresLoading" class="ao-loading" hidden role="status" aria-live="polite">
+      <div class="vyra-skeleton-shimmer" style="height:140px;"></div>
+    </div>
+    <div id="aoFailuresEmpty" class="ao-empty" hidden>Şu an tekrar eden hata yok 🎉</div>
+    <div class="ao-table-wrap">
+      <table id="aoFailuresTable" class="ao-table" aria-label="Hata tekrar listesi">
+        <thead>
+          <tr>
+            <th scope="col">Hata Sınıfı</th>
+            <th scope="col">Tekrar</th>
+            <th scope="col">SQL (kısaltılmış)</th>
+            <th scope="col">İpucu</th>
+            <th scope="col">Son</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <h4 class="ao-tab-pane__subtitle">Sınıf Bazında Toplam</h4>
+    <ul id="aoFailuresByClass" class="ao-bar-list" aria-label="Hata sınıfı toplamları"></ul>
+  </section>
+
+  <!-- Tab: Glossary -->
+  <section class="ao-panel ao-tab-pane" id="aoTabGlossary" role="tabpanel"
+           aria-labelledby="aoTabBtnGlossary" hidden>
+    <h3 class="ao-tab-pane__title">Glossary Kullanım İstatistikleri</h3>
+    <div id="aoGlossaryLoading" class="ao-loading" hidden role="status" aria-live="polite">
+      <div class="vyra-skeleton-shimmer" style="height:140px;"></div>
+    </div>
+    <div id="aoGlossaryEmpty" class="ao-empty" hidden>Henüz glossary kullanım verisi yok</div>
+    <div class="ao-table-wrap">
+      <table id="aoGlossaryTable" class="ao-table" aria-label="Glossary terim listesi">
+        <thead>
+          <tr>
+            <th scope="col">Terim</th>
+            <th scope="col">Tip</th>
+            <th scope="col">Açılım</th>
+            <th scope="col">Tablo</th>
+            <th scope="col">Kullanım</th>
+            <th scope="col">Doğr.</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <h4 class="ao-tab-pane__subtitle">Tip Bazında Toplam</h4>
+    <ul id="aoGlossaryByType" class="ao-bar-list" aria-label="Glossary tip toplamları"></ul>
+  </section>
+
+  <!-- Tab: Signal Weight Tuning (v3.29.8 L3) -->
+  <section class="ao-panel ao-tab-pane" id="aoTabSignals" role="tabpanel"
+           aria-labelledby="aoTabBtnSignals" hidden>
+    <h3 class="ao-tab-pane__title">multi_signal_rank Ağırlık Tuner</h3>
+    <p class="ao-tab-pane__desc">
+      Tablo seçimini etkileyen 7 sinyalin (semantic, name_fuzzy, column_match,
+      fk_centrality, recency, usage_freq, glossary_match) ağırlıklarını
+      Pearson korelasyon analizine dayalı admin onaylı olarak ayarla.
+    </p>
+
+    <div class="swt-actions">
+      <button type="button" id="swtAnalyzeBtn" class="btn btn-secondary"
+              data-tooltip="Scheduler beklemeden hemen analiz yap">
+        <i class="fa-solid fa-flask"></i> Şimdi Analiz Et
+      </button>
+      <button type="button" id="swtResetBtn" class="btn btn-danger-outline"
+              data-tooltip="Tüm override'ları sil → varsayılan ağırlıklara dön">
+        <i class="fa-solid fa-rotate-left"></i> Override'ları Sıfırla
+      </button>
+      <button type="button" id="swtRefreshBtn" class="btn btn-secondary"
+              data-tooltip="Mevcut ağırlıkları ve önerileri yenile">
+        <i class="fa-solid fa-rotate"></i> Yenile
+      </button>
+    </div>
+
+    <div id="swtLoading" class="ao-loading" hidden role="status" aria-live="polite">
+      <div class="vyra-skeleton-shimmer" style="height:200px;"></div>
+    </div>
+
+    <!-- v3.29.9 — FK inference deploy banner host (conditionally filled by JS) -->
+    <div id="swtDeployBanner" hidden></div>
+
+    <h4 class="ao-tab-pane__subtitle">Yürürlükteki Ağırlıklar</h4>
+    <div class="swt-table-wrap">
+      <table id="swtCurrentTable" class="ao-table" aria-label="Yürürlükteki sinyal ağırlıkları">
+        <thead>
+          <tr>
+            <th scope="col">Sinyal</th>
+            <th scope="col">Varsayılan</th>
+            <th scope="col">Geçerli</th>
+            <th scope="col">Override Notu</th>
+            <th scope="col">İşlem</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <h4 class="ao-tab-pane__subtitle">Bekleyen Öneriler</h4>
+    <div id="swtSuggestionsEmpty" class="ao-empty" hidden>Bekleyen öneri yok</div>
+    <div class="swt-table-wrap">
+      <table id="swtSuggestionsTable" class="ao-table" aria-label="Bekleyen ağırlık önerileri">
+        <thead>
+          <tr>
+            <th scope="col">Sinyal</th>
+            <th scope="col">Mevcut</th>
+            <th scope="col">Önerilen</th>
+            <th scope="col">Δ</th>
+            <th scope="col">r (Pearson)</th>
+            <th scope="col">Güven</th>
+            <th scope="col">Örneklem</th>
+            <th scope="col">Tarih</th>
+            <th scope="col">İşlem</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <h4 class="ao-tab-pane__subtitle">Audit Geçmişi (son 20)</h4>
+    <div id="swtAuditEmpty" class="ao-empty" hidden>Henüz değişiklik kaydı yok</div>
+    <div class="swt-table-wrap">
+      <table id="swtAuditTable" class="ao-table" aria-label="Sinyal ağırlığı değişim geçmişi">
+        <thead>
+          <tr>
+            <th scope="col">Sinyal</th>
+            <th scope="col">Eski</th>
+            <th scope="col">Yeni</th>
+            <th scope="col">Aksiyon</th>
+            <th scope="col">Tarih</th>
+            <th scope="col">Not</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Tab: FK Inference (v3.29.9) -->
+  <section class="ao-panel ao-tab-pane" id="aoTabFkInference" role="tabpanel"
+           aria-labelledby="aoTabBtnFkInference" hidden>
+    <h3 class="ao-tab-pane__title">FK Inference Layer (v3.29.9)</h3>
+    <p class="ao-tab-pane__desc">
+      Convention-based FK inference (naming patterns + type compatibility + sample
+      validation) — 4 SQL dialect (PostgreSQL/Oracle/MSSQL/MySQL) destekli.
+      Aşağıda kaynak başına çıkarım istatistikleri ve son keşifler listelenir.
+    </p>
+
+    <div class="ao-fki-actions">
+      <label class="ao-fki-source-label" for="aoFkiSourceSelect">
+        Kaynak:
+        <select id="aoFkiSourceSelect" class="form-control ao-fki-source-select"
+                aria-label="FK Inference istatistikleri için veri kaynağı seç">
+          <option value="">— seçiniz —</option>
+        </select>
+      </label>
+      <button type="button" id="aoFkiRefreshBtn" class="btn btn-secondary"
+              data-tooltip="Seçili kaynak için istatistikleri yenile">
+        <i class="fa-solid fa-rotate"></i> Yenile
+      </button>
+    </div>
+
+    <div id="aoFkiLoading" class="ao-loading" hidden role="status" aria-live="polite">
+      <div class="vyra-skeleton-shimmer" style="height:140px;"></div>
+    </div>
+    <div id="aoFkiEmpty" class="ao-empty" hidden>Henüz FK inference verisi yok</div>
+
+    <h4 class="ao-tab-pane__subtitle">Özet</h4>
+    <div class="ao-fki-stats" id="aoFkiStatsCards"
+         aria-label="FK Inference özet metrikleri"></div>
+
+    <h4 class="ao-tab-pane__subtitle">Onay Bekleyen Çıkarımlar</h4>
+    <div class="ao-table-wrap">
+      <table id="aoFkiPendingTable" class="ao-table"
+             aria-label="Onay bekleyen FK çıkarımları">
+        <thead>
+          <tr>
+            <th scope="col">Kaynak Tablo</th>
+            <th scope="col">Kaynak Kolon</th>
+            <th scope="col">Hedef Tablo</th>
+            <th scope="col">Hedef Kolon</th>
+            <th scope="col">Güven</th>
+            <th scope="col">Yöntem</th>
+            <th scope="col">Tarih</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 4) Son run'lar -->
+  <section class="ao-panel" aria-labelledby="aoRecentTitle">
+    <h3 id="aoRecentTitle">Son 20 Çalışma</h3>
+    <div class="ao-table-wrap">
+      <table id="aoRecentTable" class="ao-table">
+        <thead>
+          <tr>
+            <th scope="col">Run ID</th>
+            <th scope="col">Durum</th>
+            <th scope="col">Süre</th>
+            <th scope="col">Kaynak</th>
+            <th scope="col">Boyut</th>
+            <th scope="col">Satır</th>
+            <th scope="col">Tarih</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+</section>

@@ -43,6 +43,18 @@ const CSS_FILES = [
     'assets/css/modules/ds_enrichment.css',
     'assets/css/modules/theme_catalog.css',
     'assets/css/theme_picker.css',
+    'assets/css/modules/feature_permissions.css',  // v3.18.0
+    'assets/css/modules/_tooltip.css',              // v3.19.0 — CSS-only tooltip helper
+    'assets/css/modules/session_timeout.css',       // v3.28.1 — 30dk session timeout modal
+    'assets/css/modules/sample_data_preview.css',   // v3.28.2 G3 — execute öncesi aday tablo sample data kartı
+    'assets/css/modules/query_builder.css',         // v3.28.3 G4 — Pre-execute drag-drop query builder
+    'assets/css/modules/db_source_selector.css',    // v3.20.0 Faz 1f — DB kaynak chip selector
+    'assets/css/modules/agentic_observability.css', // v3.25.0 Faz 6g — pipeline gözlem dashboard
+    'assets/css/modules/disambiguation_card.css',   // v3.29.7 G2 — clarification_v2 zengin kart
+    'assets/css/modules/query_builder_v2.css',      // v3.29.7 G4 — Multi-table query builder
+    'assets/css/modules/agentic_observability_faz6.css', // v3.29.7 G5 — Faz 6 observability sekmeleri
+    'assets/css/modules/signal_weight_tuner.css',   // v3.29.8 L3 — multi_signal_rank weight tuner UI
+    'assets/css/modules/fk_inference.css',          // v3.29.9 — FK inference observability + deploy banner
 ];
 
 const JS_FILES = [
@@ -72,6 +84,11 @@ const JS_FILES = [
     'assets/js/modules/dialog_voice.js',
     'assets/js/modules/dialog_images.js',
     'assets/js/modules/dialog_ticket.js',
+    'assets/js/modules/db_source_selector.js',  // v3.20.0 Faz 1f — dialog_chat'ten ÖNCE
+    'assets/js/modules/sample_data_preview.js', // v3.28.2 G3 — dialog_chat'ten ÖNCE (window.renderSampleDataPreview)
+    'assets/js/modules/query_builder.js',       // v3.28.3 G4 — Pre-execute drag-drop builder (window.QueryBuilder)
+    'assets/js/modules/disambiguation_card.js', // v3.29.7 G2 — Disambiguation v2 (window.DisambiguationCardV2) — dialog_chat'ten ÖNCE
+    'assets/js/modules/query_builder_v2.js',    // v3.29.7 G4 — Multi-table query builder (window.QueryBuilderV2)
     'assets/js/modules/dialog_chat.js',
     'assets/js/modules/permissions_manager.js',
     'assets/js/modules/file_guidelines_modal.js',
@@ -112,6 +129,12 @@ const JS_FILES = [
     'assets/js/modules/theme_catalog_module.js',
     'assets/js/modules/theme_preview_modal.js',
     'assets/js/modules/theme_picker_popup.js',
+    'assets/js/modules/feature_permissions_module.js',  // v3.18.0
+    'assets/js/modules/agentic_query_consumer.js',      // v3.25.0 Faz 6f — SSE stream consumer
+    'assets/js/modules/agentic_observability.js',       // v3.25.0 Faz 6g — admin dashboard
+    'assets/js/modules/agentic_observability_faz6.js',  // v3.29.7 G5 — Faz 6 sekmeleri (heatmap/failures/glossary)
+    'assets/js/modules/signal_weight_tuner.js',         // v3.29.8 L3 — multi_signal_rank weight tuner
+    'assets/js/modules/fk_inference_observability.js',  // v3.29.9 — FK Inference observability sekmesi
     'assets/js/branding_engine.js',
 ];
 

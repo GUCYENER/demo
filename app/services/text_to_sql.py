@@ -89,8 +89,89 @@ def build_text_to_sql_prompt(
     if dialect == "postgresql":
         dialect_rules = '''PostgreSQL Özel Kuralları:
   - Büyük/küçük harf duyarlılığını sağlamak için ŞEMA, TABLO ve SÜTUN adlarını DAİMA çift tırnak (") içine al. (Örn: SELECT * FROM "elysion"."T_ORG_USER")
-  - Sorguya DAİMA "LIMIT 100" ekle.
-  - Tarih işlemleri için CURRENT_DATE veya NOW() kullan.'''
+  - Sorguya DAİMA "LIMIT 100" ekle (CTE'nin DIŞINDA en dış SELECT'e).
+  - Tarih işlemleri için CURRENT_DATE veya NOW() kullan.
+
+  Sık Kullanılan PostgreSQL Fonksiyonları (v3.29.2):
+    Tarih/Zaman:
+      - NOW(), CURRENT_DATE, CURRENT_TIMESTAMP, AGE(ts1, ts2)
+      - DATE_TRUNC('day'|'week'|'month'|'quarter'|'year', col)  → periyodik gruplama
+      - EXTRACT(YEAR|MONTH|DOW|HOUR FROM col)                    → bileşen çıkarma
+      - col::date, col::timestamp                                 → cast
+      - col + INTERVAL '7 days', col - INTERVAL '1 month'         → tarih aritmetiği
+      - TO_CHAR(col, 'YYYY-MM-DD HH24:MI')                         → biçim
+      - GENERATE_SERIES(start_date, end_date, '1 day')            → boş günler dahil seri
+    String:
+      - COALESCE(col, 'fallback'), NULLIF(a, b)
+      - CONCAT(a, ' ', b), a || ' ' || b
+      - SUBSTRING(col FROM 1 FOR 10), LEFT(col, 5), RIGHT(col, 5)
+      - LOWER(col), UPPER(col), INITCAP(col), TRIM(col)
+      - ILIKE '%kelime%'   (case-insensitive arama — KESİN!)
+      - REGEXP_REPLACE(col, '\\s+', ' ', 'g'), REGEXP_MATCH(col, 'pattern')
+      - SPLIT_PART(col, '-', 2), STRING_AGG(col, ', ' ORDER BY x)
+    Sayısal/Aggregate:
+      - COUNT(*), COUNT(DISTINCT col), SUM, AVG, MIN, MAX
+      - ROUND(num, 2), CEIL, FLOOR, ABS, GREATEST(a,b), LEAST(a,b)
+      - PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY col)  → medyan
+      - FILTER (WHERE …)  → koşullu aggregate
+    JSON/Array:
+      - col->>'key', col#>>'{a,b}', JSONB_BUILD_OBJECT(...), JSONB_AGG(...)
+      - ARRAY_AGG(col ORDER BY x), UNNEST(arr), arr @> ARRAY['x']
+    Pencere (Window):
+      - ROW_NUMBER() OVER (PARTITION BY g ORDER BY t DESC)
+      - RANK(), DENSE_RANK(), LAG(col) OVER (...), LEAD(col) OVER (...)
+      - SUM(x) OVER (ORDER BY t ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+    NULL/Koşul:
+      - CASE WHEN ... THEN ... ELSE ... END
+      - col IS DISTINCT FROM other  (NULL-safe karşılaştırma)
+
+  CTE & İleri Şablonlar (PostgreSQL):
+    1) CTE — her grupta son N kayıt (ROW_NUMBER):
+       WITH ranked AS (
+         SELECT p.*, t."team_name",
+                ROW_NUMBER() OVER (PARTITION BY t."id" ORDER BY p."created_at" DESC) AS rn
+         FROM "public"."problem" p
+         JOIN "public"."party" t ON t."id" = p."assignee_id"
+       )
+       SELECT * FROM ranked WHERE rn <= 3 LIMIT 100;
+
+    2) LATERAL — her ana kayıt için top-K detay:
+       SELECT p."id", p."title", ws."step_label", ws."acted_at"
+       FROM "public"."problem" p
+       LEFT JOIN LATERAL (
+         SELECT "step_label", "acted_at" FROM "public"."workflow_status"
+         WHERE "problem_id" = p."id" ORDER BY "acted_at" DESC LIMIT 2
+       ) ws ON TRUE
+       ORDER BY p."created_at" DESC LIMIT 10;
+
+    3) STRING_AGG — parent + detayların tek satırda birleşmesi:
+       SELECT p."id", p."title",
+              STRING_AGG(ws."step_label", ' → ' ORDER BY ws."acted_at") AS step_chain
+       FROM "public"."problem" p
+       LEFT JOIN "public"."workflow_status" ws ON ws."problem_id" = p."id"
+       GROUP BY p."id", p."title"
+       ORDER BY p."created_at" DESC LIMIT 5;
+
+    4) GENERATE_SERIES — son N gün, boş günler dahil:
+       WITH days AS (
+         SELECT d::date AS day
+         FROM GENERATE_SERIES(CURRENT_DATE - 29, CURRENT_DATE, '1 day') d
+       )
+       SELECT d.day, COUNT(p."id") AS cnt
+       FROM days d
+       LEFT JOIN "public"."problem" p ON p."created_at"::date = d.day
+       GROUP BY d.day ORDER BY d.day;
+
+    5) Koşan toplam (running total):
+       SELECT *, SUM("amount") OVER (ORDER BY "created_at"
+                  ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_total
+       FROM "public"."invoice" ORDER BY "created_at" LIMIT 100;
+
+    6) N:M köprü (junction) traversal:
+       SELECT u."name", r."role_name"
+       FROM "public"."user" u
+       JOIN "public"."user_role" ur ON ur."user_id" = u."id"
+       JOIN "public"."role" r ON r."id" = ur."role_id" LIMIT 100;'''
     elif dialect == "mssql":
         dialect_rules = '''MSSQL Özel Kuralları:
   - Şema, tablo ve sütun adlarını köşeli parantez ([]) içine al. (Örn: SELECT * FROM [elysion].[T_ORG_USER])
@@ -129,7 +210,7 @@ def build_text_to_sql_prompt(
         user_msg = f"""VERİTABANI ŞEMASI:
 {schema_block}
 
-ÖNCEKİ SORGU (kullanıcının daha önce sorduğu ve cevap aldığı):
+ÖNCEKİ SORGU (kullanıcının daha önce sorduğu ve cevap aldığı — BU ÇIPA TABLODUR):
 ```sql
 {prev_sql}
 ```
@@ -137,22 +218,28 @@ def build_text_to_sql_prompt(
 ÖNCEKİ SORGUNUN DÖNDÜĞÜ KOLONLAR:
 {prev_cols_text}
 
-KULLANICININ YENİ İSTEĞİ (önceki sorgu üzerinde DEĞİŞİKLİK):
+KULLANICININ YENİ İSTEĞİ (önceki sorgu BAĞLAMINDA, çıpa tablo KORUNARAK):
 {query}
 
-FOLLOW-UP MODİFİKASYON KURALLARI:
-1. Bu bir TAKİP isteğidir — kullanıcı önceki sorgunun sonucu üzerinde değişiklik istiyor.
-2. Mümkün olduğunca aynı FROM / JOIN / WHERE yapısını KORU. Yeni bir sorgu kurgulama.
-3. Sadece kullanıcının istediği değişikliği uygula:
-   - Yeni kolon seçimi → SELECT listesini değiştir
-   - Ek filtre → WHERE'e ekle
-   - Sıralama/gruplama → ORDER BY / GROUP BY ekle
-   - Limit değişikliği → satır sayısını ayarla
-4. Şemada olmayan kolonları KESİNLİKLE kullanma. Halüsinasyon yasak.
-5. Eğer kullanıcının istediği kolon önceki sorgunun tablolarında yoksa, DIAGNOSTIC: ile açıkla.
-6. Sonucu yine ```sql ... ``` bloğu içinde döndür.
+FOLLOW-UP MODİFİKASYON KURALLARI (KATI):
+1. Bu bir TAKİP isteğidir — yukarıdaki SQL'deki FROM tablosu ÇIPA tablodur, ASLA değiştirme.
+2. ÇIPA tablonun FROM'unu birebir KORU. JOIN, WHERE, SELECT, ORDER BY üzerinde
+   gerekli değişikliği yap; ama ana tabloyu (FROM) değiştirme.
+3. Kullanıcı çıpa tabloda olmayan bir alan istiyorsa (ör: "hangi kullanıcı açmış?"):
+   - Şemadaki FK ilişkilerini kullan → ilgili tabloyu JOIN ile EKLE.
+   - Çıpa tablonun FK referansı varsa o kolon üzerinden join et.
+   - JOIN sonrası gerekli kolonu SELECT'e ekle; FROM yine çıpa tablo kalsın.
+4. Değişiklik tipleri:
+   - Yeni kolon → SELECT'i genişlet (gerekirse JOIN ekle)
+   - Filtre → WHERE'e AND ile ekle
+   - Sıralama/sınırlama → ORDER BY / TOP / FETCH ekle
+   - Gruplama → GROUP BY ekle
+5. Şemada olmayan kolonları KESİNLİKLE kullanma. Halüsinasyon yasak.
+   Sadece YUKARIDAKİ "VERİTABANI ŞEMASI" bloğundaki tablolar/kolonlar kullanılabilir.
+6. Eğer istenen bilgi şemada hiç yoksa (ilişkili tablo da yok), DIAGNOSTIC: ile açıkla.
+7. Sonucu yine ```sql ... ``` bloğu içinde döndür.
 
-Lütfen önceki sorguyu modifiye ederek yeni SELECT sorgusunu yaz."""
+Lütfen ÇIPA tablonun FROM'unu koruyarak yeni SELECT sorgusunu yaz."""
     else:
         user_msg = f"""VERİTABANI ŞEMASI:
 {schema_block}
@@ -809,12 +896,21 @@ def get_schema_context(source_id: int, enriched_only: bool = False) -> Dict[str,
             key = (t.get("schema") or "", t["name"])
             t["col_enrichments"] = col_enrichments_map.get(key, {})
 
-        # İlişkiler
+        # İlişkiler — v3.29.9: rejected_at IS NOT NULL olanları (admin reddi)
+        # ve onaylanmamış low-confidence inferred FK'ları (< 0.7) dışla;
+        # admin_verified inferred + tüm declared FK'lar dahil.
         cur.execute("""
             SELECT from_schema, from_table, from_column,
-                   to_schema, to_table, to_column, constraint_name
+                   to_schema, to_table, to_column, constraint_name,
+                   is_inferred, admin_verified, confidence_score
             FROM ds_db_relationships
             WHERE source_id = %s
+              AND rejected_at IS NULL
+              AND (
+                    is_inferred = FALSE
+                 OR admin_verified = TRUE
+                 OR confidence_score >= 0.70
+              )
         """, (source_id,))
 
         relationships = []
@@ -823,6 +919,9 @@ def get_schema_context(source_id: int, enriched_only: bool = False) -> Dict[str,
                 "from": f"{row['from_schema']}.{row['from_table']}.{row['from_column']}",
                 "to": f"{row['to_schema']}.{row['to_table']}.{row['to_column']}",
                 "constraint": row["constraint_name"],
+                "is_inferred": bool(row.get("is_inferred")),
+                "admin_verified": bool(row.get("admin_verified")),
+                "confidence": row.get("confidence_score"),
             })
 
         conn.close()

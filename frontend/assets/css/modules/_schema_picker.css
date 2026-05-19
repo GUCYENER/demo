@@ -1,0 +1,196 @@
+/* VYRA — Schema Picker (Faz 5e / v3.24.0)
+ * HEBE SaaS standartları:
+ *   - Tüm renkler --vyra-* CSS variable
+ *   - Focus visible outline
+ *   - Drag-over visual feedback
+ *   - Loading skeleton (spinner değil)
+ */
+.schema-picker-modal[hidden] { display: none; }
+.schema-picker-modal {
+    position: fixed; inset: 0; z-index: 1000;
+    display: flex; align-items: center; justify-content: center;
+}
+.schema-picker-backdrop {
+    position: absolute; inset: 0;
+    background: var(--vyra-overlay-bg, rgba(0, 0, 0, 0.55));
+    backdrop-filter: blur(2px);
+}
+.schema-picker-dialog {
+    position: relative;
+    background: var(--vyra-bg-surface, #1c1f23);
+    color: var(--vyra-fg-primary, #e6e8eb);
+    width: min(900px, 92vw); max-height: 86vh;
+    display: flex; flex-direction: column;
+    border-radius: var(--vyra-radius-lg, 12px);
+    box-shadow: var(--vyra-shadow-xl, 0 20px 60px rgba(0, 0, 0, 0.4));
+    border: 1px solid var(--vyra-border-subtle, #2c3138);
+}
+.schema-picker-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--vyra-border-subtle, #2c3138);
+}
+.schema-picker-header h2 {
+    margin: 0; font-size: 16px; font-weight: 600;
+}
+.schema-picker-close {
+    background: transparent; border: 0; color: var(--vyra-fg-secondary, #9aa1ab);
+    font-size: 22px; line-height: 1; padding: 4px 10px;
+    cursor: pointer; border-radius: var(--vyra-radius-sm, 6px);
+}
+.schema-picker-close:hover { background: var(--vyra-bg-hover, #2a2e34); }
+.schema-picker-close:focus-visible {
+    outline: 2px solid var(--vyra-accent, #4f8cff);
+    outline-offset: 2px;
+}
+
+.schema-picker-toolbar {
+    display: flex; gap: 12px; align-items: center;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--vyra-border-subtle, #2c3138);
+}
+.schema-picker-toolbar input[type="search"] {
+    flex: 1;
+    padding: 8px 12px;
+    background: var(--vyra-bg-input, #15171b);
+    color: var(--vyra-fg-primary, #e6e8eb);
+    border: 1px solid var(--vyra-border-strong, #353a42);
+    border-radius: var(--vyra-radius-sm, 6px);
+    font-size: 13px;
+}
+.schema-picker-toolbar input[type="search"]:focus-visible {
+    outline: 2px solid var(--vyra-accent, #4f8cff);
+    outline-offset: 0;
+    border-color: var(--vyra-accent, #4f8cff);
+}
+.schema-picker-status {
+    font-size: 12px; color: var(--vyra-fg-secondary, #9aa1ab);
+    white-space: nowrap;
+}
+
+.schema-picker-body {
+    flex: 1; min-height: 0;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+    padding: 12px 18px;
+    overflow: hidden;
+}
+.schema-picker-pane {
+    display: flex; flex-direction: column;
+    background: var(--vyra-bg-elevated, #14161a);
+    border: 1px solid var(--vyra-border-subtle, #2c3138);
+    border-radius: var(--vyra-radius-md, 8px);
+    overflow: hidden;
+}
+.schema-picker-pane h3 {
+    margin: 0; padding: 10px 14px;
+    font-size: 12px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    background: var(--vyra-bg-pane-header, #1a1d22);
+    border-bottom: 1px solid var(--vyra-border-subtle, #2c3138);
+}
+.schema-picker-pane--drop { position: relative; }
+
+.schema-picker-list {
+    list-style: none; margin: 0; padding: 6px;
+    flex: 1; overflow-y: auto;
+    outline: none;
+}
+.schema-picker-list:focus-visible {
+    box-shadow: inset 0 0 0 2px var(--vyra-accent, #4f8cff);
+}
+.schema-picker-list--drop.drag-over {
+    background: var(--vyra-accent-bg-soft, rgba(79, 140, 255, 0.08));
+    box-shadow: inset 0 0 0 2px var(--vyra-accent, #4f8cff);
+}
+
+.schema-picker-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px;
+    border-radius: var(--vyra-radius-sm, 6px);
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.12s;
+}
+.schema-picker-item:hover {
+    background: var(--vyra-bg-hover, #2a2e34);
+}
+.schema-picker-item.focused {
+    background: var(--vyra-accent-bg-soft, rgba(79, 140, 255, 0.12));
+    box-shadow: inset 0 0 0 1px var(--vyra-accent, #4f8cff);
+}
+.schema-picker-item-main {
+    flex: 1;
+    font-family: var(--vyra-font-mono, 'Consolas', monospace);
+    font-size: 13px;
+    color: var(--vyra-fg-primary, #e6e8eb);
+}
+.schema-picker-item-sub {
+    font-size: 11px;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    margin-left: 6px;
+}
+.schema-picker-add, .schema-picker-remove {
+    background: transparent; border: 0;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    font-size: 16px; line-height: 1;
+    cursor: pointer;
+}
+.schema-picker-add:hover {
+    background: var(--vyra-accent, #4f8cff);
+    color: white;
+}
+.schema-picker-remove:hover {
+    background: var(--vyra-danger, #e85a5a);
+    color: white;
+}
+.schema-picker-item--selected {
+    background: var(--vyra-bg-selected, rgba(79, 140, 255, 0.06));
+}
+
+.schema-picker-empty {
+    text-align: center;
+    padding: 24px 16px;
+    color: var(--vyra-fg-tertiary, #6b7280);
+}
+.schema-picker-empty-icon {
+    display: block;
+    font-size: 28px;
+    margin-bottom: 6px;
+    opacity: 0.6;
+}
+.schema-picker-empty p {
+    margin: 0; font-size: 12px;
+}
+
+.schema-picker-skeleton {
+    height: 32px;
+    margin: 4px 0;
+    background: linear-gradient(
+        90deg,
+        var(--vyra-bg-skeleton, #1f2329) 0%,
+        var(--vyra-bg-skeleton-shimmer, #2a2e34) 50%,
+        var(--vyra-bg-skeleton, #1f2329) 100%
+    );
+    background-size: 200% 100%;
+    animation: vyra-skeleton-shimmer 1.4s infinite ease-in-out;
+    border-radius: var(--vyra-radius-sm, 6px);
+}
+@keyframes vyra-skeleton-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+.schema-picker-footer {
+    display: flex; gap: 8px; justify-content: flex-end;
+    padding: 12px 18px;
+    border-top: 1px solid var(--vyra-border-subtle, #2c3138);
+    background: var(--vyra-bg-footer, #16181c);
+}
+
+@media (max-width: 640px) {
+    .schema-picker-body { grid-template-columns: 1fr; }
+    .schema-picker-dialog { width: 96vw; max-height: 92vh; }
+}

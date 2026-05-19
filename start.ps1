@@ -50,6 +50,26 @@ Start-Process -FilePath "$pgBin\pg_ctl.exe" -ArgumentList "-D", "`"$pgData`"", "
 Start-Sleep -Seconds 8
 Write-Host "   [OK] PostgreSQL (port 5005)" -ForegroundColor Green
 
+# 1.5. DB Migration (Alembic bypass — psycopg2 direkt, idempotent)
+#      head'deyse hicbir sey yapmaz. Cikis kodlari: 0=OK, 1-99=hata.
+$migScript = "$ProjectRoot\run_migrations.py"
+if (Test-Path $migScript) {
+    Write-Host "   [ADIM] DB migration kontrol ediliyor..." -ForegroundColor Yellow
+    & $VenvPython $migScript
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "   [HATA] Migration basarisiz (exit=$LASTEXITCODE)" -ForegroundColor Red
+        $migLog = "$ProjectRoot\migration_run.log"
+        if (Test-Path $migLog) {
+            Write-Host "   [HATA] Son 20 satir ($migLog):" -ForegroundColor Red
+            Get-Content $migLog -Tail 20
+        }
+        exit 1
+    }
+    Write-Host "   [OK] Migration tamamlandi (detay: migration_run.log)" -ForegroundColor Green
+} else {
+    Write-Host "   [--] run_migrations.py bulunamadi - migration atlandi" -ForegroundColor DarkGray
+}
+
 # 2. Redis Cache
 Write-Host "[2/7] Redis baslatiliyor..." -ForegroundColor Yellow
 $redisExe = "$ProjectRoot\redis\redis-server.exe"

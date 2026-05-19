@@ -1,0 +1,211 @@
+/* ============================================================
+   VYRA — Sample Data Preview Kartı (v3.28.2 G3)
+   ============================================================
+   Chat akışında SQL ÜRETİMİ ÖNCESİ kullanıcıya "aday tablo +
+   ilk N satır" gösteren cached önizleme kartı.
+
+   SaaS / HEBE checklist:
+     - role="region" + aria-labelledby
+     - aria-busy fetch sırasında true → skeleton render
+     - .skel-line placeholder animasyon (prefers-reduced-motion off)
+     - .sample-preview-empty empty-state CTA
+     - brand-token (--accent, --bg-card, --text-1) kullanır
+     - data-tooltip (_tooltip.css ile uyumlu)
+   ============================================================ */
+
+.sample-preview-card {
+    margin: 0.75rem 0;
+    padding: 0.75rem 0.9rem 0.85rem;
+    border-radius: 10px;
+    border: 1px solid var(--border-md, rgba(255,255,255,0.10));
+    background: var(--bg-card, rgba(20,23,34,0.85));
+    box-shadow: var(--shadow-sm, 0 1px 4px rgba(0,0,0,0.30));
+    overflow: hidden;
+}
+
+.sample-preview-card[aria-busy="true"] .sample-preview-table {
+    pointer-events: none;
+}
+
+.sample-preview-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.6rem;
+}
+
+.sample-preview-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.sample-preview-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 7px;
+    background: var(--gold-dim, rgba(77,153,255,0.12));
+    color: var(--accent, var(--gold, #4D99FF));
+    flex-shrink: 0;
+}
+
+.sample-preview-icon i { font-size: 0.78rem; }
+
+.sample-preview-title {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-1, #EEF0F8);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sample-preview-badge {
+    flex-shrink: 0;
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--gold-dim, rgba(77,153,255,0.12));
+    color: var(--accent, var(--gold, #4D99FF));
+    letter-spacing: 0.02em;
+    cursor: help;
+    user-select: none;
+}
+
+/* Tablo */
+.sample-preview-table-wrap {
+    overflow-x: auto;
+    border-radius: 6px;
+    border: 1px solid var(--border, rgba(255,255,255,0.07));
+    background: var(--bg-input, rgba(16,19,30,0.65));
+    max-height: 240px;
+    overflow-y: auto;
+}
+
+.sample-preview-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+}
+
+.sample-preview-table th,
+.sample-preview-table td {
+    padding: 6px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--border, rgba(255,255,255,0.07));
+    color: var(--text-2, #8E99B8);
+    vertical-align: top;
+    white-space: nowrap;
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sample-preview-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bg-card, rgba(20,23,34,0.92));
+    color: var(--text-1, #EEF0F8);
+    font-weight: 600;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    cursor: help;
+}
+
+.sample-preview-table tr:last-child td { border-bottom: none; }
+
+.sample-preview-table tr:hover td {
+    background: var(--bg-hover, rgba(255,255,255,0.03));
+}
+
+.sample-cell-null {
+    color: var(--text-3, #3A4460);
+    font-style: italic;
+}
+
+/* Empty state */
+.sample-preview-empty {
+    text-align: center;
+    padding: 1.4rem 1rem !important;
+    color: var(--text-2, #8E99B8);
+    background: transparent;
+    white-space: normal !important;
+}
+
+.sample-preview-empty strong {
+    display: block;
+    margin-bottom: 0.3rem;
+    color: var(--text-1, #EEF0F8);
+    font-weight: 500;
+}
+
+.sample-preview-empty-hint {
+    font-size: 0.78rem;
+    color: var(--text-3, #6A7390);
+    line-height: 1.4;
+}
+
+/* Footer caption */
+.sample-preview-caption {
+    margin-top: 0.4rem;
+    font-size: 0.72rem;
+    color: var(--text-3, #6A7390);
+    letter-spacing: 0.01em;
+}
+
+/* ============================================================
+   Skeleton (.skel-line) — global helper de olabilir, modülde tanımla
+   ============================================================ */
+.skel-line {
+    display: inline-block;
+    width: 100%;
+    height: 10px;
+    border-radius: 4px;
+    background: linear-gradient(
+        90deg,
+        rgba(255,255,255,0.05) 0%,
+        rgba(255,255,255,0.12) 50%,
+        rgba(255,255,255,0.05) 100%
+    );
+    background-size: 200% 100%;
+    animation: skelShimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes skelShimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* Reduced motion fallback */
+@media (prefers-reduced-motion: reduce) {
+    .skel-line {
+        animation: none;
+        background: rgba(255,255,255,0.08);
+    }
+}
+
+/* Light theme uyumu (data-theme=light) */
+:root[data-theme="light"] .sample-preview-card {
+    background: var(--bg-card, rgba(255,255,255,0.96));
+    border-color: rgba(0,0,0,0.10);
+}
+:root[data-theme="light"] .sample-preview-table-wrap {
+    background: rgba(0,0,0,0.02);
+}
+:root[data-theme="light"] .skel-line {
+    background: linear-gradient(
+        90deg,
+        rgba(0,0,0,0.05) 0%,
+        rgba(0,0,0,0.10) 50%,
+        rgba(0,0,0,0.05) 100%
+    );
+    background-size: 200% 100%;
+}

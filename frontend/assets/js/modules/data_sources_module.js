@@ -193,6 +193,20 @@ window.DataSourcesModule = (function () {
                 }
             });
         });
+        // v3.27.0 — DB Öğrenme Loop butonu
+        grid.querySelectorAll('.ds-btn-dbloop').forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (window.DSLearningModule && DSLearningModule.openDbLearningLoop) {
+                    DSLearningModule.openDbLearningLoop(parseInt(btn.dataset.id), btn.dataset.name);
+                }
+            });
+        });
+        // Yetki butonu (v3.17.0)
+        grid.querySelectorAll('.ds-btn-perm').forEach(btn => {
+            btn.addEventListener('click', () => {
+                openPermissionModal(parseInt(btn.dataset.id), btn.dataset.name);
+            });
+        });
     }
 
     function renderCard(source) {
@@ -269,23 +283,29 @@ window.DataSourcesModule = (function () {
                     </div>
                     <div class="ds-card-actions">
                         <span class="ds-status ${statusClass}">${statusText}</span>
-                        <button class="ds-btn-test" data-id="${source.id}" data-name="${_escapeHtml(source.name)}" title="Bağlantı Testi">
+                        <button class="ds-btn-test" data-id="${source.id}" data-name="${_escapeHtml(source.name)}" aria-label="Bağlantı testi: ${_escapeHtml(source.name)}" data-tooltip="Bağlantı Testi">
                             <i class="fa-solid fa-plug-circle-check"></i>
                         </button>
-                        ${source.source_type === 'database' ? `<button class="ds-card-discover-btn ds-btn-discover" data-id="${source.id}" data-name="${_escapeHtml(source.name)}" title="DB Keşfet">
+                        ${source.source_type === 'database' ? `<button class="ds-card-discover-btn ds-btn-discover" data-id="${source.id}" data-name="${_escapeHtml(source.name)}" aria-label="DB keşfet: ${_escapeHtml(source.name)}" data-tooltip="DB Keşfet">
                             <i class="fa-solid fa-magnifying-glass-chart"></i>
                         </button>
-                        <button class="ds-card-history-btn ds-btn-history" data-id="${source.id}" data-name="${_escapeHtml(source.name)}" title="Öğrenme Geçmişi">
+                        <button class="ds-card-history-btn ds-btn-history" data-id="${source.id}" data-name="${_escapeHtml(source.name)}" aria-label="Öğrenme geçmişi: ${_escapeHtml(source.name)}" data-tooltip="Öğrenme Geçmişi">
                             <i class="fa-solid fa-brain"></i>
                         </button>
-                        <button class="ds-card-enrich-btn ds-btn-enrich" data-id="${source.id}" data-name="${_escapeHtml(source.name)}" title="Tablo Etiketleme">
+                        <button class="ds-card-enrich-btn ds-btn-enrich" data-id="${source.id}" data-name="${_escapeHtml(source.name)}" aria-label="Tablo etiketleme: ${_escapeHtml(source.name)}" data-tooltip="Tablo Etiketleme">
                             <i class="fa-solid fa-tags"></i>
+                        </button>
+                        <button class="ds-card-dbloop-btn ds-btn-dbloop" data-id="${source.id}" data-name="${_escapeHtml(source.name)}" aria-label="DB öğrenme loop: ${_escapeHtml(source.name)}" data-tooltip="DB Öğrenme Loop (v3.27)">
+                            <i class="fa-solid fa-robot"></i>
                         </button>` : ''}
-                        <button class="ds-btn-edit" data-id="${source.id}" title="Düzenle">
+                        <button class="ds-btn-edit" data-id="${source.id}" aria-label="Kaynağı düzenle: ${_escapeHtml(source.name)}" data-tooltip="Düzenle">
                             <i class="fa-solid fa-pen"></i>
                         </button>
-                        <button class="ds-btn-delete" data-id="${source.id}" data-name="${_escapeHtml(source.name)}" title="Sil">
+                        <button class="ds-btn-delete" data-id="${source.id}" data-name="${_escapeHtml(source.name)}" aria-label="Kaynağı sil: ${_escapeHtml(source.name)}" data-tooltip="Sil">
                             <i class="fa-solid fa-trash-alt"></i>
+                        </button>
+                        <button class="ds-btn-perm" data-id="${source.id}" data-name="${_escapeHtml(source.name)}" aria-label="Yetkilendirme: ${_escapeHtml(source.name)}" data-tooltip="Yetkilendirme">
+                            <i class="fa-solid fa-shield-halved"></i>
                         </button>
                     </div>
                 </div>
@@ -314,12 +334,14 @@ window.DataSourcesModule = (function () {
         const title = isEdit ? 'Kaynağı Düzenle' : 'Yeni Kaynak Ekle';
         const s = source || {};
 
+        const _dsModalTitleId = 'dsModalTitle';
+        const _dsModalReturnFocus = document.activeElement;
         const modalHtml = `
-            <div id="dsModal" class="modal-overlay">
+            <div id="dsModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="${_dsModalTitleId}">
                 <div class="modal-box ds-modal-box">
                     <div class="modal-header">
-                        <h3><i class="fa-solid fa-plug-circle-plus"></i> ${title}</h3>
-                        <button class="modal-close" id="dsModalClose"><i class="fa-solid fa-xmark"></i></button>
+                        <h3 id="${_dsModalTitleId}"><i class="fa-solid fa-plug-circle-plus"></i> ${title}</h3>
+                        <button class="modal-close" id="dsModalClose" aria-label="Kapat" data-tooltip="Kapat (Esc)"><i class="fa-solid fa-xmark"></i></button>
                     </div>
                     <div class="modal-body ds-modal-body">
                         <div class="ds-form-group">
@@ -368,14 +390,26 @@ window.DataSourcesModule = (function () {
         document.body.insertAdjacentHTML('beforeend', modalHtml);
 
         // Event listeners
-        document.getElementById('dsModalClose').addEventListener('click', closeModal);
-        document.getElementById('dsModalCancel').addEventListener('click', closeModal);
+        const _overlayEl = document.getElementById('dsModal');
+        const _closeAndReturnFocus = () => {
+            closeModal();
+            if (_dsModalReturnFocus && typeof _dsModalReturnFocus.focus === 'function') {
+                try { _dsModalReturnFocus.focus(); } catch (_) {}
+            }
+        };
+        document.getElementById('dsModalClose').addEventListener('click', _closeAndReturnFocus);
+        document.getElementById('dsModalCancel').addEventListener('click', _closeAndReturnFocus);
         document.getElementById('dsModalSave').addEventListener('click', () => handleSave(source));
+
+        // Click-outside → kapat
+        _overlayEl.addEventListener('mousedown', (e) => {
+            if (e.target === _overlayEl) _closeAndReturnFocus();
+        });
 
         // ESC ile kapat
         const escHandler = (e) => {
             if (e.key === 'Escape') {
-                closeModal();
+                _closeAndReturnFocus();
                 document.removeEventListener('keydown', escHandler);
             }
         };
@@ -669,6 +703,284 @@ window.DataSourcesModule = (function () {
         save(formData);
     }
 
+    // --- Permission Modal (v3.17.0) ---
+
+    let permState = {
+        sourceId: null,
+        sourceName: '',
+        activeTab: 'user',     // 'user' | 'org'
+        users: [],
+        orgs: [],
+        viewUserIds: new Set(),
+        viewOrgIds: new Set(),
+        execUserIds: new Set(),
+        execOrgIds: new Set(),
+        searchText: '',
+    };
+
+    async function openPermissionModal(sourceId, sourceName) {
+        permState.sourceId = sourceId;
+        permState.sourceName = sourceName || '';
+        permState.activeTab = 'user';
+        permState.searchText = '';
+        permState.users = [];
+        permState.orgs = [];
+        permState.viewUserIds = new Set();
+        permState.viewOrgIds = new Set();
+        permState.execUserIds = new Set();
+        permState.execOrgIds = new Set();
+
+        _closePermissionModal();
+        // A11y: kapanınca odağı buraya geri ver
+        permState._returnFocusEl = document.activeElement;
+
+        const titleId = 'dsPermModalTitle';
+        const modalHtml = `
+            <div id="dsPermModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="${titleId}">
+                <div class="modal-box ds-perm-modal-box">
+                    <div class="modal-header">
+                        <h3 id="${titleId}"><i class="fa-solid fa-shield-halved"></i> Yetkilendirme — ${_escapeHtml(sourceName || '')}</h3>
+                        <button class="modal-close" id="dsPermClose" aria-label="Kapat" data-tooltip="Kapat (Esc)"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+                    <div class="modal-body ds-perm-modal-body">
+                        <div class="ds-perm-tabs" role="tablist">
+                            <button class="ds-perm-tab active" data-tab="user" role="tab" aria-selected="true">
+                                <i class="fa-solid fa-user"></i> Kullanıcılar
+                            </button>
+                            <button class="ds-perm-tab" data-tab="org" role="tab" aria-selected="false">
+                                <i class="fa-solid fa-users"></i> Org Grupları
+                            </button>
+                        </div>
+                        <div class="ds-perm-search">
+                            <i class="fa-solid fa-search"></i>
+                            <input type="text" id="dsPermSearch" placeholder="Ara..." aria-label="Kullanıcı veya org ara">
+                        </div>
+                        <div class="ds-perm-list" id="dsPermList">
+                            <div class="ds-perm-loading">
+                                <i class="fa-solid fa-spinner fa-spin"></i> Yükleniyor...
+                            </div>
+                        </div>
+                        <div class="ds-perm-legend">
+                            <span><i class="fa-solid fa-eye"></i> Görüntüleme</span>
+                            <span><i class="fa-solid fa-bolt"></i> Çalıştırma (SQL)</span>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn" id="dsPermCancel">İptal</button>
+                        <button class="btn primary" id="dsPermSave">
+                            <i class="fa-solid fa-save"></i> Kaydet
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+        const overlay = document.getElementById('dsPermModal');
+        // Click-outside → kapat
+        overlay.addEventListener('mousedown', (e) => {
+            if (e.target === overlay) _closePermissionModal();
+        });
+        // ESC → kapat
+        permState._escHandler = (e) => {
+            if (e.key === 'Escape') _closePermissionModal();
+        };
+        document.addEventListener('keydown', permState._escHandler);
+
+        document.getElementById('dsPermClose').addEventListener('click', _closePermissionModal);
+        document.getElementById('dsPermCancel').addEventListener('click', _closePermissionModal);
+        document.getElementById('dsPermSave').addEventListener('click', _savePermissions);
+
+        // İlk açılışta arama input'una odak
+        setTimeout(() => {
+            const search = document.getElementById('dsPermSearch');
+            if (search) search.focus();
+        }, 50);
+        document.querySelectorAll('#dsPermModal .ds-perm-tab').forEach(t => {
+            t.addEventListener('click', () => {
+                permState.activeTab = t.dataset.tab;
+                document.querySelectorAll('#dsPermModal .ds-perm-tab').forEach(x => x.classList.toggle('active', x === t));
+                _renderPermissionList();
+            });
+        });
+        document.getElementById('dsPermSearch').addEventListener('input', (e) => {
+            permState.searchText = e.target.value.toLowerCase();
+            _renderPermissionList();
+        });
+
+        // Veri yükle (subjects + current permissions paralel)
+        try {
+            const token = localStorage.getItem('access_token') || '';
+            const companyId = _getSelectedCompanyId();
+            const subjectsUrl = `${API_BASE}/permissions/subjects${companyId ? '?company_id=' + companyId : ''}`;
+            const [subjectsRes, permsRes] = await Promise.all([
+                fetch(subjectsUrl, { headers: { 'Authorization': 'Bearer ' + token } }),
+                fetch(`${API_BASE}/${sourceId}/permissions`, { headers: { 'Authorization': 'Bearer ' + token } })
+            ]);
+            if (!subjectsRes.ok) throw new Error('Kullanıcı/org listesi alınamadı');
+            if (!permsRes.ok) throw new Error('Yetki listesi alınamadı');
+
+            const subjects = await subjectsRes.json();
+            const perms = await permsRes.json();
+            permState.users = subjects.users || [];
+            permState.orgs = subjects.orgs || [];
+            permState.viewUserIds = new Set(perms.user_ids || []);
+            permState.viewOrgIds = new Set(perms.org_ids || []);
+            permState.execUserIds = new Set(perms.can_execute_user_ids || []);
+            permState.execOrgIds = new Set(perms.can_execute_org_ids || []);
+            _renderPermissionList();
+        } catch (error) {
+            console.error('[DataSources] Permission modal load error:', error);
+            if (typeof showToast === 'function') showToast(error.message || 'Yetki ekranı yüklenemedi', 'error');
+            _closePermissionModal();
+        }
+    }
+
+    function _closePermissionModal() {
+        const m = document.getElementById('dsPermModal');
+        if (m) m.remove();
+        if (permState._escHandler) {
+            document.removeEventListener('keydown', permState._escHandler);
+            permState._escHandler = null;
+        }
+        // A11y: return-focus
+        if (permState._returnFocusEl && typeof permState._returnFocusEl.focus === 'function') {
+            try { permState._returnFocusEl.focus(); } catch (_) {}
+            permState._returnFocusEl = null;
+        }
+    }
+
+    function _renderPermissionList() {
+        const container = document.getElementById('dsPermList');
+        if (!container) return;
+        const isUserTab = permState.activeTab === 'user';
+        const items = isUserTab ? permState.users : permState.orgs;
+        const viewSet = isUserTab ? permState.viewUserIds : permState.viewOrgIds;
+        const execSet = isUserTab ? permState.execUserIds : permState.execOrgIds;
+        const q = permState.searchText;
+
+        const filtered = items.filter(it => {
+            if (!q) return true;
+            if (isUserTab) {
+                return (it.full_name || '').toLowerCase().includes(q)
+                    || (it.username || '').toLowerCase().includes(q)
+                    || (it.email || '').toLowerCase().includes(q);
+            }
+            return (it.org_code || '').toLowerCase().includes(q)
+                || (it.org_name || '').toLowerCase().includes(q);
+        });
+
+        if (filtered.length === 0) {
+            container.innerHTML = `<div class="ds-perm-empty"><i class="fa-solid fa-folder-open"></i><p>Kayıt bulunamadı</p></div>`;
+            return;
+        }
+
+        container.innerHTML = filtered.map(it => {
+            const label = isUserTab
+                ? `${_escapeHtml(it.full_name || it.username || '')} <span class="ds-perm-sub">${_escapeHtml(it.email || '')}</span>`
+                : `<span class="ds-perm-code">${_escapeHtml(it.org_code || '')}</span> ${_escapeHtml(it.org_name || '')}`;
+            const vChecked = viewSet.has(it.id) ? 'checked' : '';
+            const eChecked = execSet.has(it.id) ? 'checked' : '';
+            return `
+                <div class="ds-perm-row">
+                    <div class="ds-perm-label">${label}</div>
+                    <div class="ds-perm-controls">
+                        <label class="ds-perm-chk" title="Görüntüleme">
+                            <input type="checkbox" class="ds-perm-view" data-id="${it.id}" ${vChecked}>
+                            <i class="fa-solid fa-eye"></i>
+                        </label>
+                        <label class="ds-perm-chk" title="Çalıştırma">
+                            <input type="checkbox" class="ds-perm-exec" data-id="${it.id}" ${eChecked}>
+                            <i class="fa-solid fa-bolt"></i>
+                        </label>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        container.querySelectorAll('.ds-perm-view').forEach(cb => {
+            cb.addEventListener('change', (e) => {
+                // FIX (v3.27.5): checkbox.value boş ise tarayıcı "on" döner → parseInt("on")=NaN
+                // → set NaN birikir → JSON.stringify(null) → backend 422 "Input should be a valid integer".
+                // Sadece data-id güvenilir kaynak.
+                const id = parseInt(e.target.dataset.id, 10);
+                if (Number.isNaN(id)) return;
+                const set = isUserTab ? permState.viewUserIds : permState.viewOrgIds;
+                const execS = isUserTab ? permState.execUserIds : permState.execOrgIds;
+                if (e.target.checked) {
+                    set.add(id);
+                } else {
+                    set.delete(id);
+                    execS.delete(id); // view kapatılırsa exec da düşer
+                    const execCb = container.querySelector(`.ds-perm-exec[data-id="${id}"]`);
+                    if (execCb) execCb.checked = false;
+                }
+            });
+        });
+        container.querySelectorAll('.ds-perm-exec').forEach(cb => {
+            cb.addEventListener('change', (e) => {
+                const id = parseInt(e.target.dataset.id, 10);
+                if (Number.isNaN(id)) return;
+                const set = isUserTab ? permState.execUserIds : permState.execOrgIds;
+                const viewS = isUserTab ? permState.viewUserIds : permState.viewOrgIds;
+                if (e.target.checked) {
+                    set.add(id);
+                    viewS.add(id); // exec açılırsa view zorunlu
+                    const viewCb = container.querySelector(`.ds-perm-view[data-id="${id}"]`);
+                    if (viewCb) viewCb.checked = true;
+                } else {
+                    set.delete(id);
+                }
+            });
+        });
+    }
+
+    async function _savePermissions() {
+        const saveBtn = document.getElementById('dsPermSave');
+        const originalHtml = saveBtn ? saveBtn.innerHTML : '';
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            saveBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Kaydediliyor...';
+        }
+        try {
+            const token = localStorage.getItem('access_token') || '';
+            // FIX (v3.27.5): NaN/non-integer guard — JSON.stringify NaN'ı null'a çevirir,
+            // backend 422 "Input should be a valid integer" verirdi.
+            const _toIntArr = (s) => Array.from(s).filter(v => Number.isInteger(v));
+            const body = {
+                user_ids: _toIntArr(permState.viewUserIds),
+                org_ids: _toIntArr(permState.viewOrgIds),
+                can_execute_user_ids: _toIntArr(permState.execUserIds),
+                can_execute_org_ids: _toIntArr(permState.execOrgIds),
+            };
+            const res = await fetch(`${API_BASE}/${permState.sourceId}/permissions`, {
+                method: 'PUT',
+                headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                // FastAPI 422 → detail = [{loc,msg,type},...]; tek satıra düzleştir
+                let msg = err.detail || err.message || 'Yetkiler kaydedilemedi';
+                if (Array.isArray(msg)) {
+                    msg = msg.map(d => (d && d.msg) ? `${(d.loc || []).slice(-1)[0] || '?'}: ${d.msg}` : JSON.stringify(d)).join('; ');
+                } else if (typeof msg === 'object') {
+                    msg = JSON.stringify(msg);
+                }
+                throw new Error(msg);
+            }
+            if (typeof window.showToast === 'function') window.showToast('Yetkiler kaydedildi', 'success');
+            _closePermissionModal();
+        } catch (error) {
+            console.error('[DataSources] Save permissions error:', error);
+            if (typeof window.showToast === 'function') window.showToast(error.message || 'Kaydetme hatası', 'error');
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.innerHTML = originalHtml;
+            }
+        }
+    }
+
     // --- Connection Test ---
 
     async function testConnection(id, name) {
@@ -823,5 +1135,5 @@ window.DataSourcesModule = (function () {
     }
 
     // --- Public API ---
-    return { load, openModal, deleteSource, closeModal, testConnection };
+    return { load, openModal, deleteSource, closeModal, testConnection, openPermissionModal };
 })();

@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.19.3"  # Mode-switch sistem mesaj birikme fix + Geçmiş badge/filtre + fresh-login temiz state + sanitized DB err (v3.19.3)
+    APP_VERSION: str = "3.29.9"  # v3.29.9 Multi-dialect FK Inference Layer — RC1: fk_inference_service.py (convention-based: naming patterns + type compat + sample validation, 4 dialect adapters PG/Oracle/MSSQL/MySQL via Protocol + factory) + migration 031 (ds_db_relationships → is_inferred/inference_method/evidence_json/admin_verified/verified_by/verified_at/rejected_at + system_settings FK_INFERENCE_DEPLOY_TS) + 50 test. RC2: 6 admin endpoint (POST /infer-fks, GET /inferred-relationships, POST /verify, POST /reject, POST /bulk-verify, GET /fk-inference-stats) + auto-trigger in ds_learning_service Step 2. RC3: v3.29.8 integration — multi_signal_rank.build_centrality_index (confidence-weighted: declared=1.0, inferred unverified=0.5×conf, verified=1.0, rejected=0) + analyze_signal_weights min_event_age_hours filter (fk_centrality samples filtered pre-Pearson) + signal_weight_api /current adds fk_inference_recent_deploy/age_hours + text_to_sql FK SELECT filter (rejected NULL, is_inferred=FALSE OR verified OR conf≥0.70). RC4: signal_weight_tuner deploy banner + agentic_observability "FK Inference" tab + ds_learning_module "FK Çıkarımını Yenile" button + Inferred/Declared rozetleri. 89 test green.
 
     # Frontend & API prefix
     api_prefix: str = "/api"
@@ -168,6 +168,54 @@ class Settings(BaseSettings):
     
     # DB Connection Yönetimi
     DB_MAX_RETRIES: int = 15  # Veritabanı bağlantı deneme sayısı
+
+    # -------------------------------------------------
+    # Synthetic Q/SQL Generator (v3.28.0 — Faz 5 G2)
+    # -------------------------------------------------
+    # Synthetic generate_db_query_pairs günlük LLM bütçe sınırı (USD).
+    # 0 = sınırsız (önerilmez). Aşıldığında üretim erken durur.
+    MAX_LLM_DAILY_BUDGET_USD: float = 1.0
+
+    # -------------------------------------------------
+    # FK Graph Resolver (v3.29.5 — Faz 7 carry-over)
+    # -------------------------------------------------
+    # K-shortest path arama parametreleri. Çok-tablolu sorular için path
+    # patlamasını sınırlar. Yüksek değerler latency artışı getirir.
+    FK_GRAPH_DEFAULT_K: int = 5            # Maks alternatif yol sayısı
+    FK_GRAPH_DEFAULT_MAX_HOPS: int = 5     # Tek yol için maks zincir uzunluğu
+
+    # -------------------------------------------------
+    # Code Value Auto Re-scan (v3.29.5 — Faz 7 carry-over)
+    # -------------------------------------------------
+    # ds_db_samples güncellendikten sonra ds_code_values otomatik yenileme.
+    # 0 = devre dışı (manuel admin tetikleme). >0 ise scheduler interval'inin
+    # bir katı olarak çalışır (SCHEDULER_INTERVAL_SECONDS × bu çarpan).
+    CODE_VALUE_AUTO_RESCAN_INTERVAL_MULT: int = 0   # 0 = off; örn 12 = ~1 saat
+    CODE_VALUE_AUTO_RESCAN_MIN_AGE_MINUTES: int = 60  # Son tarama bu kadar eskiyse yeniden tara
+
+    # -------------------------------------------------
+    # Signal Weight Analyzer (v3.29.8 — Layer 2)
+    # -------------------------------------------------
+    # multi_signal_rank ağırlıklarının offline Pearson korelasyon
+    # tabanlı önerilerini üreten analyzer. Önerileri sadece
+    # signal_weight_suggestions tablosuna yazar; admin onayı (Layer 3)
+    # olmadan asıl ağırlıkları değiştirmez.
+    # 0 = devre dışı (manuel admin tetikleme). >0 ise scheduler interval'inin
+    # bir katı olarak çalışır (SCHEDULER_INTERVAL_SECONDS × bu çarpan).
+    # Default 288 → 288 × 300s ≈ 24 saat (günde 1 kez).
+    SIGNAL_WEIGHT_ANALYZER_INTERVAL_MULT: int = 0    # 0 = off; öneri 288 (~24h)
+    SIGNAL_WEIGHT_ANALYZER_WINDOW_DAYS: int = 7       # Pencere
+    SIGNAL_WEIGHT_ANALYZER_MIN_SAMPLE_SIZE: int = 50  # Sample yetersizse skip
+    SIGNAL_WEIGHT_ANALYZER_LAMBDA: float = 0.3        # Yumuşak ayarlama katsayısı
+
+    # -------------------------------------------------
+    # Langfuse Observability (v3.26.0 Faz 5 P2-b — opsiyonel)
+    # -------------------------------------------------
+    # Boş bırakılırsa Langfuse devre dışı kalır. pipeline_events DB-tabanlı
+    # observability her hâlükârda çalışmaya devam eder.
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_SECRET_KEY: str = ""
+    LANGFUSE_HOST: str = "https://cloud.langfuse.com"
 
     model_config = SettingsConfigDict(
         env_file=".env",

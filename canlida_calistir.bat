@@ -227,6 +227,29 @@ goto pg_done
 echo    [OK] PostgreSQL baslatildi (port 5005)
 :pg_done
 
+:: --- DB Migration (Alembic bypass — psycopg2 direkt) ---
+:: run_migrations.py: idempotent, head'deyse hicbir sey yapmaz.
+:: 022 -> 031 zincirini sirayla uygular. Cikis kodlari:
+::   0 = OK / nothing to do, 1 = import fail, 2 = chain broken, 3 = exec fail, 99 = fatal
+echo    [ADIM] DB migration kontrol ediliyor...
+if not exist "%PROJECT_ROOT%\run_migrations.py" goto migration_skip
+"%VENV_PYTHON%" "%PROJECT_ROOT%\run_migrations.py"
+if errorlevel 1 goto migration_fail
+echo    [OK] Migration tamamlandi (detay: migration_run.log)
+goto migration_done
+
+:migration_fail
+echo    [HATA] Migration basarisiz! Log: %PROJECT_ROOT%\migration_run.log
+echo    [HATA] Son 20 satir:
+powershell -Command "Get-Content '%PROJECT_ROOT%\migration_run.log' -Tail 20"
+pause
+exit /b 1
+
+:migration_skip
+echo    [UYARI] run_migrations.py bulunamadi - migration adimi atlandi
+
+:migration_done
+
 :: --- DB Bakimi (REINDEX + VACUUM) ---
 echo    [ADIM] Veritabani bakimi yapiliyor (REINDEX + VACUUM)...
 set "PGPASSWORD=postgres"

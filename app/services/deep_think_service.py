@@ -1877,7 +1877,7 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
         return None
 
 
-    def process_stream_db_only(self, query: str, user_id: int, company_id: int = None, confirm_mode: bool = False, schema_hint: str = None, report_template: str = None, follow_up_context: Optional[Dict[str, Any]] = None) -> Generator[Dict[str, Any], None, None]:
+    def process_stream_db_only(self, query: str, user_id: int, company_id: int = None, confirm_mode: bool = False, schema_hint: str = None, report_template: str = None, follow_up_context: Optional[Dict[str, Any]] = None, source_id: int = None) -> Generator[Dict[str, Any], None, None]:
         """
         v3.10.0: DB-only pipeline — Firma bazlı DB kaynağı filtresi + Schema Pruning + Error Sanitization.
         + FAQ/Query Cache + Confirm before execute + Self-Healing.
@@ -1939,8 +1939,19 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             try:
                 cur = conn.cursor()
 
+                # v3.20.0 Faz 1c: source_id verilmişse o kaynağa kilitlen
+                if source_id is not None:
+                    cur.execute("""
+                        SELECT ds.id, ds.name, ds.db_type, ds.host, ds.port,
+                               ds.db_name, ds.db_user, ds.db_password_encrypted
+                        FROM data_sources ds
+                        WHERE ds.id = %s
+                          AND ds.source_type = 'database'
+                          AND ds.is_active = TRUE
+                        LIMIT 1
+                    """, (source_id,))
                 # v3.8.0: company_id filtresi — kullanıcının firmasına ait kaynaklar
-                if company_id:
+                elif company_id:
                     cur.execute("""
                         SELECT ds.id, ds.name, ds.db_type, ds.host, ds.port,
                                ds.db_name, ds.db_user, ds.db_password_encrypted
@@ -2038,7 +2049,8 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             ml_matched_tables = []
             try:
                 from app.services.ds_learning_service import search_db_knowledge
-                ml_results = search_db_knowledge(query, company_id=company_id, min_score=0.25, max_results=3)
+                # v3.20.0 Faz 1c: DB-only path source_id verilmişse RLS-scope edilir
+                ml_results = search_db_knowledge(query, company_id=company_id, min_score=0.25, max_results=3, source_id=source_id)
                 if ml_results:
                     schema_parts = []
                     for r in ml_results:
@@ -2325,6 +2337,41 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             sql = sql_result["sql"]
             retry_count = 0
             from_cache = sql_result.get("from_cache", False)
+
+            # ── 5a.5: v3.28.2 G3 — Sample Data Preview hint ─────────────
+            # Frontend'e seçilen birincil tabloyu duyur; consumer
+            # /api/data-sources/{id}/samples'tan cached örnek satırları çeker.
+            # Hata olursa graceful: event yayma.
+            try:
+                _preview_table = None
+                _preview_schema = None
+                # 1) pruned_tables varsa ilk eleman
+                _pt = locals().get("pruned_tables")
+                if isinstance(_pt, list) and _pt:
+                    _first = _pt[0]
+                    if isinstance(_first, dict):
+                        _preview_table = (
+                            _first.get("table_name") or _first.get("name") or _first.get("table")
+                        )
+                        _preview_schema = _first.get("schema") or _first.get("schema_name")
+                # 2) combined_matched fallback
+                if not _preview_table:
+                    _cm = locals().get("combined_matched")
+                    if isinstance(_cm, list) and _cm:
+                        _first2 = _cm[0]
+                        if isinstance(_first2, dict):
+                            _preview_table = (
+                                _first2.get("table_name") or _first2.get("name") or _first2.get("table")
+                            )
+                            _preview_schema = _first2.get("schema") or _first2.get("schema_name")
+                if _preview_table and source and source.get("id"):
+                    yield {"type": "selected_table_for_preview", "data": {
+                        "source_id": int(source["id"]),
+                        "schema": _preview_schema,
+                        "table": _preview_table,
+                    }}
+            except Exception:
+                pass
 
             # ── 5b. Confirm Mode: SQL'i göster, çalıştırma ──────────────
             if confirm_mode:
@@ -3203,43 +3250,51 @@ def _generate_followup_suggestions(query: str, db_data: list, schema_ctx: dict) 
     date_cols = [c for c in col_names if any(
         kw in c.lower() for kw in ("tarih", "date", "time", "created", "updated", "zaman", "period")
     )]
+    # v3.27.1: id/code/year gibi identifier kolonları sum/avg için anlamsız → hariç tut
+    _id_like = ("id", "code", "no", "kod", "year", "yil", "yıl")
     numeric_cols = [
         c for c in col_names
         if isinstance(first_row, dict) and isinstance(first_row.get(c), (int, float))
+        and not any(kw in c.lower() for kw in _id_like)
     ]
     status_cols = [c for c in col_names if any(
         kw in c.lower() for kw in ("status", "durum", "stat", "state", "tip", "type", "kategori", "category")
     )]
 
+    # v3.27.1: Önerileri tablo şemasına bağla — metin ve query gerçek kolon adlarını içersin.
     if date_cols:
+        dc = date_cols[0]
         suggestions.append({
-            "text": "📈 Aylık trend olarak görüntüle",
-            "query": f"{query} — aylık gruplama ile trend analizi"
+            "text": f"📈 {dc} alanına göre aylık trend",
+            "query": f"{query} — {dc} alanını aylık grupla, trend olarak göster"
         })
 
     if numeric_cols:
+        nc = numeric_cols[0]
         suggestions.append({
-            "text": "📊 Toplamları ve ortalamaları göster",
-            "query": f"{query} — toplam, ortalama ve minimum/maksimum hesapla"
+            "text": f"📊 {nc} için toplam ve ortalama",
+            "query": f"{query} — {nc} alanının toplam, ortalama, min ve max değerlerini hesapla"
         })
 
     if status_cols:
         status_col = status_cols[0]
         suggestions.append({
-            "text": f"📋 {status_col} bazında dağılım göster",
+            "text": f"📋 {status_col} bazında dağılım",
             "query": f"{query} — {status_col} kolonuna göre grupla ve sayıları göster"
         })
 
-    if row_count >= 10:
+    if row_count >= 10 and numeric_cols:
+        nc = numeric_cols[0]
         suggestions.append({
-            "text": "🔝 En yüksek 10 kaydı sırala",
-            "query": f"{query} — en yüksek değerlere göre ilk 10"
+            "text": f"🔝 {nc} alanına göre en yüksek 10 kayıt",
+            "query": f"{query} — {nc} alanına göre azalan sırala ve ilk 10'u göster"
         })
 
     if date_cols and numeric_cols:
+        dc = date_cols[0]
         suggestions.append({
-            "text": "📅 Son 7 günlük karşılaştırma",
-            "query": f"{query} — son 7 günle önceki 7 günü karşılaştır"
+            "text": f"📅 {dc} ile son 7 gün karşılaştırma",
+            "query": f"{query} — {dc} alanı üzerinden son 7 günle önceki 7 günü karşılaştır"
         })
 
     # ── 2. Şema bazlı öneriler (ilişkili tablolardan) ──────────────────
@@ -3287,16 +3342,40 @@ def _generate_followup_suggestions(query: str, db_data: list, schema_ctx: dict) 
     if len(suggestions) < 3:
         try:
             col_sample = ", ".join(col_names[:8])
+            # v3.27.1: LLM'e ana tablo adlarını ve örnek satırı ver — öneriler
+            # gerçek tabloya bağlı, generic değil olsun.
+            used_tables_list: list[str] = []
+            try:
+                if schema_ctx:
+                    tables = schema_ctx.get("tables", []) or []
+                    used_set = set()
+                    for t in tables:
+                        t_cols = {(c.get("name") or "").lower() for c in t.get("columns", [])}
+                        if any(cn.lower() in t_cols for cn in col_names):
+                            label = t.get("admin_label_tr") or t.get("business_name_tr") or t.get("name")
+                            if label:
+                                used_set.add(label)
+                    used_tables_list = sorted(used_set)[:3]
+            except Exception:
+                used_tables_list = []
+            tables_hint = ", ".join(used_tables_list) if used_tables_list else "(belirtilmedi)"
+            sample_row_str = ""
+            try:
+                if isinstance(first_row, dict):
+                    items = list(first_row.items())[:6]
+                    sample_row_str = ", ".join(f"{k}={v}" for k, v in items)
+            except Exception:
+                pass
             messages = [
                 {
                     "role": "system",
                     "content": (
                         "Sen bir veri analisti asistansın. Kullanıcının veritabanı sorgusuna "
                         f"ilişkin {3 - len(suggestions)} adet kısa follow-up soru öner. "
-                        "Sorular kullanıcının konusuyla doğrudan ilgili, farklı açılardan "
-                        "analiz yapacak nitelikte olmalı. Türkçe.\n"
+                        "Sorular kullanıcının SORGULADIĞI TABLO/KOLON adlarına doğrudan referans "
+                        "vermeli; generic 'trend göster' gibi değil, kolon adı içermeli. Türkçe.\n"
                         "YANIT FORMATI — JSON array:\n"
-                        '[{"text":"📋 Kısa buton etiketi (max 6 kelime)","query":"Tam sorgu metni"},...]\n'
+                        '[{"text":"📋 Kısa buton etiketi (max 6 kelime, kolon adı içerebilir)","query":"Tam sorgu metni"},...]\n'
                         "Sadece JSON döndür."
                     ),
                 },
@@ -3304,7 +3383,9 @@ def _generate_followup_suggestions(query: str, db_data: list, schema_ctx: dict) 
                     "role": "user",
                     "content": (
                         f"Kullanıcının sorusu: {query}\n"
+                        f"İlgili tablolar: {tables_hint}\n"
                         f"Dönen veri kolonları: {col_sample}\n"
+                        f"Örnek satır: {sample_row_str or '(boş)'}\n"
                         f"Satır sayısı: {row_count}"
                     ),
                 },

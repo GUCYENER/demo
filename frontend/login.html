@@ -753,6 +753,12 @@ body::before {
         <div class="fc-sub">Yetkili kurumsal hesabınızla devam edin.</div>
       </div>
 
+      <!-- v3.28.1: ?reason=session_expired ile gelen oturum-süresi-doldu banner'ı -->
+      <div class="fc-error" id="sessionExpiredBanner" role="status" aria-live="polite" style="background:rgba(245,165,36,0.12);border-color:rgba(245,165,36,0.32);color:#f5a524">
+        <svg viewBox="0 0 24 24" style="stroke:currentColor;fill:none"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <span>Oturum süreniz doldu. Lütfen tekrar giriş yapın.</span>
+      </div>
+
       <div class="tab-row">
         <button class="tab active" onclick="switchTab('login', this)">Giriş Yap</button>
         <button class="tab" onclick="switchTab('register', this)">Kayıt Ol</button>
@@ -1183,11 +1189,22 @@ body::before {
     tryLoad();
   }
 
+  function showSessionExpiredBannerIfNeeded() {
+    try {
+      var reason = new URLSearchParams(window.location.search).get('reason');
+      if (reason === 'session_expired') {
+        var el = document.getElementById('sessionExpiredBanner');
+        if (el) el.classList.add('show');
+      }
+    } catch (e) { /* noop */ }
+  }
+
   document.addEventListener('DOMContentLoaded', function() {
     loadVersion();
     loadRememberedUser();
     checkExistingAuth();
     loadLdapDomains();
+    showSessionExpiredBannerIfNeeded();
   });
 
 })();

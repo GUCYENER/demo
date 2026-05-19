@@ -1,0 +1,156 @@
+/* =====================================================================
+   VYRA — DB Source Selector (v3.20.0 / Faz 1f)
+   "Veritabanında Ara" başlığı altında kullanıcının yetkili veri
+   kaynaklarını chip tabanlı tek-seçimli radio group olarak gösterir.
+
+   HEBE: Tüm renkler CSS variable (no hard-coded hex), keyboard focus
+   görünür, empty/loading/error state'leri ayrı.
+   ===================================================================== */
+
+.db-source-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 8px 14px;
+    margin: 0 12px 8px 12px;
+    background: var(--bg-card, rgba(0, 0, 0, 0.18));
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+    border-radius: 10px;
+    backdrop-filter: blur(10px);
+    font-size: 12.5px;
+}
+
+.db-source-bar[hidden] { display: none !important; }
+
+.dsb-label {
+    color: var(--text-2, rgba(255, 255, 255, 0.7));
+    font-weight: 500;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.dsb-label::before {
+    content: "";
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><ellipse cx='12' cy='5' rx='9' ry='3'/><path d='M21 12c0 1.66-4 3-9 3s-9-1.34-9-3'/><path d='M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5'/></svg>");
+    background-size: contain;
+    background-repeat: no-repeat;
+    opacity: 0.7;
+}
+
+.dsb-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.dsb-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px 4px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+    background: var(--bg-soft, rgba(255, 255, 255, 0.04));
+    color: var(--text-1, rgba(255, 255, 255, 0.92));
+    font-size: 12px;
+    line-height: 1.4;
+    cursor: pointer;
+    transition: background .15s, border-color .15s, transform .08s;
+    font-family: inherit;
+}
+
+.dsb-chip:hover {
+    border-color: var(--accent, #4D99FF);
+    background: var(--accent-subtle, rgba(77, 153, 255, 0.08));
+}
+
+.dsb-chip:focus-visible {
+    outline: 2px solid var(--accent, #4D99FF);
+    outline-offset: 2px;
+}
+
+.dsb-chip.selected {
+    border-color: var(--accent, #4D99FF);
+    background: var(--accent-subtle, rgba(77, 153, 255, 0.15));
+    color: var(--text-1, rgba(255, 255, 255, 0.98));
+    font-weight: 500;
+}
+
+.dsb-chip:active { transform: scale(0.97); }
+
+.dsb-chip-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--border, rgba(255, 255, 255, 0.25));
+    border: 1.5px solid transparent;
+    flex-shrink: 0;
+    transition: background .15s, border-color .15s;
+}
+
+.dsb-chip.selected .dsb-chip-dot {
+    background: var(--accent, #4D99FF);
+    box-shadow: 0 0 6px var(--accent-glow, rgba(77, 153, 255, 0.5));
+}
+
+.dsb-chip-label {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ----- Status messages (empty / error / loading) ----- */
+.dsb-status {
+    flex: 1 1 auto;
+    color: var(--text-3, rgba(255, 255, 255, 0.5));
+    font-style: italic;
+}
+
+.dsb-status:empty { display: none; }
+
+.dsb-status[data-state="error"] {
+    color: var(--danger, #FF5466);
+    font-style: normal;
+}
+
+.dsb-status[data-state="empty"] {
+    color: var(--warning, #F5A524);
+    font-style: normal;
+}
+
+/* ----- Loading skeleton ----- */
+.dsb-skeleton {
+    display: inline-block;
+    width: 90px;
+    height: 22px;
+    border-radius: 999px;
+    background: linear-gradient(
+        90deg,
+        var(--bg-soft, rgba(255, 255, 255, 0.04)) 0%,
+        var(--bg-card, rgba(255, 255, 255, 0.08)) 50%,
+        var(--bg-soft, rgba(255, 255, 255, 0.04)) 100%
+    );
+    background-size: 200% 100%;
+    animation: dsb-skel 1.1s ease-in-out infinite;
+}
+
+@keyframes dsb-skel {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* ----- Responsive ----- */
+@media (max-width: 600px) {
+    .db-source-bar { margin: 0 8px 8px 8px; padding: 6px 10px; }
+    .dsb-chip-label { max-width: 140px; }
+}

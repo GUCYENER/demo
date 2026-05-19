@@ -1,0 +1,167 @@
+/* VYRA v3.29.7 G5 — Agentic Observability Faz 6 sekmeleri
+ * Template heatmap + Failures + Glossary
+ */
+
+.ao-tabs {
+    display: flex;
+    gap: 6px;
+    border-bottom: 1px solid var(--border, #2a2e38);
+    margin: 16px 0 12px;
+    flex-wrap: wrap;
+}
+
+.ao-tab {
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    color: var(--text-2, #9aa0a6);
+    cursor: pointer;
+    padding: 8px 14px;
+    font-size: 12.5px;
+    font-weight: 500;
+    transition: color 120ms ease, background 120ms ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.ao-tab i { font-size: 12px; }
+
+.ao-tab:hover { color: var(--text-1, #e8eaed); background: var(--bg-3, #232831); }
+
+.ao-tab:focus-visible {
+    outline: 2px solid var(--blue, #4285f4);
+    outline-offset: 2px;
+}
+
+.ao-tab--active {
+    color: var(--blue, #4285f4);
+    border-color: var(--border, #2a2e38);
+    background: var(--bg-2, #1a1d24);
+    border-bottom-color: var(--bg-2, #1a1d24);
+    margin-bottom: -1px;
+}
+
+.ao-tab-pane { margin-top: 8px; }
+.ao-tab-pane[hidden] { display: none; }
+
+.ao-tab-pane__title {
+    margin: 0 0 8px;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--text-1, #e8eaed);
+}
+
+.ao-tab-pane__subtitle {
+    margin: 14px 0 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-2, #9aa0a6);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Heatmap */
+.ao-heatmap-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border, #2a2e38);
+    border-radius: 6px;
+}
+
+.ao-heatmap-table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 11.5px;
+}
+
+.ao-heatmap-table th,
+.ao-heatmap-table td {
+    padding: 6px 10px;
+    text-align: center;
+    border: 1px solid var(--border, #2a2e38);
+}
+
+.ao-heatmap-table th {
+    background: var(--bg-3, #232831);
+    color: var(--text-2, #9aa0a6);
+    font-weight: 600;
+}
+
+.ao-heatmap-rowlabel {
+    text-align: left;
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 11px;
+    background: var(--bg-3, #232831);
+    color: var(--text-1, #e8eaed);
+    white-space: nowrap;
+}
+
+.ao-heatmap-cell {
+    color: var(--text-1, #e8eaed);
+    font-weight: 500;
+    min-width: 40px;
+}
+
+/* Faz 6 utilities */
+.ao-empty {
+    padding: 10px 12px;
+    color: var(--text-2, #9aa0a6);
+    font-size: 12px;
+    font-style: italic;
+}
+
+.ao-mono { font-family: 'JetBrains Mono', 'Consolas', monospace; font-size: 11px; }
+
+.ao-truncate {
+    max-width: 360px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ao-verified-yes { color: var(--green, #34a853); font-weight: 600; }
+.ao-verified-no { color: var(--text-2, #9aa0a6); }
+
+.ao-bar-li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 12px;
+}
+
+.ao-bar-label {
+    min-width: 180px;
+    color: var(--text-1, #e8eaed);
+}
+
+.ao-bar {
+    flex: 1;
+    height: 8px;
+    background: var(--bg-3, #232831);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.ao-bar-fill {
+    display: block;
+    height: 100%;
+    background: var(--blue, #4285f4);
+    transition: width 200ms ease;
+}
+
+.ao-bar-value {
+    min-width: 40px;
+    text-align: right;
+    color: var(--text-2, #9aa0a6);
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 11px;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    .ao-tab,
+    .ao-bar-fill { transition: none; }
+}

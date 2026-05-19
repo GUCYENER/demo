@@ -361,6 +361,7 @@ class SafeSQLExecutor:
         source: dict,
         dialect: str,
         allowed_tables: Optional[List[str]] = None,
+        use_result_cache: bool = True,
     ) -> SQLResult:
         """
         SQL sorgusunu güvenli şekilde yürütür.
@@ -403,10 +404,39 @@ class SafeSQLExecutor:
         # 4. Fonksiyon adaptasyonu
         adapted_sql = adapt_functions(limited_sql, dialect)
 
+        # 4b. v3.27.0 — Result fingerprint cache lookup (Redis, TTL=5dk)
+        _src_id = source.get("id") if isinstance(source, dict) else None
+        if use_result_cache and _src_id:
+            try:
+                from app.services.db_learning.result_cache import get_cached_result
+                cached = get_cached_result(adapted_sql, _src_id)
+                if cached is not None and isinstance(cached, SQLResult) and cached.success:
+                    elapsed = (time.time() - start) * 1000
+                    # Cache hit kopyası — elapsed güncelle, sql_executed koru
+                    return SQLResult(
+                        success=True,
+                        data=cached.data,
+                        columns=cached.columns,
+                        row_count=cached.row_count,
+                        sql_executed=cached.sql_executed,
+                        elapsed_ms=elapsed,
+                        truncated=cached.truncated,
+                    )
+            except Exception as _ce:
+                logger.debug("[result_cache] lookup err: %s", _ce)
+
         # 5. Yürütme (timeout ile)
         try:
             result = self._execute_with_timeout(adapted_sql, source, dialect)
             result.elapsed_ms = (time.time() - start) * 1000
+
+            # 5b. v3.27.0 — Başarılı + non-truncated sonuçları cache'le
+            if use_result_cache and _src_id and result.success and not result.truncated:
+                try:
+                    from app.services.db_learning.result_cache import set_cached_result
+                    set_cached_result(adapted_sql, _src_id, result)
+                except Exception as _se:
+                    logger.debug("[result_cache] set err: %s", _se)
 
             log_system_event(
                 "INFO",
@@ -588,6 +618,16 @@ class SafeSQLExecutor:
                 elif dialect == SQLDialect.MYSQL:
                     cur.execute(f"SET SESSION MAX_EXECUTION_TIME = {self.timeout * 1000}")
                     db_native_timeout = True
+                elif dialect == SQLDialect.ORACLE:
+                    # v3.26.0 Faz 1 P0-b: oracledb connection-level call_timeout (ms)
+                    # ORA-12161 / DPI-1067 — uzun süren sorgular abort edilir.
+                    # cursor üzerinden ALTER SESSION DDL sayılır ve whitelist'i geçemez;
+                    # bu yüzden connection attribute'u kullanılır.
+                    try:
+                        conn.call_timeout = int(self.timeout * 1000)
+                        db_native_timeout = True
+                    except Exception:
+                        pass  # Driver eski sürüm → thread fallback
             except Exception as timeout_err:
                 logger.warning(f"DB-native timeout ayarlanamadı (thread fallback kullanılacak): {timeout_err}")
 
@@ -668,15 +708,15 @@ class SafeSQLExecutor:
             İzin verilen tablo adları listesi
         """
         try:
-            from app.core.db import get_db_conn
-            conn = get_db_conn()
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT object_name FROM ds_db_objects WHERE source_id = %s AND object_type = 'table'",
-                (source_id,)
-            )
-            tables = [row["object_name"] for row in cur.fetchall()]
-            conn.close()
+            # v3.20.0 Faz 1c: ds_db_objects RLS koruma altında — source_id ile scoped erişim
+            from app.core.db import get_db_context_scoped
+            with get_db_context_scoped(source_id) as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT object_name FROM ds_db_objects WHERE source_id = %s AND object_type = 'table'",
+                    (source_id,)
+                )
+                tables = [row["object_name"] for row in cur.fetchall()]
             return tables
         except Exception as e:
             log_warning(f"Tablo whitelist alınamadı: {e}", "hybrid_router")
