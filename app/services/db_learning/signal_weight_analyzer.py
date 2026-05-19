@@ -77,13 +77,15 @@ def _fetch_run_data(
     cur: Any,
     company_id: Optional[int],
     days: int,
-) -> List[Tuple[Dict[str, float], int, Dict[str, float]]]:
+) -> List[Tuple[Dict[str, float], int, Dict[str, float], Optional[Any]]]:
     """
     pipeline_events'tan son N gün boyunca her run için
-    (top1_signals, outcome, weights_used) tuple'larını döner.
+    (top1_signals, outcome, weights_used, sb_created_at) tuple'larını döner.
 
     outcome: 1 if pipeline_end status='ok' AND row_count>0 AND retry_count==0
              0 otherwise
+    sb_created_at: v3.29.9 — signal_breakdown event timestamp'i;
+                   per-signal age filter için (örn. fk_centrality deploy banner).
     """
     co_filter = ""
     params: List[Any] = [days]
@@ -94,7 +96,7 @@ def _fetch_run_data(
     cur.execute(
         f"""
         WITH sb AS (
-            SELECT e.run_id, e.metadata
+            SELECT e.run_id, e.metadata, e.created_at AS sb_ts
               FROM pipeline_events e
              WHERE e.event_type = 'signal_breakdown'
                AND e.created_at >= NOW() - (%s || ' days')::interval
@@ -107,18 +109,23 @@ def _fetch_run_data(
                AND e.created_at >= NOW() - (%s || ' days')::interval
                {co_filter}
         )
-        SELECT sb.metadata AS sb_meta, pe.status, pe.end_meta
+        SELECT sb.metadata AS sb_meta, pe.status, pe.end_meta, sb.sb_ts
           FROM sb
           JOIN pe ON pe.run_id = sb.run_id
         """,
         params + params,
     )
     rows = cur.fetchall()
-    out: List[Tuple[Dict[str, float], int, Dict[str, float]]] = []
+    out: List[Tuple[Dict[str, float], int, Dict[str, float], Optional[Any]]] = []
     for row in rows:
-        sb_meta = row[0] if not isinstance(row, dict) else row.get("sb_meta")
-        status = row[1] if not isinstance(row, dict) else row.get("status")
-        end_meta = row[2] if not isinstance(row, dict) else row.get("end_meta")
+        if isinstance(row, dict):
+            sb_meta = row.get("sb_meta")
+            status = row.get("status")
+            end_meta = row.get("end_meta")
+            sb_ts = row.get("sb_ts")
+        else:
+            sb_meta, status, end_meta = row[0], row[1], row[2]
+            sb_ts = row[3] if len(row) > 3 else None
         # JSONB → dict (psycopg2 RealDictCursor zaten dict döner)
         if isinstance(sb_meta, str):
             try:
@@ -142,8 +149,35 @@ def _fetch_run_data(
         retry_count = (end_meta or {}).get("retry_count") or 0
         row_count = (end_meta or {}).get("row_count") or 0
         outcome = 1 if (status == "ok" and row_count > 0 and retry_count == 0) else 0
-        out.append((signals, outcome, weights_used))
+        out.append((signals, outcome, weights_used, sb_ts))
     return out
+
+
+def _load_fk_inference_deploy_ts(cur: Any) -> Optional[Any]:
+    """v3.29.9 — system_settings'ten FK inference deploy timestamp'ini oku."""
+    try:
+        cur.execute(
+            "SELECT setting_value FROM system_settings WHERE setting_key = %s",
+            ("FK_INFERENCE_DEPLOY_TS",),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        val = row.get("setting_value") if hasattr(row, "get") else row[0]
+        if not val:
+            return None
+        # Parse ISO 8601 if string, else assume datetime
+        from datetime import datetime
+        if isinstance(val, str):
+            try:
+                # Postgres TIMESTAMPTZ → ISO
+                return datetime.fromisoformat(val.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        return val
+    except Exception as e:
+        logger.debug("[signal_weight_analyzer] FK_INFERENCE_DEPLOY_TS load failed: %s", e)
+        return None
 
 
 def _renormalize(weights: Dict[str, float]) -> Dict[str, float]:
@@ -160,10 +194,17 @@ def analyze_signal_weights(
     days: int = 7,
     min_sample_size: int = 50,
     lambda_: float = 0.3,
+    min_event_age_hours: int = 0,
 ) -> List[Dict[str, Any]]:
     """
     Son N gün signal_breakdown event'lerinden Pearson korelasyon hesaplar
     ve her sinyal için bir suggestion satırı üretir.
+
+    v3.29.9 — `min_event_age_hours`: fk_centrality için deploy-day spike
+    filtresi. system_settings.FK_INFERENCE_DEPLOY_TS + min_event_age_hours
+    öncesindeki signal_breakdown örnekleri SADECE fk_centrality Pearson
+    hesabından çıkarılır (diğer sinyaller etkilenmez). Default 0 = filtre
+    devre dışı.
 
     Returns:
         List[{
@@ -181,9 +222,20 @@ def analyze_signal_weights(
         )
         return []
 
+    # v3.29.9: fk_centrality için deploy_ts cutoff (None ise filtre yok)
+    fk_cutoff_ts: Optional[Any] = None
+    if min_event_age_hours and min_event_age_hours > 0:
+        deploy_ts = _load_fk_inference_deploy_ts(cur)
+        if deploy_ts is not None:
+            from datetime import timedelta
+            try:
+                fk_cutoff_ts = deploy_ts + timedelta(hours=min_event_age_hours)
+            except Exception:
+                fk_cutoff_ts = None
+
     # Yürürlükteki ağırlıklar (son run'ın weights'ından — analiz anındaki snapshot)
     current_weights: Dict[str, float] = {}
-    for _, _, w in samples:
+    for _, _, w, _ in samples:
         if w:
             current_weights = {k: float(v) for k, v in w.items() if k in SIGNAL_NAMES}
             break
@@ -193,18 +245,34 @@ def analyze_signal_weights(
         current_weights = dict(DEFAULT_WEIGHTS)
 
     # Outcomes vektörü ortak
-    ys = [float(o) for (_, o, _) in samples]
+    ys = [float(o) for (_, o, _, _) in samples]
 
     # Pearson per sinyal — clipped + renormalized suggestion
     raw_suggestions: Dict[str, Dict[str, Any]] = {}
     for sig in SIGNAL_NAMES:
         score_key = _SIGNAL_KEY_MAP[sig]
-        xs = [float((s or {}).get(score_key) or 0.0) for (s, _, _) in samples]
+        # v3.29.9: fk_centrality için per-event age filtresi
+        if sig == "fk_centrality" and fk_cutoff_ts is not None:
+            filtered = [(s, o, sb_ts) for (s, o, _, sb_ts) in samples
+                        if sb_ts is not None and sb_ts >= fk_cutoff_ts]
+            if len(filtered) < min_sample_size:
+                logger.info(
+                    "[signal_weight_analyzer] fk_centrality için deploy_ts+%dh sonrası n=%d < min=%d — atlandı",
+                    min_event_age_hours, len(filtered), min_sample_size,
+                )
+                continue
+            sig_xs = [float((s or {}).get(score_key) or 0.0) for (s, _, _) in filtered]
+            sig_ys = [float(o) for (_, o, _) in filtered]
+            sig_n = len(filtered)
+        else:
+            sig_xs = [float((s or {}).get(score_key) or 0.0) for (s, _, _, _) in samples]
+            sig_ys = ys
+            sig_n = n
         # Sinyal tamamen sabitse (varyans yok) korelasyon anlamsız
-        if len(set(xs)) <= 1:
+        if len(set(sig_xs)) <= 1:
             continue
-        r = _pearson(xs, ys)
-        conf = _confidence(r, n)
+        r = _pearson(sig_xs, sig_ys)
+        conf = _confidence(r, sig_n)
         cur_w = float(current_weights.get(sig) or 0.0)
         # Yumuşak ayarlama
         proposed = cur_w * (1.0 + lambda_ * r)
@@ -217,7 +285,7 @@ def analyze_signal_weights(
             "_proposed": proposed,
             "confidence": round(conf, 6),
             "correlation_pearson": round(r, 6),
-            "sample_size": n,
+            "sample_size": sig_n,
             "window_days": days,
         }
 
@@ -277,12 +345,14 @@ def run_full_analysis(
     days: int = 7,
     min_sample_size: int = 50,
     lambda_: float = 0.3,
+    min_event_age_hours: int = 0,
 ) -> Dict[str, Any]:
     """Scheduler/admin endpoint'inden tetiklenir. Analiz + persist."""
     try:
         suggestions = analyze_signal_weights(
             cur, company_id=company_id, days=days,
             min_sample_size=min_sample_size, lambda_=lambda_,
+            min_event_age_hours=min_event_age_hours,
         )
         persisted = persist_suggestions(cur, suggestions, company_id)
         return {

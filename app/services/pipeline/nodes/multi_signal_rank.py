@@ -201,21 +201,73 @@ def _column_match_score(query: str, candidate: Dict[str, Any],
 
 
 def _fk_centrality_score(candidate: Dict[str, Any],
-                         centrality_index: Optional[Dict[tuple, int]] = None,
-                         max_centrality: int = 10) -> float:
+                         centrality_index: Optional[Dict[tuple, float]] = None,
+                         max_centrality: float = 10.0) -> float:
     """
     Aday tablonun FK ağırlığı.
 
-    centrality_index: {(schema, table) → fk_count}
-                      Hesabı upstream: relationships'te tabloya gelen + giden FK sayısı.
+    centrality_index: {(schema, table) → weighted_fk_sum}  (v3.29.9)
+        Per-edge weight rules (declared+inferred birleşik graph):
+          - declared FK                            → 1.0
+          - inferred, admin_verified=TRUE          → 1.0
+          - inferred, admin_verified=FALSE, NOT rejected → 0.5 × confidence_score
+          - rejected_at IS NOT NULL                → 0.0  (atlanır)
+
+    Backward-compat: int input (eski "raw count" dict) hala kabul edilir;
+    skor normalize edilirken max_centrality'a bölünür.
     """
     if centrality_index is None:
         return 0.0
-    cnt = centrality_index.get(
+    raw = centrality_index.get(
         (candidate.get("schema_name") or "", candidate.get("table_name") or ""),
-        0,
+        0.0,
     )
-    return float(min(1.0, cnt / max_centrality))
+    return float(min(1.0, float(raw) / float(max_centrality)))
+
+
+def build_centrality_index(cur: Any, source_id: int) -> Dict[tuple, float]:
+    """v3.29.9: ds_db_relationships'ten confidence-weighted centrality index.
+
+    Hem from_table hem to_table'a edge atfedilir (undirected centrality).
+    Rejected ilişkiler dahil edilmez (rejected_at IS NOT NULL → 0).
+    """
+    cur.execute(
+        """
+        SELECT from_schema, from_table, to_schema, to_table,
+               is_inferred, admin_verified, confidence_score
+          FROM ds_db_relationships
+         WHERE source_id = %s
+           AND rejected_at IS NULL
+        """,
+        (source_id,),
+    )
+    rows = cur.fetchall() or []
+    idx: Dict[tuple, float] = {}
+    for r in rows:
+        if hasattr(r, "get"):
+            fs = r.get("from_schema") or ""
+            ft = r.get("from_table") or ""
+            ts = r.get("to_schema") or ""
+            tt = r.get("to_table") or ""
+            is_inf = bool(r.get("is_inferred"))
+            verified = bool(r.get("admin_verified"))
+            conf = r.get("confidence_score")
+        else:
+            fs, ft, ts, tt = r[0] or "", r[1] or "", r[2] or "", r[3] or ""
+            is_inf, verified = bool(r[4]), bool(r[5])
+            conf = r[6]
+        if not is_inf or verified:
+            w = 1.0
+        else:
+            try:
+                w = 0.5 * float(conf or 0.0)
+            except (TypeError, ValueError):
+                w = 0.0
+        if w <= 0.0:
+            continue
+        idx[(fs, ft)] = idx.get((fs, ft), 0.0) + w
+        idx[(ts, tt)] = idx.get((ts, tt), 0.0) + w
+    return idx
 
 
 def _recency_score(candidate: Dict[str, Any],
@@ -324,7 +376,7 @@ def multi_signal_rank(
     candidates: List[Dict[str, Any]],
     query_text: str,
     column_index: Optional[Dict[tuple, List[Dict]]] = None,
-    centrality_index: Optional[Dict[tuple, int]] = None,
+    centrality_index: Optional[Dict[tuple, float]] = None,
     recency_index: Optional[Dict[tuple, float]] = None,
     freq_index: Optional[Dict[tuple, int]] = None,
     weights: Optional[Dict[str, float]] = None,

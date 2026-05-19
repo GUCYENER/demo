@@ -113,6 +113,11 @@
             data-tooltip="multi_signal_rank ağırlık önerileri (v3.29.8)">
       <i class="fa-solid fa-sliders"></i> Sinyal Ağırlıkları
     </button>
+    <button type="button" class="ao-tab" role="tab" aria-selected="false"
+            aria-controls="aoTabFkInference" id="aoTabBtnFkInference"
+            data-tooltip="FK Inference Layer istatistikleri (v3.29.9)">
+      <i class="fa-solid fa-diagram-project"></i> FK Inference
+    </button>
   </nav>
 
   <!-- Tab: Template heatmap -->
@@ -214,6 +219,9 @@
       <div class="vyra-skeleton-shimmer" style="height:200px;"></div>
     </div>
 
+    <!-- v3.29.9 — FK inference deploy banner host (conditionally filled by JS) -->
+    <div id="swtDeployBanner" hidden></div>
+
     <h4 class="ao-tab-pane__subtitle">Yürürlükteki Ağırlıklar</h4>
     <div class="swt-table-wrap">
       <table id="swtCurrentTable" class="ao-table" aria-label="Yürürlükteki sinyal ağırlıkları">
@@ -263,6 +271,59 @@
             <th scope="col">Aksiyon</th>
             <th scope="col">Tarih</th>
             <th scope="col">Not</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Tab: FK Inference (v3.29.9) -->
+  <section class="ao-panel ao-tab-pane" id="aoTabFkInference" role="tabpanel"
+           aria-labelledby="aoTabBtnFkInference" hidden>
+    <h3 class="ao-tab-pane__title">FK Inference Layer (v3.29.9)</h3>
+    <p class="ao-tab-pane__desc">
+      Convention-based FK inference (naming patterns + type compatibility + sample
+      validation) — 4 SQL dialect (PostgreSQL/Oracle/MSSQL/MySQL) destekli.
+      Aşağıda kaynak başına çıkarım istatistikleri ve son keşifler listelenir.
+    </p>
+
+    <div class="ao-fki-actions">
+      <label class="ao-fki-source-label" for="aoFkiSourceSelect">
+        Kaynak:
+        <select id="aoFkiSourceSelect" class="form-control ao-fki-source-select"
+                aria-label="FK Inference istatistikleri için veri kaynağı seç">
+          <option value="">— seçiniz —</option>
+        </select>
+      </label>
+      <button type="button" id="aoFkiRefreshBtn" class="btn btn-secondary"
+              data-tooltip="Seçili kaynak için istatistikleri yenile">
+        <i class="fa-solid fa-rotate"></i> Yenile
+      </button>
+    </div>
+
+    <div id="aoFkiLoading" class="ao-loading" hidden role="status" aria-live="polite">
+      <div class="vyra-skeleton-shimmer" style="height:140px;"></div>
+    </div>
+    <div id="aoFkiEmpty" class="ao-empty" hidden>Henüz FK inference verisi yok</div>
+
+    <h4 class="ao-tab-pane__subtitle">Özet</h4>
+    <div class="ao-fki-stats" id="aoFkiStatsCards"
+         aria-label="FK Inference özet metrikleri"></div>
+
+    <h4 class="ao-tab-pane__subtitle">Onay Bekleyen Çıkarımlar</h4>
+    <div class="ao-table-wrap">
+      <table id="aoFkiPendingTable" class="ao-table"
+             aria-label="Onay bekleyen FK çıkarımları">
+        <thead>
+          <tr>
+            <th scope="col">Kaynak Tablo</th>
+            <th scope="col">Kaynak Kolon</th>
+            <th scope="col">Hedef Tablo</th>
+            <th scope="col">Hedef Kolon</th>
+            <th scope="col">Güven</th>
+            <th scope="col">Yöntem</th>
+            <th scope="col">Tarih</th>
           </tr>
         </thead>
         <tbody></tbody>

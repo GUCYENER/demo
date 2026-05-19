@@ -122,12 +122,50 @@ def get_current_weights(
             )
             overrides = [dict(r) for r in (cur.fetchall() or [])]
 
+            # v3.29.9 — fk_centrality için deploy banner trigger
+            fk_recent = False
+            fk_deploy_ts: Optional[str] = None
+            fk_age_hours: Optional[float] = None
+            try:
+                cur.execute(
+                    "SELECT setting_value FROM system_settings "
+                    "WHERE setting_key = %s",
+                    ("FK_INFERENCE_DEPLOY_TS",),
+                )
+                row = cur.fetchone()
+                if row:
+                    val = row.get("setting_value") if hasattr(row, "get") else row[0]
+                    if val:
+                        from datetime import datetime, timezone
+                        ts: Optional[datetime] = None
+                        if isinstance(val, str):
+                            try:
+                                ts = datetime.fromisoformat(val.replace("Z", "+00:00"))
+                            except ValueError:
+                                ts = None
+                        else:
+                            ts = val
+                        if ts is not None:
+                            fk_deploy_ts = ts.isoformat()
+                            now = datetime.now(timezone.utc)
+                            if ts.tzinfo is None:
+                                ts = ts.replace(tzinfo=timezone.utc)
+                            age = (now - ts).total_seconds() / 3600.0
+                            fk_age_hours = round(age, 2)
+                            # 72 saatten yeniyse "yakın zamanda deploy" sinyali
+                            fk_recent = age < 72.0
+            except Exception:
+                pass
+
     return {
         "company_id": co_id,
         "active_weights": active,
         "defaults": dict(DEFAULT_WEIGHTS),
         "overrides": overrides,
         "latest_suggestions": suggestions,
+        "fk_inference_recent_deploy": fk_recent,
+        "fk_inference_deploy_ts": fk_deploy_ts,
+        "fk_inference_deploy_age_hours": fk_age_hours,
     }
 
 

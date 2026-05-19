@@ -84,7 +84,36 @@
         }
     }
 
+    function _renderDeployBanner(data) {
+        // v3.29.9 — FK inference recent deploy banner: fk_centrality önerileri
+        // henüz olgunlaşmamış olabilir, admin'i uyar.
+        const host = document.getElementById('swtDeployBanner');
+        if (!host) return;
+        if (data && data.fk_inference_recent_deploy === true) {
+            const ageH = Number(data.fk_inference_deploy_age_hours || 0);
+            const remainingH = Math.max(0, 72 - ageH);
+            const remainingTxt = remainingH >= 24
+                ? `${(remainingH / 24).toFixed(1)} gün`
+                : `${remainingH.toFixed(0)} saat`;
+            host.innerHTML = `
+                <div class="swt-deploy-banner" role="status" aria-live="polite">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    <span>
+                        <strong>v3.29.9 FK Inference yeni devreye alındı.</strong>
+                        Deploy üzerinden ${ageH.toFixed(1)} saat geçti.
+                        <code class="swt-mono">fk_centrality</code> önerileri olgunlaşana kadar ~${remainingTxt} daha bekleyin.
+                    </span>
+                </div>
+            `;
+            host.hidden = false;
+        } else {
+            host.hidden = true;
+            host.innerHTML = '';
+        }
+    }
+
     function _renderCurrent(data) {
+        _renderDeployBanner(data);
         const tbody = document.querySelector('#swtCurrentTable tbody');
         if (!tbody) return;
         tbody.innerHTML = '';

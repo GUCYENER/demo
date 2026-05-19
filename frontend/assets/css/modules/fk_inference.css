@@ -1,0 +1,111 @@
+/* fk_inference.css — v3.29.9
+ * ============================
+ * FK Inference observability sekmesi + signal_weight_tuner deploy banner.
+ * HEBE: prefers-reduced-motion friendly (no transitions on color-only highlights).
+ */
+
+/* ───── signal_weight_tuner deploy banner (v3.29.9) ───── */
+.swt-deploy-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    margin: 0.75rem 0 1rem 0;
+    padding: 0.75rem 1rem;
+    background: #fff8e1;
+    border: 1px solid #ffd54f;
+    border-left: 4px solid #f9a825;
+    border-radius: 6px;
+    color: #5d4037;
+    font-size: 0.92rem;
+    line-height: 1.45;
+}
+
+.swt-deploy-banner i {
+    color: #f9a825;
+    font-size: 1.15rem;
+    margin-top: 0.1rem;
+}
+
+.swt-deploy-banner strong { color: #3e2723; }
+
+.swt-deploy-banner code.swt-mono {
+    background: rgba(0, 0, 0, 0.06);
+    padding: 0.05rem 0.35rem;
+    border-radius: 3px;
+    font-size: 0.9em;
+}
+
+/* ───── FK Inference observability tab ───── */
+.ao-fki-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin: 0.75rem 0;
+}
+
+.ao-fki-source-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 500;
+    color: var(--text-primary, #212121);
+}
+
+.ao-fki-source-select {
+    min-width: 240px;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--border-color, #ccc);
+    border-radius: 4px;
+    background: #fff;
+    font-size: 0.92rem;
+}
+
+/* Stat cards grid */
+.ao-fki-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 0.75rem;
+    margin: 0.5rem 0 1.25rem 0;
+}
+
+.fki-stat-card {
+    background: var(--surface-1, #fafafa);
+    border: 1px solid var(--border-color, #e0e0e0);
+    border-radius: 6px;
+    padding: 0.85rem 1rem;
+    text-align: center;
+}
+
+.fki-stat-card__value {
+    font-size: 1.65rem;
+    font-weight: 700;
+    color: var(--text-primary, #212121);
+    line-height: 1.1;
+    margin-bottom: 0.25rem;
+}
+
+.fki-stat-card__label {
+    font-size: 0.82rem;
+    color: var(--text-secondary, #616161);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.fki-stat-card--inferred { border-left: 4px solid #1976d2; }
+.fki-stat-card--verified { border-left: 4px solid #2e7d32; }
+.fki-stat-card--pending  { border-left: 4px solid #f9a825; }
+.fki-stat-card--rejected { border-left: 4px solid #c62828; opacity: 0.85; }
+
+/* Pending table */
+#aoFkiPendingTable td {
+    vertical-align: middle;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .swt-deploy-banner,
+    .fki-stat-card {
+        transition: none !important;
+        animation: none !important;
+    }
+}

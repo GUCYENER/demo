@@ -20,7 +20,11 @@
         glossary: '/api/agentic-query/observability/glossary-usage',
     };
 
-    const TAB_IDS = ['Templates', 'Failures', 'Glossary'];
+    // v3.29.8 'Signals' (signal_weight_tuner.js kendi click handler'ı içinde
+    // veri yüklüyor) + v3.29.9 'FkInference' (fk_inference_observability.js
+    // kendi yüklemesini yapıyor). Buradaki TAB_IDS yalnız panel switching
+    // (aria-selected + hidden) için.
+    const TAB_IDS = ['Templates', 'Failures', 'Glossary', 'Signals', 'FkInference'];
 
     function _authHeaders() {
         const h = { 'Accept': 'application/json' };

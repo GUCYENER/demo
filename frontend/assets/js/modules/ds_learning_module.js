@@ -759,29 +759,77 @@ window.DSLearningModule = (function () {
                 `;
             }
 
-            // İlişkiler tablosu
+            // İlişkiler tablosu (v3.29.0 Faz 6 G1 — cardinality + junction rozetleri)
             let relsHtml = '';
             if (data.relationships && data.relationships.length > 0) {
+                const _fmtCard = (cf, ct) => {
+                    if (!cf || !ct) return '<span class="ds-badge ds-badge-muted" data-tooltip="Cardinality henüz analiz edilmedi" aria-label="Bilinmiyor">?:?</span>';
+                    const label = `${cf}:${ct}`;
+                    const cls = (cf === '1' && ct === '1') ? 'ds-badge-card-11'
+                              : (cf === 'N' && ct === '1') ? 'ds-badge-card-n1'
+                              : (cf === '1' && ct === 'N') ? 'ds-badge-card-1n'
+                              : 'ds-badge-card-nn';
+                    return `<span class="ds-badge ${cls}" data-tooltip="Kardinalite ${label}" aria-label="Kardinalite ${label}">${label}</span>`;
+                };
+                const _fmtJunction = (isJ) => isJ
+                    ? '<span class="ds-badge ds-badge-junction" data-tooltip="N:M köprü tablosu" aria-label="Junction tablosu">N:M</span>'
+                    : '';
+                const _fmtConf = (c) => {
+                    if (c === null || c === undefined) return '';
+                    const pct = Math.round(Number(c) * 100);
+                    const lvl = pct >= 85 ? 'high' : (pct >= 60 ? 'mid' : 'low');
+                    return `<span class="ds-badge ds-badge-conf-${lvl}" data-tooltip="Analiz güveni" aria-label="Güven ${pct}%">${pct}%</span>`;
+                };
+                // v3.29.9 — Inferred / Verified / Declared rozetleri
+                const _fmtSource = (r) => {
+                    if (r.is_inferred === true) {
+                        if (r.admin_verified === true) {
+                            return '<span class="ds-badge ds-badge-conf-high" data-tooltip="Admin tarafından onaylanmış çıkarım" aria-label="Onaylanmış çıkarım">Inferred ✓</span>';
+                        }
+                        return '<span class="ds-badge ds-badge-conf-mid" data-tooltip="Convention-based çıkarım, admin onayı bekliyor" aria-label="Bekleyen çıkarım">Inferred</span>';
+                    }
+                    return '<span class="ds-badge ds-badge-conf-high" data-tooltip="DB katalogundan declared FK" aria-label="Declared FK">Declared</span>';
+                };
                 relsHtml = `
                     <div class="ds-details-section">
                         <h4><i class="fa-solid fa-link"></i> İlişkiler (${data.relationships.length})</h4>
                         <div class="ds-details-table-wrap">
                             <table class="ds-details-table">
                                 <thead>
-                                    <tr><th>Kaynak Tablo</th><th>Kaynak Sütun</th><th></th><th>Hedef Tablo</th><th>Hedef Sütun</th></tr>
+                                    <tr><th>Kaynak Tablo</th><th>Kaynak Sütun</th><th>Kardinalite</th><th>Hedef Tablo</th><th>Hedef Sütun</th><th>Tür</th><th>Güven</th></tr>
                                 </thead>
                                 <tbody>
                                     ${data.relationships.map(r => `
                                         <tr>
-                                            <td>${_escapeHtml(r.from_table)}</td>
+                                            <td>${_escapeHtml(r.from_table)} ${_fmtJunction(r.is_junction)}</td>
                                             <td>${_escapeHtml(r.from_column)}</td>
-                                            <td><i class="fa-solid fa-arrow-right" style="color: var(--accent-primary);"></i></td>
+                                            <td>${_fmtCard(r.cardinality_from, r.cardinality_to)} <i class="fa-solid fa-arrow-right" style="color: var(--accent-primary);"></i></td>
                                             <td>${_escapeHtml(r.to_table)}</td>
                                             <td>${_escapeHtml(r.to_column)}</td>
+                                            <td>${_fmtSource(r)}</td>
+                                            <td>${_fmtConf(r.confidence_score)}</td>
                                         </tr>
                                     `).join('')}
                                 </tbody>
                             </table>
+                        </div>
+                        <div class="ds-rel-actions" style="margin-top: 8px; display: flex; justify-content: flex-end; gap: 8px;">
+                            <button type="button"
+                                    class="btn-secondary"
+                                    id="dsInferFksBtn"
+                                    data-source-id="${sourceId}"
+                                    data-tooltip="v3.29.9 — Convention-based FK inference (naming + type + sample) çalıştır"
+                                    aria-label="FK çıkarımını yeniden çalıştır">
+                                <i class="fa-solid fa-wand-magic-sparkles"></i> FK Çıkarımını Yenile
+                            </button>
+                            <button type="button"
+                                    class="btn-secondary"
+                                    id="dsAnalyzeCardinalityBtn"
+                                    data-source-id="${sourceId}"
+                                    data-tooltip="FK için 1:1 / 1:N / N:M kardinalite + köprü analizini yeniden çalıştır"
+                                    aria-label="Kardinalite analizini yeniden çalıştır">
+                                <i class="fa-solid fa-diagram-project"></i> Kardinalite Analizini Yenile
+                            </button>
                         </div>
                     </div>
                 `;
@@ -840,6 +888,66 @@ window.DSLearningModule = (function () {
                 if (e.key === 'Escape') closeDetailsModal();
             }
             document.addEventListener('keydown', detailsEscHandler);
+
+            // v3.29.9 — Convention-based FK Inference yeniden çalıştır
+            const inferBtn = document.getElementById('dsInferFksBtn');
+            if (inferBtn) {
+                inferBtn.addEventListener('click', async () => {
+                    const sid = inferBtn.dataset.sourceId;
+                    if (!sid) return;
+                    const originalHtml = inferBtn.innerHTML;
+                    inferBtn.disabled = true;
+                    inferBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Çıkarılıyor…';
+                    try {
+                        const res = await apiCall(`/${sid}/infer-fks`, 'POST', {
+                            sample_validate: false,
+                            min_confidence: 0.60,
+                        });
+                        const s = (res && (res.stats || res)) || {};
+                        const added = s.inferred_added != null ? s.inferred_added : (s.added || 0);
+                        const skipped = s.skipped != null ? s.skipped : (s.duplicates || 0);
+                        toast('success',
+                            `FK çıkarımı tamamlandı — ${added} yeni öneri, ${skipped} mevcut/atlandı. ` +
+                            `Önerileri "FK Inference" sekmesinden inceleyebilirsiniz.`);
+                        closeDetailsModal();
+                        setTimeout(() => { try { showDiscoveryDetails(parseInt(sid, 10)); } catch (_) {} }, 350);
+                    } catch (err) {
+                        toast('error', 'FK çıkarımı başarısız: ' + (err && err.message ? err.message : err));
+                    } finally {
+                        inferBtn.disabled = false;
+                        inferBtn.innerHTML = originalHtml;
+                    }
+                });
+            }
+
+            // v3.29.0 Faz 6 G1 — Kardinalite analizini yeniden çalıştır
+            const cardBtn = document.getElementById('dsAnalyzeCardinalityBtn');
+            if (cardBtn) {
+                cardBtn.addEventListener('click', async () => {
+                    const sid = cardBtn.dataset.sourceId;
+                    if (!sid) return;
+                    const originalHtml = cardBtn.innerHTML;
+                    cardBtn.disabled = true;
+                    cardBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Analiz ediliyor…';
+                    try {
+                        const res = await apiCall(`/${sid}/analyze-cardinality`, 'POST');
+                        const s = (res && res.stats) || {};
+                        toast('success',
+                            `Kardinalite analizi tamamlandı — ${s.analyzed || 0} ilişki: ` +
+                            `${s.one_to_one || 0} 1:1, ${s.one_to_many || 0} 1:N, ${s.many_to_many || 0} N:M; ` +
+                            `${s.junctions || 0} köprü, ${s.inverse_pairs_linked || 0} ters yön çifti.`);
+                        // Modal'ı kapat ve yeniden aç (yeni metadata ile tabloyu render et)
+                        closeDetailsModal();
+                        setTimeout(() => { try { showDiscoveryDetails(parseInt(sid, 10)); } catch (_) {} }, 350);
+                    } catch (err) {
+                        toast('error', 'Kardinalite analizi başarısız: ' + (err && err.message ? err.message : err));
+                    } finally {
+                        cardBtn.disabled = false;
+                        cardBtn.innerHTML = originalHtml;
+                    }
+                });
+            }
+
             requestAnimationFrame(() => modal.classList.add('active'));
 
         } catch (err) {
@@ -1352,9 +1460,17 @@ window.DSLearningModule = (function () {
 
                 let answerHtml = _formatMLAnswer(answer);
 
+                // v3.28.7: kart başlığına schema/table data-attribute'ları — sample lazy-load için
+                const metaRaw = r.metadata || {};
+                const schemaName = metaRaw.schema_name || '';
+                const fullTable = metaRaw.full_table || (schemaName ? `${schemaName}.${tableName}` : tableName);
+                const escSchema = _escapeHtml(schemaName);
+                const escTable = _escapeHtml(tableName);
+                const escScript = _escapeHtml(answer);
+
                 return `
-                    <div class="ds-lr-card" data-idx="${idx}">
-                        <div class="ds-lr-card-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="ds-lr-card" data-idx="${idx}" data-source-id="${sourceId}" data-schema="${escSchema}" data-table="${escTable}">
+                        <div class="ds-lr-card-header" onclick="window.DSLearningModule.toggleResultCard(this)">
                             <div class="ds-lr-card-meta">
                                 <span class="ds-lr-type-badge ${typeClass}">${typeLabel}</span>
                                 ${tableName ? `<span class="ds-lr-table-name"><i class="fa-solid fa-table"></i> ${_escapeHtml(tableName)}</span>` : ''}
@@ -1369,6 +1485,16 @@ window.DSLearningModule = (function () {
                             <div class="ds-lr-answer">
                                 <div class="ds-lr-answer-label"><i class="fa-solid fa-robot"></i> ML Cevabı</div>
                                 <div class="ds-lr-answer-text">${answerHtml}</div>
+                            </div>
+                            <details class="ds-lr-script">
+                                <summary><i class="fa-solid fa-code"></i> Öğrenilen Script (ham metin)</summary>
+                                <pre class="ds-lr-script-pre">${escScript}</pre>
+                            </details>
+                            <div class="ds-lr-sample-slot" data-loaded="0" aria-live="polite">
+                                <div class="ds-lr-sample-placeholder">
+                                    <i class="fa-solid fa-database"></i>
+                                    <span>Örnek veri kart açılınca yüklenecek (${_escapeHtml(fullTable)})</span>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1528,6 +1654,10 @@ window.DSLearningModule = (function () {
                     <div id="dsDbLoopList" class="ds-dbloop-list">
                         <div class="ds-loading"><i class="fa-solid fa-spinner fa-spin"></i> Yükleniyor...</div>
                     </div>
+                    <h4 style="margin: 1.25rem 0 0.5rem; color:#dc2626;">Başarısız Denemeler</h4>
+                    <div id="dsDbLoopFailures" class="ds-dbloop-failures">
+                        <div class="ds-loading"><i class="fa-solid fa-spinner fa-spin"></i> Yükleniyor...</div>
+                    </div>
                 </div>
             </div>
         `;
@@ -1548,10 +1678,12 @@ window.DSLearningModule = (function () {
         document.getElementById('dsDbLoopRefreshBtn').addEventListener('click', () => {
             loadDbLoopStatus(sourceId);
             loadLearnedQueries(sourceId);
+            loadSyntheticFailures(sourceId);
         });
 
         await loadDbLoopStatus(sourceId);
         await loadLearnedQueries(sourceId);
+        await loadSyntheticFailures(sourceId);
     }
 
     async function triggerSyntheticGeneration(sourceId) {
@@ -1581,7 +1713,10 @@ window.DSLearningModule = (function () {
             if (done || ticks > 120) { // 2 dakika cap
                 clearInterval(_dbLoopPollTimer);
                 _dbLoopPollTimer = null;
-                if (done) loadLearnedQueries(sourceId);
+                if (done) {
+                    loadLearnedQueries(sourceId);
+                    loadSyntheticFailures(sourceId);
+                }
             }
         }, 1500);
     }
@@ -1598,6 +1733,22 @@ window.DSLearningModule = (function () {
                 html = `<div class="ds-dbloop-pill ds-dbloop-running"><i class="fa-solid fa-spinner fa-spin"></i> Çalışıyor (dialect: ${_escapeHtml(job.dialect || '?')})</div>`;
             } else if (status === 'done') {
                 const s = job.summary || {};
+                const totalFail = (s.failed_execute || 0) + (s.failed_learn || 0);
+                const errors = Array.isArray(s.errors) ? s.errors : [];
+                let errBlock = '';
+                if (errors.length) {
+                    const items = errors.slice(0, 50).map(e => `<li>${_escapeHtml(String(e))}</li>`).join('');
+                    errBlock = `
+                        <details class="ds-dbloop-errdetails" style="margin-top:0.5rem;">
+                            <summary style="cursor:pointer; color:#dc2626;">
+                                ⚠️ Hata mesajları (${errors.length})
+                            </summary>
+                            <ul class="ds-dbloop-errlist" style="max-height:240px; overflow:auto; font-family:monospace; font-size:0.78rem;">
+                                ${items}
+                            </ul>
+                        </details>
+                    `;
+                }
                 html = `
                     <div class="ds-dbloop-pill ds-dbloop-done"><i class="fa-solid fa-check"></i> Tamamlandı (${s.elapsed_ms || 0} ms)</div>
                     <div class="ds-dbloop-stats">
@@ -1605,8 +1756,11 @@ window.DSLearningModule = (function () {
                         <span>Denenen: <strong>${s.total_attempts || 0}</strong></span>
                         <span>Başarılı: <strong style="color:#16a34a;">${s.success || 0}</strong></span>
                         <span>Atlanan: <strong>${s.skipped_existing || 0}</strong></span>
-                        <span>Hata: <strong style="color:#dc2626;">${(s.failed_execute || 0) + (s.failed_learn || 0)}</strong></span>
+                        <span>Execute Hata: <strong style="color:#dc2626;">${s.failed_execute || 0}</strong></span>
+                        <span>Öğrenme Hata: <strong style="color:#dc2626;">${s.failed_learn || 0}</strong></span>
+                        <span>Toplam Hata: <strong style="color:#dc2626;">${totalFail}</strong></span>
                     </div>
+                    ${errBlock}
                 `;
             } else if (status === 'error') {
                 html = `<div class="ds-dbloop-pill ds-dbloop-error"><i class="fa-solid fa-circle-exclamation"></i> Hata: ${_escapeHtml(job.error || 'bilinmeyen')}</div>`;
@@ -1657,6 +1811,40 @@ window.DSLearningModule = (function () {
             });
         } catch (e) {
             list.innerHTML = `<div class="ds-dbloop-empty">Liste alınamadı: ${_escapeHtml(e.message || '')}</div>`;
+        }
+    }
+
+    // v3.28.9 Paket C: başarısız sentetik denemeleri listele
+    async function loadSyntheticFailures(sourceId) {
+        const box = document.getElementById('dsDbLoopFailures');
+        if (!box) return;
+        box.innerHTML = '<div class="ds-loading"><i class="fa-solid fa-spinner fa-spin"></i> Yükleniyor...</div>';
+        try {
+            const res = await apiCall(`/${sourceId}/synthetic-failures?limit=50`);
+            const items = (res && res.items) || [];
+            if (!items.length) {
+                box.innerHTML = '<div class="ds-dbloop-empty">Hatalı deneme yok.</div>';
+                return;
+            }
+            box.innerHTML = items.map(it => `
+                <div class="ds-dbloop-failrow" style="border:1px solid #fecaca; background:#fef2f2; padding:0.5rem 0.75rem; margin-bottom:0.5rem; border-radius:6px;">
+                    <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; margin-bottom:0.25rem;">
+                        <span class="ds-dbloop-badge" style="background:#dc2626; color:#fff;">${_escapeHtml(it.template_kind || '?')}</span>
+                        <span style="font-weight:600;">${_escapeHtml(it.from_table || '')}.${_escapeHtml(it.from_column || '')}</span>
+                        <span style="color:#6b7280;">→</span>
+                        <span style="font-weight:600;">${_escapeHtml(it.to_table || '')}.${_escapeHtml(it.to_column || '')}</span>
+                        <span style="margin-left:auto; color:#6b7280; font-size:0.75rem;">${_escapeHtml(it.executed_at || '')}</span>
+                    </div>
+                    <details>
+                        <summary style="cursor:pointer; color:#dc2626; font-size:0.85rem;">
+                            ❌ ${_escapeHtml((it.error_message || 'bilinmeyen hata').substring(0, 200))}
+                        </summary>
+                        <pre style="margin-top:0.5rem; padding:0.5rem; background:#fff; border:1px solid #e5e7eb; border-radius:4px; overflow:auto; max-height:200px; font-size:0.75rem;">${_escapeHtml(it.rendered_sql || '')}</pre>
+                    </details>
+                </div>
+            `).join('');
+        } catch (e) {
+            box.innerHTML = `<div class="ds-dbloop-empty">Hatalar alınamadı: ${_escapeHtml(e.message || '')}</div>`;
         }
     }
 
@@ -1897,6 +2085,92 @@ window.DSLearningModule = (function () {
         console.log('[DSLearning] Modül yüklendi (Faz 2)');
     }
 
+    /**
+     * v3.28.7: ML Öğrenme Sonuçları kartını expand/collapse eder ve ilk açılışta
+     * tablonun cached örnek verisini lazy-load ile yükler.
+     */
+    function toggleResultCard(headerEl) {
+        if (!headerEl) return;
+        const card = headerEl.parentElement;
+        if (!card) return;
+        const wasExpanded = card.classList.contains('expanded');
+        card.classList.toggle('expanded');
+        if (wasExpanded) return; // kapanıyor — fetch yok
+
+        const slot = card.querySelector('.ds-lr-sample-slot');
+        if (!slot || slot.dataset.loaded === '1') return;
+        const sourceId = card.dataset.sourceId;
+        const schema = card.dataset.schema;
+        const table = card.dataset.table;
+        if (!sourceId || !table) {
+            slot.innerHTML = '<div class="ds-lr-sample-empty"><i class="fa-solid fa-circle-info"></i> Tablo bilgisi eksik.</div>';
+            slot.dataset.loaded = '1';
+            return;
+        }
+
+        slot.innerHTML = '<div class="ds-lr-sample-loading"><i class="fa-solid fa-spinner fa-spin"></i> Örnek veri yükleniyor...</div>';
+        slot.dataset.loaded = '1';
+
+        const params = new URLSearchParams({ table, limit: '5' });
+        if (schema) params.append('schema', schema);
+        const url = `/api/data-sources/${encodeURIComponent(sourceId)}/samples?${params.toString()}`;
+        const token = localStorage.getItem('access_token');
+
+        fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+            .then(async (res) => {
+                if (res.status === 404) {
+                    const body = await res.json().catch(() => ({}));
+                    throw new Error(body.detail || 'Cache boş — örnek veri toplanmamış.');
+                }
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return res.json();
+            })
+            .then((data) => _renderSampleInSlot(slot, data))
+            .catch((err) => {
+                slot.innerHTML = `
+                    <div class="ds-lr-sample-empty">
+                        <i class="fa-solid fa-triangle-exclamation"></i>
+                        ${_escapeHtml(err.message || 'Örnek veri yüklenemedi')}
+                    </div>`;
+                // Yeniden denenebilsin diye loaded flag'i sıfırla
+                slot.dataset.loaded = '0';
+            });
+    }
+
+    function _renderSampleInSlot(slot, payload) {
+        const rows = Array.isArray(payload && payload.rows) ? payload.rows : [];
+        if (!rows.length) {
+            slot.innerHTML = '<div class="ds-lr-sample-empty"><i class="fa-solid fa-circle-info"></i> Cache boş döndü.</div>';
+            return;
+        }
+        const cols = Array.isArray(payload.columns) && payload.columns.length
+            ? payload.columns.map((c) => (typeof c === 'string' ? c : c.name))
+            : Object.keys(rows[0] || {});
+        let html = '<div class="ds-lr-sample-header"><i class="fa-solid fa-table-list"></i> <strong>Örnek Veri</strong>';
+        if (payload.fetched_at) {
+            html += ` <span class="ds-lr-sample-fetched">⏱ ${_escapeHtml(String(payload.fetched_at).slice(0, 16).replace('T', ' '))}</span>`;
+        }
+        if (payload.row_count && payload.row_count > rows.length) {
+            html += ` <span class="ds-lr-sample-count">(${rows.length}/${payload.row_count})</span>`;
+        }
+        html += '</div>';
+        html += '<div class="ds-lr-sample-tablewrap"><table class="ds-lr-sample-table"><thead><tr>';
+        cols.forEach((c) => { html += `<th>${_escapeHtml(c)}</th>`; });
+        html += '</tr></thead><tbody>';
+        rows.forEach((r) => {
+            html += '<tr>';
+            cols.forEach((c) => {
+                const v = r[c];
+                const text = v == null ? '' : String(v);
+                const trunc = text.length > 80 ? text.slice(0, 77) + '…' : text;
+                html += `<td title="${_escapeHtml(text)}">${_escapeHtml(trunc)}</td>`;
+            });
+            html += '</tr>';
+        });
+        html += '</tbody></table></div>';
+        slot.innerHTML = html;
+    }
+
     return {
         init,
         openWizard,
@@ -1908,7 +2182,8 @@ window.DSLearningModule = (function () {
         showLearningHistory,
         showJobDetail,
         showLearningResults,
-        openDbLearningLoop
+        openDbLearningLoop,
+        toggleResultCard
     };
 })();
 

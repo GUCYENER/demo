@@ -955,6 +955,40 @@ def detect_objects(source: dict, vyra_conn) -> dict:
 
         vyra_conn.commit()
 
+        # ─── v3.29.9: FK Inference auto-trigger (naming+type only) ───
+        # Tüm 4 dialect için çalışır (PG / Oracle / MSSQL / MySQL).
+        # Hedef DB'ye bağlanmaz — sadece VYRA DB'deki ds_db_objects'i okur.
+        # Hata olması keşfi BLOKLAMAZ.
+        try:
+            from app.services.db_learning.fk_inference_service import (
+                infer_fks_for_source,
+            )
+            _inf = infer_fks_for_source(
+                vyra_cur, source_id,
+                sample_validate=False,
+                min_confidence=0.60,
+                dialect=db_dialect,
+            )
+            vyra_conn.commit()
+            logger.info(
+                "[DSLearning.fk_inference] source=%s dialect=%s declared=%d "
+                "candidates=%d persisted=%d skipped_existing=%d skipped_low=%d",
+                source_id, db_dialect, len(relationships),
+                _inf.get("candidates", 0),
+                _inf.get("persisted", 0),
+                _inf.get("skipped_existing", 0),
+                _inf.get("skipped_low_confidence", 0),
+            )
+        except Exception as _fk_inf_err:
+            try:
+                vyra_conn.rollback()
+            except Exception:
+                pass
+            logger.warning(
+                "[DSLearning.fk_inference] failed source=%s: %s",
+                source_id, str(_fk_inf_err)[:200],
+            )
+
         # Snapshot oluştur ve diff hesapla (v3.0)
         snapshot_result = {}
         try:
@@ -1442,17 +1476,30 @@ def get_discovery_details(vyra_conn, source_id: int) -> dict:
             "row_count_estimate": row["row_count_estimate"], "columns": row["columns_json"]
         })
 
-    # İlişkiler
+    # İlişkiler (v3.29.0 Faz 6 G1 — cardinality + junction metadata)
     cur.execute("""
-        SELECT from_schema, from_table, from_column, to_schema, to_table, to_column, constraint_name
+        SELECT id, from_schema, from_table, from_column,
+               to_schema, to_table, to_column, constraint_name,
+               cardinality_from, cardinality_to, is_junction,
+               path_weight, inverse_relationship_id,
+               confidence_score, last_analyzed_at
         FROM ds_db_relationships WHERE source_id = %s
     """, (source_id,))
     rels = []
     for row in cur.fetchall():
+        last_analyzed = row["last_analyzed_at"] if "last_analyzed_at" in row.keys() else None
         rels.append({
+            "id": row["id"],
             "from_schema": row["from_schema"], "from_table": row["from_table"], "from_column": row["from_column"],
             "to_schema": row["to_schema"], "to_table": row["to_table"], "to_column": row["to_column"],
-            "constraint_name": row["constraint_name"]
+            "constraint_name": row["constraint_name"],
+            "cardinality_from": row["cardinality_from"],
+            "cardinality_to": row["cardinality_to"],
+            "is_junction": bool(row["is_junction"]) if row["is_junction"] is not None else False,
+            "path_weight": row["path_weight"],
+            "inverse_relationship_id": row["inverse_relationship_id"],
+            "confidence_score": float(row["confidence_score"]) if row["confidence_score"] is not None else None,
+            "last_analyzed_at": last_analyzed.isoformat() if last_analyzed else None,
         })
 
     return {"objects": objects, "relationships": rels}
