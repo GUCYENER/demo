@@ -1,0 +1,96 @@
+/* VYRA v3.29.8 L3 — Signal Weight Tuner UI
+ * agentic_observability altındaki Sinyal Ağırlıkları sekmesi
+ */
+
+.swt-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 10px 0 14px;
+}
+
+.swt-actions .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+}
+
+.swt-actions .btn i { font-size: 11px; }
+
+.swt-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border, #2a2e38);
+    border-radius: 6px;
+    margin-bottom: 16px;
+}
+
+.swt-mono {
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 11.5px;
+    color: var(--text-1, #e8eaed);
+}
+
+.swt-note {
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-2, #9aa0a6);
+    font-size: 11.5px;
+}
+
+.swt-weight-cell {
+    font-weight: 600;
+    color: var(--blue, #4285f4);
+}
+
+.swt-conf-ok { color: var(--green, #34a853); font-weight: 600; }
+.swt-conf-low { color: var(--orange, #fbbc04); font-weight: 600; }
+
+.swt-action {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--text-1, #e8eaed);
+    background: var(--bg-3, #232831);
+    border: 1px solid var(--border, #2a2e38);
+}
+
+.swt-action--apply { background: rgba(52, 168, 83, 0.15); color: var(--green, #34a853); border-color: rgba(52, 168, 83, 0.3); }
+.swt-action--manual { background: rgba(66, 133, 244, 0.15); color: var(--blue, #4285f4); border-color: rgba(66, 133, 244, 0.3); }
+.swt-action--reset { background: rgba(234, 67, 53, 0.15); color: var(--red, #ea4335); border-color: rgba(234, 67, 53, 0.3); }
+.swt-action--revert { background: rgba(251, 188, 4, 0.15); color: var(--orange, #fbbc04); border-color: rgba(251, 188, 4, 0.3); }
+
+.ao-tab-pane__desc {
+    margin: 4px 0 12px;
+    color: var(--text-2, #9aa0a6);
+    font-size: 12px;
+    line-height: 1.55;
+    max-width: 720px;
+}
+
+.ao-empty-inline {
+    color: var(--text-3, #6b7280);
+    font-style: italic;
+    font-size: 11px;
+}
+
+/* btn-danger-outline (yoksa fallback) */
+.btn-danger-outline {
+    background: transparent;
+    color: var(--red, #ea4335);
+    border: 1px solid var(--red, #ea4335);
+}
+.btn-danger-outline:hover {
+    background: rgba(234, 67, 53, 0.1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .swt-actions .btn,
+    .swt-action { transition: none; }
+}

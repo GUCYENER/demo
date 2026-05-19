@@ -53,6 +53,7 @@ const CSS_FILES = [
     'assets/css/modules/disambiguation_card.css',   // v3.29.7 G2 — clarification_v2 zengin kart
     'assets/css/modules/query_builder_v2.css',      // v3.29.7 G4 — Multi-table query builder
     'assets/css/modules/agentic_observability_faz6.css', // v3.29.7 G5 — Faz 6 observability sekmeleri
+    'assets/css/modules/signal_weight_tuner.css',   // v3.29.8 L3 — multi_signal_rank weight tuner UI
 ];
 
 const JS_FILES = [
@@ -131,6 +132,7 @@ const JS_FILES = [
     'assets/js/modules/agentic_query_consumer.js',      // v3.25.0 Faz 6f — SSE stream consumer
     'assets/js/modules/agentic_observability.js',       // v3.25.0 Faz 6g — admin dashboard
     'assets/js/modules/agentic_observability_faz6.js',  // v3.29.7 G5 — Faz 6 sekmeleri (heatmap/failures/glossary)
+    'assets/js/modules/signal_weight_tuner.js',         // v3.29.8 L3 — multi_signal_rank weight tuner
     'assets/js/branding_engine.js',
 ];
 

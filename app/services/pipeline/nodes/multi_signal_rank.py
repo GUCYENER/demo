@@ -48,6 +48,55 @@ DEFAULT_WEIGHTS: Dict[str, float] = {
     "glossary_match": 0.12,
 }
 
+# v3.29.8 L3 — Per-company override cache (TTL bazlı, in-memory)
+# Format: {company_id: (weights_dict, expires_at_unix)}
+_COMPANY_WEIGHTS_CACHE: Dict[int, tuple] = {}
+_COMPANY_WEIGHTS_TTL_SEC = 60.0
+
+
+def load_company_weights(cur: Any, company_id: Optional[int]) -> Dict[str, float]:
+    """
+    Şirket bazlı override'ları DB'den yükler ve DEFAULT_WEIGHTS üzerine bindirir.
+    60 saniyelik TTL cache; company_id=None → DEFAULT_WEIGHTS döner.
+
+    Best-effort: cursor None/Exception → DEFAULT_WEIGHTS.
+    """
+    if company_id is None or cur is None:
+        return dict(DEFAULT_WEIGHTS)
+    now = time.time()
+    cached = _COMPANY_WEIGHTS_CACHE.get(company_id)
+    if cached and cached[1] > now:
+        return dict(cached[0])
+    weights = dict(DEFAULT_WEIGHTS)
+    try:
+        cur.execute(
+            "SELECT signal_name, weight FROM signal_weight_overrides WHERE company_id = %s",
+            (company_id,),
+        )
+        rows = cur.fetchall() or []
+        for r in rows:
+            # RealDictCursor veya tuple
+            if isinstance(r, dict):
+                name = r.get("signal_name")
+                w = r.get("weight")
+            else:
+                name, w = r[0], r[1]
+            if name in DEFAULT_WEIGHTS and w is not None:
+                weights[name] = float(w)
+    except Exception:
+        # Tablo yok (eski deploy) veya RLS hatası → defaults
+        return dict(DEFAULT_WEIGHTS)
+    _COMPANY_WEIGHTS_CACHE[company_id] = (dict(weights), now + _COMPANY_WEIGHTS_TTL_SEC)
+    return weights
+
+
+def invalidate_company_weights_cache(company_id: Optional[int] = None) -> None:
+    """Apply endpoint'i bunu çağırır. None → tüm cache temizlenir."""
+    if company_id is None:
+        _COMPANY_WEIGHTS_CACHE.clear()
+    else:
+        _COMPANY_WEIGHTS_CACHE.pop(company_id, None)
+
 
 def _normalize_tr(text: str) -> str:
     """Türkçe normalize: lowercase + diakritik kaldır + alfanumerik kelime."""
@@ -357,6 +406,16 @@ def multi_signal_rank_node(state: Dict[str, Any]) -> Dict[str, Any]:
         except Exception:
             weights = None
 
+    # v3.29.8 L3 — Şirket-bazlı DB override (signal_weight_overrides)
+    # user_preferences gibi explicit state weights varsa onu dokunmuyoruz.
+    if weights is None:
+        co_id = state.get("company_id")
+        if co_id is not None:
+            try:
+                weights = load_company_weights(state.get("_cursor"), co_id)
+            except Exception:
+                weights = None
+
     ranked = multi_signal_rank(
         candidates, query,
         column_index=state.get("column_index"),
@@ -374,6 +433,37 @@ def multi_signal_rank_node(state: Dict[str, Any]) -> Dict[str, Any]:
             ranked = apply_table_filters(ranked, user_prefs)
         except Exception:
             pass
+
+    # v3.29.8 L1 — signal_breakdown event: top-3 candidate'ın sinyal kırılımı +
+    # kullanılan ağırlıklar. Layer 2 analyzer bu event'leri pipeline_end ile
+    # eşleyip Pearson korelasyonu hesaplar. Best-effort (emit_event silent).
+    try:
+        from app.services.pipeline.observability import emit_event
+        active_weights = {**DEFAULT_WEIGHTS, **(weights or {})}
+        signal_keys = (
+            "semantic_score", "name_fuzzy_score", "column_match_score",
+            "fk_centrality_score", "recency_score", "usage_freq_score",
+            "glossary_match_score",
+        )
+        breakdown = []
+        for c in ranked[:3]:
+            breakdown.append({
+                "schema": c.get("schema_name"),
+                "table": c.get("table_name"),
+                "final_score": round(float(c.get("final_score") or 0.0), 4),
+                "signals": {k: round(float(c.get(k) or 0.0), 4) for k in signal_keys},
+            })
+        emit_event(
+            state, "signal_breakdown",
+            node_name="multi_signal_rank",
+            metadata={
+                "weights": {k: round(float(v), 4) for k, v in active_weights.items()},
+                "top": breakdown,
+                "candidate_count": len(ranked),
+            },
+        )
+    except Exception:
+        pass
 
     # Faz 5c — CatBoost inference (varsa final_score'u model skoruna swap'lar)
     # Heuristik final_score ml öncesi `heuristic_score` adıyla korunur

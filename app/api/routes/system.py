@@ -51,11 +51,11 @@ async def reset_system(
     - ML modelleri ve eğitim (ml_models, ml_training_jobs, ml_training_samples, ml_training_schedules)
     - Öğrenilmiş cevaplar (learned_answers)
     - DS Öğrenme Verileri (ds_learning_results, ds_db_samples, ds_db_objects, ds_db_relationships, ds_discovery_jobs, ds_learning_schedules)
-    - Agentic Query Learning (v3.21–v3.28): learned_db_queries, ds_synthetic_query_runs,
+    - Agentic Query Learning (v3.21–v3.29): learned_db_queries, ds_synthetic_query_runs,
       ds_column_embeddings, agentic_query_decisions, agentic_query_feedback,
       agentic_size_observations, catboost_models, few_shot_examples, business_glossary,
       metric_definitions, synonym_suggestions, pipeline_events, pipeline_traces,
-      user_preferences
+      user_preferences, ds_code_values (v3.29.1), learned_query_failures (v3.29.4)
     - Golden SQL (golden_sql)
     - İş Süreci Şablonları (business_process_templates)
     - Bekleyen DB Sorguları (pending_db_queries)
@@ -286,6 +286,11 @@ async def reset_system(
             ("pipeline_events",            True,  False),  # v3.25
             ("pipeline_traces",            True,  False),  # v3.27 G2
             ("user_preferences",           True,  False),  # v3.23
+            ("ds_code_values",             True,  False),  # v3.29.1 Faz 6 G2 — code value dictionary
+            ("learned_query_failures",     True,  False),  # v3.29.4 Faz 6 G5 — retry/error pattern learning
+            ("signal_weight_suggestions",  True,  False),  # v3.29.8 L2 — analyzer önerileri
+            ("signal_weight_overrides",    True,  False),  # v3.29.8 L3 — admin onaylı override'lar
+            ("signal_weight_audit_log",    True,  False),  # v3.29.8 L3 — audit history
         ]
         for tbl, has_co, src_only in agentic_learning_tables:
             # Eski deploy'larda tablo olmayabilir — information_schema kontrolü ile guard
@@ -465,6 +470,9 @@ async def get_system_info(
             "agentic_query_decisions", "agentic_query_feedback", "agentic_size_observations",
             "catboost_models", "few_shot_examples", "business_glossary", "metric_definitions",
             "synonym_suggestions", "pipeline_events", "pipeline_traces", "user_preferences",
+            "ds_code_values", "learned_query_failures",  # v3.29 Faz 6
+            "signal_weight_suggestions",  # v3.29.8 L2
+            "signal_weight_overrides", "signal_weight_audit_log",  # v3.29.8 L3
         ):
             cur.execute(
                 "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = %s",
@@ -508,7 +516,7 @@ async def get_system_info(
                 "sql_audit_log": info["sql_audit_log"],
                 "enhancement_history": info.get("enhancement_history", 0),
                 "system_logs": info["system_logs"],
-                # 🧠 v3.21–v3.28: Agentic Query Learning
+                # 🧠 v3.21–v3.29: Agentic Query Learning
                 "learned_db_queries": info.get("learned_db_queries", 0),
                 "ds_synthetic_query_runs": info.get("ds_synthetic_query_runs", 0),
                 "ds_column_embeddings": info.get("ds_column_embeddings", 0),
@@ -523,6 +531,13 @@ async def get_system_info(
                 "pipeline_events": info.get("pipeline_events", 0),
                 "pipeline_traces": info.get("pipeline_traces", 0),
                 "user_preferences": info.get("user_preferences", 0),
+                # v3.29 Faz 6
+                "ds_code_values": info.get("ds_code_values", 0),
+                "learned_query_failures": info.get("learned_query_failures", 0),
+                # v3.29.8 L2 + L3
+                "signal_weight_suggestions": info.get("signal_weight_suggestions", 0),
+                "signal_weight_overrides": info.get("signal_weight_overrides", 0),
+                "signal_weight_audit_log": info.get("signal_weight_audit_log", 0),
             }
         }
         

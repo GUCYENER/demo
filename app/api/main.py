@@ -12,7 +12,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import auth, chat, health, rag as rag_routes, tickets, llm_config, prompts, users, system, websocket as ws_routes, organizations, feedback, dialog, permissions, assets, ldap_settings, domain_org_api, widget as widget_routes, companies, address, data_sources_api, sql_audit_api, themes, db_export, feature_permissions, agentic_query_api, metrics_api, db_learning_api, query_state_api, query_builder_api
+from app.api.routes import auth, chat, health, rag as rag_routes, tickets, llm_config, prompts, users, system, websocket as ws_routes, organizations, feedback, dialog, permissions, assets, ldap_settings, domain_org_api, widget as widget_routes, companies, address, data_sources_api, sql_audit_api, themes, db_export, feature_permissions, agentic_query_api, metrics_api, db_learning_api, query_state_api, query_builder_api, signal_weight_api
 from app.core.config import settings
 from app.core.db import init_db
 from app.core.rate_limiter import limiter, get_rate_limit_handler, get_rate_limit_exception
@@ -81,6 +81,8 @@ def _run_schedule_checker():
 
     # v3.29.5 Faz 7 — code_value auto re-scan tick counter
     _cv_tick = 0
+    # v3.29.8 L2 — signal_weight_analyzer tick counter
+    _swa_tick = 0
 
     while _scheduler_running:
         try:
@@ -139,6 +141,45 @@ def _run_schedule_checker():
                             )
             except Exception as e:
                 log_error(f"[Scheduler] code_value auto re-scan hatasi: {e}", "scheduler")
+
+            # 5) v3.29.8 L2 — Signal weight analyzer (Pearson korelasyon önerileri)
+            try:
+                swa_mult = int(getattr(settings, "SIGNAL_WEIGHT_ANALYZER_INTERVAL_MULT", 0) or 0)
+                if swa_mult > 0:
+                    _swa_tick += 1
+                    if _swa_tick >= swa_mult:
+                        _swa_tick = 0
+                        from app.core.db import get_db_context
+                        from app.services.db_learning.signal_weight_analyzer import (
+                            run_full_analysis,
+                        )
+                        days = int(getattr(settings, "SIGNAL_WEIGHT_ANALYZER_WINDOW_DAYS", 7) or 7)
+                        min_n = int(getattr(settings, "SIGNAL_WEIGHT_ANALYZER_MIN_SAMPLE_SIZE", 50) or 50)
+                        lam = float(getattr(settings, "SIGNAL_WEIGHT_ANALYZER_LAMBDA", 0.3) or 0.3)
+                        total_suggestions = 0
+                        with get_db_context() as conn:
+                            with conn.cursor() as cur:
+                                cur.execute("SELECT id FROM companies")
+                                co_ids = [r[0] for r in cur.fetchall()]
+                            from app.core.db import apply_company_scope as _apply_scope
+                            for co_id in co_ids:
+                                with conn.cursor() as cur:
+                                    # Defense-in-depth: RLS scope per-company
+                                    _apply_scope(cur, co_id)
+                                    res = run_full_analysis(
+                                        cur, company_id=co_id, days=days,
+                                        min_sample_size=min_n, lambda_=lam,
+                                    )
+                                    if res.get("ok"):
+                                        total_suggestions += res.get("persisted", 0)
+                        if total_suggestions > 0:
+                            log_system_event(
+                                "INFO",
+                                f"[Scheduler] signal_weight analyzer: {total_suggestions} oneri uretildi",
+                                "scheduler",
+                            )
+            except Exception as e:
+                log_error(f"[Scheduler] signal_weight analyzer hatasi: {e}", "scheduler")
 
         except Exception as e:
             log_error(f"[Scheduler] Kontrol hatasi: {e}", "scheduler")
@@ -304,6 +345,7 @@ def create_app() -> FastAPI:
     app.include_router(db_learning_api.router)  # v3.27.0 - DB Learning Loop (G1+G3+G4)
     app.include_router(query_state_api.router)  # v3.28.3 - Faz 5 G4 - Pre-execute Drag-Drop Query Builder
     app.include_router(query_builder_api.router)  # v3.29.7 G3 - Multi-table Query Builder (suggest-path + preview)
+    app.include_router(signal_weight_api.router)  # v3.29.8 L3 - multi_signal_rank weight tuner admin API
 
     from pathlib import Path
     from fastapi.responses import FileResponse

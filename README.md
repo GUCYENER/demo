@@ -75,7 +75,17 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
-### 🆕 v3.29.7 (2026-05-19) - Faz 6 Eksik İmplementasyon + Plan.md Persistance
+### 🆕 v3.29.8 (2026-05-19) - Signal Weight Tuner (3-layer agentic learning loop)
+- 🧭 **L1 — Observability:** `multi_signal_rank_node` her ranking sonrası `signal_breakdown` pipeline_event yayar (top-3 candidate × 7 sinyal + kullanılan ağırlıklar). Best-effort/silent-fail; ranking yolunu asla bloklamaz. 5 unit test.
+- 🔬 **L2 — Analyzer + öneriler:** `app/services/db_learning/signal_weight_analyzer.py` — Pearson korelasyon (signal_score vs outcome=ok∧row>0∧retry=0) + Bayesian shrinkage (`|r|·√(n/(n+30))`) + lambda smoothing (`new = cur·(1+λr)`, λ=0.3) + drift cap (`[0.5×, 2×]` + cold-start +0.05) + renormalize toplam=1.0. Migration 029 (`signal_weight_suggestions` RLS PERMISSIVE + 5 index). Scheduler hook `SIGNAL_WEIGHT_ANALYZER_INTERVAL_MULT` (default 0=off; 288≈24h). 12 unit test.
+- 🔐 **L3 — Admin override + cache:** Migration 030 (`signal_weight_overrides` UNIQUE(company_id, signal_name) + `signal_weight_audit_log` action ENUM). `load_company_weights(cur, company_id)` 60s TTL in-memory cache, RLS error → DEFAULT_WEIGHTS fallback. Yeni 7-endpoint admin API `/api/admin/signal-weights/*` (current, suggestions, apply [FOR UPDATE], manual override, analyze, reset, audit). 12 unit test.
+- 🖥️ **UI:** `agentic_observability` altında "Sinyal Ağırlıkları" 4. tab (`signal_weight_tuner.js/css`) — current weights tablo, pending suggestions tablo (apply/manual butonları), audit history son 20 satır. HEBE Pre-Plan Gate uyumlu (aria-label, keyboard, prefers-reduced-motion).
+- 🛡️ **Defense-in-depth:** `signal_name` 3-katmanlı whitelist (Pydantic+DB CHECK+frozenset), `company_id` token'dan, `apply_company_scope` per-company iterasyonda da (scheduler), `FOR UPDATE` /apply'da TOCTOU kapatır.
+- 🧹 **Sistem Sıfırla:** Faz 6 öğrenme tabloları (`ds_code_values`, `learned_query_failures`) + L2+L3 (`signal_weight_suggestions`, `signal_weight_overrides`, `signal_weight_audit_log`) parametreler sekmesinde temiz başlangıç sürecine eklendi (16 agentic tablo).
+- 📦 **Bundle:** 748KB JS / 361KB CSS.
+- 📋 **Plan:** `.agents/plans/v3.29.8_signal_weight_tuner.md` (HERA).
+
+### v3.29.7 (2026-05-19) - Faz 6 Eksik İmplementasyon + Plan.md Persistance
 - 📊 **HERA — Plan.md persistance:** `.agents/workflows/vyrazeus.md` Bölüm 5d eklendi. Her geliştirme/güncelleme/fix talebi `.agents/plans/{vYYY.Z}_{slug}.md` dosyasına yazılır → `/compact` sonrası bağlam korunur.
 - 🎯 **G1 — Glossary signal:** `app/services/pipeline/nodes/multi_signal_rank.py` — 7. sinyal `glossary_match_score` (weight 0.12). `business_glossary.mapped_table` ve term match'lere göre puan; `admin_verified=true` 1.0x, false 0.6x. 12 unit test geçti.
 - 💬 **G2 — Clarification v2 SSE:** `sse_adapter.py:state_to_clarification_v2_event` + `agentic_query_api.py` interrupt branch zengin kart event'i emit eder. Frontend `disambiguation_card.js` (window.DisambiguationCardV2) + `disambiguation_card.css` (HEBE compliant: keyboard nav, ARIA, prefers-reduced-motion). `dialog_chat.js` v2 öncelikli + `__VYRA_CLARIFICATION_V2_HANDLED__` flag ile v1 geri uyumluluğu. 11 SSE testi geçti.

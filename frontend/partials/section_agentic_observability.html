@@ -108,6 +108,11 @@
             data-tooltip="İş sözlüğü kullanım istatistikleri">
       <i class="fa-solid fa-book"></i> Glossary Kullanımı
     </button>
+    <button type="button" class="ao-tab" role="tab" aria-selected="false"
+            aria-controls="aoTabSignals" id="aoTabBtnSignals"
+            data-tooltip="multi_signal_rank ağırlık önerileri (v3.29.8)">
+      <i class="fa-solid fa-sliders"></i> Sinyal Ağırlıkları
+    </button>
   </nav>
 
   <!-- Tab: Template heatmap -->
@@ -178,6 +183,91 @@
     </div>
     <h4 class="ao-tab-pane__subtitle">Tip Bazında Toplam</h4>
     <ul id="aoGlossaryByType" class="ao-bar-list" aria-label="Glossary tip toplamları"></ul>
+  </section>
+
+  <!-- Tab: Signal Weight Tuning (v3.29.8 L3) -->
+  <section class="ao-panel ao-tab-pane" id="aoTabSignals" role="tabpanel"
+           aria-labelledby="aoTabBtnSignals" hidden>
+    <h3 class="ao-tab-pane__title">multi_signal_rank Ağırlık Tuner</h3>
+    <p class="ao-tab-pane__desc">
+      Tablo seçimini etkileyen 7 sinyalin (semantic, name_fuzzy, column_match,
+      fk_centrality, recency, usage_freq, glossary_match) ağırlıklarını
+      Pearson korelasyon analizine dayalı admin onaylı olarak ayarla.
+    </p>
+
+    <div class="swt-actions">
+      <button type="button" id="swtAnalyzeBtn" class="btn btn-secondary"
+              data-tooltip="Scheduler beklemeden hemen analiz yap">
+        <i class="fa-solid fa-flask"></i> Şimdi Analiz Et
+      </button>
+      <button type="button" id="swtResetBtn" class="btn btn-danger-outline"
+              data-tooltip="Tüm override'ları sil → varsayılan ağırlıklara dön">
+        <i class="fa-solid fa-rotate-left"></i> Override'ları Sıfırla
+      </button>
+      <button type="button" id="swtRefreshBtn" class="btn btn-secondary"
+              data-tooltip="Mevcut ağırlıkları ve önerileri yenile">
+        <i class="fa-solid fa-rotate"></i> Yenile
+      </button>
+    </div>
+
+    <div id="swtLoading" class="ao-loading" hidden role="status" aria-live="polite">
+      <div class="vyra-skeleton-shimmer" style="height:200px;"></div>
+    </div>
+
+    <h4 class="ao-tab-pane__subtitle">Yürürlükteki Ağırlıklar</h4>
+    <div class="swt-table-wrap">
+      <table id="swtCurrentTable" class="ao-table" aria-label="Yürürlükteki sinyal ağırlıkları">
+        <thead>
+          <tr>
+            <th scope="col">Sinyal</th>
+            <th scope="col">Varsayılan</th>
+            <th scope="col">Geçerli</th>
+            <th scope="col">Override Notu</th>
+            <th scope="col">İşlem</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <h4 class="ao-tab-pane__subtitle">Bekleyen Öneriler</h4>
+    <div id="swtSuggestionsEmpty" class="ao-empty" hidden>Bekleyen öneri yok</div>
+    <div class="swt-table-wrap">
+      <table id="swtSuggestionsTable" class="ao-table" aria-label="Bekleyen ağırlık önerileri">
+        <thead>
+          <tr>
+            <th scope="col">Sinyal</th>
+            <th scope="col">Mevcut</th>
+            <th scope="col">Önerilen</th>
+            <th scope="col">Δ</th>
+            <th scope="col">r (Pearson)</th>
+            <th scope="col">Güven</th>
+            <th scope="col">Örneklem</th>
+            <th scope="col">Tarih</th>
+            <th scope="col">İşlem</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <h4 class="ao-tab-pane__subtitle">Audit Geçmişi (son 20)</h4>
+    <div id="swtAuditEmpty" class="ao-empty" hidden>Henüz değişiklik kaydı yok</div>
+    <div class="swt-table-wrap">
+      <table id="swtAuditTable" class="ao-table" aria-label="Sinyal ağırlığı değişim geçmişi">
+        <thead>
+          <tr>
+            <th scope="col">Sinyal</th>
+            <th scope="col">Eski</th>
+            <th scope="col">Yeni</th>
+            <th scope="col">Aksiyon</th>
+            <th scope="col">Tarih</th>
+            <th scope="col">Not</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
   </section>
 
   <!-- 4) Son run'lar -->

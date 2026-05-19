@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.29.7"  # v3.29.7 Faz 6 eksik implementasyon — G1 multi_signal_rank.glossary_match_score (12 test), G2 clarification_v2 SSE (sse_adapter+disambiguation_card.js+css, 11 test, geri uyumlu), G3 query_builder_api (suggest-path + preview, 41 test, identifier+op whitelist, dialect-aware LIMIT), G4 query_builder_v2.js multi-table builder (HEBE Pre-Plan Gate, keyboard nav, ARIA, prefers-reduced-motion), G5 observability sekmeleri (template-heatmap + failures-top + glossary-usage endpoint'leri + agentic_observability_faz6.js/css). Plan.md persistance protokolü (.agents/plans/) HERA. Bundle 741KB JS / 359KB CSS.
+    APP_VERSION: str = "3.29.8"  # v3.29.8 Signal Weight Tuner (3-layer agentic learning loop) — L1 multi_signal_rank.signal_breakdown pipeline_event emission (5 test, best-effort/silent-fail), L2 signal_weight_analyzer + migration 029 + scheduler hook (Pearson + Bayesian shrinkage + lambda smoothing + drift cap [0.5x,2x], 12 test), L3 signal_weight_overrides + audit_log migration 030 + load_company_weights TTL cache + 7-endpoint admin API + agentic_observability "Sinyal Ağırlıkları" tab (signal_weight_tuner.js/css, 12 test). Code review fixes B2 (per-company apply_company_scope in scheduler) + S1 (FOR UPDATE on /apply suggestion read). Sistem Sıfırla'ya ds_code_values + learned_query_failures + 3 swt tablosu eklendi (16 agentic tablo). Bundle 748KB JS / 361KB CSS.
 
     # Frontend & API prefix
     api_prefix: str = "/api"
@@ -192,6 +192,21 @@ class Settings(BaseSettings):
     # bir katı olarak çalışır (SCHEDULER_INTERVAL_SECONDS × bu çarpan).
     CODE_VALUE_AUTO_RESCAN_INTERVAL_MULT: int = 0   # 0 = off; örn 12 = ~1 saat
     CODE_VALUE_AUTO_RESCAN_MIN_AGE_MINUTES: int = 60  # Son tarama bu kadar eskiyse yeniden tara
+
+    # -------------------------------------------------
+    # Signal Weight Analyzer (v3.29.8 — Layer 2)
+    # -------------------------------------------------
+    # multi_signal_rank ağırlıklarının offline Pearson korelasyon
+    # tabanlı önerilerini üreten analyzer. Önerileri sadece
+    # signal_weight_suggestions tablosuna yazar; admin onayı (Layer 3)
+    # olmadan asıl ağırlıkları değiştirmez.
+    # 0 = devre dışı (manuel admin tetikleme). >0 ise scheduler interval'inin
+    # bir katı olarak çalışır (SCHEDULER_INTERVAL_SECONDS × bu çarpan).
+    # Default 288 → 288 × 300s ≈ 24 saat (günde 1 kez).
+    SIGNAL_WEIGHT_ANALYZER_INTERVAL_MULT: int = 0    # 0 = off; öneri 288 (~24h)
+    SIGNAL_WEIGHT_ANALYZER_WINDOW_DAYS: int = 7       # Pencere
+    SIGNAL_WEIGHT_ANALYZER_MIN_SAMPLE_SIZE: int = 50  # Sample yetersizse skip
+    SIGNAL_WEIGHT_ANALYZER_LAMBDA: float = 0.3        # Yumuşak ayarlama katsayısı
 
     # -------------------------------------------------
     # Langfuse Observability (v3.26.0 Faz 5 P2-b — opsiyonel)
