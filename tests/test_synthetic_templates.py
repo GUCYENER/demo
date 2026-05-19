@@ -16,6 +16,18 @@ from app.services.db_learning.synthetic_templates import (
     render_all,
 )
 
+# v3.29.2 G3: TEMPLATE_KINDS chain-only kinds da içeriyor (CHAIN_JOIN_*,
+# CTE_LATEST_N_PER_GROUP, LATERAL_TOP_K, JUNCTION_N2M). render() bunları
+# desteklemez (chain-only renderers ayrı orkestrasyon gerektirir). Test
+# parametrize için yalnız single-rel temelli renderable kinds kullanılır.
+SINGLE_REL_RENDERABLE = (
+    "LOOKUP_JOIN",
+    "AGGREGATE_COUNT",
+    "STRING_AGG_DETAILS",
+    "TIME_SERIES_GENERATE",
+    "WINDOW_RUNNING_TOTAL",
+)
+
 
 @pytest.fixture
 def rel():
@@ -31,7 +43,7 @@ def rel():
 
 
 class TestRender:
-    @pytest.mark.parametrize("kind", list(TEMPLATE_KINDS))
+    @pytest.mark.parametrize("kind", list(SINGLE_REL_RENDERABLE))
     def test_each_kind_returns_non_empty_sql(self, rel, kind):
         rq = render(rel, kind, dialect="postgresql")
         assert rq.sql.strip()
@@ -70,10 +82,13 @@ class TestRender:
 
 class TestRenderAll:
     def test_returns_one_per_template_kind(self, rel):
+        # render_all() backward-compatible: yalnız G1 set'i döner
+        # (LOOKUP_JOIN + AGGREGATE_COUNT). TEMPLATE_KINDS tüm v2 ailesini
+        # içerir ama chain-only kinds tek-Relationship'ten render edilemez.
         out = render_all(rel, dialect="postgresql")
         kinds = [r.template_kind for r in out]
-        assert set(kinds) == set(TEMPLATE_KINDS)
-        assert len(out) == len(TEMPLATE_KINDS)
+        assert set(kinds) == {"LOOKUP_JOIN", "AGGREGATE_COUNT"}
+        assert len(out) == 2
 
     def test_renders_question_in_turkish(self, rel):
         out = render_all(rel, dialect="postgresql")

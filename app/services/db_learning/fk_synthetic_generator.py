@@ -28,11 +28,29 @@ from app.services.db_learning.learned_queries_service import (
     record_successful_query,
 )
 from app.services.db_learning.synthetic_templates import (
+    COMPLEXITY_BY_KIND,
     Relationship,
     RenderedQuery,
     TEMPLATE_KINDS,
     render,
 )
+
+# v3.29.2 G3: tek-Relationship temelli ("per-FK") render edilebilen kinds.
+# Chain-only kinds (CHAIN_JOIN_*, CTE_LATEST_N_PER_GROUP, LATERAL_TOP_K,
+# JUNCTION_N2M) ayrı bir orchestrator gerektirir (fk_graph_resolver tabanlı).
+SINGLE_REL_KINDS: tuple = (
+    "LOOKUP_JOIN",
+    "AGGREGATE_COUNT",
+    "STRING_AGG_DETAILS",
+    "TIME_SERIES_GENERATE",
+    "WINDOW_RUNNING_TOTAL",
+)
+# v3.29.2 G3: yeni v2 template'ler — template_version=2 işaretlenir.
+V2_KINDS: frozenset = frozenset({
+    "CHAIN_JOIN_3HOP", "CHAIN_JOIN_NHOP", "CTE_LATEST_N_PER_GROUP",
+    "LATERAL_TOP_K", "STRING_AGG_DETAILS", "JUNCTION_N2M",
+    "TIME_SERIES_GENERATE", "WINDOW_RUNNING_TOTAL",
+})
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +152,10 @@ def _audit_run(
     learned_query_id: Optional[int],
 ) -> None:
     """ds_synthetic_query_runs'a audit kaydı (UNIQUE varsa upsert)."""
+    # v3.29.2 G3: template versioning meta
+    _tv = 2 if rq.template_kind in V2_KINDS else 1
+    _cs = getattr(rq, "complexity_score", None) or COMPLEXITY_BY_KIND.get(rq.template_kind, 1)
+    _jp = list(getattr(rq, "join_path", None) or rq.tables or [])
     try:
         cur.execute(
             """
@@ -142,12 +164,14 @@ def _audit_run(
                  from_schema, from_table, from_column,
                  to_schema, to_table, to_column,
                  template_kind, dialect, rendered_sql, sql_hash,
-                 success, row_count, elapsed_ms, error_message, learned_query_id)
+                 success, row_count, elapsed_ms, error_message, learned_query_id,
+                 template_version, complexity_score, join_path)
             VALUES (%s, %s, %s,
                     %s, %s, %s,
                     %s, %s, %s,
                     %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s)
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s)
             ON CONFLICT (source_id, relationship_id, template_kind)
               DO UPDATE SET
                 rendered_sql = EXCLUDED.rendered_sql,
@@ -158,7 +182,10 @@ def _audit_run(
                 row_count = EXCLUDED.row_count,
                 elapsed_ms = EXCLUDED.elapsed_ms,
                 error_message = EXCLUDED.error_message,
-                learned_query_id = COALESCE(EXCLUDED.learned_query_id, ds_synthetic_query_runs.learned_query_id)
+                learned_query_id = COALESCE(EXCLUDED.learned_query_id, ds_synthetic_query_runs.learned_query_id),
+                template_version = EXCLUDED.template_version,
+                complexity_score = EXCLUDED.complexity_score,
+                join_path = EXCLUDED.join_path
             """,
             (
                 source_id, company_id, rel.id,
@@ -166,6 +193,7 @@ def _audit_run(
                 rel.to_schema, rel.to_table, rel.to_column,
                 rq.template_kind, rq.dialect, rq.sql, sql_hash(rq.sql),
                 success, row_count, elapsed_ms, error_message, learned_query_id,
+                _tv, _cs, _jp,
             ),
         )
     except Exception as e:
@@ -220,7 +248,12 @@ def generate_for_source(
     """
     _started = time.perf_counter()
     summary = GenerationSummary(source_id=source_id, dialect=dialect)
-    kinds = template_kinds or list(TEMPLATE_KINDS)
+    # v3.29.2 G3: default G1 davranışını koru (LOOKUP_JOIN + AGGREGATE_COUNT).
+    # Caller ister tek-FK temelli G3 kinds (STRING_AGG_DETAILS, TIME_SERIES_*,
+    # WINDOW_*) ekleyebilir. Chain-only kinds bu loop'tan üretilmez.
+    kinds = template_kinds or ["LOOKUP_JOIN", "AGGREGATE_COUNT"]
+    # Render() çağrılabilir olmayan chain-only kinds'i sessizce filtrele
+    kinds = [k for k in kinds if k in SINGLE_REL_KINDS]
 
     rels = _fetch_relationships(cur, source_id)
     if max_fks is not None:
@@ -240,12 +273,28 @@ def generate_for_source(
         return summary
 
     # Her FK × template
+    # v3.28.9 Paket C: her iterasyon SAVEPOINT ile izole edilir. Aksi halde
+    # bir INSERT hatası (örn. embedding column tipi cast, FK violation)
+    # PostgreSQL transaction'ı poison eder → kalan tüm iterasyonlar
+    # "current transaction is aborted" alır ve sessizce başarısız olur.
+    _sp_counter = 0
     for rel in rels:
         for kind in kinds:
             summary.total_attempts += 1
+            _sp_counter += 1
+            _sp_name = f"sp_fkgen_{_sp_counter}"
+
+            try:
+                cur.execute(f"SAVEPOINT {_sp_name}")
+            except Exception as _sp_err:
+                logger.warning("[fk_gen.savepoint] %s", _sp_err)
 
             if skip_existing and _already_succeeded(cur, source_id, rel.id, kind):
                 summary.skipped_existing += 1
+                try:
+                    cur.execute(f"RELEASE SAVEPOINT {_sp_name}")
+                except Exception:
+                    pass
                 continue
 
             # Render
@@ -253,7 +302,12 @@ def generate_for_source(
                 rq = render(rel, kind, dialect=dialect)
             except Exception as e:
                 summary.failed_execute += 1
-                summary.errors.append(f"render rel={rel.id} kind={kind}: {e}")
+                if len(summary.errors) < 50:
+                    summary.errors.append(f"render rel={rel.id} kind={kind}: {e}")
+                try:
+                    cur.execute(f"RELEASE SAVEPOINT {_sp_name}")
+                except Exception:
+                    pass
                 continue
 
             # Execute on target DB (read-only, timeout aware)
@@ -266,24 +320,46 @@ def generate_for_source(
                 if not res.success:
                     err_msg = res.error or "execute failed"
                     summary.failed_execute += 1
+                    if len(summary.errors) < 50:
+                        summary.errors.append(
+                            f"execute rel={rel.id} kind={kind}: {err_msg[:200]}"
+                        )
+                    # v3.28.9: target DB hatası metadata cur'ı bozmaz, ama audit
+                    # öncesi safe — savepoint'i rollback'leme gerek yok.
                     _audit_run(cur, source_id, company_id, rel, rq,
                                success=False, row_count=None,
                                elapsed_ms=exec_ms, error_message=err_msg,
                                learned_query_id=None)
+                    try:
+                        cur.execute(f"RELEASE SAVEPOINT {_sp_name}")
+                    except Exception:
+                        pass
                     continue
                 row_count = int(res.row_count or 0)
             except Exception as e:
                 exec_ms = int((time.perf_counter() - _exec_start) * 1000)
                 err_msg = str(e)[:500]
                 summary.failed_execute += 1
+                if len(summary.errors) < 50:
+                    summary.errors.append(
+                        f"execute rel={rel.id} kind={kind} exception: {err_msg[:200]}"
+                    )
                 _audit_run(cur, source_id, company_id, rel, rq,
                            success=False, row_count=None,
                            elapsed_ms=exec_ms, error_message=err_msg,
                            learned_query_id=None)
+                try:
+                    cur.execute(f"RELEASE SAVEPOINT {_sp_name}")
+                except Exception:
+                    pass
                 continue
 
             # Başarılı + row_count >= 0 → öğret (boş sonuç da öğretici: tablo var, ilişki çalışıyor)
+            # v3.28.9 Paket C: learn fail durumunda success counter YANLIŞ artıyordu.
+            # Artık her dalda doğru sayım + hata mesajı korunur.
             learned_id: Optional[int] = None
+            learn_failed = False
+            learn_err_msg: Optional[str] = None
             try:
                 rec = record_successful_query(
                     cur,
@@ -296,21 +372,56 @@ def generate_for_source(
                     columns_meta=rq.columns_meta,
                     source="synthetic",
                     created_by_user_id=None,
+                    # v3.29.2 G3
+                    template_version=2 if kind in V2_KINDS else 1,
+                    complexity_score=getattr(rq, "complexity_score", None) or COMPLEXITY_BY_KIND.get(kind, 1),
+                    join_path=getattr(rq, "join_path", None) or rq.tables,
                 )
-                if rec.get("status") in ("inserted", "duplicate"):
+                _st = rec.get("status")
+                if _st in ("inserted", "duplicate"):
                     learned_id = rec.get("id")
                 else:
-                    summary.failed_learn += 1
+                    learn_failed = True
+                    learn_err_msg = (
+                        f"learn rel={rel.id} kind={kind} status={_st} "
+                        f"err={(rec.get('error') or rec.get('reason') or 'unknown')[:200]}"
+                    )
             except Exception as e:
-                summary.failed_learn += 1
-                summary.errors.append(f"learn rel={rel.id} kind={kind}: {e}")
+                learn_failed = True
+                learn_err_msg = f"learn rel={rel.id} kind={kind} exception: {str(e)[:200]}"
 
-            # Audit (success path)
+            if learn_failed:
+                summary.failed_learn += 1
+                if learn_err_msg and len(summary.errors) < 50:
+                    summary.errors.append(learn_err_msg)
+                # v3.28.9 Paket C: record_successful_query INSERT/dedupe sırasında
+                # patladığında cur'ın transaction'ı poison olabilir → audit_run
+                # öncesi savepoint'e rollback et, sonra audit'i temiz txn'da çalıştır.
+                try:
+                    cur.execute(f"ROLLBACK TO SAVEPOINT {_sp_name}")
+                except Exception:
+                    pass
+                _audit_run(cur, source_id, company_id, rel, rq,
+                           success=False, row_count=row_count,
+                           elapsed_ms=exec_ms, error_message=learn_err_msg,
+                           learned_query_id=None)
+                try:
+                    cur.execute(f"RELEASE SAVEPOINT {_sp_name}")
+                except Exception:
+                    pass
+                # ÖNEMLİ: success counter ARTMAZ — bu deneme öğretilemedi.
+                continue
+
+            # Audit (true success path)
             _audit_run(cur, source_id, company_id, rel, rq,
                        success=True, row_count=row_count,
                        elapsed_ms=exec_ms, error_message=None,
                        learned_query_id=learned_id)
             summary.success += 1
+            try:
+                cur.execute(f"RELEASE SAVEPOINT {_sp_name}")
+            except Exception:
+                pass
 
     summary.elapsed_ms = int((time.perf_counter() - _started) * 1000)
     return summary

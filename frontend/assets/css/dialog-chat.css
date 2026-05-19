@@ -2689,6 +2689,25 @@
     }
 }
 
+/* v3.28.7: Stream token alanı gizlendiğinde bubble görsel boşluğunu sıkıştır —
+   sample preview gibi extras kart görünür kalır. */
+.streaming-tokens[hidden] {
+    display: none !important;
+}
+
+.streaming-bubble.streaming-collapsed {
+    background: transparent;
+    padding: 0;
+    border: 0;
+    min-height: 0;
+    box-shadow: none;
+}
+
+.streaming-bubble.streaming-collapsed .streaming-cursor,
+.streaming-bubble.streaming-collapsed .streaming-status {
+    display: none !important;
+}
+
 /* Streaming status mesajı */
 .streaming-status {
     font-size: 12px;

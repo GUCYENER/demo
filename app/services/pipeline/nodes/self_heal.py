@@ -129,9 +129,14 @@ def self_heal_node(state: Dict[str, Any]) -> Dict[str, Any]:
     Validation veya execute sonrası çağrılır.
     State delta:
         - error_category: sınıflandırma sonucu
+        - error_class: DB error_class (G5 — syntax/missing_table/amb_column/…)
         - retry_hint: LLM'e gönderilecek ipucu (sql_generate okur)
         - retry_action: 'abort' | 'rewrite' | 'execute'
         - retry_count: rewrite ise +1
+        - failure_log_id: learned_query_failures.id (G5 — telemetry)
+
+    v3.29.4 G5: Hatalar `learned_query_failures` tablosuna kaydedilir; daha önce
+    kayıtlı pattern_hint/corrected_sql varsa retry_hint zenginleştirilir.
     """
     errors = state.get("validation_errors") or state.get("errors") or []
     if not errors:
@@ -152,6 +157,46 @@ def self_heal_node(state: Dict[str, Any]) -> Dict[str, Any]:
     }
     if action == "rewrite":
         out["retry_count"] = int(state.get("retry_count", 0)) + 1
+
+    # v3.29.4 G5 — Error pattern learning (best-effort)
+    cur = state.get("_cursor")
+    source_id = state.get("source_id")
+    company_id = state.get("company_id")
+    question = state.get("question") or ""
+    failed_sql = state.get("sql") or ""
+    if cur is not None and source_id and company_id and question and failed_sql:
+        try:
+            from app.services.db_learning.error_pattern_learner import (
+                classify_error as _classify_db,
+                record_failure,
+                suggest_fix,
+            )
+            error_class = _classify_db(category, last_err)
+            out["error_class"] = error_class
+
+            # Önce mevcut pattern_hint var mı? — varsa retry_hint'i zenginleştir
+            existing = suggest_fix(
+                cur, source_id=source_id,
+                question=question, error_class=error_class,
+            )
+            if existing and existing.get("pattern_hint"):
+                out["retry_hint"] = (
+                    (out["retry_hint"] or "") + "\n[Geçmiş pattern] " + existing["pattern_hint"]
+                )
+
+            # Failure'ı log + UPSERT (recurrence)
+            rec = record_failure(
+                cur,
+                source_id=source_id, company_id=company_id,
+                question=question, failed_sql=failed_sql,
+                error_class=error_class, error_message=last_err,
+            )
+            if rec.get("id"):
+                out["failure_log_id"] = rec["id"]
+            if rec.get("needs_review"):
+                out["needs_admin_review"] = True
+        except Exception as exc:
+            logger.debug("[self_heal] error pattern learning skipped: %s", exc)
 
     return out
 

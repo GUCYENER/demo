@@ -47,8 +47,72 @@ def _build_context(state: Dict[str, Any]) -> str:
         lines.append("\nGLOSSARY:")
         for h in glos[:5]:
             term = h.get("term") or ""
-            tgt = h.get("table") or ""
-            lines.append(f"  '{term}' -> {tgt}")
+            tgt = h.get("table") or h.get("mapped_table") or ""
+            exp = h.get("expansion_tr")
+            extra = f" ({exp})" if exp else ""
+            lines.append(f"  '{term}' -> {tgt}{extra}")
+
+    # v3.29.1 Faz 6 G2 — CODE VALUE HINTS
+    # Seçili tablolardaki kodlu kolonların TR etiketleri prompt'a enjekte edilir.
+    cur = state.get("_cursor")
+    source_id = state.get("source_id")
+    if cur is not None and source_id is not None and selected:
+        try:
+            from app.services.db_learning.code_value_extractor import list_for_column
+            code_lines: List[str] = []
+            for cand in selected[:5]:
+                tbl = cand.get("table_name") or ""
+                if not tbl:
+                    continue
+                for col in (cand.get("columns") or [])[:30]:
+                    cname = col.get("column_name") or ""
+                    if not cname:
+                        continue
+                    rows = list_for_column(cur, source_id, tbl, cname, limit=12)
+                    if not rows:
+                        continue
+                    parts = []
+                    for r in rows:
+                        cv = r.get("code_value")
+                        lbl = r.get("label_tr") or r.get("label_en")
+                        if cv and lbl:
+                            parts.append(f"{cv}={lbl}")
+                        elif cv:
+                            parts.append(str(cv))
+                    if parts:
+                        code_lines.append(f"  {tbl}.{cname}: " + ", ".join(parts[:12]))
+                    if len(code_lines) >= 12:
+                        break
+                if len(code_lines) >= 12:
+                    break
+            if code_lines:
+                lines.append("\nCODE VALUE HINTS:")
+                lines.extend(code_lines)
+        except Exception as exc:
+            logger.debug("[sql_generate] code value injection skipped: %s", exc)
+
+    # v3.29.3 Faz 6 G4 — SAMPLE DATA injection (PII-maskeli, prompt budget'lı)
+    # Seçili tablolar için ds_db_samples'tan max 3 satır, is_pii=TRUE kolonlar
+    # mask_value() ile maskelenerek LLM'in tip/format anlaması için verilir.
+    if cur is not None and source_id is not None and selected:
+        try:
+            from app.services.db_learning.sample_data_loader import (
+                format_for_prompt, load_samples_for_tables,
+            )
+            tbl_specs = [
+                {"schema_name": c.get("schema_name"), "table_name": c.get("table_name")}
+                for c in selected[:4]
+                if c.get("table_name")
+            ]
+            if tbl_specs:
+                payloads = load_samples_for_tables(cur, source_id, tbl_specs)
+                block = format_for_prompt(payloads)
+                if block:
+                    lines.append("")
+                    lines.append(block)
+        except Exception as exc:
+            logger.debug("[sql_generate] sample data injection skipped: %s", exc)
+
     return "\n".join(lines)
 
 

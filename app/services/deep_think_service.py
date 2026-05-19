@@ -2106,8 +2106,40 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             # ML + Entity Resolution sonuçlarını birleştir
             combined_matched = list(set(ml_matched_tables + entity_matched_tables))
 
+            # v3.28.9: Follow-up modunda önceki SQL'in FROM tablosunu çıpa olarak
+            # combined_matched'e MUTLAKA enjekte et. Aksi halde yeni sorudaki entity
+            # resolution farklı tabloya kayar ve pruner önceki tabloyu schema'dan
+            # düşürür → LLM tabloyu görmez ve halüsinasyon eder.
+            followup_anchor_tables: list = []
+            if follow_up_context and follow_up_context.get("prev_sql"):
+                try:
+                    import re as _re
+                    _prev_sql = follow_up_context.get("prev_sql", "")
+                    # FROM ... ve JOIN ... klozlarındaki tüm referansları yakala
+                    _refs = _re.findall(
+                        r'\b(?:FROM|JOIN)\s+("?[\w\.]+"?)',
+                        _prev_sql,
+                        flags=_re.IGNORECASE,
+                    )
+                    for _r in _refs:
+                        _r = _r.strip().strip('"').lower()
+                        if _r and _r not in followup_anchor_tables:
+                            followup_anchor_tables.append(_r)
+                    if followup_anchor_tables:
+                        for _at in followup_anchor_tables:
+                            if _at not in [m.lower() for m in combined_matched]:
+                                combined_matched.append(_at)
+                        log_system_event(
+                            "INFO",
+                            f"DB-Only Follow-up: prev_sql çıpa tabloları enjekte edildi → {followup_anchor_tables}",
+                            "deep_think", user_id
+                        )
+                except Exception as _fua_err:
+                    log_warning(f"DB-Only: Follow-up anchor extraction hatası: {_fua_err}", "deep_think")
+
             # v3.14.0: ML eşleşme varsa tüm tabloları al (pruning yapılacak),
             # ML eşleşme yoksa sadece enriched tabloları al (gereksiz tabloları LLM'e gönderme)
+            # v3.28.9: Follow-up modunda çıpa zaten matched'e eklendi — pruning aktif kalsın.
             use_enriched_only = not combined_matched
             schema_ctx = None
             source = None
@@ -2744,8 +2776,10 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             }}
 
             # ── 10. v4.0: Follow-up Önerileri ───────────────────────────────
+            # v3.28.8: sql_executed iletilir — fonksiyon FROM tablosunu çıkarıp
+            # gerçek kolonlardan öneri üretsin (aggregate result alias'ları değil).
             try:
-                followups = _generate_followup_suggestions(query, db_data, schema_ctx)
+                followups = _generate_followup_suggestions(query, db_data, schema_ctx, sql_executed)
                 if followups:
                     yield {"type": "followup", "data": {"suggestions": followups}}
             except Exception as _fu_err:
@@ -3223,14 +3257,23 @@ def _generate_report_templates(query: str, schema_ctx: dict) -> list:
     return heuristic[:3]
 
 
-def _generate_followup_suggestions(query: str, db_data: list, schema_ctx: dict) -> list:
+def _generate_followup_suggestions(query: str, db_data: list, schema_ctx: dict, sql_executed: str = "") -> list:
     """
     v3.14.0: Sorgu sonrasında kullanıcıya konuya uygun en az 3 follow-up önerisi üretir.
 
     Strateji:
-    1. Kural bazlı öneriler (veri yapısından — tarih, sayı, satır sayısı)
+    1. Kural bazlı öneriler (gerçek tablo kolonlarından — tarih, sayı, status)
     2. Şema bazlı öneriler (ilişkili tablolardan derinleştirme)
     3. Kural + şema yeterli değilse LLM ile tamamla
+
+    v3.28.8:
+      - Aggregate sonuç kolonları (alias'lar) yerine asıl FROM tablosunun
+        gerçek kolonları kullanılır. Tablo, sql_executed'in FROM clause'undan
+        regex ile çıkarılır; bulunamazsa eski heuristic (col_names ∩ schema)
+        devreye girer.
+      - LLM önerilerinde raw SQL döndürme filtresi: query alanı SELECT/INSERT
+        gibi anahtarla başlıyorsa öneri atılır (canlıda LLM bazen SQL üretip
+        pipeline'ı kilitliyordu).
 
     Returns:
         [{"text": "...", "query": "..."}, ...]  — min 3, max 5 öneri
@@ -3246,55 +3289,138 @@ def _generate_followup_suggestions(query: str, db_data: list, schema_ctx: dict) 
 
     suggestions = []
 
-    # ── 1. Kural bazlı öneriler (veri yapısından) ──────────────────────
-    date_cols = [c for c in col_names if any(
-        kw in c.lower() for kw in ("tarih", "date", "time", "created", "updated", "zaman", "period")
-    )]
-    # v3.27.1: id/code/year gibi identifier kolonları sum/avg için anlamsız → hariç tut
+    # v3.28.8: önce SQL'den tablo adını çıkarıp schema_ctx'te eşle.
+    # Aggregate sorgularda (COUNT/AVG/SUM) result kolonları alias olur
+    # ve gerçek tablo kolonu değildir — bu nedenle FROM-tablosunu bulup
+    # onun columns_json içindeki gerçek kolonları kullanmamız şart.
+    matched_table: dict | None = None
+    try:
+        if sql_executed and schema_ctx:
+            _tables_ctx_sql = schema_ctx.get("tables", []) or []
+            _m = re.search(r'\bFROM\s+("?[\w\.]+"?)', sql_executed, re.IGNORECASE)
+            if _m:
+                _ref = _m.group(1).strip().strip('"').lower()
+                _ref_tbl = _ref.split(".")[-1]
+                for _t in _tables_ctx_sql:
+                    if (_t.get("name") or "").lower() == _ref_tbl:
+                        matched_table = _t
+                        break
+    except Exception:
+        matched_table = None
+
+    # v3.28.7: Öneri text/query'lerinde kullanılacak ana tablo etiketini
+    # (admin_label_tr / business_name_tr / name) bir kez çöz — kural-bazlı
+    # öneriler de LLM dalı gibi tablo bağlamına bağlansın.
+    tbl_label: str | None = None
+    if matched_table:
+        tbl_label = (matched_table.get("admin_label_tr")
+                     or matched_table.get("business_name_tr")
+                     or matched_table.get("name"))
+    try:
+        if not tbl_label and schema_ctx and col_names:
+            _tables_ctx = schema_ctx.get("tables", []) or []
+            _col_lc = {c.lower() for c in col_names}
+            _matched: list[tuple[int, dict]] = []
+            for _t in _tables_ctx:
+                _t_cols = {(c.get("name") or "").lower() for c in (_t.get("columns") or [])}
+                _hits = len(_col_lc & _t_cols)
+                if _hits:
+                    _matched.append((_hits, _t))
+            if _matched:
+                _matched.sort(key=lambda x: x[0], reverse=True)
+                matched_table = matched_table or _matched[0][1]
+                _lbl = (_matched[0][1].get("admin_label_tr")
+                        or _matched[0][1].get("business_name_tr")
+                        or _matched[0][1].get("name"))
+                if _lbl:
+                    tbl_label = _lbl
+    except Exception:
+        pass
+
+    # ── 1. Kural bazlı öneriler ────────────────────────────────────────
+    # v3.28.8: önce gerçek tablonun kolonları (matched_table.columns) üzerinden
+    # tespit yap. Bulunamadıysa eski fallback (result-set first_row.keys()).
     _id_like = ("id", "code", "no", "kod", "year", "yil", "yıl")
-    numeric_cols = [
-        c for c in col_names
-        if isinstance(first_row, dict) and isinstance(first_row.get(c), (int, float))
-        and not any(kw in c.lower() for kw in _id_like)
-    ]
-    status_cols = [c for c in col_names if any(
-        kw in c.lower() for kw in ("status", "durum", "stat", "state", "tip", "type", "kategori", "category")
-    )]
+
+    real_cols: list[dict] = []
+    if matched_table:
+        real_cols = matched_table.get("columns") or []
+
+    if real_cols:
+        # tip + isim heuristic'i — type bilgisi varsa onu önce kullan
+        _numeric_types = ("int", "float", "numeric", "decimal", "double", "real", "bigint", "smallint", "money")
+        _date_types = ("date", "time", "timestamp", "datetime")
+        date_cols = []
+        numeric_cols = []
+        status_cols = []
+        for _c in real_cols:
+            _cname = _c.get("name") or ""
+            _ctype = str(_c.get("type") or "").lower()
+            if not _cname:
+                continue
+            _cl = _cname.lower()
+            if any(t in _ctype for t in _date_types) or any(kw in _cl for kw in (
+                "tarih", "date", "time", "created", "updated", "zaman", "period"
+            )):
+                date_cols.append(_cname)
+            elif any(t in _ctype for t in _numeric_types) and not any(kw in _cl for kw in _id_like):
+                numeric_cols.append(_cname)
+            if any(kw in _cl for kw in (
+                "status", "durum", "stat", "state", "tip", "type", "kategori", "category"
+            )):
+                status_cols.append(_cname)
+    else:
+        # Fallback: aggregate sonuç kolonlarından heuristic (eski davranış)
+        date_cols = [c for c in col_names if any(
+            kw in c.lower() for kw in ("tarih", "date", "time", "created", "updated", "zaman", "period")
+        )]
+        numeric_cols = [
+            c for c in col_names
+            if isinstance(first_row, dict) and isinstance(first_row.get(c), (int, float))
+            and not any(kw in c.lower() for kw in _id_like)
+        ]
+        status_cols = [c for c in col_names if any(
+            kw in c.lower() for kw in ("status", "durum", "stat", "state", "tip", "type", "kategori", "category")
+        )]
 
     # v3.27.1: Önerileri tablo şemasına bağla — metin ve query gerçek kolon adlarını içersin.
+    # v3.28.7: Tablo etiketi de hem text hem query'ye enjekte edilir (alakasız öneri bug-fix).
+    _tbl_text_pref = f"{tbl_label} — " if tbl_label else ""
+    _tbl_query_pref = f"{tbl_label} tablosunda " if tbl_label else f"{query} — "
+
     if date_cols:
         dc = date_cols[0]
         suggestions.append({
-            "text": f"📈 {dc} alanına göre aylık trend",
-            "query": f"{query} — {dc} alanını aylık grupla, trend olarak göster"
+            "text": f"📈 {_tbl_text_pref}{dc} alanına göre aylık trend",
+            "query": f"{_tbl_query_pref}{dc} alanını aylık grupla, trend olarak göster"
         })
 
     if numeric_cols:
         nc = numeric_cols[0]
         suggestions.append({
-            "text": f"📊 {nc} için toplam ve ortalama",
-            "query": f"{query} — {nc} alanının toplam, ortalama, min ve max değerlerini hesapla"
+            "text": f"📊 {_tbl_text_pref}{nc} için toplam ve ortalama",
+            "query": f"{_tbl_query_pref}{nc} alanının toplam, ortalama, min ve max değerlerini hesapla"
         })
 
     if status_cols:
         status_col = status_cols[0]
         suggestions.append({
-            "text": f"📋 {status_col} bazında dağılım",
-            "query": f"{query} — {status_col} kolonuna göre grupla ve sayıları göster"
+            "text": f"📋 {_tbl_text_pref}{status_col} bazında dağılım",
+            "query": f"{_tbl_query_pref}{status_col} kolonuna göre grupla ve sayıları göster"
         })
 
     if row_count >= 10 and numeric_cols:
         nc = numeric_cols[0]
         suggestions.append({
-            "text": f"🔝 {nc} alanına göre en yüksek 10 kayıt",
-            "query": f"{query} — {nc} alanına göre azalan sırala ve ilk 10'u göster"
+            "text": f"🔝 {_tbl_text_pref}{nc} alanına göre en yüksek 10 kayıt",
+            "query": f"{_tbl_query_pref}{nc} alanına göre azalan sırala ve ilk 10'u göster"
         })
 
     if date_cols and numeric_cols:
         dc = date_cols[0]
         suggestions.append({
-            "text": f"📅 {dc} ile son 7 gün karşılaştırma",
-            "query": f"{query} — {dc} alanı üzerinden son 7 günle önceki 7 günü karşılaştır"
+            "text": f"📅 {_tbl_text_pref}{dc} ile son 7 gün karşılaştırma",
+            "query": f"{_tbl_query_pref}{dc} alanı üzerinden son 7 günle önceki 7 günü karşılaştır"
         })
 
     # ── 2. Şema bazlı öneriler (ilişkili tablolardan) ──────────────────
@@ -3332,21 +3458,30 @@ def _generate_followup_suggestions(query: str, db_data: list, schema_ctx: dict) 
                         bname = t.get("admin_label_tr") or t.get("business_name_tr") or related_table
                         break
                 suggestions.append({
-                    "text": f"🔗 {bname} detayıyla birleştir",
-                    "query": f"{query} — {bname} tablosu ile JOIN yaparak detay ekle"
+                    "text": f"🔗 {_tbl_text_pref}{bname} detayıyla birleştir",
+                    "query": f"{_tbl_query_pref}{bname} tablosu ile JOIN yaparak detay ekle"
                 })
                 if len(suggestions) >= 5:
                     break
 
-    # ── 3. LLM ile tamamla (min 3'e ulaşamadıysa) ─────────────────────
-    if len(suggestions) < 3:
+    # ── 3. LLM ile tamamla (min 3'e ulaşamadıysa veya tablo etiketi çözülemediyse) ─
+    # v3.28.7: tbl_label None ise kural-bazlı öneriler tablo bağlamından yoksun olur;
+    # LLM yedek zenginleştirme her zaman tetiklensin.
+    if len(suggestions) < 3 or not tbl_label:
         try:
-            col_sample = ", ".join(col_names[:8])
-            # v3.27.1: LLM'e ana tablo adlarını ve örnek satırı ver — öneriler
-            # gerçek tabloya bağlı, generic değil olsun.
+            # v3.28.8: LLM'e GERÇEK tablo kolonlarını ver — aggregate alias değil.
+            if real_cols:
+                _real_col_str = ", ".join(
+                    f"{(c.get('name') or '')}({(c.get('type') or '?')})" for c in real_cols[:20]
+                )
+            else:
+                _real_col_str = ", ".join(col_names[:8])
+            col_sample = _real_col_str
             used_tables_list: list[str] = []
             try:
-                if schema_ctx:
+                if tbl_label:
+                    used_tables_list = [tbl_label]
+                elif schema_ctx:
                     tables = schema_ctx.get("tables", []) or []
                     used_set = set()
                     for t in tables:
@@ -3366,16 +3501,26 @@ def _generate_followup_suggestions(query: str, db_data: list, schema_ctx: dict) 
                     sample_row_str = ", ".join(f"{k}={v}" for k, v in items)
             except Exception:
                 pass
+            # v3.28.7: hedef öneri sayısı — tbl_label çözülemediyse de en az 2 öneri iste
+            _llm_need = max(2, 3 - len(suggestions))
             messages = [
                 {
                     "role": "system",
                     "content": (
                         "Sen bir veri analisti asistansın. Kullanıcının veritabanı sorgusuna "
-                        f"ilişkin {3 - len(suggestions)} adet kısa follow-up soru öner. "
+                        f"ilişkin {_llm_need} adet kısa follow-up soru öner. "
                         "Sorular kullanıcının SORGULADIĞI TABLO/KOLON adlarına doğrudan referans "
-                        "vermeli; generic 'trend göster' gibi değil, kolon adı içermeli. Türkçe.\n"
+                        "vermeli; generic 'trend göster' gibi değil, hem TABLO ADI hem kolon adı "
+                        "içermeli. Türkçe.\n\n"
+                        "ÖNEMLİ KURALLAR:\n"
+                        "1) ASLA SQL ifadesi (SELECT/INSERT/UPDATE/DELETE/FROM/WHERE/JOIN) YAZMA. "
+                        "Sadece doğal dilde Türkçe soru/komut yaz.\n"
+                        "2) 'Dönen veri kolonları' aggregate alias olabilir (örn. 'problem_kayit_sayisi') — "
+                        "bunları KULLANMA. Yalnızca aşağıdaki GERÇEK TABLO KOLONLARI listesinden "
+                        "kolon adı seç.\n"
+                        "3) Tablo adı ve kolon adı GERÇEK olmalı, uydurma — listede yoksa kullanma.\n\n"
                         "YANIT FORMATI — JSON array:\n"
-                        '[{"text":"📋 Kısa buton etiketi (max 6 kelime, kolon adı içerebilir)","query":"Tam sorgu metni"},...]\n'
+                        '[{"text":"📋 Kısa buton etiketi (tablo + gerçek kolon, max 8 kelime)","query":"Doğal dilde Türkçe sorgu metni — tablo adıyla"},...]\n'
                         "Sadece JSON döndür."
                     ),
                 },
@@ -3383,9 +3528,9 @@ def _generate_followup_suggestions(query: str, db_data: list, schema_ctx: dict) 
                     "role": "user",
                     "content": (
                         f"Kullanıcının sorusu: {query}\n"
-                        f"İlgili tablolar: {tables_hint}\n"
-                        f"Dönen veri kolonları: {col_sample}\n"
-                        f"Örnek satır: {sample_row_str or '(boş)'}\n"
+                        f"İlgili tablo etiketi: {tables_hint}\n"
+                        f"GERÇEK TABLO KOLONLARI (öneride bunları kullan): {col_sample}\n"
+                        f"Örnek satır (yalnız bağlam için): {sample_row_str or '(boş)'}\n"
                         f"Satır sayısı: {row_count}"
                     ),
                 },
@@ -3396,9 +3541,44 @@ def _generate_followup_suggestions(query: str, db_data: list, schema_ctx: dict) 
                 match = re.search(r'\[.*\]', raw, re.DOTALL)
                 if match:
                     llm_suggestions = _json.loads(match.group(0))
-                    suggestions.extend(llm_suggestions[:3 - len(suggestions)])
+                    # v3.28.8: raw SQL içerikli önerileri filtrele — LLM bazen
+                    # query alanına "SELECT MIN(tarih)..." gibi SQL döküyordu;
+                    # pipeline'a girince intent-extraction fail edip cevap üretmez.
+                    _sql_kw = re.compile(
+                        r'^\s*(SELECT|INSERT|UPDATE|DELETE|WITH|MERGE|TRUNCATE|DROP|CREATE)\b',
+                        re.IGNORECASE,
+                    )
+                    _filtered: list = []
+                    for _s in llm_suggestions:
+                        if not isinstance(_s, dict):
+                            continue
+                        _q = (_s.get("query") or "").strip()
+                        _t = (_s.get("text") or "").strip()
+                        if not _q or not _t:
+                            continue
+                        if _sql_kw.match(_q) or _sql_kw.match(_t):
+                            log_warning(
+                                f"_generate_followup_suggestions: SQL içerikli öneri atıldı: {_q[:80]}",
+                                "deep_think",
+                            )
+                            continue
+                        _filtered.append(_s)
+                    suggestions.extend(_filtered[:_llm_need])
         except Exception as e:
             log_warning(f"_generate_followup_suggestions LLM hata: {e}", "deep_think")
+
+    # v3.28.8: Final filtre — kural/şema dallarında da raw-SQL geçmesin
+    _sql_kw_final = re.compile(
+        r'^\s*(SELECT|INSERT|UPDATE|DELETE|WITH|MERGE|TRUNCATE|DROP|CREATE)\b',
+        re.IGNORECASE,
+    )
+    suggestions = [
+        s for s in suggestions
+        if isinstance(s, dict)
+           and s.get("text") and s.get("query")
+           and not _sql_kw_final.match((s.get("query") or "").strip())
+           and not _sql_kw_final.match((s.get("text") or "").strip())
+    ]
 
     # Deduplicate ve sınırla
     seen = set()

@@ -361,7 +361,10 @@ const DSEnrichmentModule = (() => {
         const savedCursorPos = wasSearchFocused && searchInput ? searchInput.selectionStart : null;
 
         if (_filteredData.length === 0 && _searchQuery === '' && !_filterLowScore) {
-            const total = parseInt(document.querySelector('.ds-enrich-stat-num')?.textContent || "0");
+            // v3.28.7 fix: önceki kod sayfadaki İLK .ds-enrich-stat-num'ü okuyordu
+            // (LLM Bekleyen = 0) → her zaman "Enrichment Bekleniyor" mesajı düşüyordu.
+            // Toplam tablo sayısını doğrudan state'ten al.
+            const total = _pendingData.length;
             const pendingCount = _pendingData.filter(x => !x.is_approved).length;
             
             // Eğer gösterilecek onaylılar yoksa veya _showApproved kapalıysa tam ekran boş durumları göster.

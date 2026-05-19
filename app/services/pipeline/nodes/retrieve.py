@@ -47,25 +47,31 @@ def _expand_with_glossary(
         where.append("(company_id IS NULL OR company_id = %s)")
         params.append(company_id)
 
-    # 1) tsv match (term + synonyms + description üzerinde)
+    # 1) tsv match (term + synonyms + description + expansion_tr + mapped_table)
+    # v3.29.1 G2: term_type, expansion_tr, mapped_table, mapped_columns alanları okunur.
+    used_ids: List[int] = []
     try:
         tsv_where = " AND ".join(where + ["tsv @@ plainto_tsquery('pg_catalog.simple', %s)"])
         params_tsv = list(params) + [query_text]
+        common_cols = ("id, term, synonyms, canonical_schema, canonical_table, canonical_column, description, "
+                       "term_type, expansion_tr, mapped_table, mapped_columns, admin_verified")
         if where:
             sql = f"""
-                SELECT term, synonyms, canonical_schema, canonical_table, canonical_column, description
+                SELECT {common_cols}
                   FROM business_glossary
                  WHERE {tsv_where}
-                 ORDER BY ts_rank(tsv, plainto_tsquery('pg_catalog.simple', %s)) DESC
+                 ORDER BY admin_verified DESC NULLS LAST, usage_count DESC NULLS LAST,
+                          ts_rank(tsv, plainto_tsquery('pg_catalog.simple', %s)) DESC
                  LIMIT %s
             """
             cur.execute(sql, params_tsv + [query_text, limit])
         else:
-            sql = """
-                SELECT term, synonyms, canonical_schema, canonical_table, canonical_column, description
+            sql = f"""
+                SELECT {common_cols}
                   FROM business_glossary
                  WHERE tsv @@ plainto_tsquery('pg_catalog.simple', %s)
-                 ORDER BY ts_rank(tsv, plainto_tsquery('pg_catalog.simple', %s)) DESC
+                 ORDER BY admin_verified DESC NULLS LAST, usage_count DESC NULLS LAST,
+                          ts_rank(tsv, plainto_tsquery('pg_catalog.simple', %s)) DESC
                  LIMIT %s
             """
             cur.execute(sql, [query_text, query_text, limit])
@@ -78,15 +84,38 @@ def _expand_with_glossary(
                     if s not in seen:
                         seen.add(s)
                         expanded_terms.append(s)
+            # expansion_tr → genişletmeye de eklenir (örn 'L1' → 'Level 1 destek')
+            exp_tr = r.get("expansion_tr") if hasattr(r, "get") else None
+            if exp_tr and exp_tr not in seen:
+                seen.add(exp_tr)
+                expanded_terms.append(exp_tr)
             hints.append({
                 "term": term,
+                "term_type": r.get("term_type") if hasattr(r, "get") else None,
+                "expansion_tr": exp_tr,
                 "schema": r.get("canonical_schema"),
                 "table": r.get("canonical_table"),
                 "column": r.get("canonical_column"),
+                "mapped_table": r.get("mapped_table") if hasattr(r, "get") else None,
+                "mapped_columns": (r.get("mapped_columns") if hasattr(r, "get") else None) or [],
+                "admin_verified": bool(r.get("admin_verified")) if hasattr(r, "get") else False,
                 "description": r.get("description"),
             })
+            rid = r.get("id") if hasattr(r, "get") else None
+            if rid is not None:
+                used_ids.append(rid)
     except Exception as e:
         logger.warning("[QueryExpand] glossary tsv hata: %s", e)
+
+    # usage_count + last_used_at bump (best-effort)
+    if used_ids:
+        try:
+            cur.execute(
+                "UPDATE business_glossary SET usage_count = usage_count + 1, last_used_at = NOW() WHERE id = ANY(%s)",
+                (used_ids,),
+            )
+        except Exception:
+            pass
 
     return {"expanded_terms": expanded_terms, "canonical_hints": hints}
 
