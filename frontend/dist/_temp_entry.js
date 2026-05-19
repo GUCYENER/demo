@@ -29602,7 +29602,9 @@ const DSEnrichmentModule = (() => {
                             <i class="fa-solid fa-circle-check" style="color: #4cd964;"></i>
                             <h4>Onay Bekleyen Tablo Yok</h4>
                             <p>Harika! Tespit edilen tüm tablolar incelendi ve onaylandı.</p>
-                            <button class="ds-enrich-btn" style="margin-top:20px;width:auto;padding:8px 16px;" onclick="document.querySelector('#dsShowApprovedChk').click()">
+                            <!-- v3.29.10 fix (bug #2): empty state render'da #dsShowApprovedChk DOM'da yok.
+                                 Doğrudan modül metodunu çağırarak null TypeError engellendi. -->
+                            <button class="ds-enrich-btn" style="margin-top:20px;width:auto;padding:8px 16px;" onclick="DSEnrichmentModule.toggleShowApprovedFilter(true)">
                                 Onaylıları Gözden Geçir
                             </button>
                         </div>
