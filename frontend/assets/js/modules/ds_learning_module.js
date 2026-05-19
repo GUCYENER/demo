@@ -555,7 +555,12 @@ window.DSLearningModule = (function () {
                         </div>
                         <div class="ds-result-card">
                             <div class="ds-result-card-label">FK İlişkileri</div>
-                            <div class="ds-result-card-value">${result.relationship_count || 0}</div>
+                            <div class="ds-result-card-value">${(result.total_relationships !== undefined) ? result.total_relationships : (result.relationship_count || 0)}</div>
+                            ${(result.inferred_count !== undefined && result.inferred_count > 0) ? `
+                            <div class="ds-result-card-sub" style="font-size:11px;color:#666;margin-top:4px;">
+                                <span title="Veritabanında FK constraint olarak tanımlı">Declared: ${result.declared_count || result.relationship_count || 0}</span>
+                                · <span title="Naming/type pattern ile çıkarsanan (is_inferred=TRUE)">Inferred: ${result.inferred_count}</span>
+                            </div>` : ''}
                         </div>
                         <div class="ds-result-card">
                             <div class="ds-result-card-label">Toplam Sütun</div>
@@ -1168,7 +1173,12 @@ window.DSLearningModule = (function () {
                     </div>
                     <div class="ds-result-card">
                         <div class="ds-result-card-label">FK İlişkileri</div>
-                        <div class="ds-result-card-value">${resultData.relationship_count || 0}</div>
+                        <div class="ds-result-card-value">${(resultData.total_relationships !== undefined) ? resultData.total_relationships : (resultData.relationship_count || 0)}</div>
+                        ${(resultData.inferred_count !== undefined && resultData.inferred_count > 0) ? `
+                        <div class="ds-result-card-sub" style="font-size:11px;color:#666;margin-top:4px;">
+                            <span title="Veritabanında FK constraint olarak tanımlı">Declared: ${resultData.declared_count || resultData.relationship_count || 0}</span>
+                            · <span title="Naming/type pattern ile çıkarsanan (is_inferred=TRUE)">Inferred: ${resultData.inferred_count}</span>
+                        </div>` : ''}
                     </div>
                     <div class="ds-result-card">
                         <div class="ds-result-card-label">Toplam Sütun</div>

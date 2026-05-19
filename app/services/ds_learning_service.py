@@ -959,6 +959,7 @@ def detect_objects(source: dict, vyra_conn) -> dict:
         # Tüm 4 dialect için çalışır (PG / Oracle / MSSQL / MySQL).
         # Hedef DB'ye bağlanmaz — sadece VYRA DB'deki ds_db_objects'i okur.
         # Hata olması keşfi BLOKLAMAZ.
+        inferred_count = 0
         try:
             from app.services.db_learning.fk_inference_service import (
                 infer_fks_for_source,
@@ -988,6 +989,23 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                 "[DSLearning.fk_inference] failed source=%s: %s",
                 source_id, str(_fk_inf_err)[:200],
             )
+
+        # v3.29.11: inferred FK sayısını otoriter olarak DB'den oku (UI için)
+        try:
+            vyra_cur.execute(
+                "SELECT COUNT(*) FROM ds_db_relationships "
+                "WHERE source_id = %s AND is_inferred = TRUE",
+                (source_id,),
+            )
+            _row = vyra_cur.fetchone()
+            if _row:
+                inferred_count = int(_row[0] if not hasattr(_row, "get") else _row.get("count", _row[0]))
+        except Exception as _inf_count_err:
+            try:
+                vyra_conn.rollback()
+            except Exception:
+                pass
+            logger.debug("[DSLearning.fk_inference] inferred_count read failed: %s", _inf_count_err)
 
         # Snapshot oluştur ve diff hesapla (v3.0)
         snapshot_result = {}
@@ -1037,6 +1055,10 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                 "table_count": sum(1 for o in objects if o["object_type"] == "table"),
                 "view_count": sum(1 for o in objects if o["object_type"] == "view"),
                 "relationship_count": len(relationships),
+                # v3.29.11: declared (DB FK constraint) ve inferred (naming/type) ayrı gösterilsin
+                "declared_count": len(relationships),
+                "inferred_count": inferred_count,
+                "total_relationships": len(relationships) + inferred_count,
                 "total_columns": sum(o["column_count"] for o in objects),
                 "elapsed_ms": elapsed,
                 "snapshot": {
