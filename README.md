@@ -75,6 +75,12 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.29.11 (2026-05-19) - DB Learning live-fix: dedupe pgvector guard + inferred FK count
+- 🛡️ **L2 dedupe pgvector guard (HEPHAESTUS):** `app/services/db_learning/dedupe_service.py` Layer 2 başına lazy-import `_detect_embedding_column_type(cur)` koruması eklendi. Canlı OnedeskTest'te `learned_db_queries.question_embedding` kolonu `float8[]` (udt=`_float8`) olduğu için `<=> %s::vector` sorgusu transaction'ı poison'lıyor, ardışık INSERT'ler `InFailedSqlTransaction` ile patlıyordu (58/58 FK Loop attempt fail). Tip `vector` değilse L2 sessizce atlanır (debug log); L1 hash + L3 Jaccard yeterli fallback. `lookup_cached_sql` ve `few_shot_auto_populator` zaten guard'lıydı — regresyon kapatıldı.
+- 📊 **Inferred FK count expose (HERMES):** `app/services/ds_learning_service.py` FK Inference auto-trigger sonrası `ds_db_relationships WHERE is_inferred=TRUE` sayımı yapılıp response'a `inferred_count` / `declared_count` / `total_relationships` alanları eklendi. Hata güvenli (rollback + 0 fallback).
+- 🖥️ **UI rozet (ATHENA):** `frontend/assets/js/modules/ds_learning_module.js` "FK İlişkileri" kartı `total_relationships` (declared+inferred) gösteriyor; inferred>0 ise altında "Declared: X · Inferred: Y" rozet rivi (iki yer: Step 2 ve detail panel).
+- 📋 **Plan:** `.agents/plans/v3.29.11_dedupe_pgvector_guard.md` (status: completed, commit: 88aed91).
+
 ### 🆕 v3.29.10 (2026-05-19) - Housekeeping + Live Bug Fix
 - 🧹 **Working tree closure:** v3.29.0 → v3.29.9 boyunca biriken 36 dosya (modified + untracked) mantıksal commit gruplarına ayrılarak hira branch'a alındı: db_learning supporting modules (cardinality/code-value/error-pattern/fk-graph/incremental/sample-data), feature_permissions + permission_audit endpoints, disambiguation_card pipeline node, failure_queue + tooltip + feature_permissions frontend, migrations 023-028 (relationship_cardinality, business_glossary_v2, code_value_dictionary, template_versioning, pii_flag, query_failure_log).
 - 📋 **Plan dosyaları kapanışı:** `.agents/plans/v3.29.8_signal_weight_tuner.md` ve `.agents/plans/v3.29.9_fk_inference.md` frontmatter'larına `status: completed` + commit hash eklendi (HERA persistence).
@@ -3729,7 +3735,7 @@ netstat -an | findstr "5005"
 
 **Geliştirici:** Yasın Fazlıoğlu  
 **E-posta:** yasin.fazlioglu@consultant.turkcell.com.tr  
-**Versiyon:** 3.29.10 (Faz 6 closure + Signal Weight Tuner + Multi-dialect FK Inference + Housekeeping/Bug Fix)
+**Versiyon:** 3.29.11 (DB Learning live-fix: dedupe pgvector guard + inferred FK count)
 
 ---
 
