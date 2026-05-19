@@ -91,6 +91,95 @@
     </section>
   </div>
 
+  <!-- v3.29.7 G5 — Faz 6 sekmeleri -->
+  <nav class="ao-tabs" role="tablist" aria-label="Faz 6 öğrenme metrikleri">
+    <button type="button" class="ao-tab ao-tab--active" role="tab" aria-selected="true"
+            aria-controls="aoTabTemplates" id="aoTabBtnTemplates"
+            data-tooltip="Template kullanım heatmap'i (kind × complexity)">
+      <i class="fa-solid fa-grip"></i> Template Kullanımı
+    </button>
+    <button type="button" class="ao-tab" role="tab" aria-selected="false"
+            aria-controls="aoTabFailures" id="aoTabBtnFailures"
+            data-tooltip="Tekrar eden hata pattern'leri">
+      <i class="fa-solid fa-triangle-exclamation"></i> Hatalar (Top-10)
+    </button>
+    <button type="button" class="ao-tab" role="tab" aria-selected="false"
+            aria-controls="aoTabGlossary" id="aoTabBtnGlossary"
+            data-tooltip="İş sözlüğü kullanım istatistikleri">
+      <i class="fa-solid fa-book"></i> Glossary Kullanımı
+    </button>
+  </nav>
+
+  <!-- Tab: Template heatmap -->
+  <section class="ao-panel ao-tab-pane ao-tab-pane--active" id="aoTabTemplates"
+           role="tabpanel" aria-labelledby="aoTabBtnTemplates">
+    <h3 class="ao-tab-pane__title">Template Kullanım Heatmap (son 30 gün)</h3>
+    <div id="aoHeatmapLoading" class="ao-loading" hidden role="status" aria-live="polite">
+      <div class="vyra-skeleton-shimmer" style="height:140px;"></div>
+    </div>
+    <div id="aoHeatmapEmpty" class="ao-empty" hidden>Henüz template kullanım verisi yok</div>
+    <div class="ao-heatmap-wrap">
+      <table id="aoHeatmapTable" class="ao-heatmap-table"
+             aria-label="Template kullanım heatmap'i">
+        <thead><tr><th scope="col">Template</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Tab: Failures top-10 -->
+  <section class="ao-panel ao-tab-pane" id="aoTabFailures" role="tabpanel"
+           aria-labelledby="aoTabBtnFailures" hidden>
+    <h3 class="ao-tab-pane__title">Tekrar Eden Hatalar — Top 10</h3>
+    <div id="aoFailuresLoading" class="ao-loading" hidden role="status" aria-live="polite">
+      <div class="vyra-skeleton-shimmer" style="height:140px;"></div>
+    </div>
+    <div id="aoFailuresEmpty" class="ao-empty" hidden>Şu an tekrar eden hata yok 🎉</div>
+    <div class="ao-table-wrap">
+      <table id="aoFailuresTable" class="ao-table" aria-label="Hata tekrar listesi">
+        <thead>
+          <tr>
+            <th scope="col">Hata Sınıfı</th>
+            <th scope="col">Tekrar</th>
+            <th scope="col">SQL (kısaltılmış)</th>
+            <th scope="col">İpucu</th>
+            <th scope="col">Son</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <h4 class="ao-tab-pane__subtitle">Sınıf Bazında Toplam</h4>
+    <ul id="aoFailuresByClass" class="ao-bar-list" aria-label="Hata sınıfı toplamları"></ul>
+  </section>
+
+  <!-- Tab: Glossary -->
+  <section class="ao-panel ao-tab-pane" id="aoTabGlossary" role="tabpanel"
+           aria-labelledby="aoTabBtnGlossary" hidden>
+    <h3 class="ao-tab-pane__title">Glossary Kullanım İstatistikleri</h3>
+    <div id="aoGlossaryLoading" class="ao-loading" hidden role="status" aria-live="polite">
+      <div class="vyra-skeleton-shimmer" style="height:140px;"></div>
+    </div>
+    <div id="aoGlossaryEmpty" class="ao-empty" hidden>Henüz glossary kullanım verisi yok</div>
+    <div class="ao-table-wrap">
+      <table id="aoGlossaryTable" class="ao-table" aria-label="Glossary terim listesi">
+        <thead>
+          <tr>
+            <th scope="col">Terim</th>
+            <th scope="col">Tip</th>
+            <th scope="col">Açılım</th>
+            <th scope="col">Tablo</th>
+            <th scope="col">Kullanım</th>
+            <th scope="col">Doğr.</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <h4 class="ao-tab-pane__subtitle">Tip Bazında Toplam</h4>
+    <ul id="aoGlossaryByType" class="ao-bar-list" aria-label="Glossary tip toplamları"></ul>
+  </section>
+
   <!-- 4) Son run'lar -->
   <section class="ao-panel" aria-labelledby="aoRecentTitle">
     <h3 id="aoRecentTitle">Son 20 Çalışma</h3>

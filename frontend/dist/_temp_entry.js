@@ -8766,6 +8766,7 @@ window.DialogTicketModule = (function () {
         }
         html += '</tbody></table></div>';
 
+        // v3.28.7: footer — meta bilgi + "Sorguyu Özelleştir" CTA (drag-drop builder)
         const footer = `
             <div class="sample-preview-footer">
                 <span class="sample-preview-meta">
@@ -8773,12 +8774,68 @@ window.DialogTicketModule = (function () {
                     ${payload.row_count && payload.row_count > rows.length ? ` (cache: ${payload.row_count})` : ''}
                 </span>
                 ${payload.fetched_at ? `<span class="sample-preview-fetched" data-tooltip="Cache zamanı">⏱ ${_esc(payload.fetched_at.slice(0, 16).replace('T', ' '))}</span>` : ''}
+                <button type="button"
+                        class="sample-preview-customize-btn"
+                        aria-label="Sorguyu özelleştir — drag-drop builder aç"
+                        data-tooltip="Pre-execute drag-drop: kolon seç, filtre ekle, SQL önizle">
+                    ✏️ Sorguyu Özelleştir
+                </button>
             </div>
         `;
 
         body.innerHTML = html + footer;
         card.classList.remove('sample-preview-loading');
         card.setAttribute('aria-busy', 'false');
+
+        // CTA → QueryBuilder.open
+        const btn = card.querySelector('.sample-preview-customize-btn');
+        if (btn && window.QueryBuilder && typeof window.QueryBuilder.open === 'function') {
+            btn.addEventListener('click', () => _openQueryBuilder(card, hint, payload));
+        } else if (btn) {
+            // QueryBuilder yüklenmemişse butonu pasifleştir, sebebi tooltip'e yaz
+            btn.disabled = true;
+            btn.setAttribute('data-tooltip', 'Query Builder modülü yüklenmedi.');
+        }
+    }
+
+    /**
+     * Sample preview altına Query Builder render eder ve mevcut açık builder'ı kapatır.
+     */
+    function _openQueryBuilder(card, hint, payload) {
+        if (!window.QueryBuilder || typeof window.QueryBuilder.open !== 'function') return;
+        if (typeof window.QueryBuilder.close === 'function') {
+            try { window.QueryBuilder.close(); } catch (_) { /* sessiz */ }
+        }
+
+        // QueryBuilder'ın yerleşeceği container — sample card'ın hemen altına
+        let qbContainer = card.querySelector('.sample-preview-qb-container');
+        if (!qbContainer) {
+            qbContainer = document.createElement('div');
+            qbContainer.className = 'sample-preview-qb-container';
+            card.appendChild(qbContainer);
+        } else {
+            qbContainer.innerHTML = '';
+        }
+
+        // columns: backend [{name, type}] döner; defensif olarak string array'i de tolere et
+        const rawCols = Array.isArray(payload.columns) ? payload.columns : [];
+        const columns = rawCols.map((c) => (typeof c === 'string' ? { name: c, type: '' } : c))
+            .filter((c) => c && c.name);
+
+        window.QueryBuilder.open({
+            parentEl: qbContainer,
+            sourceId: hint.source_id,
+            schema: hint.schema || null,
+            table: hint.table,
+            columns: columns,
+            onSqlReady: (sql, params, warnings) => {
+                // Phase 1: SQL'i preview panelinde göster (QueryBuilder kendi içinde gösterir).
+                // Otomatik execute yapılmaz — kullanıcı niyet sahibi.
+                if (warnings && warnings.length) {
+                    console.info('[QueryBuilder] uyarılar:', warnings);
+                }
+            },
+        });
     }
 
     /**
@@ -9369,6 +9426,1170 @@ window.DialogTicketModule = (function () {
 })();
 
 
+/* === assets/js/modules/disambiguation_card.js === */
+/**
+ * VYRA v3.29.7 G2 — Disambiguation Card v2
+ * =========================================
+ * SSE event `clarification_v2` için zengin "Bunu mu kastettiniz?" kartları.
+ *
+ * Backend payload (her kart):
+ *   {
+ *     schema, table, label_tr, score, matched_terms,
+ *     row_count_estimate, preview_sql,
+ *     sample_rows: [{col1:val, col2:val, ...}],
+ *     masked_columns: [str], join_paths_to_target: [[node, node, ...]],
+ *     truncated: bool
+ *   }
+ *
+ * Public API:
+ *   window.DisambiguationCardV2.render(cards, query, message, onSelect, container)
+ *
+ * HEBE compliance:
+ *   - data-tooltip + aria-label ikon-only buton zorunluluğu
+ *   - keyboard erişim (Tab/Enter/Space/Esc)
+ *   - role="radiogroup" / role="radio" semantic
+ *   - CSS değişkenler (no hex), FontAwesome 6 (fa-solid)
+ *   - Türkçe label_tr defaultu + admin_verified rozeti
+ */
+(function () {
+    'use strict';
+
+    /** XSS-safe text → DOM */
+    function _escape(s) {
+        const div = document.createElement('div');
+        div.textContent = String(s == null ? '' : s);
+        return div.innerHTML;
+    }
+
+    function _formatRowCount(n) {
+        if (n == null || isNaN(n)) return '';
+        if (n < 1000) return String(n);
+        if (n < 1_000_000) return (n / 1000).toFixed(1).replace('.0', '') + 'K';
+        return (n / 1_000_000).toFixed(1).replace('.0', '') + 'M';
+    }
+
+    /** Sample rows mini-table */
+    function _renderSampleTable(rows, maskedCols) {
+        if (!Array.isArray(rows) || rows.length === 0) {
+            return `<div class="disambig-sample-empty">
+                <i class="fa-solid fa-circle-info"></i>
+                <span>Örnek satır yok</span>
+            </div>`;
+        }
+        const cols = Object.keys(rows[0]);
+        const maskedSet = new Set(maskedCols || []);
+        const head = cols.map(c => {
+            const masked = maskedSet.has(c);
+            const icon = masked ? '<i class="fa-solid fa-eye-slash" aria-hidden="true"></i> ' : '';
+            const tt = masked ? 'PII maskelenmiş kolon' : 'Kolon adı';
+            return `<th data-tooltip="${_escape(tt)}">${icon}${_escape(c)}</th>`;
+        }).join('');
+        const body = rows.slice(0, 3).map(row => {
+            const cells = cols.map(c => {
+                const v = row[c];
+                const str = v == null ? '<span class="disambig-null">∅</span>' : _escape(String(v).slice(0, 40));
+                return `<td>${str}</td>`;
+            }).join('');
+            return `<tr>${cells}</tr>`;
+        }).join('');
+        return `<table class="disambig-sample-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    }
+
+    /** Join path chips: ["public.problem","public.party"] → 'problem → party' */
+    function _renderJoinPaths(paths) {
+        if (!Array.isArray(paths) || paths.length === 0) return '';
+        const chips = paths.slice(0, 3).map(path => {
+            if (!Array.isArray(path) || path.length === 0) return '';
+            const nodes = path.map(n => {
+                const parts = String(n).split('.');
+                const short = parts[parts.length - 1] || n;
+                return `<span class="disambig-path-node">${_escape(short)}</span>`;
+            }).join('<i class="fa-solid fa-arrow-right disambig-path-arrow" aria-hidden="true"></i>');
+            return `<div class="disambig-path-chip" data-tooltip="JOIN yolu (${_escape(path.join(' → '))})">
+                <i class="fa-solid fa-diagram-project" aria-hidden="true"></i>
+                ${nodes}
+            </div>`;
+        }).join('');
+        return `<div class="disambig-paths">
+            <span class="disambig-section-label">
+                <i class="fa-solid fa-route" aria-hidden="true"></i> Bağlantılı tablolar
+            </span>
+            ${chips}
+        </div>`;
+    }
+
+    function _renderCard(card, index, total) {
+        const full = card.schema && card.schema !== 'public'
+            ? `${card.schema}.${card.table}`
+            : card.table;
+        const label = card.label_tr || full;
+        const rowCount = _formatRowCount(card.row_count_estimate);
+        const score = (card.score || 0).toFixed(2);
+        const truncated = card.truncated
+            ? `<span class="disambig-badge disambig-badge-warn" data-tooltip="Bazı kolonlar PII gizliliği için maskelendi">
+                 <i class="fa-solid fa-shield-halved" aria-hidden="true"></i> PII maskeli
+               </span>`
+            : '';
+        const matchedTerms = (card.matched_terms || []).slice(0, 4).map(t =>
+            `<span class="disambig-term">${_escape(t)}</span>`).join('');
+
+        return `<div class="disambig-card-v2"
+                     role="radio"
+                     tabindex="0"
+                     aria-checked="false"
+                     aria-labelledby="disambig-title-${index}"
+                     data-schema="${_escape(card.schema || '')}"
+                     data-table="${_escape(card.table || '')}"
+                     data-full="${_escape(full)}">
+
+            <div class="disambig-card-header">
+                <div class="disambig-card-title-wrap">
+                    <i class="fa-solid fa-table disambig-card-icon" aria-hidden="true"></i>
+                    <div>
+                        <h4 class="disambig-card-title" id="disambig-title-${index}">
+                            ${_escape(label)}
+                        </h4>
+                        <div class="disambig-card-meta">
+                            <code class="disambig-card-fqn">${_escape(full)}</code>
+                            ${rowCount ? `<span class="disambig-meta-sep">•</span>
+                                <span class="disambig-row-count" data-tooltip="Tahmini satır sayısı">
+                                    <i class="fa-solid fa-database" aria-hidden="true"></i> ${rowCount} satır
+                                </span>` : ''}
+                            <span class="disambig-meta-sep">•</span>
+                            <span class="disambig-score" data-tooltip="Sıralama puanı (0-1)">
+                                <i class="fa-solid fa-chart-simple" aria-hidden="true"></i> ${score}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                ${truncated}
+            </div>
+
+            ${matchedTerms ? `<div class="disambig-terms">${matchedTerms}</div>` : ''}
+
+            <div class="disambig-sample">
+                <span class="disambig-section-label">
+                    <i class="fa-solid fa-eye" aria-hidden="true"></i> Örnek veri
+                </span>
+                ${_renderSampleTable(card.sample_rows, card.masked_columns)}
+            </div>
+
+            ${_renderJoinPaths(card.join_paths_to_target)}
+
+            <div class="disambig-card-actions">
+                <button type="button" class="disambig-select-btn"
+                        aria-label="Bu tabloyu seç ve sorguyu yeniden gönder"
+                        data-tooltip="Bu tabloyu seçip sorguyu yeniden çalıştır">
+                    <i class="fa-solid fa-check" aria-hidden="true"></i>
+                    <span>Bunu seç</span>
+                </button>
+            </div>
+        </div>`;
+    }
+
+    /**
+     * Render zengin disambiguation kartları.
+     *
+     * @param {Array} cards - SSE clarification_v2 cards
+     * @param {string} query - Original kullanıcı sorgusu
+     * @param {string} message - Üst mesaj
+     * @param {Function} onSelect - (selectedFull, card) => void
+     * @param {HTMLElement} container - Hedef container (yoksa string döner)
+     * @returns {HTMLElement | string} container veya HTML string
+     */
+    function render(cards, query, message, onSelect, container) {
+        if (!Array.isArray(cards) || cards.length === 0) {
+            const msg = `<div class="vyra-empty-state">
+                <i class="fa-solid fa-circle-question" aria-hidden="true"></i>
+                <h3>Eşleşen tablo bulunamadı</h3>
+                <p>Soruyu farklı kelimelerle yeniden deneyin.</p>
+            </div>`;
+            if (container) { container.innerHTML = msg; return container; }
+            return msg;
+        }
+
+        const html = `<div class="disambig-v2-wrap"
+                           role="radiogroup"
+                           aria-label="Tablo seçimi"
+                           data-query="${_escape(query || '')}">
+            <div class="disambig-v2-header">
+                <i class="fa-solid fa-circle-question disambig-v2-icon" aria-hidden="true"></i>
+                <div>
+                    <h3 class="disambig-v2-title">${_escape(message || 'Hangi tabloyu kastettiniz?')}</h3>
+                    ${query ? `<p class="disambig-v2-query"><em>"${_escape(query)}"</em></p>` : ''}
+                </div>
+            </div>
+            <div class="disambig-v2-cards">
+                ${cards.map((c, i) => _renderCard(c, i, cards.length)).join('')}
+            </div>
+        </div>`;
+
+        if (!container) return html;
+
+        container.innerHTML = html;
+        const wrap = container.querySelector('.disambig-v2-wrap');
+        if (!wrap) return container;
+
+        const cardEls = wrap.querySelectorAll('.disambig-card-v2');
+
+        function _select(cardEl) {
+            // ARIA güncelleme
+            cardEls.forEach(el => el.setAttribute('aria-checked', 'false'));
+            cardEl.setAttribute('aria-checked', 'true');
+            cardEl.classList.add('disambig-selected');
+            // Diğer butonları devre dışı bırak
+            wrap.querySelectorAll('.disambig-select-btn').forEach(b => {
+                b.disabled = true;
+                b.classList.add('disambig-btn-disabled');
+            });
+            const full = cardEl.dataset.full || '';
+            const schema = cardEl.dataset.schema || '';
+            const table = cardEl.dataset.table || '';
+            // Toast bilgi (proje API'si window.showToast)
+            if (typeof window.showToast === 'function') {
+                window.showToast(`✓ ${full} seçildi`, 'success');
+            }
+            const matched = cards.find(c => (c.table === table && (c.schema || '') === schema));
+            if (typeof onSelect === 'function') {
+                onSelect(full, matched);
+            }
+        }
+
+        // Click + Keyboard (Enter/Space)
+        cardEls.forEach(cardEl => {
+            const btn = cardEl.querySelector('.disambig-select-btn');
+            if (btn) {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    _select(cardEl);
+                });
+            }
+            cardEl.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    _select(cardEl);
+                }
+            });
+            // Card body click (button hariç)
+            cardEl.addEventListener('click', (e) => {
+                if (e.target.closest('.disambig-select-btn')) return;
+                cardEl.focus();
+            });
+        });
+
+        // İlk karta odaklan (klavye akışı)
+        if (cardEls.length > 0) {
+            setTimeout(() => cardEls[0].focus(), 80);
+        }
+
+        return container;
+    }
+
+    window.DisambiguationCardV2 = { render };
+})();
+
+
+/* === assets/js/modules/query_builder_v2.js === */
+/**
+ * VYRA Query Builder v2 — v3.29.7 G4
+ * ===================================
+ * Multi-table drag-drop Query Builder.
+ *
+ *  - 2–8 tablo: arama + ekleme (sol panel)
+ *  - FK path auto-suggest (orta panel) → /api/query-builder/suggest-path
+ *  - Per-tablo kolon seçimi, filtre, agg/group_by (sağ panel)
+ *  - SQL preview + opsiyonel 5s sample execute → /api/query-builder/preview
+ *
+ * HEBE Pre-Plan Gate uyumluluğu:
+ *   - role="application" + role="list"
+ *   - aria-label + data-tooltip
+ *   - Tam keyboard erişimi (Tab/Enter/Space/Escape/Arrows)
+ *   - aria-live="polite" status announcer
+ *   - prefers-reduced-motion fallback (CSS)
+ *   - Basit/Gelişmiş toggle (default: Basit = 2-hop)
+ *
+ * window.QueryBuilderV2 = {
+ *   open({ parentEl, sourceId, dialect?, tablesCatalog?, onSqlReady? }),
+ *   close()
+ * }
+ *
+ * tablesCatalog: [{ schema, table, label_tr?, columns: [{name, type}] }, ...]
+ *   Eğer verilmezse /api/data-sources/{sourceId}/objects'tan çekilir.
+ */
+(function () {
+    'use strict';
+
+    const JOIN_TYPES = [
+        { v: 'INNER', label: 'INNER' },
+        { v: 'LEFT', label: 'LEFT' },
+        { v: 'RIGHT', label: 'RIGHT' },
+        { v: 'FULL', label: 'FULL' },
+    ];
+
+    const FILTER_OPS = [
+        { v: '=', label: '=' },
+        { v: '!=', label: '≠' },
+        { v: '<', label: '<' },
+        { v: '<=', label: '≤' },
+        { v: '>', label: '>' },
+        { v: '>=', label: '≥' },
+        { v: 'LIKE', label: 'LIKE' },
+        { v: 'ILIKE', label: 'ILIKE' },
+        { v: 'IN', label: 'IN (csv)' },
+        { v: 'NOT IN', label: 'NOT IN (csv)' },
+        { v: 'BETWEEN', label: 'BETWEEN (a,b)' },
+        { v: 'IS NULL', label: 'IS NULL' },
+        { v: 'IS NOT NULL', label: 'IS NOT NULL' },
+    ];
+
+    const AGG_FUNCS = ['', 'SUM', 'COUNT', 'AVG', 'MIN', 'MAX'];
+
+    let _activeRoot = null;
+
+    // ───────────────────────── helpers ─────────────────────────
+
+    function _el(tag, attrs = {}, ...children) {
+        const e = document.createElement(tag);
+        for (const [k, v] of Object.entries(attrs)) {
+            if (k === 'class') e.className = v;
+            else if (k === 'text') e.textContent = v;
+            else if (k.startsWith('on') && typeof v === 'function') e.addEventListener(k.slice(2), v);
+            else if (v !== undefined && v !== null) e.setAttribute(k, v);
+        }
+        for (const c of children) {
+            if (c == null) continue;
+            e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+        }
+        return e;
+    }
+
+    function _announce(root, msg) {
+        const live = root.querySelector('.qbv2-live');
+        if (live) live.textContent = msg;
+    }
+
+    function _toast(msg, type = 'info') {
+        if (window.toast && typeof window.toast[type] === 'function') {
+            window.toast[type](msg);
+        } else if (window.showToast) {
+            window.showToast(msg, type);
+        } else {
+            console.warn('[qbv2]', type, msg);
+        }
+    }
+
+    async function _fetchJson(url, options = {}) {
+        const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+        const token = (window.apiClient && window.apiClient.getToken && window.apiClient.getToken())
+            || localStorage.getItem('access_token');
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const resp = await fetch(url, { ...options, headers });
+        if (!resp.ok) {
+            const text = await resp.text().catch(() => '');
+            throw new Error(`HTTP ${resp.status}: ${text.slice(0, 200)}`);
+        }
+        return resp.json();
+    }
+
+    // ───────────────────────── state ─────────────────────────
+
+    /**
+     * state = {
+     *   sourceId, dialect, catalog: [{schema, table, label_tr, columns}],
+     *   tables: [{ schema, table, alias }],
+     *   joins: [{ from_table, from_column, to_table, to_column, join_type }],
+     *   select: [{ table, column, alias?, agg? }],
+     *   filters: [{ table, column, op, value }],
+     *   groupBy: [{ table, column }],
+     *   orderBy: { table, column, direction } | null,
+     *   limit: number,
+     *   advanced: boolean,
+     * }
+     */
+    function _emptyState(sourceId, dialect) {
+        return {
+            sourceId, dialect: dialect || 'postgresql',
+            catalog: [],
+            tables: [], joins: [],
+            select: [], filters: [], groupBy: [],
+            orderBy: null, limit: 50, advanced: false,
+        };
+    }
+
+    function _aliasFor(table) { return table; }
+
+    // ───────────────────────── catalog load ─────────────────────────
+
+    async function _loadCatalog(state) {
+        if (state.catalog && state.catalog.length) return state.catalog;
+        try {
+            const data = await _fetchJson(`/api/data-sources/${state.sourceId}/objects`);
+            const items = (data && (data.items || data.objects || data)) || [];
+            state.catalog = items.map((o) => ({
+                schema: o.schema_name || o.schema || 'public',
+                table: o.table_name || o.name,
+                label_tr: o.business_name_tr || o.admin_label_tr || '',
+                columns: o.columns_json || o.columns || [],
+            })).filter((x) => x.table);
+        } catch (err) {
+            console.warn('[qbv2] catalog fetch failed:', err);
+            state.catalog = [];
+            _toast('Şema yüklenemedi: ' + err.message, 'warning');
+        }
+        return state.catalog;
+    }
+
+    // ───────────────────────── render: shell ─────────────────────────
+
+    function _renderShell(parentEl, state) {
+        parentEl.innerHTML = '';
+        const root = _el('div', {
+            class: 'qbv2-root',
+            role: 'application',
+            'aria-label': 'Multi-table sorgu oluşturucu',
+        });
+
+        const header = _el('div', { class: 'qbv2-header' },
+            _el('div', { class: 'qbv2-title' },
+                _el('i', { class: 'fa-solid fa-diagram-project' }),
+                _el('span', { text: ' Multi-table Query Builder' }),
+            ),
+            _el('div', { class: 'qbv2-toolbar' },
+                _el('label', { class: 'qbv2-toggle', 'data-tooltip': 'Basit: 2 tablo, Gelişmiş: 3+ tablo' },
+                    _el('input', {
+                        type: 'checkbox',
+                        class: 'qbv2-adv-checkbox',
+                        'aria-label': 'Gelişmiş mod (3+ tablo)',
+                        onchange: (e) => {
+                            state.advanced = e.target.checked;
+                            _announce(root, state.advanced ? 'Gelişmiş mod' : 'Basit mod');
+                        },
+                    }),
+                    _el('span', { text: ' Gelişmiş' }),
+                ),
+                _el('button', {
+                    type: 'button',
+                    class: 'qbv2-btn qbv2-btn-secondary',
+                    'aria-label': 'Sorgu oluşturucuyu kapat',
+                    'data-tooltip': 'Kapat (Esc)',
+                    onclick: () => close(),
+                },
+                    _el('i', { class: 'fa-solid fa-xmark' }),
+                ),
+            ),
+        );
+
+        const body = _el('div', { class: 'qbv2-body' },
+            _el('div', { class: 'qbv2-pane qbv2-pane-left', 'aria-label': 'Tablo arama' }),
+            _el('div', { class: 'qbv2-pane qbv2-pane-center', 'aria-label': 'Seçili tablolar ve join yolları' }),
+            _el('div', { class: 'qbv2-pane qbv2-pane-right', 'aria-label': 'Kolon ve filtre seçimi' }),
+        );
+
+        const footer = _el('div', { class: 'qbv2-footer' },
+            _el('button', {
+                type: 'button',
+                class: 'qbv2-btn qbv2-btn-primary',
+                'data-tooltip': 'SQL üret ve önizle',
+                'aria-label': 'SQL önizle',
+                onclick: () => _doPreview(root, state, false),
+            },
+                _el('i', { class: 'fa-solid fa-eye' }),
+                _el('span', { text: ' SQL Önizle' }),
+            ),
+            _el('button', {
+                type: 'button',
+                class: 'qbv2-btn qbv2-btn-success',
+                'data-tooltip': '5 saniyelik örnek yürütme (20 satır)',
+                'aria-label': 'Örnek çalıştır',
+                onclick: () => _doPreview(root, state, true),
+            },
+                _el('i', { class: 'fa-solid fa-play' }),
+                _el('span', { text: ' Örnek Çalıştır' }),
+            ),
+            _el('div', { class: 'qbv2-live', role: 'status', 'aria-live': 'polite' }),
+        );
+
+        const previewBox = _el('div', { class: 'qbv2-preview', 'aria-label': 'SQL önizleme' });
+
+        root.appendChild(header);
+        root.appendChild(body);
+        root.appendChild(footer);
+        root.appendChild(previewBox);
+        parentEl.appendChild(root);
+
+        // Esc → close
+        root.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') { e.preventDefault(); close(); }
+        });
+
+        _activeRoot = root;
+        return root;
+    }
+
+    // ───────────────────────── render: left (tablo arama) ─────────────────────────
+
+    function _renderLeftPane(root, state) {
+        const pane = root.querySelector('.qbv2-pane-left');
+        pane.innerHTML = '';
+
+        pane.appendChild(_el('h4', { class: 'qbv2-pane-title', text: 'Tablolar' }));
+
+        const search = _el('input', {
+            type: 'search',
+            class: 'qbv2-search-input',
+            placeholder: 'Tablo ara…',
+            'aria-label': 'Tablo arama kutusu',
+            oninput: (e) => _renderTableList(pane, state, e.target.value),
+        });
+        pane.appendChild(search);
+
+        const list = _el('div', {
+            class: 'qbv2-table-list',
+            role: 'list',
+            'aria-label': 'Mevcut tablolar listesi',
+        });
+        pane.appendChild(list);
+
+        _renderTableList(pane, state, '');
+    }
+
+    function _renderTableList(pane, state, filterText) {
+        const list = pane.querySelector('.qbv2-table-list');
+        list.innerHTML = '';
+        const q = (filterText || '').trim().toLowerCase();
+        const items = state.catalog.filter((c) => {
+            if (!q) return true;
+            return (c.table.toLowerCase().includes(q)
+                || (c.label_tr || '').toLowerCase().includes(q)
+                || (c.schema || '').toLowerCase().includes(q));
+        }).slice(0, 50);
+
+        if (items.length === 0) {
+            list.appendChild(_el('div', {
+                class: 'qbv2-empty',
+                text: q ? 'Eşleşen tablo yok' : 'Tablo bulunamadı',
+            }));
+            return;
+        }
+
+        items.forEach((c) => {
+            const alreadyAdded = state.tables.some((t) => t.schema === c.schema && t.table === c.table);
+            const btn = _el('button', {
+                type: 'button',
+                class: 'qbv2-table-item' + (alreadyAdded ? ' qbv2-table-added' : ''),
+                role: 'listitem',
+                'aria-label': `${c.schema}.${c.table} tablosunu ekle`,
+                'data-tooltip': c.label_tr || `${c.schema}.${c.table}`,
+                disabled: alreadyAdded ? 'true' : null,
+                onclick: () => _addTable(root => _renderAll(root, state), state, c),
+            },
+                _el('i', { class: 'fa-solid fa-table' }),
+                _el('span', { class: 'qbv2-table-name', text: ` ${c.table}` }),
+                _el('span', { class: 'qbv2-table-schema', text: c.schema }),
+            );
+            list.appendChild(btn);
+        });
+    }
+
+    function _addTable(rerender, state, catalogEntry) {
+        if (state.tables.length >= 8) {
+            _toast('En fazla 8 tablo eklenebilir', 'warning');
+            return;
+        }
+        if (state.tables.some((t) => t.schema === catalogEntry.schema && t.table === catalogEntry.table)) {
+            return;
+        }
+        state.tables.push({
+            schema: catalogEntry.schema,
+            table: catalogEntry.table,
+            alias: _aliasFor(catalogEntry.table),
+            columns: catalogEntry.columns || [],
+            label_tr: catalogEntry.label_tr || '',
+        });
+        // Otomatik path öner (2+ tablo varsa son eklenen ile birinci arası)
+        if (state.tables.length >= 2) {
+            _autoSuggestPath(state, state.tables[0], state.tables[state.tables.length - 1]);
+        }
+        rerender(_activeRoot);
+        _announce(_activeRoot, `${catalogEntry.table} eklendi`);
+    }
+
+    function _removeTable(state, idx) {
+        const removed = state.tables.splice(idx, 1)[0];
+        if (!removed) return;
+        // İlgili join/select/filter/groupBy temizle
+        state.joins = state.joins.filter((j) => j.from_table !== removed.table && j.to_table !== removed.table);
+        state.select = state.select.filter((s) => s.table !== removed.table);
+        state.filters = state.filters.filter((f) => f.table !== removed.table);
+        state.groupBy = state.groupBy.filter((g) => g.table !== removed.table);
+        if (state.orderBy && state.orderBy.table === removed.table) state.orderBy = null;
+    }
+
+    async function _autoSuggestPath(state, src, dst) {
+        if (!src || !dst || src.table === dst.table) return;
+        try {
+            const result = await _fetchJson('/api/query-builder/suggest-path', {
+                method: 'POST',
+                body: JSON.stringify({
+                    source_id: state.sourceId,
+                    src: { schema: src.schema, table: src.table },
+                    dst: { schema: dst.schema, table: dst.table },
+                    k: 3, max_hops: 5,
+                }),
+            });
+            const paths = (result && (result.paths || result.results)) || [];
+            if (paths.length && paths[0].edges && paths[0].edges.length) {
+                paths[0].edges.forEach((edge) => {
+                    const exists = state.joins.some((j) =>
+                        j.from_table === edge.from_table && j.from_column === edge.from_column
+                        && j.to_table === edge.to_table && j.to_column === edge.to_column);
+                    if (!exists) {
+                        state.joins.push({
+                            from_table: edge.from_table,
+                            from_column: edge.from_column,
+                            to_table: edge.to_table,
+                            to_column: edge.to_column,
+                            join_type: 'INNER',
+                        });
+                    }
+                });
+                _announce(_activeRoot, `${paths[0].edges.length} adımlı JOIN yolu önerildi`);
+                _renderCenterPane(_activeRoot, state);
+            }
+        } catch (err) {
+            console.warn('[qbv2] suggest-path failed:', err);
+        }
+    }
+
+    // ───────────────────────── render: center (selected tables + joins) ─────────────────────────
+
+    function _renderCenterPane(root, state) {
+        const pane = root.querySelector('.qbv2-pane-center');
+        pane.innerHTML = '';
+
+        pane.appendChild(_el('h4', { class: 'qbv2-pane-title', text: 'Seçili Tablolar' }));
+
+        if (state.tables.length === 0) {
+            pane.appendChild(_el('div', {
+                class: 'qbv2-empty',
+                text: 'Soldan tablo seçin (2–8 arası)',
+            }));
+            return;
+        }
+
+        const tableList = _el('ol', { class: 'qbv2-selected-tables', 'aria-label': 'Seçili tablolar' });
+        state.tables.forEach((t, idx) => {
+            tableList.appendChild(_el('li', { class: 'qbv2-selected-item' },
+                _el('span', { class: 'qbv2-selected-name', text: `${t.schema}.${t.table}` }),
+                _el('button', {
+                    type: 'button',
+                    class: 'qbv2-icon-btn',
+                    'aria-label': `${t.table} tablosunu kaldır`,
+                    'data-tooltip': 'Kaldır',
+                    onclick: () => { _removeTable(state, idx); _renderAll(root, state); },
+                },
+                    _el('i', { class: 'fa-solid fa-trash' }),
+                ),
+            ));
+        });
+        pane.appendChild(tableList);
+
+        // JOIN edge editor
+        pane.appendChild(_el('h4', { class: 'qbv2-pane-title', text: 'JOIN Yolu' }));
+        if (state.joins.length === 0) {
+            pane.appendChild(_el('div', {
+                class: 'qbv2-empty',
+                text: state.tables.length >= 2 ? 'Otomatik öneri yok — manuel ekleyin' : '',
+            }));
+        } else {
+            const joinList = _el('ol', { class: 'qbv2-join-list' });
+            state.joins.forEach((j, idx) => {
+                joinList.appendChild(_renderJoinRow(root, state, j, idx));
+            });
+            pane.appendChild(joinList);
+        }
+
+        // Yeni join ekle butonu
+        if (state.tables.length >= 2) {
+            const addBtn = _el('button', {
+                type: 'button',
+                class: 'qbv2-btn qbv2-btn-secondary qbv2-btn-sm',
+                'data-tooltip': 'Manuel JOIN edge ekle',
+                'aria-label': 'JOIN ekle',
+                onclick: () => {
+                    state.joins.push({
+                        from_table: state.tables[0].table, from_column: '',
+                        to_table: state.tables[1].table, to_column: '',
+                        join_type: 'INNER',
+                    });
+                    _renderCenterPane(root, state);
+                },
+            },
+                _el('i', { class: 'fa-solid fa-plus' }),
+                _el('span', { text: ' JOIN ekle' }),
+            );
+            pane.appendChild(addBtn);
+        }
+    }
+
+    function _renderJoinRow(root, state, j, idx) {
+        const li = _el('li', { class: 'qbv2-join-row', role: 'group', 'aria-label': `JOIN ${idx + 1}` });
+
+        const typeSel = _el('select', {
+            class: 'qbv2-mini-select',
+            'aria-label': 'JOIN tipi',
+            onchange: (e) => { j.join_type = e.target.value; },
+        });
+        JOIN_TYPES.forEach((jt) => {
+            const o = _el('option', { value: jt.v, text: jt.label });
+            if (jt.v === j.join_type) o.selected = true;
+            typeSel.appendChild(o);
+        });
+
+        const fromTblSel = _renderTableSelect(state, j.from_table, (v) => { j.from_table = v; j.from_column = ''; _renderCenterPane(root, state); });
+        const fromColSel = _renderColumnSelect(state, j.from_table, j.from_column, (v) => { j.from_column = v; });
+
+        const arrow = _el('span', { class: 'qbv2-arrow', text: '⟷', 'aria-hidden': 'true' });
+
+        const toTblSel = _renderTableSelect(state, j.to_table, (v) => { j.to_table = v; j.to_column = ''; _renderCenterPane(root, state); });
+        const toColSel = _renderColumnSelect(state, j.to_table, j.to_column, (v) => { j.to_column = v; });
+
+        const delBtn = _el('button', {
+            type: 'button',
+            class: 'qbv2-icon-btn',
+            'aria-label': 'JOIN kaldır',
+            'data-tooltip': 'Kaldır',
+            onclick: () => { state.joins.splice(idx, 1); _renderCenterPane(root, state); },
+        }, _el('i', { class: 'fa-solid fa-trash' }));
+
+        li.appendChild(typeSel);
+        li.appendChild(fromTblSel);
+        li.appendChild(_el('span', { class: 'qbv2-dot', text: '.' }));
+        li.appendChild(fromColSel);
+        li.appendChild(arrow);
+        li.appendChild(toTblSel);
+        li.appendChild(_el('span', { class: 'qbv2-dot', text: '.' }));
+        li.appendChild(toColSel);
+        li.appendChild(delBtn);
+        return li;
+    }
+
+    function _renderTableSelect(state, current, onchange) {
+        const sel = _el('select', {
+            class: 'qbv2-mini-select',
+            'aria-label': 'Tablo',
+            onchange: (e) => onchange(e.target.value),
+        });
+        state.tables.forEach((t) => {
+            const o = _el('option', { value: t.table, text: t.table });
+            if (t.table === current) o.selected = true;
+            sel.appendChild(o);
+        });
+        return sel;
+    }
+
+    function _renderColumnSelect(state, tableName, current, onchange) {
+        const sel = _el('select', {
+            class: 'qbv2-mini-select',
+            'aria-label': 'Kolon',
+            onchange: (e) => onchange(e.target.value),
+        });
+        sel.appendChild(_el('option', { value: '', text: '— kolon —' }));
+        const tref = state.tables.find((t) => t.table === tableName);
+        const cols = (tref && tref.columns) || [];
+        cols.forEach((c) => {
+            const name = typeof c === 'string' ? c : c.name;
+            const o = _el('option', { value: name, text: name });
+            if (name === current) o.selected = true;
+            sel.appendChild(o);
+        });
+        return sel;
+    }
+
+    // ───────────────────────── render: right (select + filter + groupby) ─────────────────────────
+
+    function _renderRightPane(root, state) {
+        const pane = root.querySelector('.qbv2-pane-right');
+        pane.innerHTML = '';
+
+        pane.appendChild(_el('h4', { class: 'qbv2-pane-title', text: 'SELECT Kolonları' }));
+        const selectList = _el('div', { class: 'qbv2-clause-list' });
+        state.select.forEach((s, idx) => selectList.appendChild(_renderSelectRow(root, state, s, idx)));
+        pane.appendChild(selectList);
+        pane.appendChild(_el('button', {
+            type: 'button',
+            class: 'qbv2-btn qbv2-btn-secondary qbv2-btn-sm',
+            'aria-label': 'SELECT kolon ekle',
+            'data-tooltip': 'Yeni kolon',
+            onclick: () => {
+                if (state.tables.length === 0) return;
+                state.select.push({ table: state.tables[0].table, column: '', alias: '', agg: '' });
+                _renderRightPane(root, state);
+            },
+        }, _el('i', { class: 'fa-solid fa-plus' }), _el('span', { text: ' SELECT' })));
+
+        pane.appendChild(_el('h4', { class: 'qbv2-pane-title', text: 'Filtreler (WHERE)' }));
+        const filterList = _el('div', { class: 'qbv2-clause-list' });
+        state.filters.forEach((f, idx) => filterList.appendChild(_renderFilterRow(root, state, f, idx)));
+        pane.appendChild(filterList);
+        pane.appendChild(_el('button', {
+            type: 'button',
+            class: 'qbv2-btn qbv2-btn-secondary qbv2-btn-sm',
+            'aria-label': 'Filtre ekle',
+            'data-tooltip': 'Yeni filtre',
+            onclick: () => {
+                if (state.tables.length === 0) return;
+                state.filters.push({ table: state.tables[0].table, column: '', op: '=', value: '' });
+                _renderRightPane(root, state);
+            },
+        }, _el('i', { class: 'fa-solid fa-plus' }), _el('span', { text: ' Filtre' })));
+
+        // Gelişmiş: GROUP BY + ORDER BY
+        if (state.advanced) {
+            pane.appendChild(_el('h4', { class: 'qbv2-pane-title', text: 'GROUP BY' }));
+            const gList = _el('div', { class: 'qbv2-clause-list' });
+            state.groupBy.forEach((g, idx) => gList.appendChild(_renderGroupByRow(root, state, g, idx)));
+            pane.appendChild(gList);
+            pane.appendChild(_el('button', {
+                type: 'button',
+                class: 'qbv2-btn qbv2-btn-secondary qbv2-btn-sm',
+                'aria-label': 'GROUP BY ekle',
+                onclick: () => {
+                    if (state.tables.length === 0) return;
+                    state.groupBy.push({ table: state.tables[0].table, column: '' });
+                    _renderRightPane(root, state);
+                },
+            }, _el('i', { class: 'fa-solid fa-plus' }), _el('span', { text: ' GROUP BY' })));
+        }
+
+        // ORDER BY + LIMIT
+        pane.appendChild(_el('h4', { class: 'qbv2-pane-title', text: 'ORDER BY · LIMIT' }));
+        pane.appendChild(_renderOrderByRow(root, state));
+        pane.appendChild(_renderLimitRow(root, state));
+    }
+
+    function _renderSelectRow(root, state, s, idx) {
+        const row = _el('div', { class: 'qbv2-clause-row' });
+        const aggSel = _el('select', {
+            class: 'qbv2-mini-select',
+            'aria-label': 'Aggregate fonksiyon',
+            onchange: (e) => { s.agg = e.target.value || ''; },
+        });
+        AGG_FUNCS.forEach((a) => {
+            const o = _el('option', { value: a, text: a || '—' });
+            if (a === (s.agg || '')) o.selected = true;
+            aggSel.appendChild(o);
+        });
+
+        const tblSel = _renderTableSelect(state, s.table, (v) => { s.table = v; s.column = ''; _renderRightPane(root, state); });
+        const colSel = _renderColumnSelect(state, s.table, s.column, (v) => { s.column = v; });
+        const aliasInput = _el('input', {
+            type: 'text',
+            class: 'qbv2-mini-input',
+            placeholder: 'alias',
+            'aria-label': 'Kolon alias',
+            value: s.alias || '',
+            oninput: (e) => { s.alias = e.target.value; },
+        });
+        const delBtn = _el('button', {
+            type: 'button',
+            class: 'qbv2-icon-btn',
+            'aria-label': 'SELECT kolon kaldır',
+            onclick: () => { state.select.splice(idx, 1); _renderRightPane(root, state); },
+        }, _el('i', { class: 'fa-solid fa-trash' }));
+
+        row.appendChild(aggSel);
+        row.appendChild(tblSel);
+        row.appendChild(colSel);
+        row.appendChild(aliasInput);
+        row.appendChild(delBtn);
+        return row;
+    }
+
+    function _renderFilterRow(root, state, f, idx) {
+        const row = _el('div', { class: 'qbv2-clause-row' });
+        const tblSel = _renderTableSelect(state, f.table, (v) => { f.table = v; f.column = ''; _renderRightPane(root, state); });
+        const colSel = _renderColumnSelect(state, f.table, f.column, (v) => { f.column = v; });
+
+        const opSel = _el('select', {
+            class: 'qbv2-mini-select',
+            'aria-label': 'Filtre operatörü',
+            onchange: (e) => { f.op = e.target.value; _renderRightPane(root, state); },
+        });
+        FILTER_OPS.forEach((op) => {
+            const o = _el('option', { value: op.v, text: op.label });
+            if (op.v === f.op) o.selected = true;
+            opSel.appendChild(o);
+        });
+
+        const needsValue = !['IS NULL', 'IS NOT NULL'].includes(f.op);
+        const valueInput = needsValue ? _el('input', {
+            type: 'text',
+            class: 'qbv2-mini-input',
+            placeholder: ['IN', 'NOT IN', 'BETWEEN'].includes(f.op) ? 'csv değer' : 'değer',
+            'aria-label': 'Filtre değeri',
+            value: Array.isArray(f.value) ? f.value.join(',') : (f.value || ''),
+            oninput: (e) => {
+                const raw = e.target.value;
+                if (['IN', 'NOT IN', 'BETWEEN'].includes(f.op)) {
+                    f.value = raw.split(',').map((x) => x.trim()).filter((x) => x !== '');
+                } else {
+                    f.value = raw;
+                }
+            },
+        }) : null;
+
+        const delBtn = _el('button', {
+            type: 'button',
+            class: 'qbv2-icon-btn',
+            'aria-label': 'Filtre kaldır',
+            onclick: () => { state.filters.splice(idx, 1); _renderRightPane(root, state); },
+        }, _el('i', { class: 'fa-solid fa-trash' }));
+
+        row.appendChild(tblSel);
+        row.appendChild(colSel);
+        row.appendChild(opSel);
+        if (valueInput) row.appendChild(valueInput);
+        row.appendChild(delBtn);
+        return row;
+    }
+
+    function _renderGroupByRow(root, state, g, idx) {
+        const row = _el('div', { class: 'qbv2-clause-row' });
+        const tblSel = _renderTableSelect(state, g.table, (v) => { g.table = v; g.column = ''; _renderRightPane(root, state); });
+        const colSel = _renderColumnSelect(state, g.table, g.column, (v) => { g.column = v; });
+        const delBtn = _el('button', {
+            type: 'button',
+            class: 'qbv2-icon-btn',
+            'aria-label': 'GROUP BY kaldır',
+            onclick: () => { state.groupBy.splice(idx, 1); _renderRightPane(root, state); },
+        }, _el('i', { class: 'fa-solid fa-trash' }));
+        row.appendChild(tblSel);
+        row.appendChild(colSel);
+        row.appendChild(delBtn);
+        return row;
+    }
+
+    function _renderOrderByRow(root, state) {
+        const row = _el('div', { class: 'qbv2-clause-row' });
+        const enabled = !!state.orderBy;
+        const toggle = _el('input', {
+            type: 'checkbox',
+            'aria-label': 'ORDER BY etkin',
+            onchange: (e) => {
+                if (e.target.checked) {
+                    state.orderBy = { table: state.tables[0]?.table || '', column: '', direction: 'ASC' };
+                } else {
+                    state.orderBy = null;
+                }
+                _renderRightPane(root, state);
+            },
+        });
+        if (enabled) toggle.checked = true;
+        row.appendChild(toggle);
+        row.appendChild(_el('span', { text: ' ORDER BY ' }));
+
+        if (state.orderBy) {
+            const tblSel = _renderTableSelect(state, state.orderBy.table, (v) => { state.orderBy.table = v; state.orderBy.column = ''; _renderRightPane(root, state); });
+            const colSel = _renderColumnSelect(state, state.orderBy.table, state.orderBy.column, (v) => { state.orderBy.column = v; });
+            const dirSel = _el('select', { class: 'qbv2-mini-select', 'aria-label': 'Sıra yönü', onchange: (e) => { state.orderBy.direction = e.target.value; } });
+            ['ASC', 'DESC'].forEach((d) => {
+                const o = _el('option', { value: d, text: d });
+                if (d === state.orderBy.direction) o.selected = true;
+                dirSel.appendChild(o);
+            });
+            row.appendChild(tblSel);
+            row.appendChild(colSel);
+            row.appendChild(dirSel);
+        }
+        return row;
+    }
+
+    function _renderLimitRow(root, state) {
+        const row = _el('div', { class: 'qbv2-clause-row' });
+        row.appendChild(_el('span', { text: 'LIMIT ' }));
+        const input = _el('input', {
+            type: 'number',
+            class: 'qbv2-mini-input',
+            min: '1', max: '1000', step: '1',
+            value: String(state.limit),
+            'aria-label': 'Limit',
+            'data-tooltip': '1 – 1000 arası',
+            oninput: (e) => {
+                const v = parseInt(e.target.value || '50', 10);
+                state.limit = Math.max(1, Math.min(1000, v || 50));
+            },
+        });
+        row.appendChild(input);
+        return row;
+    }
+
+    // ───────────────────────── render: all ─────────────────────────
+
+    function _renderAll(root, state) {
+        _renderLeftPane(root, state);
+        _renderCenterPane(root, state);
+        _renderRightPane(root, state);
+    }
+
+    // ───────────────────────── preview ─────────────────────────
+
+    async function _doPreview(root, state, execute) {
+        if (state.tables.length === 0) {
+            _toast('Önce tablo ekleyin', 'warning');
+            return;
+        }
+        const box = root.querySelector('.qbv2-preview');
+        box.innerHTML = '';
+        box.appendChild(_el('div', { class: 'qbv2-loading', text: 'Önizleme hazırlanıyor…', 'aria-live': 'polite' }));
+
+        // Build payload (yalnız değeri olanları dahil et)
+        const payload = {
+            source_id: state.sourceId,
+            tables: state.tables.map((t) => ({ schema: t.schema, table: t.table, alias: t.alias })),
+            joins: state.joins
+                .filter((j) => j.from_column && j.to_column)
+                .map((j) => ({
+                    from_table: j.from_table, from_column: j.from_column,
+                    to_table: j.to_table, to_column: j.to_column,
+                    join_type: j.join_type || 'INNER',
+                })),
+            select: state.select
+                .filter((s) => s.column)
+                .map((s) => ({
+                    table: s.table, column: s.column,
+                    alias: s.alias || null,
+                    agg: s.agg || null,
+                })),
+            filters: state.filters
+                .filter((f) => f.column && (['IS NULL', 'IS NOT NULL'].includes(f.op) || f.value !== '' && f.value != null))
+                .map((f) => ({ table: f.table, column: f.column, op: f.op, value: f.value })),
+            group_by: state.groupBy
+                .filter((g) => g.column)
+                .map((g) => ({ table: g.table, column: g.column })),
+            order_by: state.orderBy && state.orderBy.column
+                ? { table: state.orderBy.table, column: state.orderBy.column, direction: state.orderBy.direction }
+                : null,
+            limit: state.limit,
+            dialect: state.dialect,
+            execute: !!execute,
+        };
+
+        try {
+            const result = await _fetchJson('/api/query-builder/preview', {
+                method: 'POST',
+                body: JSON.stringify(payload),
+            });
+            _renderPreviewResult(box, result, state, execute);
+            if (state._onSqlReady) {
+                try { state._onSqlReady(result.sql, result.params, result.warnings); } catch (e) { console.warn(e); }
+            }
+        } catch (err) {
+            box.innerHTML = '';
+            box.appendChild(_el('div', { class: 'qbv2-error', text: 'Hata: ' + err.message }));
+            _toast('Önizleme başarısız: ' + err.message, 'error');
+        }
+    }
+
+    function _renderPreviewResult(box, result, state, executed) {
+        box.innerHTML = '';
+        box.appendChild(_el('h4', { class: 'qbv2-pane-title', text: 'SQL Önizleme' }));
+
+        const sql = _el('pre', { class: 'qbv2-sql', tabindex: '0', 'aria-label': 'Üretilen SQL' });
+        sql.textContent = result.sql || '';
+        box.appendChild(sql);
+
+        const copyBtn = _el('button', {
+            type: 'button',
+            class: 'qbv2-btn qbv2-btn-secondary qbv2-btn-sm',
+            'aria-label': 'SQL kopyala',
+            'data-tooltip': 'Panoya kopyala',
+            onclick: async () => {
+                try { await navigator.clipboard.writeText(result.sql || ''); _toast('SQL kopyalandı', 'success'); }
+                catch { _toast('Kopyalanamadı', 'error'); }
+            },
+        }, _el('i', { class: 'fa-solid fa-copy' }), _el('span', { text: ' Kopyala' }));
+        box.appendChild(copyBtn);
+
+        if (result.warnings && result.warnings.length) {
+            const wlist = _el('ul', { class: 'qbv2-warnings', 'aria-label': 'Uyarılar' });
+            result.warnings.forEach((w) => wlist.appendChild(_el('li', { text: w })));
+            box.appendChild(wlist);
+        }
+
+        if (executed && result.executed) {
+            if (result.success && Array.isArray(result.rows)) {
+                box.appendChild(_renderRowsTable(result.columns || [], result.rows));
+                _announce(_activeRoot, `${result.row_count || result.rows.length} satır`);
+            } else if (!result.success) {
+                box.appendChild(_el('div', { class: 'qbv2-error', text: 'Yürütme hatası: ' + (result.execute_error || 'bilinmeyen') }));
+            }
+        }
+    }
+
+    function _renderRowsTable(columns, rows) {
+        const cols = columns.length ? columns : (rows[0] ? Object.keys(rows[0]) : []);
+        const tbl = _el('table', { class: 'qbv2-rows-table', 'aria-label': 'Örnek satırlar' });
+        const thead = _el('thead', {});
+        const trH = _el('tr', {});
+        cols.forEach((c) => trH.appendChild(_el('th', { text: typeof c === 'string' ? c : c.name })));
+        thead.appendChild(trH);
+        tbl.appendChild(thead);
+        const tbody = _el('tbody', {});
+        rows.slice(0, 20).forEach((r) => {
+            const tr = _el('tr', {});
+            cols.forEach((c) => {
+                const key = typeof c === 'string' ? c : c.name;
+                const v = r[key];
+                tr.appendChild(_el('td', { text: v === null || v === undefined ? '∅' : String(v).slice(0, 200) }));
+            });
+            tbody.appendChild(tr);
+        });
+        tbl.appendChild(tbody);
+        return tbl;
+    }
+
+    // ───────────────────────── public API ─────────────────────────
+
+    async function open(opts = {}) {
+        if (!opts.parentEl || !opts.sourceId) {
+            console.error('[qbv2] parentEl ve sourceId zorunlu');
+            return;
+        }
+        if (_activeRoot) close();
+
+        const state = _emptyState(opts.sourceId, opts.dialect);
+        state._onSqlReady = opts.onSqlReady;
+
+        if (Array.isArray(opts.tablesCatalog) && opts.tablesCatalog.length) {
+            state.catalog = opts.tablesCatalog.map((c) => ({
+                schema: c.schema || 'public',
+                table: c.table || c.name,
+                label_tr: c.label_tr || '',
+                columns: c.columns || [],
+            }));
+        }
+
+        _renderShell(opts.parentEl, state);
+        if (!state.catalog.length) {
+            await _loadCatalog(state);
+        }
+        _renderAll(_activeRoot, state);
+
+        return state;
+    }
+
+    function close() {
+        if (_activeRoot && _activeRoot.parentNode) {
+            _activeRoot.parentNode.removeChild(_activeRoot);
+        }
+        _activeRoot = null;
+    }
+
+    window.QueryBuilderV2 = { open, close };
+})();
+
+
 /* === assets/js/modules/dialog_chat.js === */
 /**
  * VYRA Dialog Chat Module
@@ -9923,6 +11144,9 @@ window.DialogChatModule = (function () {
         if (!isDbMode) {
             isWaitingForResponse = true;
         }
+        // v3.29.7 G2: Yeni mesajda clarification_v2 bayrağını sıfırla
+        // (yoksa ikinci sorguda v1 yanlışlıkla atlanır)
+        window.__VYRA_CLARIFICATION_V2_HANDLED__ = false;
 
         // v3.16.0: Follow-up anchor'ı POST'tan ÖNCE yerel değişkene al ve modül state'ini
         // anında temizle. Bu, error/timeout/iptal gibi yollardan biten istekler için de
@@ -10121,8 +11345,14 @@ window.DialogChatModule = (function () {
                                 }
                                 break;
 
-                            // v4.0: Disambiguation — aynı isimde çoklu tablo
+                            // v4.0: Disambiguation v1 — aynı isimde çoklu tablo (geri uyumlu)
+                            // v3.29.7 G2: Eğer clarification_v2 event'i de gelirse o tercih edilir,
+                            // v1 sadece v2 yoksa render olur (handledByV2 flag).
                             case 'clarification': {
+                                if (window.__VYRA_CLARIFICATION_V2_HANDLED__) {
+                                    // v2 zaten render etti, v1'i atla
+                                    return;
+                                }
                                 if (streamingEl) streamingEl.remove();
                                 const { candidates, query: cQuery, message: cMsg } = eventData;
                                 const disambigHtml = window.DialogChatUtils.renderDisambiguationCard(
@@ -10133,6 +11363,67 @@ window.DialogChatModule = (function () {
                                     }
                                 );
                                 _insertInteractiveBlock(disambigHtml);
+                                isWaitingForResponse = false;
+                                hideTypingIndicator();
+                                return;
+                            }
+
+                            // v3.29.7 G2: Disambiguation v2 — zengin kartlar (sample_rows,
+                            // preview_sql, join_paths_to_target, row_count_estimate, masked_columns)
+                            case 'clarification_v2': {
+                                if (streamingEl) streamingEl.remove();
+                                const { cards, query: cQuery, message: cMsg } = eventData;
+                                if (!window.DisambiguationCardV2) {
+                                    // Modül yüklenmemişse v1 fallback (v1 handler bunu tutmaz çünkü v2 bayrağı yok)
+                                    console.warn('[VYRA] DisambiguationCardV2 modülü yüklenmedi — v1 fallback');
+                                    return;
+                                }
+                                const container = document.createElement('div');
+                                container.className = 'disambig-v2-container';
+                                window.DisambiguationCardV2.render(
+                                    cards, cQuery, cMsg,
+                                    (selectedFull, _card) => {
+                                        _sendDbMessageWithHint(cQuery, selectedFull, null);
+                                    },
+                                    container
+                                );
+                                _insertInteractiveBlock(container.innerHTML);
+                                // Block insertion HTML string ile çalışıyor — handler'lar kayboldu;
+                                // bu yüzden insertion sonrası elementi yeniden bulup onSelect bağla
+                                setTimeout(() => {
+                                    const inserted = document.querySelector(
+                                        `.disambig-v2-wrap[data-query="${(cQuery || '').replace(/"/g, '\\"')}"]`
+                                    );
+                                    if (inserted) {
+                                        const cardEls = inserted.querySelectorAll('.disambig-card-v2');
+                                        cardEls.forEach(cardEl => {
+                                            const btn = cardEl.querySelector('.disambig-select-btn');
+                                            const _select = () => {
+                                                cardEls.forEach(el => el.setAttribute('aria-checked', 'false'));
+                                                cardEl.setAttribute('aria-checked', 'true');
+                                                cardEl.classList.add('disambig-selected');
+                                                inserted.querySelectorAll('.disambig-select-btn').forEach(b => {
+                                                    b.disabled = true;
+                                                    b.classList.add('disambig-btn-disabled');
+                                                });
+                                                _sendDbMessageWithHint(cQuery, cardEl.dataset.full || '', null);
+                                                if (typeof window.showToast === 'function') {
+                                                    window.showToast(`✓ ${cardEl.dataset.full} seçildi`, 'success');
+                                                }
+                                            };
+                                            if (btn) btn.addEventListener('click', _select);
+                                            cardEl.addEventListener('keydown', (e) => {
+                                                if (e.key === 'Enter' || e.key === ' ') {
+                                                    e.preventDefault();
+                                                    _select();
+                                                }
+                                            });
+                                        });
+                                        const first = inserted.querySelector('.disambig-card-v2');
+                                        if (first) first.focus();
+                                    }
+                                }, 50);
+                                window.__VYRA_CLARIFICATION_V2_HANDLED__ = true;
                                 isWaitingForResponse = false;
                                 hideTypingIndicator();
                                 return;
@@ -10187,7 +11478,7 @@ window.DialogChatModule = (function () {
                                 mentionDiv.appendChild(statusSpan);
 
                                 // streamingEl'in content alanına ekle
-                                const contentEl = streamingEl.querySelector('.message-content') || streamingEl;
+                                const contentEl = streamingEl.querySelector('.streaming-extras') || streamingEl.querySelector('.message-content') || streamingEl;
                                 contentEl.appendChild(mentionDiv);
                                 break;
                             }
@@ -10196,7 +11487,7 @@ window.DialogChatModule = (function () {
                             case 'selected_table_for_preview': {
                                 try {
                                     if (!streamingEl) streamingEl = createStreamingMessage();
-                                    const contentEl = streamingEl.querySelector('.message-content') || streamingEl;
+                                    const contentEl = streamingEl.querySelector('.streaming-extras') || streamingEl.querySelector('.message-content') || streamingEl;
                                     if (window.renderSampleDataPreview) {
                                         window.renderSampleDataPreview(contentEl, eventData);
                                     }
@@ -10289,7 +11580,7 @@ window.DialogChatModule = (function () {
                                         }
                                     });
                                 }
-                                const twContent = streamingEl.querySelector('.message-content') || streamingEl;
+                                const twContent = streamingEl.querySelector('.streaming-extras') || streamingEl.querySelector('.message-content') || streamingEl;
                                 twContent.appendChild(twDiv);
                                 // v3.14.6: sayacı başlat ve mevcut elapsed'ten devam ettir
                                 elapsedSeconds = parseInt(twElapsed) || 0;
@@ -10347,7 +11638,7 @@ window.DialogChatModule = (function () {
                                     // v3.16.0: DB modunda badge'i chip listesinin başına ekle.
                                     let prefixHtml = '';
                                     if (isDbMode && lastDbAssistantMessageId) {
-                                        prefixHtml = `<button type="button" class="db-followup-anchor-badge" data-anchor-id="${lastDbAssistantMessageId}" title="Bir sonraki mesajın önceki sorgu üzerinde değişiklik olduğunu belirt"><i class="fa-solid fa-link"></i> Önceki konu ile ilgili soru sor</button>`;
+                                        prefixHtml = `<button type="button" class="db-followup-anchor-badge" data-anchor-id="${lastDbAssistantMessageId}" title="Sonraki mesaj son sorgu üzerinde devam edecek — tablo + bağlam korunur"><i class="fa-solid fa-link"></i> Son konu ile ilgili sor</button>`;
                                     }
                                     _insertInteractiveBlock(prefixHtml + fuHtml);
                                     // Badge tıklama handler'ı
@@ -10364,7 +11655,7 @@ window.DialogChatModule = (function () {
                                                     _showFollowupIndicator(aid);
                                                     const inp = document.getElementById('dialogInput');
                                                     if (inp) {
-                                                        inp.placeholder = '↪ Önceki sorgu üzerinde değişiklik isteyin...';
+                                                        inp.placeholder = '↪ Son sorgu üzerinde devam edin (tablo + bağlam korunacak)...';
                                                         inp.focus();
                                                     }
                                                 });
@@ -10402,9 +11693,22 @@ window.DialogChatModule = (function () {
             // ⏱️ Response time hesapla
             const responseTime = ((performance.now() - startTime) / 1000).toFixed(2);
 
-            // Stream container'ı temizle
+            // v3.28.7: Stream container temizlik kararı isDbOnly'ye göre verilir —
+            // db-only dalında token narrative gizlenir, sample preview kartı korunur.
+            const _isDbOnlyForCleanup = !!finalMetadata?.db_only;
+            const _hasExtras = !!(streamingEl && streamingEl.querySelector('.streaming-extras')
+                                  && streamingEl.querySelector('.streaming-extras').childNodes.length > 0);
             if (streamingEl) {
-                streamingEl.remove();
+                if (_isDbOnlyForCleanup && _hasExtras) {
+                    // Sadece token narrative'i gizle, sample preview gibi extras DOM'da kalır
+                    const _tokensEl = streamingEl.querySelector('.streaming-tokens');
+                    if (_tokensEl) _tokensEl.hidden = true;
+                    const _statusEl = streamingEl.querySelector('.streaming-status');
+                    if (_statusEl) _statusEl.style.display = 'none';
+                    streamingEl.classList.add('streaming-collapsed');
+                } else {
+                    streamingEl.remove();
+                }
             }
 
             // Final mesajı AddAssistantMessage ile göster
@@ -10532,8 +11836,11 @@ window.DialogChatModule = (function () {
             </div>
             <div class="message-bubble assistant streaming-bubble">
                 <div class="streaming-status"></div>
-                <div class="streaming-content"></div>
-                <span class="streaming-cursor">▌</span>
+                <div class="streaming-tokens">
+                    <div class="streaming-content"></div>
+                    <span class="streaming-cursor">▌</span>
+                </div>
+                <div class="streaming-extras"></div>
             </div>
         `;
 
@@ -10605,7 +11912,7 @@ window.DialogChatModule = (function () {
                 ind = document.createElement('div');
                 ind.id = 'dbFollowupIndicator';
                 ind.className = 'db-followup-indicator';
-                ind.innerHTML = `<span class="dfi-text"><i class="fa-solid fa-link"></i> Önceki konu ile ilgili sor</span><button type="button" class="dfi-clear" title="Vazgeç" aria-label="Vazgeç">×</button>`;
+                ind.innerHTML = `<span class="dfi-text"><i class="fa-solid fa-link"></i> Son konu ile ilgili sor</span><button type="button" class="dfi-clear" title="Vazgeç" aria-label="Vazgeç">×</button>`;
                 host.insertBefore(ind, input);
                 const clearBtn = ind.querySelector('.dfi-clear');
                 if (clearBtn) clearBtn.addEventListener('click', () => {
@@ -26476,29 +27783,58 @@ window.DSLearningModule = (function () {
                 `;
             }
 
-            // İlişkiler tablosu
+            // İlişkiler tablosu (v3.29.0 Faz 6 G1 — cardinality + junction rozetleri)
             let relsHtml = '';
             if (data.relationships && data.relationships.length > 0) {
+                const _fmtCard = (cf, ct) => {
+                    if (!cf || !ct) return '<span class="ds-badge ds-badge-muted" data-tooltip="Cardinality henüz analiz edilmedi" aria-label="Bilinmiyor">?:?</span>';
+                    const label = `${cf}:${ct}`;
+                    const cls = (cf === '1' && ct === '1') ? 'ds-badge-card-11'
+                              : (cf === 'N' && ct === '1') ? 'ds-badge-card-n1'
+                              : (cf === '1' && ct === 'N') ? 'ds-badge-card-1n'
+                              : 'ds-badge-card-nn';
+                    return `<span class="ds-badge ${cls}" data-tooltip="Kardinalite ${label}" aria-label="Kardinalite ${label}">${label}</span>`;
+                };
+                const _fmtJunction = (isJ) => isJ
+                    ? '<span class="ds-badge ds-badge-junction" data-tooltip="N:M köprü tablosu" aria-label="Junction tablosu">N:M</span>'
+                    : '';
+                const _fmtConf = (c) => {
+                    if (c === null || c === undefined) return '';
+                    const pct = Math.round(Number(c) * 100);
+                    const lvl = pct >= 85 ? 'high' : (pct >= 60 ? 'mid' : 'low');
+                    return `<span class="ds-badge ds-badge-conf-${lvl}" data-tooltip="Analiz güveni" aria-label="Güven ${pct}%">${pct}%</span>`;
+                };
                 relsHtml = `
                     <div class="ds-details-section">
                         <h4><i class="fa-solid fa-link"></i> İlişkiler (${data.relationships.length})</h4>
                         <div class="ds-details-table-wrap">
                             <table class="ds-details-table">
                                 <thead>
-                                    <tr><th>Kaynak Tablo</th><th>Kaynak Sütun</th><th></th><th>Hedef Tablo</th><th>Hedef Sütun</th></tr>
+                                    <tr><th>Kaynak Tablo</th><th>Kaynak Sütun</th><th>Kardinalite</th><th>Hedef Tablo</th><th>Hedef Sütun</th><th>Güven</th></tr>
                                 </thead>
                                 <tbody>
                                     ${data.relationships.map(r => `
                                         <tr>
-                                            <td>${_escapeHtml(r.from_table)}</td>
+                                            <td>${_escapeHtml(r.from_table)} ${_fmtJunction(r.is_junction)}</td>
                                             <td>${_escapeHtml(r.from_column)}</td>
-                                            <td><i class="fa-solid fa-arrow-right" style="color: var(--accent-primary);"></i></td>
+                                            <td>${_fmtCard(r.cardinality_from, r.cardinality_to)} <i class="fa-solid fa-arrow-right" style="color: var(--accent-primary);"></i></td>
                                             <td>${_escapeHtml(r.to_table)}</td>
                                             <td>${_escapeHtml(r.to_column)}</td>
+                                            <td>${_fmtConf(r.confidence_score)}</td>
                                         </tr>
                                     `).join('')}
                                 </tbody>
                             </table>
+                        </div>
+                        <div class="ds-rel-actions" style="margin-top: 8px; display: flex; justify-content: flex-end; gap: 8px;">
+                            <button type="button"
+                                    class="btn-secondary"
+                                    id="dsAnalyzeCardinalityBtn"
+                                    data-source-id="${sourceId}"
+                                    data-tooltip="FK için 1:1 / 1:N / N:M kardinalite + köprü analizini yeniden çalıştır"
+                                    aria-label="Kardinalite analizini yeniden çalıştır">
+                                <i class="fa-solid fa-diagram-project"></i> Kardinalite Analizini Yenile
+                            </button>
                         </div>
                     </div>
                 `;
@@ -26557,6 +27893,35 @@ window.DSLearningModule = (function () {
                 if (e.key === 'Escape') closeDetailsModal();
             }
             document.addEventListener('keydown', detailsEscHandler);
+
+            // v3.29.0 Faz 6 G1 — Kardinalite analizini yeniden çalıştır
+            const cardBtn = document.getElementById('dsAnalyzeCardinalityBtn');
+            if (cardBtn) {
+                cardBtn.addEventListener('click', async () => {
+                    const sid = cardBtn.dataset.sourceId;
+                    if (!sid) return;
+                    const originalHtml = cardBtn.innerHTML;
+                    cardBtn.disabled = true;
+                    cardBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Analiz ediliyor…';
+                    try {
+                        const res = await apiCall(`/${sid}/analyze-cardinality`, 'POST');
+                        const s = (res && res.stats) || {};
+                        toast('success',
+                            `Kardinalite analizi tamamlandı — ${s.analyzed || 0} ilişki: ` +
+                            `${s.one_to_one || 0} 1:1, ${s.one_to_many || 0} 1:N, ${s.many_to_many || 0} N:M; ` +
+                            `${s.junctions || 0} köprü, ${s.inverse_pairs_linked || 0} ters yön çifti.`);
+                        // Modal'ı kapat ve yeniden aç (yeni metadata ile tabloyu render et)
+                        closeDetailsModal();
+                        setTimeout(() => { try { showDiscoveryDetails(parseInt(sid, 10)); } catch (_) {} }, 350);
+                    } catch (err) {
+                        toast('error', 'Kardinalite analizi başarısız: ' + (err && err.message ? err.message : err));
+                    } finally {
+                        cardBtn.disabled = false;
+                        cardBtn.innerHTML = originalHtml;
+                    }
+                });
+            }
+
             requestAnimationFrame(() => modal.classList.add('active'));
 
         } catch (err) {
@@ -27069,9 +28434,17 @@ window.DSLearningModule = (function () {
 
                 let answerHtml = _formatMLAnswer(answer);
 
+                // v3.28.7: kart başlığına schema/table data-attribute'ları — sample lazy-load için
+                const metaRaw = r.metadata || {};
+                const schemaName = metaRaw.schema_name || '';
+                const fullTable = metaRaw.full_table || (schemaName ? `${schemaName}.${tableName}` : tableName);
+                const escSchema = _escapeHtml(schemaName);
+                const escTable = _escapeHtml(tableName);
+                const escScript = _escapeHtml(answer);
+
                 return `
-                    <div class="ds-lr-card" data-idx="${idx}">
-                        <div class="ds-lr-card-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="ds-lr-card" data-idx="${idx}" data-source-id="${sourceId}" data-schema="${escSchema}" data-table="${escTable}">
+                        <div class="ds-lr-card-header" onclick="window.DSLearningModule.toggleResultCard(this)">
                             <div class="ds-lr-card-meta">
                                 <span class="ds-lr-type-badge ${typeClass}">${typeLabel}</span>
                                 ${tableName ? `<span class="ds-lr-table-name"><i class="fa-solid fa-table"></i> ${_escapeHtml(tableName)}</span>` : ''}
@@ -27086,6 +28459,16 @@ window.DSLearningModule = (function () {
                             <div class="ds-lr-answer">
                                 <div class="ds-lr-answer-label"><i class="fa-solid fa-robot"></i> ML Cevabı</div>
                                 <div class="ds-lr-answer-text">${answerHtml}</div>
+                            </div>
+                            <details class="ds-lr-script">
+                                <summary><i class="fa-solid fa-code"></i> Öğrenilen Script (ham metin)</summary>
+                                <pre class="ds-lr-script-pre">${escScript}</pre>
+                            </details>
+                            <div class="ds-lr-sample-slot" data-loaded="0" aria-live="polite">
+                                <div class="ds-lr-sample-placeholder">
+                                    <i class="fa-solid fa-database"></i>
+                                    <span>Örnek veri kart açılınca yüklenecek (${_escapeHtml(fullTable)})</span>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -27245,6 +28628,10 @@ window.DSLearningModule = (function () {
                     <div id="dsDbLoopList" class="ds-dbloop-list">
                         <div class="ds-loading"><i class="fa-solid fa-spinner fa-spin"></i> Yükleniyor...</div>
                     </div>
+                    <h4 style="margin: 1.25rem 0 0.5rem; color:#dc2626;">Başarısız Denemeler</h4>
+                    <div id="dsDbLoopFailures" class="ds-dbloop-failures">
+                        <div class="ds-loading"><i class="fa-solid fa-spinner fa-spin"></i> Yükleniyor...</div>
+                    </div>
                 </div>
             </div>
         `;
@@ -27265,10 +28652,12 @@ window.DSLearningModule = (function () {
         document.getElementById('dsDbLoopRefreshBtn').addEventListener('click', () => {
             loadDbLoopStatus(sourceId);
             loadLearnedQueries(sourceId);
+            loadSyntheticFailures(sourceId);
         });
 
         await loadDbLoopStatus(sourceId);
         await loadLearnedQueries(sourceId);
+        await loadSyntheticFailures(sourceId);
     }
 
     async function triggerSyntheticGeneration(sourceId) {
@@ -27298,7 +28687,10 @@ window.DSLearningModule = (function () {
             if (done || ticks > 120) { // 2 dakika cap
                 clearInterval(_dbLoopPollTimer);
                 _dbLoopPollTimer = null;
-                if (done) loadLearnedQueries(sourceId);
+                if (done) {
+                    loadLearnedQueries(sourceId);
+                    loadSyntheticFailures(sourceId);
+                }
             }
         }, 1500);
     }
@@ -27315,6 +28707,22 @@ window.DSLearningModule = (function () {
                 html = `<div class="ds-dbloop-pill ds-dbloop-running"><i class="fa-solid fa-spinner fa-spin"></i> Çalışıyor (dialect: ${_escapeHtml(job.dialect || '?')})</div>`;
             } else if (status === 'done') {
                 const s = job.summary || {};
+                const totalFail = (s.failed_execute || 0) + (s.failed_learn || 0);
+                const errors = Array.isArray(s.errors) ? s.errors : [];
+                let errBlock = '';
+                if (errors.length) {
+                    const items = errors.slice(0, 50).map(e => `<li>${_escapeHtml(String(e))}</li>`).join('');
+                    errBlock = `
+                        <details class="ds-dbloop-errdetails" style="margin-top:0.5rem;">
+                            <summary style="cursor:pointer; color:#dc2626;">
+                                ⚠️ Hata mesajları (${errors.length})
+                            </summary>
+                            <ul class="ds-dbloop-errlist" style="max-height:240px; overflow:auto; font-family:monospace; font-size:0.78rem;">
+                                ${items}
+                            </ul>
+                        </details>
+                    `;
+                }
                 html = `
                     <div class="ds-dbloop-pill ds-dbloop-done"><i class="fa-solid fa-check"></i> Tamamlandı (${s.elapsed_ms || 0} ms)</div>
                     <div class="ds-dbloop-stats">
@@ -27322,8 +28730,11 @@ window.DSLearningModule = (function () {
                         <span>Denenen: <strong>${s.total_attempts || 0}</strong></span>
                         <span>Başarılı: <strong style="color:#16a34a;">${s.success || 0}</strong></span>
                         <span>Atlanan: <strong>${s.skipped_existing || 0}</strong></span>
-                        <span>Hata: <strong style="color:#dc2626;">${(s.failed_execute || 0) + (s.failed_learn || 0)}</strong></span>
+                        <span>Execute Hata: <strong style="color:#dc2626;">${s.failed_execute || 0}</strong></span>
+                        <span>Öğrenme Hata: <strong style="color:#dc2626;">${s.failed_learn || 0}</strong></span>
+                        <span>Toplam Hata: <strong style="color:#dc2626;">${totalFail}</strong></span>
                     </div>
+                    ${errBlock}
                 `;
             } else if (status === 'error') {
                 html = `<div class="ds-dbloop-pill ds-dbloop-error"><i class="fa-solid fa-circle-exclamation"></i> Hata: ${_escapeHtml(job.error || 'bilinmeyen')}</div>`;
@@ -27374,6 +28785,40 @@ window.DSLearningModule = (function () {
             });
         } catch (e) {
             list.innerHTML = `<div class="ds-dbloop-empty">Liste alınamadı: ${_escapeHtml(e.message || '')}</div>`;
+        }
+    }
+
+    // v3.28.9 Paket C: başarısız sentetik denemeleri listele
+    async function loadSyntheticFailures(sourceId) {
+        const box = document.getElementById('dsDbLoopFailures');
+        if (!box) return;
+        box.innerHTML = '<div class="ds-loading"><i class="fa-solid fa-spinner fa-spin"></i> Yükleniyor...</div>';
+        try {
+            const res = await apiCall(`/${sourceId}/synthetic-failures?limit=50`);
+            const items = (res && res.items) || [];
+            if (!items.length) {
+                box.innerHTML = '<div class="ds-dbloop-empty">Hatalı deneme yok.</div>';
+                return;
+            }
+            box.innerHTML = items.map(it => `
+                <div class="ds-dbloop-failrow" style="border:1px solid #fecaca; background:#fef2f2; padding:0.5rem 0.75rem; margin-bottom:0.5rem; border-radius:6px;">
+                    <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; margin-bottom:0.25rem;">
+                        <span class="ds-dbloop-badge" style="background:#dc2626; color:#fff;">${_escapeHtml(it.template_kind || '?')}</span>
+                        <span style="font-weight:600;">${_escapeHtml(it.from_table || '')}.${_escapeHtml(it.from_column || '')}</span>
+                        <span style="color:#6b7280;">→</span>
+                        <span style="font-weight:600;">${_escapeHtml(it.to_table || '')}.${_escapeHtml(it.to_column || '')}</span>
+                        <span style="margin-left:auto; color:#6b7280; font-size:0.75rem;">${_escapeHtml(it.executed_at || '')}</span>
+                    </div>
+                    <details>
+                        <summary style="cursor:pointer; color:#dc2626; font-size:0.85rem;">
+                            ❌ ${_escapeHtml((it.error_message || 'bilinmeyen hata').substring(0, 200))}
+                        </summary>
+                        <pre style="margin-top:0.5rem; padding:0.5rem; background:#fff; border:1px solid #e5e7eb; border-radius:4px; overflow:auto; max-height:200px; font-size:0.75rem;">${_escapeHtml(it.rendered_sql || '')}</pre>
+                    </details>
+                </div>
+            `).join('');
+        } catch (e) {
+            box.innerHTML = `<div class="ds-dbloop-empty">Hatalar alınamadı: ${_escapeHtml(e.message || '')}</div>`;
         }
     }
 
@@ -27614,6 +29059,92 @@ window.DSLearningModule = (function () {
         console.log('[DSLearning] Modül yüklendi (Faz 2)');
     }
 
+    /**
+     * v3.28.7: ML Öğrenme Sonuçları kartını expand/collapse eder ve ilk açılışta
+     * tablonun cached örnek verisini lazy-load ile yükler.
+     */
+    function toggleResultCard(headerEl) {
+        if (!headerEl) return;
+        const card = headerEl.parentElement;
+        if (!card) return;
+        const wasExpanded = card.classList.contains('expanded');
+        card.classList.toggle('expanded');
+        if (wasExpanded) return; // kapanıyor — fetch yok
+
+        const slot = card.querySelector('.ds-lr-sample-slot');
+        if (!slot || slot.dataset.loaded === '1') return;
+        const sourceId = card.dataset.sourceId;
+        const schema = card.dataset.schema;
+        const table = card.dataset.table;
+        if (!sourceId || !table) {
+            slot.innerHTML = '<div class="ds-lr-sample-empty"><i class="fa-solid fa-circle-info"></i> Tablo bilgisi eksik.</div>';
+            slot.dataset.loaded = '1';
+            return;
+        }
+
+        slot.innerHTML = '<div class="ds-lr-sample-loading"><i class="fa-solid fa-spinner fa-spin"></i> Örnek veri yükleniyor...</div>';
+        slot.dataset.loaded = '1';
+
+        const params = new URLSearchParams({ table, limit: '5' });
+        if (schema) params.append('schema', schema);
+        const url = `/api/data-sources/${encodeURIComponent(sourceId)}/samples?${params.toString()}`;
+        const token = localStorage.getItem('access_token');
+
+        fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+            .then(async (res) => {
+                if (res.status === 404) {
+                    const body = await res.json().catch(() => ({}));
+                    throw new Error(body.detail || 'Cache boş — örnek veri toplanmamış.');
+                }
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return res.json();
+            })
+            .then((data) => _renderSampleInSlot(slot, data))
+            .catch((err) => {
+                slot.innerHTML = `
+                    <div class="ds-lr-sample-empty">
+                        <i class="fa-solid fa-triangle-exclamation"></i>
+                        ${_escapeHtml(err.message || 'Örnek veri yüklenemedi')}
+                    </div>`;
+                // Yeniden denenebilsin diye loaded flag'i sıfırla
+                slot.dataset.loaded = '0';
+            });
+    }
+
+    function _renderSampleInSlot(slot, payload) {
+        const rows = Array.isArray(payload && payload.rows) ? payload.rows : [];
+        if (!rows.length) {
+            slot.innerHTML = '<div class="ds-lr-sample-empty"><i class="fa-solid fa-circle-info"></i> Cache boş döndü.</div>';
+            return;
+        }
+        const cols = Array.isArray(payload.columns) && payload.columns.length
+            ? payload.columns.map((c) => (typeof c === 'string' ? c : c.name))
+            : Object.keys(rows[0] || {});
+        let html = '<div class="ds-lr-sample-header"><i class="fa-solid fa-table-list"></i> <strong>Örnek Veri</strong>';
+        if (payload.fetched_at) {
+            html += ` <span class="ds-lr-sample-fetched">⏱ ${_escapeHtml(String(payload.fetched_at).slice(0, 16).replace('T', ' '))}</span>`;
+        }
+        if (payload.row_count && payload.row_count > rows.length) {
+            html += ` <span class="ds-lr-sample-count">(${rows.length}/${payload.row_count})</span>`;
+        }
+        html += '</div>';
+        html += '<div class="ds-lr-sample-tablewrap"><table class="ds-lr-sample-table"><thead><tr>';
+        cols.forEach((c) => { html += `<th>${_escapeHtml(c)}</th>`; });
+        html += '</tr></thead><tbody>';
+        rows.forEach((r) => {
+            html += '<tr>';
+            cols.forEach((c) => {
+                const v = r[c];
+                const text = v == null ? '' : String(v);
+                const trunc = text.length > 80 ? text.slice(0, 77) + '…' : text;
+                html += `<td title="${_escapeHtml(text)}">${_escapeHtml(trunc)}</td>`;
+            });
+            html += '</tr>';
+        });
+        html += '</tbody></table></div>';
+        slot.innerHTML = html;
+    }
+
     return {
         init,
         openWizard,
@@ -27625,7 +29156,8 @@ window.DSLearningModule = (function () {
         showLearningHistory,
         showJobDetail,
         showLearningResults,
-        openDbLearningLoop
+        openDbLearningLoop,
+        toggleResultCard
     };
 })();
 
@@ -27997,7 +29529,10 @@ const DSEnrichmentModule = (() => {
         const savedCursorPos = wasSearchFocused && searchInput ? searchInput.selectionStart : null;
 
         if (_filteredData.length === 0 && _searchQuery === '' && !_filterLowScore) {
-            const total = parseInt(document.querySelector('.ds-enrich-stat-num')?.textContent || "0");
+            // v3.28.7 fix: önceki kod sayfadaki İLK .ds-enrich-stat-num'ü okuyordu
+            // (LLM Bekleyen = 0) → her zaman "Enrichment Bekleniyor" mesajı düşüyordu.
+            // Toplam tablo sayısını doğrudan state'ten al.
+            const total = _pendingData.length;
             const pendingCount = _pendingData.filter(x => !x.is_approved).length;
             
             // Eğer gösterilecek onaylılar yoksa veya _showApproved kapalıysa tam ekran boş durumları göster.
@@ -30767,6 +32302,351 @@ window.ThemePickerPopup = (function () {
     }
 
     window.AgenticObservability = { init };
+})();
+
+
+/* === assets/js/modules/agentic_observability_faz6.js === */
+/**
+ * agentic_observability_faz6.js — v3.29.7 G5
+ * ===========================================
+ * Faz 6 öğrenme metrikleri sekmeleri:
+ *   - Template heatmap (kind × complexity)
+ *   - Failures top-10
+ *   - Glossary kullanım istatistikleri
+ *
+ * window.AgenticObservabilityFaz6.init('#agenticObservabilitySection')
+ *
+ * HEBE compliance: role="tablist" / "tab" / "tabpanel", aria-selected,
+ * keyboard nav (ArrowLeft/Right, Home/End), aria-live status.
+ */
+(function () {
+    'use strict';
+
+    const ENDPOINTS = {
+        heatmap: '/api/agentic-query/observability/template-heatmap',
+        failures: '/api/agentic-query/observability/failures-top',
+        glossary: '/api/agentic-query/observability/glossary-usage',
+    };
+
+    const TAB_IDS = ['Templates', 'Failures', 'Glossary'];
+
+    function _authHeaders() {
+        const h = { 'Accept': 'application/json' };
+        try {
+            const t = window.localStorage && window.localStorage.getItem('access_token');
+            if (t) h['Authorization'] = `Bearer ${t}`;
+        } catch (_e) { /* sessiz */ }
+        return h;
+    }
+
+    async function _fetchJson(url, signal) {
+        const resp = await fetch(url, { headers: _authHeaders(), signal });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        return resp.json();
+    }
+
+    function _qs(root, sel) { return root.querySelector(sel); }
+    function _byId(id) { return document.getElementById(id); }
+
+    // ───────────── tab switching ─────────────
+
+    function _activateTab(root, name) {
+        TAB_IDS.forEach((n) => {
+            const btn = _qs(root, `#aoTabBtn${n}`);
+            const pane = _qs(root, `#aoTab${n}`);
+            if (!btn || !pane) return;
+            const active = (n === name);
+            btn.classList.toggle('ao-tab--active', active);
+            btn.setAttribute('aria-selected', active ? 'true' : 'false');
+            btn.tabIndex = active ? 0 : -1;
+            pane.classList.toggle('ao-tab-pane--active', active);
+            pane.hidden = !active;
+        });
+    }
+
+    function _bindTabs(root, state) {
+        const buttons = TAB_IDS.map((n) => _qs(root, `#aoTabBtn${n}`)).filter(Boolean);
+        buttons.forEach((btn, idx) => {
+            btn.addEventListener('click', () => {
+                const name = TAB_IDS[idx];
+                _activateTab(root, name);
+                state.activeTab = name;
+                _loadTabData(root, state, name);
+            });
+            btn.addEventListener('keydown', (e) => {
+                let nextIdx = null;
+                if (e.key === 'ArrowRight') nextIdx = (idx + 1) % buttons.length;
+                else if (e.key === 'ArrowLeft') nextIdx = (idx - 1 + buttons.length) % buttons.length;
+                else if (e.key === 'Home') nextIdx = 0;
+                else if (e.key === 'End') nextIdx = buttons.length - 1;
+                if (nextIdx != null) {
+                    e.preventDefault();
+                    buttons[nextIdx].focus();
+                    buttons[nextIdx].click();
+                }
+            });
+        });
+    }
+
+    // ───────────── heatmap ─────────────
+
+    async function _loadHeatmap(root, state) {
+        const loading = _qs(root, '#aoHeatmapLoading');
+        const empty = _qs(root, '#aoHeatmapEmpty');
+        const table = _qs(root, '#aoHeatmapTable');
+        if (loading) loading.hidden = false;
+        if (empty) empty.hidden = true;
+        try {
+            const data = await _fetchJson(ENDPOINTS.heatmap + '?days=30', state.controller.signal);
+            _renderHeatmap(table, data);
+            if ((!data.cells || data.cells.length === 0) && empty) empty.hidden = false;
+        } catch (err) {
+            if (err.name === 'AbortError') return;
+            console.warn('[ao-faz6] heatmap failed:', err);
+            if (empty) {
+                empty.hidden = false;
+                empty.textContent = `Yüklenemedi: ${err.message}`;
+            }
+        } finally {
+            if (loading) loading.hidden = true;
+        }
+    }
+
+    function _renderHeatmap(table, data) {
+        if (!table) return;
+        const thead = table.querySelector('thead');
+        const tbody = table.querySelector('tbody');
+        if (!thead || !tbody) return;
+        const complexities = (data.complexities && data.complexities.length)
+            ? data.complexities : [1, 2, 3, 4, 5];
+
+        // Header
+        thead.replaceChildren();
+        const trH = document.createElement('tr');
+        const thLabel = document.createElement('th');
+        thLabel.scope = 'col';
+        thLabel.textContent = 'Template';
+        trH.appendChild(thLabel);
+        complexities.forEach((c) => {
+            const th = document.createElement('th');
+            th.scope = 'col';
+            th.textContent = `C${c}`;
+            th.setAttribute('data-tooltip', `Karmaşıklık ${c}`);
+            trH.appendChild(th);
+        });
+        thead.appendChild(trH);
+
+        // Cell index
+        const cellMap = {};
+        (data.cells || []).forEach((c) => {
+            const k = `${c.template_kind}|${c.complexity_score}`;
+            cellMap[k] = c;
+        });
+        const maxCount = (data.cells || []).reduce((m, c) => Math.max(m, c.run_count || 0), 0) || 1;
+
+        // Rows
+        tbody.replaceChildren();
+        (data.kinds || []).forEach((kind) => {
+            const tr = document.createElement('tr');
+            const td0 = document.createElement('td');
+            td0.textContent = kind;
+            td0.className = 'ao-heatmap-rowlabel';
+            tr.appendChild(td0);
+            complexities.forEach((c) => {
+                const td = document.createElement('td');
+                const cell = cellMap[`${kind}|${c}`];
+                const cnt = cell ? cell.run_count : 0;
+                const sr = cell ? Math.round((cell.success_rate || 0) * 100) : null;
+                const ratio = maxCount > 0 ? Math.min(1, cnt / maxCount) : 0;
+                const alpha = (0.10 + 0.65 * ratio).toFixed(3);
+                td.className = 'ao-heatmap-cell';
+                td.style.backgroundColor = `rgba(66, 133, 244, ${alpha})`;
+                td.textContent = cnt > 0 ? String(cnt) : '';
+                if (cell) {
+                    td.setAttribute('data-tooltip',
+                        `${kind} · C${c}: ${cnt} kullanım · %${sr} başarı`);
+                }
+                tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+        });
+
+        // Boş kind yoksa zaten kindler boş → empty mesaj zaten gösteriliyor
+    }
+
+    // ───────────── failures ─────────────
+
+    async function _loadFailures(root, state) {
+        const loading = _qs(root, '#aoFailuresLoading');
+        const empty = _qs(root, '#aoFailuresEmpty');
+        if (loading) loading.hidden = false;
+        if (empty) empty.hidden = true;
+        try {
+            const data = await _fetchJson(ENDPOINTS.failures + '?limit=10', state.controller.signal);
+            _renderFailures(root, data);
+            if ((!data.failures || data.failures.length === 0) && empty) empty.hidden = false;
+        } catch (err) {
+            if (err.name === 'AbortError') return;
+            console.warn('[ao-faz6] failures failed:', err);
+            if (empty) {
+                empty.hidden = false;
+                empty.textContent = `Yüklenemedi: ${err.message}`;
+            }
+        } finally {
+            if (loading) loading.hidden = true;
+        }
+    }
+
+    function _renderFailures(root, data) {
+        const tbody = _qs(root, '#aoFailuresTable tbody');
+        if (tbody) {
+            tbody.replaceChildren();
+            (data.failures || []).forEach((f) => {
+                const tr = document.createElement('tr');
+                tr.appendChild(_td(f.error_class || '—'));
+                tr.appendChild(_td(String(f.recurrence_count || 0)));
+                const sqlTd = _td(f.sql_snippet || '—');
+                sqlTd.className = 'ao-mono ao-truncate';
+                sqlTd.title = f.sql_snippet || '';
+                tr.appendChild(sqlTd);
+                tr.appendChild(_td(f.hint || '—'));
+                tr.appendChild(_td(f.last_seen ? new Date(f.last_seen).toLocaleString() : '—'));
+                tbody.appendChild(tr);
+            });
+        }
+        const byClass = _qs(root, '#aoFailuresByClass');
+        if (byClass) {
+            byClass.replaceChildren();
+            const max = (data.by_class || []).reduce((m, x) => Math.max(m, x.total_recurrence || 0), 0) || 1;
+            (data.by_class || []).forEach((c) => {
+                byClass.appendChild(_barLi(c.error_class, c.total_recurrence, max));
+            });
+        }
+    }
+
+    // ───────────── glossary ─────────────
+
+    async function _loadGlossary(root, state) {
+        const loading = _qs(root, '#aoGlossaryLoading');
+        const empty = _qs(root, '#aoGlossaryEmpty');
+        if (loading) loading.hidden = false;
+        if (empty) empty.hidden = true;
+        try {
+            const data = await _fetchJson(ENDPOINTS.glossary + '?limit=20', state.controller.signal);
+            _renderGlossary(root, data);
+            if ((!data.terms || data.terms.length === 0) && empty) empty.hidden = false;
+        } catch (err) {
+            if (err.name === 'AbortError') return;
+            console.warn('[ao-faz6] glossary failed:', err);
+            if (empty) {
+                empty.hidden = false;
+                empty.textContent = `Yüklenemedi: ${err.message}`;
+            }
+        } finally {
+            if (loading) loading.hidden = true;
+        }
+    }
+
+    function _renderGlossary(root, data) {
+        const tbody = _qs(root, '#aoGlossaryTable tbody');
+        if (tbody) {
+            tbody.replaceChildren();
+            (data.terms || []).forEach((t) => {
+                const tr = document.createElement('tr');
+                tr.appendChild(_td(t.term || '—'));
+                tr.appendChild(_td(t.term_type || '—'));
+                tr.appendChild(_td(t.expansion_tr || '—'));
+                tr.appendChild(_td(t.mapped_table || '—'));
+                tr.appendChild(_td(String(t.usage_count || 0)));
+                const v = document.createElement('td');
+                v.textContent = t.admin_verified ? '✓' : '—';
+                v.className = t.admin_verified ? 'ao-verified-yes' : 'ao-verified-no';
+                tr.appendChild(v);
+                tbody.appendChild(tr);
+            });
+        }
+        const byType = _qs(root, '#aoGlossaryByType');
+        if (byType) {
+            byType.replaceChildren();
+            const max = (data.by_type || []).reduce((m, x) => Math.max(m, x.total_usage || 0), 0) || 1;
+            (data.by_type || []).forEach((t) => {
+                byType.appendChild(_barLi(`${t.term_type} (${t.count}, ✓${t.verified})`, t.total_usage, max));
+            });
+        }
+    }
+
+    // ───────────── helpers ─────────────
+
+    function _td(text) {
+        const td = document.createElement('td');
+        td.textContent = text;
+        return td;
+    }
+
+    function _barLi(label, value, max) {
+        const li = document.createElement('li');
+        li.className = 'ao-bar-li';
+        const lab = document.createElement('span');
+        lab.className = 'ao-bar-label';
+        lab.textContent = label;
+        const bar = document.createElement('span');
+        bar.className = 'ao-bar';
+        const fill = document.createElement('span');
+        fill.className = 'ao-bar-fill';
+        const pct = max > 0 ? Math.round((value / max) * 100) : 0;
+        fill.style.width = `${pct}%`;
+        bar.appendChild(fill);
+        const num = document.createElement('span');
+        num.className = 'ao-bar-value';
+        num.textContent = String(value);
+        li.appendChild(lab);
+        li.appendChild(bar);
+        li.appendChild(num);
+        return li;
+    }
+
+    // ───────────── load orchestrator ─────────────
+
+    function _loadTabData(root, state, name) {
+        // Yeni fetch — önceki istek abort
+        if (state.controller) state.controller.abort();
+        state.controller = new AbortController();
+        if (name === 'Templates') _loadHeatmap(root, state);
+        else if (name === 'Failures') _loadFailures(root, state);
+        else if (name === 'Glossary') _loadGlossary(root, state);
+    }
+
+    function init(selector) {
+        const root = typeof selector === 'string' ? document.querySelector(selector) : selector;
+        if (!root) return null;
+        // Sekme bar yoksa (eski partial) sessiz çık
+        if (!_qs(root, '#aoTabBtnTemplates')) return null;
+
+        const state = { controller: null, activeTab: 'Templates' };
+        _bindTabs(root, state);
+        // İlk sekmenin verisini yükle
+        _loadTabData(root, state, 'Templates');
+
+        // Refresh butonu da Faz 6 sekmesini yenilesin
+        const refreshBtn = _qs(root, '#aoRefresh');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', () => _loadTabData(root, state, state.activeTab));
+        }
+
+        return { state, refresh: () => _loadTabData(root, state, state.activeTab) };
+    }
+
+    window.AgenticObservabilityFaz6 = { init };
+
+    // Otomatik bağlama: AgenticObservability mevcut init'i tetiklediğinde
+    // bizim init'imiz de DOMContentLoaded sonrası bir kez çalışsın.
+    document.addEventListener('DOMContentLoaded', () => {
+        const sec = document.getElementById('agenticObservabilitySection');
+        if (sec) {
+            // Mevcut init zaten asenkron tetiklenebilir; biraz gecikme ile devreye al
+            setTimeout(() => { try { init(sec); } catch (_e) { /* sessiz */ } }, 100);
+        }
+    });
 })();
 
 

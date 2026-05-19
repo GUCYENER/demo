@@ -1,16 +1,20 @@
 """
-multi_signal_rank — Faz 3b
-==========================
-Adayları 6 sinyalle yeniden sıralar (master plan §3 weights):
+multi_signal_rank — Faz 3b + v3.29.7 (G1 glossary_match_score)
+==============================================================
+Adayları 7 sinyalle yeniden sıralar:
 
-    final = 0.35 * semantic
-          + 0.20 * name_fuzzy
-          + 0.15 * column_match
+    final = 0.30 * semantic
+          + 0.18 * name_fuzzy
+          + 0.14 * column_match
           + 0.10 * fk_centrality
-          + 0.10 * recency
-          + 0.10 * usage_freq
+          + 0.08 * recency
+          + 0.08 * usage_freq
+          + 0.12 * glossary_match     # v3.29.7 G1
 
 Ağırlıklar `system_settings`'ten override edilebilir (yoksa default).
+Toplam ~1.00. Glossary sinyali eklendiğinde diğer ağırlıklar orantılı
+olarak küçültüldü; admin_verified=True ipuçları tam puan, false ipuçları
+kısmi puan getirir.
 
 Sinyal kaynakları:
     - semantic: hybrid_retrieval'dan gelen `hybrid_score` (önceden 0.65 sem + 0.35 lex harmanı)
@@ -19,6 +23,8 @@ Sinyal kaynakları:
     - fk_centrality: ds_db_relationships'te aday tabloya/dan giden FK sayısı (normalize)
     - recency: tablo son ne zaman query_history'de göründü (decay)
     - usage_freq: son N gün içinde kaç sorguda kullanıldı (log-normalize)
+    - glossary_match: v3.29.7 G1 — query_expand_node'un ürettiği glossary_hints
+                      içinde aday (schema, table) canonical/mapped olarak geçiyor mu
 
 Tüm sinyaller [0..1] aralığında normalize edilir.
 """
@@ -31,14 +37,15 @@ import unicodedata
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional
 
-# Default weights — master plan §3
+# Default weights — v3.29.7 G1: glossary_match eklendi, toplam ~1.00
 DEFAULT_WEIGHTS: Dict[str, float] = {
-    "semantic": 0.35,
-    "name_fuzzy": 0.20,
-    "column_match": 0.15,
+    "semantic": 0.30,
+    "name_fuzzy": 0.18,
+    "column_match": 0.14,
     "fk_centrality": 0.10,
-    "recency": 0.10,
-    "usage_freq": 0.10,
+    "recency": 0.08,
+    "usage_freq": 0.08,
+    "glossary_match": 0.12,
 }
 
 
@@ -202,6 +209,68 @@ def _usage_freq_score(candidate: Dict[str, Any],
     return float(min(1.0, math.log1p(cnt) / math.log1p(saturation)))
 
 
+def _glossary_match_score(candidate: Dict[str, Any],
+                          glossary_hints: Optional[List[Dict[str, Any]]] = None) -> float:
+    """
+    v3.29.7 G1 — Aday tablonun query_expand'in ürettiği business_glossary
+    ipuçlarında geçip geçmediğini ölçer.
+
+    Eşleşme kuralları:
+      - canonical_table veya mapped_table tam eşleşmesi → +1.0
+      - canonical_schema eşleşirse fakat tablo farklıysa → +0.3 (zayıf sinyal)
+      - Birden fazla hint eşleşirse log-normalize (3 eşleşme tavan)
+      - admin_verified=True hint → tam ağırlık, false → 0.6× azaltım
+        (admin_verified hint'ler G5 synonym_learner döngüsünden geçmiş olur)
+
+    Şema-bilinmez eşleşme: hint.schema None ise (cross-schema canonical)
+    sadece tablo adına bakılır.
+    """
+    if not glossary_hints:
+        return 0.0
+
+    cand_schema = (candidate.get("schema_name") or "").lower()
+    cand_table = (candidate.get("table_name") or "").lower()
+    if not cand_table:
+        return 0.0
+
+    score_sum = 0.0
+    hits = 0
+    for hint in glossary_hints:
+        if not isinstance(hint, dict):
+            continue
+        h_schema = (hint.get("schema") or "").lower()
+        h_table = (hint.get("table") or "").lower()
+        h_mapped_table = (hint.get("mapped_table") or "").lower()
+        admin_verified = bool(hint.get("admin_verified", False))
+        # Verified hint full weight; unverified 0.6×
+        weight_factor = 1.0 if admin_verified else 0.6
+
+        matched = 0.0
+        if h_table and h_table == cand_table:
+            # Tablo eşleşti
+            if not h_schema or h_schema == cand_schema:
+                matched = 1.0
+            else:
+                # Tablo aynı, schema farklı → orta sinyal
+                matched = 0.5
+        elif h_mapped_table and h_mapped_table == cand_table:
+            matched = 1.0
+        elif h_schema and h_schema == cand_schema and not h_table:
+            # Sadece schema canonical — zayıf sinyal
+            matched = 0.3
+
+        if matched > 0:
+            score_sum += matched * weight_factor
+            hits += 1
+
+    if hits == 0:
+        return 0.0
+    # Tek güçlü eşleşme zaten anlamlı; çoklu eşleşme log-doygunluk (tavan 3)
+    raw = score_sum / max(1, hits)  # ortalama eşleşme kalitesi
+    boost = math.log1p(hits) / math.log1p(3)  # 1 hit=0.5, 3+ hit=1.0
+    return float(min(1.0, raw * (0.7 + 0.3 * boost)))
+
+
 def multi_signal_rank(
     candidates: List[Dict[str, Any]],
     query_text: str,
@@ -210,6 +279,7 @@ def multi_signal_rank(
     recency_index: Optional[Dict[tuple, float]] = None,
     freq_index: Optional[Dict[tuple, int]] = None,
     weights: Optional[Dict[str, float]] = None,
+    glossary_hints: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Adayları 6 sinyalle skorla ve `final_score` ile DESC sırala.
@@ -238,14 +308,16 @@ def multi_signal_rank(
         fk_c = _fk_centrality_score(c, centrality_index)
         rec = _recency_score(c, recency_index)
         freq = _usage_freq_score(c, freq_index)
+        gloss = _glossary_match_score(c, glossary_hints)
 
         final = (
-            w["semantic"]      * sem
-          + w["name_fuzzy"]    * name_fz
-          + w["column_match"]  * col_m
-          + w["fk_centrality"] * fk_c
-          + w["recency"]       * rec
-          + w["usage_freq"]    * freq
+            w["semantic"]        * sem
+          + w["name_fuzzy"]      * name_fz
+          + w["column_match"]    * col_m
+          + w["fk_centrality"]   * fk_c
+          + w["recency"]         * rec
+          + w["usage_freq"]      * freq
+          + w.get("glossary_match", 0.0) * gloss
         )
 
         enriched = dict(c)
@@ -255,6 +327,7 @@ def multi_signal_rank(
         enriched["fk_centrality_score"] = fk_c
         enriched["recency_score"] = rec
         enriched["usage_freq_score"] = freq
+        enriched["glossary_match_score"] = gloss
         enriched["final_score"] = float(final)
         ranked.append(enriched)
 
@@ -291,6 +364,7 @@ def multi_signal_rank_node(state: Dict[str, Any]) -> Dict[str, Any]:
         recency_index=state.get("recency_index"),
         freq_index=state.get("freq_index"),
         weights=weights,
+        glossary_hints=state.get("glossary_hints"),  # v3.29.7 G1
     )
 
     # Faz 4e — preferred/blacklisted filter

@@ -75,7 +75,16 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
-### 🆕 v3.28.5 (2026-05-18) - Pydantic v2 uyumluluk patch
+### 🆕 v3.29.7 (2026-05-19) - Faz 6 Eksik İmplementasyon + Plan.md Persistance
+- 📊 **HERA — Plan.md persistance:** `.agents/workflows/vyrazeus.md` Bölüm 5d eklendi. Her geliştirme/güncelleme/fix talebi `.agents/plans/{vYYY.Z}_{slug}.md` dosyasına yazılır → `/compact` sonrası bağlam korunur.
+- 🎯 **G1 — Glossary signal:** `app/services/pipeline/nodes/multi_signal_rank.py` — 7. sinyal `glossary_match_score` (weight 0.12). `business_glossary.mapped_table` ve term match'lere göre puan; `admin_verified=true` 1.0x, false 0.6x. 12 unit test geçti.
+- 💬 **G2 — Clarification v2 SSE:** `sse_adapter.py:state_to_clarification_v2_event` + `agentic_query_api.py` interrupt branch zengin kart event'i emit eder. Frontend `disambiguation_card.js` (window.DisambiguationCardV2) + `disambiguation_card.css` (HEBE compliant: keyboard nav, ARIA, prefers-reduced-motion). `dialog_chat.js` v2 öncelikli + `__VYRA_CLARIFICATION_V2_HANDLED__` flag ile v1 geri uyumluluğu. 11 SSE testi geçti.
+- 🔧 **G3 — Query Builder API:** `app/api/routes/query_builder_api.py` — `POST /api/query-builder/suggest-path` (Yen's K-shortest via fk_graph_resolver) + `POST /api/query-builder/preview` (multi-table parametrize SELECT, dialect-aware LIMIT/FETCH FIRST/TOP, opsiyonel 5s SafeSQLExecutor). Defense-in-depth: identifier whitelist regex (`^[A-Za-z_][A-Za-z0-9_$]{0,62}$`) + operator whitelist + Pydantic validation. 41 unit test geçti.
+- 🖱️ **G4 — Multi-table Builder UI:** `frontend/assets/js/modules/query_builder_v2.js` (window.QueryBuilderV2) — 2–8 tablo, FK auto-suggest path, per-tablo SELECT/WHERE/GROUP BY/ORDER BY, SQL preview + 5s sample execute. HEBE Pre-Plan Gate: role="application", aria-live status, ArrowKeys/Esc keyboard, data-tooltip, prefers-reduced-motion fallback, light theme override. Basit/Gelişmiş toggle (default Basit = 2-hop).
+- 📈 **G5 — Observability sekmeleri:** 3 yeni endpoint (`/observability/template-heatmap`, `/failures-top`, `/glossary-usage`) admin-only. Frontend: `section_agentic_observability.html` tablist (Templates × Complexity heatmap, Top-10 failures tablo + sınıf bazlı bar, Glossary top-20 + tip dağılımı). `agentic_observability_faz6.js`/`.css` — ArrowLeft/Right tab nav, aria-selected/controls, skeleton loading.
+- 📦 **Bundle:** 741KB JS / 359KB CSS (esbuild minified, %47/%36 küçüldü).
+
+### v3.28.5 (2026-05-18) - Pydantic v2 uyumluluk patch
 - 🔧 **Deprecation fix:** `app/api/routes/db_learning_api.py:223` — `Field(..., regex=...)` Pydantic v2'de kaldırılmış. `pattern=r"^(user|synthetic|manual)$"` ile değiştirildi. Schema endpoint imzası ve davranış değişmedi; sadece deprecation warning susturuldu.
 
 ### v3.28.4 (2026-05-18) - Sistem Sıfırlama agentic öğrenme tabloları kapsam genişletme

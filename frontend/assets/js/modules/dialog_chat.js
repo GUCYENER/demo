@@ -551,6 +551,9 @@ window.DialogChatModule = (function () {
         if (!isDbMode) {
             isWaitingForResponse = true;
         }
+        // v3.29.7 G2: Yeni mesajda clarification_v2 bayrağını sıfırla
+        // (yoksa ikinci sorguda v1 yanlışlıkla atlanır)
+        window.__VYRA_CLARIFICATION_V2_HANDLED__ = false;
 
         // v3.16.0: Follow-up anchor'ı POST'tan ÖNCE yerel değişkene al ve modül state'ini
         // anında temizle. Bu, error/timeout/iptal gibi yollardan biten istekler için de
@@ -749,8 +752,14 @@ window.DialogChatModule = (function () {
                                 }
                                 break;
 
-                            // v4.0: Disambiguation — aynı isimde çoklu tablo
+                            // v4.0: Disambiguation v1 — aynı isimde çoklu tablo (geri uyumlu)
+                            // v3.29.7 G2: Eğer clarification_v2 event'i de gelirse o tercih edilir,
+                            // v1 sadece v2 yoksa render olur (handledByV2 flag).
                             case 'clarification': {
+                                if (window.__VYRA_CLARIFICATION_V2_HANDLED__) {
+                                    // v2 zaten render etti, v1'i atla
+                                    return;
+                                }
                                 if (streamingEl) streamingEl.remove();
                                 const { candidates, query: cQuery, message: cMsg } = eventData;
                                 const disambigHtml = window.DialogChatUtils.renderDisambiguationCard(
@@ -761,6 +770,67 @@ window.DialogChatModule = (function () {
                                     }
                                 );
                                 _insertInteractiveBlock(disambigHtml);
+                                isWaitingForResponse = false;
+                                hideTypingIndicator();
+                                return;
+                            }
+
+                            // v3.29.7 G2: Disambiguation v2 — zengin kartlar (sample_rows,
+                            // preview_sql, join_paths_to_target, row_count_estimate, masked_columns)
+                            case 'clarification_v2': {
+                                if (streamingEl) streamingEl.remove();
+                                const { cards, query: cQuery, message: cMsg } = eventData;
+                                if (!window.DisambiguationCardV2) {
+                                    // Modül yüklenmemişse v1 fallback (v1 handler bunu tutmaz çünkü v2 bayrağı yok)
+                                    console.warn('[VYRA] DisambiguationCardV2 modülü yüklenmedi — v1 fallback');
+                                    return;
+                                }
+                                const container = document.createElement('div');
+                                container.className = 'disambig-v2-container';
+                                window.DisambiguationCardV2.render(
+                                    cards, cQuery, cMsg,
+                                    (selectedFull, _card) => {
+                                        _sendDbMessageWithHint(cQuery, selectedFull, null);
+                                    },
+                                    container
+                                );
+                                _insertInteractiveBlock(container.innerHTML);
+                                // Block insertion HTML string ile çalışıyor — handler'lar kayboldu;
+                                // bu yüzden insertion sonrası elementi yeniden bulup onSelect bağla
+                                setTimeout(() => {
+                                    const inserted = document.querySelector(
+                                        `.disambig-v2-wrap[data-query="${(cQuery || '').replace(/"/g, '\\"')}"]`
+                                    );
+                                    if (inserted) {
+                                        const cardEls = inserted.querySelectorAll('.disambig-card-v2');
+                                        cardEls.forEach(cardEl => {
+                                            const btn = cardEl.querySelector('.disambig-select-btn');
+                                            const _select = () => {
+                                                cardEls.forEach(el => el.setAttribute('aria-checked', 'false'));
+                                                cardEl.setAttribute('aria-checked', 'true');
+                                                cardEl.classList.add('disambig-selected');
+                                                inserted.querySelectorAll('.disambig-select-btn').forEach(b => {
+                                                    b.disabled = true;
+                                                    b.classList.add('disambig-btn-disabled');
+                                                });
+                                                _sendDbMessageWithHint(cQuery, cardEl.dataset.full || '', null);
+                                                if (typeof window.showToast === 'function') {
+                                                    window.showToast(`✓ ${cardEl.dataset.full} seçildi`, 'success');
+                                                }
+                                            };
+                                            if (btn) btn.addEventListener('click', _select);
+                                            cardEl.addEventListener('keydown', (e) => {
+                                                if (e.key === 'Enter' || e.key === ' ') {
+                                                    e.preventDefault();
+                                                    _select();
+                                                }
+                                            });
+                                        });
+                                        const first = inserted.querySelector('.disambig-card-v2');
+                                        if (first) first.focus();
+                                    }
+                                }, 50);
+                                window.__VYRA_CLARIFICATION_V2_HANDLED__ = true;
                                 isWaitingForResponse = false;
                                 hideTypingIndicator();
                                 return;
@@ -815,7 +885,7 @@ window.DialogChatModule = (function () {
                                 mentionDiv.appendChild(statusSpan);
 
                                 // streamingEl'in content alanına ekle
-                                const contentEl = streamingEl.querySelector('.message-content') || streamingEl;
+                                const contentEl = streamingEl.querySelector('.streaming-extras') || streamingEl.querySelector('.message-content') || streamingEl;
                                 contentEl.appendChild(mentionDiv);
                                 break;
                             }
@@ -824,7 +894,7 @@ window.DialogChatModule = (function () {
                             case 'selected_table_for_preview': {
                                 try {
                                     if (!streamingEl) streamingEl = createStreamingMessage();
-                                    const contentEl = streamingEl.querySelector('.message-content') || streamingEl;
+                                    const contentEl = streamingEl.querySelector('.streaming-extras') || streamingEl.querySelector('.message-content') || streamingEl;
                                     if (window.renderSampleDataPreview) {
                                         window.renderSampleDataPreview(contentEl, eventData);
                                     }
@@ -917,7 +987,7 @@ window.DialogChatModule = (function () {
                                         }
                                     });
                                 }
-                                const twContent = streamingEl.querySelector('.message-content') || streamingEl;
+                                const twContent = streamingEl.querySelector('.streaming-extras') || streamingEl.querySelector('.message-content') || streamingEl;
                                 twContent.appendChild(twDiv);
                                 // v3.14.6: sayacı başlat ve mevcut elapsed'ten devam ettir
                                 elapsedSeconds = parseInt(twElapsed) || 0;
@@ -975,7 +1045,7 @@ window.DialogChatModule = (function () {
                                     // v3.16.0: DB modunda badge'i chip listesinin başına ekle.
                                     let prefixHtml = '';
                                     if (isDbMode && lastDbAssistantMessageId) {
-                                        prefixHtml = `<button type="button" class="db-followup-anchor-badge" data-anchor-id="${lastDbAssistantMessageId}" title="Bir sonraki mesajın önceki sorgu üzerinde değişiklik olduğunu belirt"><i class="fa-solid fa-link"></i> Önceki konu ile ilgili soru sor</button>`;
+                                        prefixHtml = `<button type="button" class="db-followup-anchor-badge" data-anchor-id="${lastDbAssistantMessageId}" title="Sonraki mesaj son sorgu üzerinde devam edecek — tablo + bağlam korunur"><i class="fa-solid fa-link"></i> Son konu ile ilgili sor</button>`;
                                     }
                                     _insertInteractiveBlock(prefixHtml + fuHtml);
                                     // Badge tıklama handler'ı
@@ -992,7 +1062,7 @@ window.DialogChatModule = (function () {
                                                     _showFollowupIndicator(aid);
                                                     const inp = document.getElementById('dialogInput');
                                                     if (inp) {
-                                                        inp.placeholder = '↪ Önceki sorgu üzerinde değişiklik isteyin...';
+                                                        inp.placeholder = '↪ Son sorgu üzerinde devam edin (tablo + bağlam korunacak)...';
                                                         inp.focus();
                                                     }
                                                 });
@@ -1030,9 +1100,22 @@ window.DialogChatModule = (function () {
             // ⏱️ Response time hesapla
             const responseTime = ((performance.now() - startTime) / 1000).toFixed(2);
 
-            // Stream container'ı temizle
+            // v3.28.7: Stream container temizlik kararı isDbOnly'ye göre verilir —
+            // db-only dalında token narrative gizlenir, sample preview kartı korunur.
+            const _isDbOnlyForCleanup = !!finalMetadata?.db_only;
+            const _hasExtras = !!(streamingEl && streamingEl.querySelector('.streaming-extras')
+                                  && streamingEl.querySelector('.streaming-extras').childNodes.length > 0);
             if (streamingEl) {
-                streamingEl.remove();
+                if (_isDbOnlyForCleanup && _hasExtras) {
+                    // Sadece token narrative'i gizle, sample preview gibi extras DOM'da kalır
+                    const _tokensEl = streamingEl.querySelector('.streaming-tokens');
+                    if (_tokensEl) _tokensEl.hidden = true;
+                    const _statusEl = streamingEl.querySelector('.streaming-status');
+                    if (_statusEl) _statusEl.style.display = 'none';
+                    streamingEl.classList.add('streaming-collapsed');
+                } else {
+                    streamingEl.remove();
+                }
             }
 
             // Final mesajı AddAssistantMessage ile göster
@@ -1160,8 +1243,11 @@ window.DialogChatModule = (function () {
             </div>
             <div class="message-bubble assistant streaming-bubble">
                 <div class="streaming-status"></div>
-                <div class="streaming-content"></div>
-                <span class="streaming-cursor">▌</span>
+                <div class="streaming-tokens">
+                    <div class="streaming-content"></div>
+                    <span class="streaming-cursor">▌</span>
+                </div>
+                <div class="streaming-extras"></div>
             </div>
         `;
 
@@ -1233,7 +1319,7 @@ window.DialogChatModule = (function () {
                 ind = document.createElement('div');
                 ind.id = 'dbFollowupIndicator';
                 ind.className = 'db-followup-indicator';
-                ind.innerHTML = `<span class="dfi-text"><i class="fa-solid fa-link"></i> Önceki konu ile ilgili sor</span><button type="button" class="dfi-clear" title="Vazgeç" aria-label="Vazgeç">×</button>`;
+                ind.innerHTML = `<span class="dfi-text"><i class="fa-solid fa-link"></i> Son konu ile ilgili sor</span><button type="button" class="dfi-clear" title="Vazgeç" aria-label="Vazgeç">×</button>`;
                 host.insertBefore(ind, input);
                 const clearBtn = ind.querySelector('.dfi-clear');
                 if (clearBtn) clearBtn.addEventListener('click', () => {

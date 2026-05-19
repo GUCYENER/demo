@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     app_name: str = "VYRA"
     debug: bool = True
-    APP_VERSION: str = "3.28.5"  # v3.28: Synthetic Q/SQL + Sample Preview + Drag-Drop Query Builder + Pydantic v2 patch
+    APP_VERSION: str = "3.29.7"  # v3.29.7 Faz 6 eksik implementasyon — G1 multi_signal_rank.glossary_match_score (12 test), G2 clarification_v2 SSE (sse_adapter+disambiguation_card.js+css, 11 test, geri uyumlu), G3 query_builder_api (suggest-path + preview, 41 test, identifier+op whitelist, dialect-aware LIMIT), G4 query_builder_v2.js multi-table builder (HEBE Pre-Plan Gate, keyboard nav, ARIA, prefers-reduced-motion), G5 observability sekmeleri (template-heatmap + failures-top + glossary-usage endpoint'leri + agentic_observability_faz6.js/css). Plan.md persistance protokolü (.agents/plans/) HERA. Bundle 741KB JS / 359KB CSS.
 
     # Frontend & API prefix
     api_prefix: str = "/api"
@@ -175,6 +175,23 @@ class Settings(BaseSettings):
     # Synthetic generate_db_query_pairs günlük LLM bütçe sınırı (USD).
     # 0 = sınırsız (önerilmez). Aşıldığında üretim erken durur.
     MAX_LLM_DAILY_BUDGET_USD: float = 1.0
+
+    # -------------------------------------------------
+    # FK Graph Resolver (v3.29.5 — Faz 7 carry-over)
+    # -------------------------------------------------
+    # K-shortest path arama parametreleri. Çok-tablolu sorular için path
+    # patlamasını sınırlar. Yüksek değerler latency artışı getirir.
+    FK_GRAPH_DEFAULT_K: int = 5            # Maks alternatif yol sayısı
+    FK_GRAPH_DEFAULT_MAX_HOPS: int = 5     # Tek yol için maks zincir uzunluğu
+
+    # -------------------------------------------------
+    # Code Value Auto Re-scan (v3.29.5 — Faz 7 carry-over)
+    # -------------------------------------------------
+    # ds_db_samples güncellendikten sonra ds_code_values otomatik yenileme.
+    # 0 = devre dışı (manuel admin tetikleme). >0 ise scheduler interval'inin
+    # bir katı olarak çalışır (SCHEDULER_INTERVAL_SECONDS × bu çarpan).
+    CODE_VALUE_AUTO_RESCAN_INTERVAL_MULT: int = 0   # 0 = off; örn 12 = ~1 saat
+    CODE_VALUE_AUTO_RESCAN_MIN_AGE_MINUTES: int = 60  # Son tarama bu kadar eskiyse yeniden tara
 
     # -------------------------------------------------
     # Langfuse Observability (v3.26.0 Faz 5 P2-b — opsiyonel)

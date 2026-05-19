@@ -50,6 +50,9 @@ const CSS_FILES = [
     'assets/css/modules/query_builder.css',         // v3.28.3 G4 — Pre-execute drag-drop query builder
     'assets/css/modules/db_source_selector.css',    // v3.20.0 Faz 1f — DB kaynak chip selector
     'assets/css/modules/agentic_observability.css', // v3.25.0 Faz 6g — pipeline gözlem dashboard
+    'assets/css/modules/disambiguation_card.css',   // v3.29.7 G2 — clarification_v2 zengin kart
+    'assets/css/modules/query_builder_v2.css',      // v3.29.7 G4 — Multi-table query builder
+    'assets/css/modules/agentic_observability_faz6.css', // v3.29.7 G5 — Faz 6 observability sekmeleri
 ];
 
 const JS_FILES = [
@@ -82,6 +85,8 @@ const JS_FILES = [
     'assets/js/modules/db_source_selector.js',  // v3.20.0 Faz 1f — dialog_chat'ten ÖNCE
     'assets/js/modules/sample_data_preview.js', // v3.28.2 G3 — dialog_chat'ten ÖNCE (window.renderSampleDataPreview)
     'assets/js/modules/query_builder.js',       // v3.28.3 G4 — Pre-execute drag-drop builder (window.QueryBuilder)
+    'assets/js/modules/disambiguation_card.js', // v3.29.7 G2 — Disambiguation v2 (window.DisambiguationCardV2) — dialog_chat'ten ÖNCE
+    'assets/js/modules/query_builder_v2.js',    // v3.29.7 G4 — Multi-table query builder (window.QueryBuilderV2)
     'assets/js/modules/dialog_chat.js',
     'assets/js/modules/permissions_manager.js',
     'assets/js/modules/file_guidelines_modal.js',
@@ -125,6 +130,7 @@ const JS_FILES = [
     'assets/js/modules/feature_permissions_module.js',  // v3.18.0
     'assets/js/modules/agentic_query_consumer.js',      // v3.25.0 Faz 6f — SSE stream consumer
     'assets/js/modules/agentic_observability.js',       // v3.25.0 Faz 6g — admin dashboard
+    'assets/js/modules/agentic_observability_faz6.js',  // v3.29.7 G5 — Faz 6 sekmeleri (heatmap/failures/glossary)
     'assets/js/branding_engine.js',
 ];
 

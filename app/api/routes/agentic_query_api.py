@@ -402,7 +402,11 @@ def stream_agentic_query(
     def _event_stream():
         import json
         from app.services.pipeline.graph import run_pipeline
-        from app.services.pipeline.sse_adapter import state_to_clarification_event, format_sse
+        from app.services.pipeline.sse_adapter import (
+            state_to_clarification_event,
+            state_to_clarification_v2_event,
+            format_sse,
+        )
         from app.services.pipeline.streaming_execute import stream_execute, stream_to_sse
         from app.services.pipeline.observability import get_run_summary
         from app.services.pipeline.wiring import inject_callables
@@ -436,9 +440,13 @@ def stream_agentic_query(
 
                 run_id = final.get("_pipeline_run_id")
 
-                # Clarification interrupt
+                # Clarification interrupt — v3.29.7 G2: v2 (zengin kartlar) varsa
+                # geri uyumlu v1 + yeni v2 birlikte yayınlanır. Frontend tercih ettiği
+                # event'i handle eder; her ikisini de gören modern istemci v2'yi kullanır.
                 if final.get("_interrupt"):
                     yield format_sse(state_to_clarification_event(final))
+                    if final.get("clarification_cards"):
+                        yield format_sse(state_to_clarification_v2_event(final))
                     conn.commit()
                     return
 
@@ -888,3 +896,231 @@ def get_synthetic_q_budget(
         "budget_state": get_budget_state(),
         "max_daily_budget_usd": float(getattr(settings, "MAX_LLM_DAILY_BUDGET_USD", 1.0)),
     }
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# v3.29.7 G5 — Faz 6 Observability sekmeleri
+#   /observability/template-heatmap → template_kind × complexity_score grid
+#   /observability/failures-top      → tekrar eden hata pattern top-10
+#   /observability/glossary-usage    → en sık kullanılan glossary term'leri
+# ──────────────────────────────────────────────────────────────────────────
+
+@router.get("/api/agentic-query/observability/template-heatmap")
+def get_template_heatmap(
+    days: int = 30,
+    company_id: Optional[int] = None,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """ds_synthetic_query_runs üzerinden template_kind × complexity_score heatmap.
+
+    Hücre değeri: en son `days` gün içinde başarılı üretilen (status='ok')
+    sorgu sayısı. Frontend renk yoğunluğu için kullanır.
+    """
+    _require_admin(current_user)
+    days = max(1, min(days, 365))
+    co = company_id if company_id is not None else current_user.get("company_id")
+    co_clause = "AND company_id = %s" if co is not None else ""
+    params: list = [days]
+    if co is not None:
+        params.append(co)
+
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                f"""
+                SELECT template_kind,
+                       COALESCE(complexity_score, 1) AS complexity_score,
+                       COUNT(*)::int AS run_count,
+                       AVG(CASE WHEN status='ok' THEN 1 ELSE 0 END)::float AS success_rate
+                  FROM ds_synthetic_query_runs
+                 WHERE created_at >= NOW() - make_interval(days => %s)
+                   {co_clause}
+                 GROUP BY template_kind, COALESCE(complexity_score, 1)
+                 ORDER BY template_kind, complexity_score
+                """,
+                tuple(params),
+            )
+            rows = cur.fetchall() or []
+            cells = [
+                {
+                    "template_kind": r[0],
+                    "complexity_score": int(r[1] or 1),
+                    "run_count": int(r[2] or 0),
+                    "success_rate": float(r[3] or 0.0),
+                }
+                for r in rows
+            ]
+            kinds = sorted({c["template_kind"] for c in cells if c["template_kind"]})
+            complexities = sorted({c["complexity_score"] for c in cells})
+        finally:
+            cur.close()
+
+    return {
+        "success": True,
+        "days": days,
+        "kinds": kinds,
+        "complexities": complexities,
+        "cells": cells,
+    }
+
+
+@router.get("/api/agentic-query/observability/failures-top")
+def get_failures_top(
+    limit: int = 10,
+    company_id: Optional[int] = None,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """learned_query_failures'tan recurrence_count'a göre top-N hata."""
+    _require_admin(current_user)
+    limit = max(1, min(limit, 50))
+    co = company_id if company_id is not None else current_user.get("company_id")
+    co_clause = "WHERE company_id = %s" if co is not None else ""
+    params: list = []
+    if co is not None:
+        params.append(co)
+    params.append(limit)
+
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        try:
+            # Tabloyu try/except ile sar — migration uygulanmamışsa hata vermek yerine boş dön
+            try:
+                cur.execute(
+                    f"""
+                    SELECT error_class,
+                           recurrence_count,
+                           failure_signature,
+                           LEFT(COALESCE(failed_sql, ''), 200) AS sql_snippet,
+                           LEFT(COALESCE(pattern_hint, ''), 200) AS hint,
+                           updated_at
+                      FROM learned_query_failures
+                      {co_clause}
+                     ORDER BY recurrence_count DESC, updated_at DESC
+                     LIMIT %s
+                    """,
+                    tuple(params),
+                )
+                rows = cur.fetchall() or []
+            except Exception as exc:
+                logger.warning("[observability/failures-top] table not ready: %s", exc)
+                rows = []
+
+            failures = [
+                {
+                    "error_class": r[0],
+                    "recurrence_count": int(r[1] or 0),
+                    "signature": r[2],
+                    "sql_snippet": r[3],
+                    "hint": r[4],
+                    "last_seen": r[5].isoformat() if r[5] else None,
+                }
+                for r in rows
+            ]
+
+            # Class bazlı toplam
+            try:
+                cur.execute(
+                    f"""
+                    SELECT error_class, COUNT(*)::int AS occurrences,
+                           SUM(recurrence_count)::int AS total_recurrence
+                      FROM learned_query_failures
+                      {co_clause}
+                     GROUP BY error_class
+                     ORDER BY total_recurrence DESC
+                    """,
+                    tuple(params[:-1]),
+                )
+                cls_rows = cur.fetchall() or []
+            except Exception:
+                cls_rows = []
+            by_class = [
+                {"error_class": r[0], "occurrences": r[1], "total_recurrence": r[2]}
+                for r in cls_rows
+            ]
+        finally:
+            cur.close()
+
+    return {"success": True, "limit": limit, "failures": failures, "by_class": by_class}
+
+
+@router.get("/api/agentic-query/observability/glossary-usage")
+def get_glossary_usage(
+    limit: int = 20,
+    company_id: Optional[int] = None,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """business_glossary'den usage_count'a göre top-N glossary term."""
+    _require_admin(current_user)
+    limit = max(1, min(limit, 100))
+    co = company_id if company_id is not None else current_user.get("company_id")
+    co_clause = "WHERE company_id = %s" if co is not None else ""
+    params: list = []
+    if co is not None:
+        params.append(co)
+    params.append(limit)
+
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        try:
+            try:
+                cur.execute(
+                    f"""
+                    SELECT term,
+                           COALESCE(term_type, 'unknown') AS term_type,
+                           COALESCE(expansion_tr, '') AS expansion_tr,
+                           COALESCE(mapped_table, '') AS mapped_table,
+                           COALESCE(usage_count, 0) AS usage_count,
+                           COALESCE(admin_verified, FALSE) AS admin_verified,
+                           updated_at
+                      FROM business_glossary
+                      {co_clause}
+                     ORDER BY COALESCE(usage_count, 0) DESC, term
+                     LIMIT %s
+                    """,
+                    tuple(params),
+                )
+                rows = cur.fetchall() or []
+            except Exception as exc:
+                logger.warning("[observability/glossary-usage] table not ready: %s", exc)
+                rows = []
+
+            terms = [
+                {
+                    "term": r[0],
+                    "term_type": r[1],
+                    "expansion_tr": r[2],
+                    "mapped_table": r[3],
+                    "usage_count": int(r[4] or 0),
+                    "admin_verified": bool(r[5]),
+                    "updated_at": r[6].isoformat() if r[6] else None,
+                }
+                for r in rows
+            ]
+
+            # Type dağılımı
+            try:
+                cur.execute(
+                    f"""
+                    SELECT COALESCE(term_type, 'unknown') AS t,
+                           COUNT(*)::int AS cnt,
+                           SUM(COALESCE(usage_count, 0))::int AS total_usage,
+                           SUM(CASE WHEN admin_verified THEN 1 ELSE 0 END)::int AS verified_cnt
+                      FROM business_glossary
+                      {co_clause}
+                     GROUP BY t
+                     ORDER BY total_usage DESC
+                    """,
+                    tuple(params[:-1]),
+                )
+                type_rows = cur.fetchall() or []
+            except Exception:
+                type_rows = []
+            by_type = [
+                {"term_type": r[0], "count": r[1], "total_usage": r[2], "verified": r[3]}
+                for r in type_rows
+            ]
+        finally:
+            cur.close()
+
+    return {"success": True, "limit": limit, "terms": terms, "by_type": by_type}

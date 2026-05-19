@@ -12,7 +12,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import auth, chat, health, rag as rag_routes, tickets, llm_config, prompts, users, system, websocket as ws_routes, organizations, feedback, dialog, permissions, assets, ldap_settings, domain_org_api, widget as widget_routes, companies, address, data_sources_api, sql_audit_api, themes, db_export, feature_permissions, agentic_query_api, metrics_api, db_learning_api, query_state_api
+from app.api.routes import auth, chat, health, rag as rag_routes, tickets, llm_config, prompts, users, system, websocket as ws_routes, organizations, feedback, dialog, permissions, assets, ldap_settings, domain_org_api, widget as widget_routes, companies, address, data_sources_api, sql_audit_api, themes, db_export, feature_permissions, agentic_query_api, metrics_api, db_learning_api, query_state_api, query_builder_api
 from app.core.config import settings
 from app.core.db import init_db
 from app.core.rate_limiter import limiter, get_rate_limit_handler, get_rate_limit_exception
@@ -74,11 +74,14 @@ _scheduler_running = False
 def _run_schedule_checker():
     """Periyodik olarak scheduled training koşullarını kontrol eder"""
     import time
-    
+
     from app.services.logging_service import log_system_event, log_error
-    
+
     log_system_event("INFO", "[Scheduler] ML Training schedule checker baslatildi", "scheduler")
-    
+
+    # v3.29.5 Faz 7 — code_value auto re-scan tick counter
+    _cv_tick = 0
+
     while _scheduler_running:
         try:
             # Her SCHEDULER_INTERVAL_SECONDS saniyede bir kontrol et (config'den)
@@ -115,7 +118,28 @@ def _run_schedule_checker():
             if trigger_reason:
                 log_system_event("INFO", f"[Scheduler] Otomatik egitim tetiklendi: {trigger_reason}", "scheduler")
                 service.start_training(user_id=1, trigger=trigger_reason)
-                
+
+            # 4) v3.29.5 Faz 7 — Code value auto re-scan (config'e bağlı)
+            try:
+                cv_mult = int(getattr(settings, "CODE_VALUE_AUTO_RESCAN_INTERVAL_MULT", 0) or 0)
+                if cv_mult > 0:
+                    _cv_tick += 1
+                    if _cv_tick >= cv_mult:
+                        _cv_tick = 0
+                        from app.services.db_learning.code_value_extractor import (
+                            rescan_stale_sources,
+                        )
+                        min_age = int(getattr(settings, "CODE_VALUE_AUTO_RESCAN_MIN_AGE_MINUTES", 60) or 60)
+                        scanned = rescan_stale_sources(min_age_minutes=min_age)
+                        if scanned:
+                            log_system_event(
+                                "INFO",
+                                f"[Scheduler] code_value auto re-scan: {scanned} source islendi",
+                                "scheduler",
+                            )
+            except Exception as e:
+                log_error(f"[Scheduler] code_value auto re-scan hatasi: {e}", "scheduler")
+
         except Exception as e:
             log_error(f"[Scheduler] Kontrol hatasi: {e}", "scheduler")
     
@@ -279,6 +303,7 @@ def create_app() -> FastAPI:
     app.include_router(metrics_api.router)  # v3.26.0 - Faz 3 P1-b - Semantic/Metric Layer
     app.include_router(db_learning_api.router)  # v3.27.0 - DB Learning Loop (G1+G3+G4)
     app.include_router(query_state_api.router)  # v3.28.3 - Faz 5 G4 - Pre-execute Drag-Drop Query Builder
+    app.include_router(query_builder_api.router)  # v3.29.7 G3 - Multi-table Query Builder (suggest-path + preview)
 
     from pathlib import Path
     from fastapi.responses import FileResponse
