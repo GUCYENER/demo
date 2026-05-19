@@ -1631,4 +1631,143 @@ CREATE TABLE IF NOT EXISTS pending_db_queries (
 CREATE INDEX IF NOT EXISTS idx_pending_dbq_user ON pending_db_queries(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_pending_dbq_dialog ON pending_db_queries(dialog_id);
 
+-- ============================================================================
+-- v3.30.0 FAZ 0: Akıllı Veri Keşfi (DB Smart Wizard) — runtime convenience
+-- Authoritative kaynak: migrations/versions/032_v3300_db_smart_core_tables.py
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS dbsmart_sessions (
+    id              SERIAL PRIMARY KEY,
+    session_uid     UUID NOT NULL UNIQUE,
+    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    company_id      INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    source_id       INTEGER REFERENCES data_sources(id) ON DELETE SET NULL,
+    current_step    SMALLINT NOT NULL DEFAULT 0,
+    status          VARCHAR(20) NOT NULL DEFAULT 'active',
+    context         JSONB NOT NULL DEFAULT '{}'::jsonb,
+    generated_sql   TEXT,
+    dialect         VARCHAR(20),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_activity_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at    TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_dbsmart_sessions_user_last
+    ON dbsmart_sessions (user_id, company_id, last_activity_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dbsmart_sessions_ctx
+    ON dbsmart_sessions USING GIN (context);
+
+CREATE TABLE IF NOT EXISTS dbsmart_saved_reports (
+    id                  SERIAL PRIMARY KEY,
+    user_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    company_id          INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    source_id           INTEGER REFERENCES data_sources(id) ON DELETE SET NULL,
+    name                VARCHAR(200) NOT NULL,
+    description         TEXT,
+    wizard_state        JSONB NOT NULL,
+    last_sql            TEXT,
+    last_dialect        VARCHAR(20),
+    tags                TEXT[],
+    run_count           INTEGER NOT NULL DEFAULT 0,
+    last_run_at         TIMESTAMPTZ,
+    last_run_snapshot   JSONB,
+    is_shared           BOOLEAN NOT NULL DEFAULT FALSE,
+    share_token         VARCHAR(64),
+    share_expires_at    TIMESTAMPTZ,
+    schedule_cron       VARCHAR(64),
+    schedule_next_run   TIMESTAMPTZ,
+    owner_team_id       INTEGER,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS dbsmart_templates (
+    id                          SERIAL PRIMARY KEY,
+    template_key                VARCHAR(120) NOT NULL UNIQUE,
+    category                    VARCHAR(60) NOT NULL,
+    applicable_table_patterns   TEXT[] NOT NULL DEFAULT '{}',
+    sql_template                TEXT NOT NULL,
+    required_columns            JSONB NOT NULL DEFAULT '{}'::jsonb,
+    dialect_variants            JSONB NOT NULL DEFAULT '{}'::jsonb,
+    source_id                   INTEGER REFERENCES data_sources(id) ON DELETE CASCADE,
+    company_id                  INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+    is_official                 BOOLEAN NOT NULL DEFAULT FALSE,
+    is_active                   BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by                  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS dbsmart_user_preferences (
+    id                      SERIAL PRIMARY KEY,
+    user_id                 INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    company_id              INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    frequent_tables         INTEGER[] NOT NULL DEFAULT '{}',
+    preferred_date_range    VARCHAR(40),
+    default_metrics         TEXT[] NOT NULL DEFAULT '{}',
+    learned_preferences     JSONB NOT NULL DEFAULT '{}'::jsonb,
+    ui_settings             JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS dbsmart_metric_library (
+    id                      SERIAL PRIMARY KEY,
+    metric_key              VARCHAR(120) NOT NULL UNIQUE,
+    name_tr                 VARCHAR(160) NOT NULL,
+    name_en                 VARCHAR(160),
+    category                VARCHAR(60) NOT NULL,
+    sub_category            VARCHAR(60),
+    description_tr          TEXT,
+    rationale_template_tr   TEXT,
+    applicable_when         JSONB NOT NULL DEFAULT '{}'::jsonb,
+    sql_templates           JSONB NOT NULL DEFAULT '{}'::jsonb,
+    required_features       JSONB NOT NULL DEFAULT '[]'::jsonb,
+    optional_features       JSONB NOT NULL DEFAULT '[]'::jsonb,
+    default_viz             VARCHAR(40) NOT NULL DEFAULT 'table',
+    is_official             BOOLEAN NOT NULL DEFAULT TRUE,
+    is_active               BOOLEAN NOT NULL DEFAULT TRUE,
+    owner_user_id           INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    source_id               INTEGER REFERENCES data_sources(id) ON DELETE CASCADE,
+    company_id              INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+    usage_count             INTEGER NOT NULL DEFAULT 0,
+    success_rate            REAL,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS dbsmart_interactions (
+    id                  BIGSERIAL PRIMARY KEY,
+    session_id          INTEGER REFERENCES dbsmart_sessions(id) ON DELETE CASCADE,
+    user_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    company_id          INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    step                SMALLINT,
+    action              VARCHAR(60) NOT NULL,
+    suggestion_shown    JSONB,
+    suggestion_accepted JSONB,
+    user_override       JSONB,
+    satisfaction        SMALLINT,
+    duration_ms         INTEGER,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_dbsmart_inter_user_ts
+    ON dbsmart_interactions (user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS dbsmart_report_recommendations (
+    id                      SERIAL PRIMARY KEY,
+    recommendation_key      VARCHAR(120) NOT NULL UNIQUE,
+    trigger_pattern         JSONB NOT NULL,
+    recommended_viz         VARCHAR(40) NOT NULL,
+    confidence_min          REAL NOT NULL DEFAULT 0.6,
+    rationale_template_tr   TEXT,
+    is_active               BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS dbsmart_ab_buckets (
+    id              SERIAL PRIMARY KEY,
+    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    experiment_key  VARCHAR(80) NOT NULL,
+    variant         VARCHAR(40) NOT NULL,
+    bucket_hash     INTEGER NOT NULL,
+    assigned_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (user_id, experiment_key)
+);
+
 """

@@ -26,13 +26,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/feature-permissions", tags=["feature_permissions"])
 
 # Sistem tarafından tanınan sabit feature key'ler
-KNOWN_FEATURE_KEYS = {"kb", "db", "llm"}
+KNOWN_FEATURE_KEYS = {"kb", "db", "llm", "aki_kesif"}  # aki_kesif: v3.30.0
 
 # UI etiketleri (admin paneli için)
 FEATURE_LABELS = {
-    "kb":  "Bilgi Tabanında Ara",
-    "db":  "Veritabanında Ara",
-    "llm": "VYRA ile Sohbet Et",
+    "kb":        "Bilgi Tabanında Ara",
+    "db":        "Veritabanında Ara",
+    "llm":       "VYRA ile Sohbet Et",
+    "aki_kesif": "Akıllı Veri Keşfi",  # v3.30.0
 }
 
 

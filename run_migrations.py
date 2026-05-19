@@ -89,6 +89,7 @@ try:
         "029_v3298_signal_weight_suggestions.py",
         "030_v3298_signal_weight_overrides.py",
         "031_v3299_fk_inference_metadata.py",
+        "032_v3300_db_smart_core_tables.py",
     ]
 
     conn = psycopg2.connect(**DB)
