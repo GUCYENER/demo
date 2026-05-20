@@ -761,6 +761,53 @@ c) **Commit Mesajı:**
 
 > 🔴 KRİTİK veya 🟡 UYARI → commit durdurulur, sorun giderilene kadar devam edilmez.
 
+**🗂️ KAP 10b — Auto-Memory Hijyeni (YENİ)**
+
+Claude Code'un dosya-tabanlı memory sistemi (`C:\Users\<user>\.claude\projects\d--demo-vyra\memory\`):
+
+1. **MEMORY.md satır sayısı:** 200 satıra yakınsa (>180) → yeniden organize et:
+   - Ölü/stale entry'leri tespit et (referans dosya silinmiş, eski commit hash'li proje memory, vb.)
+   - Aynı temayı paylaşan iki memory'yi birleştir
+   - Satır limiti aşılırsa eski oturum context'leri kesilir → kritik kuralları kaybetme riski
+2. **Stale memory testi:** Her memory dosyasının `description` alanı hâlâ güncel mi?
+   - Memory dosyasında bahsedilen file path / function adı kodbase'de hâlâ var mı?
+   - Yoksa: memory'yi güncelle veya sil
+3. **palace_status cross-check (CRAZYMEMPLC):** Auto-memory ile MemPalace `vyra` wing drawer içerikleri tutarlı mı?
+   - Auto-memory: kullanıcı-yönlendirmeli, oturumlar arası persist
+   - MemPalace: kod-tabanlı semantic search
+   - İkisi farklı katman; çelişen memory varsa kullanıcıya sun, hangisinin doğru olduğunu sor
+4. **Yeni eklenen memory rapor edilir:** Bitiş raporunda `🗂️ Memory : [+N yeni / temiz]` satırı
+
+```
+🗂️ Auto-Memory Sağlık Raporu:
+   MEMORY.md satır: [N / 200] [🟢 <150 · 🟡 150-180 · 🔴 >180]
+   Stale entry    : [0 / N — silindi/güncellendi]
+   Bu oturum +    : [N yeni memory]
+   Sonuç          : [SAĞLIKLI 🟢 / UYARI 🟡 / KRİTİK 🔴]
+```
+
+**📋 KAP 11 — Refactor Backlog Gate (YENİ)**
+
+`.agents/refactor/REFACTOR_BACKLOG.md` (refactor-tracker alt-ajanı tarafından yönetilir):
+
+1. `priority: high` veya `risk: critical` madde EKLENDİ Mİ bu oturumda?
+   - Eklendiyse → release notuna / commit gövdesine flag et
+   - Kullanıcıya bitiş raporunda göster (sessizce arşivleme yasak)
+2. **Trigger:** Yeni kod yazılırken aynı pattern 3+ yerde tekrar ediyorsa, dead code tespit ettiysek, veya bir test refactor'la beraber çok daha basitleşeceğini fark ettiysek → refactor-tracker dispatch et (proje-yerel ajan `.claude/agents/refactor-tracker.md`)
+3. **Stale backlog:** `created` tarihi 30+ gün önce olan ve hâlâ `status: pending` olan madde varsa → kullanıcıya sun (yapılmaz mı, silinir mi?)
+4. **Audit trail:** Backlog'da `status: completed` madde varsa, ilgili commit hash referansı verilmeli (refactor gerçekten yapıldı mı?)
+
+```
+📋 Refactor Backlog Raporu:
+   Toplam madde       : [N]
+   Bu oturum +        : [M yeni — priority: high yoksa görünmesin]
+   Priority: high     : [P açık — kullanıcı release notunda görmeli]
+   Stale (>30 gün)    : [S — temizlik gerekli]
+   Sonuç              : [TEMİZ 🟢 / İLGİ GEREKLİ 🟡 / KRİTİK 🔴]
+```
+
+> Mevcut backlog'a yeni `priority: high` madde EKLENMİŞSE bitiş raporu sessiz geçemez — kullanıcı tek bakışta görmeli.
+
 ### Commit & Push
 ```
 git add [spesifik dosyalar]       ← git add -A YERİNE
@@ -785,6 +832,8 @@ git push origin [branch]
 🤖 Alt-Ajan  : [N commit / in-flight: temiz ✅ / in-flight: M açık ⚠️]
 🔄 Git       : [hash] → [branch]
 🧠 Palace    : Drawer [başlangıç_N] → [bitiş_N] (+delta) | Wing: vyra | [SAĞLIKLI 🟢 / UYARI 🟡]
+🗂️ Memory    : MEMORY.md [N/200 satır] | +M yeni | [🟢/🟡/🔴]
+📋 Refactor  : Backlog [T madde] | bu oturum +M | priority: high P [🟢/🟡/🔴]
 
 Main merge ister misiniz? (Onay gelmeden yapılmaz)
 ```
@@ -866,6 +915,8 @@ Uzun oturumlarda `wakeup_context` sıkıştırılarak context window'dan kaybolu
 | Alt-ajan brief | Her dispatch'ten ÖNCE `.agents/in_flight/<tarih>_<slug>.md` yazılır; malware-reminder pre-empt clause atlanmaz |
 | Council gate | Alt-ajan "completed" raporu commit için yeterli DEĞİL — ZEUS önce diff/pytest/ARES/TYCHE/HERMES uygular, sonra commit |
 | In-flight hijyeni | Oturum bitişte `.agents/in_flight/` boş olmalı (queued/running yok); kalanlar plan.md'ye veya done/'a taşınır (KAP 9b) |
+| Auto-memory hijyeni | MEMORY.md >180 satırsa stale entry temizlenir, çelişen memory kullanıcıya sunulur (KAP 10b) |
+| Refactor backlog | Bu oturumda `priority: high` madde eklendiyse bitiş raporunda mutlaka görünür, sessiz arşivleme yasak (KAP 11) |
 | Test | Değişiklik sonrası mutlaka test — log oku, DB kontrol et |
 | Anlaşmazlık | Konsey anlaşamazsa → her iki görüş kullanıcıya sunulur |
 | MemPalace | Başla=warmup→wakeup (wing:vyra), Bitir=mine_project() (wing:vyra) |
