@@ -21,3 +21,15 @@ def test_existing_features_unchanged():
     assert FEATURE_LABELS["kb"] == "Bilgi Tabanında Ara"
     assert FEATURE_LABELS["db"] == "Veritabanında Ara"
     assert FEATURE_LABELS["llm"] == "VYRA ile Sohbet Et"
+
+
+def test_admin_endpoint_exposes_aki_kesif_in_features_list():
+    """Admin /admin payload'ı 'features' listesinde aki_kesif görmeli (v3.30.0).
+
+    Regression guard: önceki implementasyon (kb,db,llm) ile hardcoded edilmişti.
+    """
+    import inspect
+    from app.api.routes import feature_permissions as fp
+    src = inspect.getsource(fp.list_all_feature_permissions)
+    # Source-level smoke: admin features listesi 4 anahtarı içermeli (regression guard)
+    assert "aki_kesif" in src

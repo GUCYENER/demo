@@ -135,6 +135,7 @@ const JS_FILES = [
     'assets/js/modules/agentic_observability_faz6.js',  // v3.29.7 G5 — Faz 6 sekmeleri (heatmap/failures/glossary)
     'assets/js/modules/signal_weight_tuner.js',         // v3.29.8 L3 — multi_signal_rank weight tuner
     'assets/js/modules/fk_inference_observability.js',  // v3.29.9 — FK Inference observability sekmesi
+    'assets/js/modules/db_smart_wizard.js',              // v3.30.0 — Akıllı Veri Keşfi Wizard
     'assets/js/branding_engine.js',
 ];
 

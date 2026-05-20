@@ -148,7 +148,7 @@ def list_all_feature_permissions(current_user: Dict[str, Any] = Depends(get_curr
         raise HTTPException(status_code=403, detail="Sadece admin erişebilir.")
 
     payload: Dict[str, Any] = {
-        "features": [{"key": k, "label": FEATURE_LABELS[k]} for k in ("kb", "db", "llm")]
+        "features": [{"key": k, "label": FEATURE_LABELS[k]} for k in ("kb", "db", "llm", "aki_kesif")]
     }
 
     with get_db_context() as conn:

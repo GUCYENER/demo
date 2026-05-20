@@ -45,6 +45,8 @@ from app.services.db_smart.rls_context import apply_vyra_user_context
 from app.services.db_smart import (
     session_manager,
     state_machine,
+    eligibility,     # v3.30.0 FAZ 1 G1.2
+    fk_graph,        # v3.30.0 FAZ 1 G1.3
 )
 
 logger = logging.getLogger(__name__)
@@ -184,21 +186,70 @@ def post_step(
     )
 
 
+class PreviewRequest(BaseModel):
+    """Transient preview: session_manager (G1.7) gelene kadar caller wizard_state'i
+    request body'sine koyabilir. Body boşsa session_manager.load_session() denenir."""
+    wizard_state: Optional[Dict[str, Any]] = None
+
+
 @router.post("/sessions/{session_uid}/preview", response_model=PreviewResponse)
 def post_preview(
     session_uid: str = Path(..., min_length=8, max_length=64),
+    body: Optional[PreviewRequest] = None,
     current_user: Dict[str, Any] = Depends(get_current_user),
 ) -> PreviewResponse:
     """SQL render + EXPLAIN + maliyet tahmini + streaming kararı.
 
-    FAZ 1 stub: query_assembler + ast_renderer FAZ 1 G1.5'te dolacak.
+    G1.5 hazır: query_assembler.assemble() çalışır. G1.7 session persist yok →
+    caller `body.wizard_state` ile geçici state gönderebilir (transient mod).
     """
     _require_user_id(current_user)
-    with get_db_context() as conn:
-        cur = conn.cursor()
-        apply_vyra_user_context(cur, current_user)
-        # TODO (FAZ 1 G1.5): query_assembler.assemble(ctx) → ast_renderer.render(ast, dialect)
-    return PreviewResponse(sql="-- preview stub (FAZ 1 G1.5)", dialect="postgresql")
+    # Lazy import — circular guard
+    from app.services.db_smart import query_assembler
+
+    wizard_state: Optional[Dict[str, Any]] = body.wizard_state if body else None
+    if not wizard_state:
+        loaded = session_manager.load_session(session_uid, current_user)
+        wizard_state = (loaded or {}).get("wizard_state") if loaded else None
+
+    if not wizard_state:
+        # G1.7 öncesi: state bulunmadıysa boş şablonu döndür
+        return PreviewResponse(
+            sql="-- preview unavailable: wizard_state not provided and session storage pending (G1.7)",
+            dialect="postgresql",
+            estimated_rows=None,
+        )
+
+    dialect = wizard_state.get("dialect", "postgresql")
+    out = query_assembler.assemble(wizard_state, current_user, dialect=dialect)
+    sql = out.get("sql") or ""
+
+    explain: Dict[str, Any] = {}
+    cost: Optional[float] = None
+    if sql and dialect == "postgresql":
+        try:
+            with get_db_context() as conn:
+                cur = conn.cursor()
+                apply_vyra_user_context(cur, current_user)
+                cost = query_assembler.explain_cost(
+                    cur, sql, dialect, current_user, binds=out.get("binds"),
+                )
+                if cost is not None:
+                    explain = {"total_cost": cost}
+        except Exception as e:
+            logger.warning("[db_smart] explain failed: %s", e)
+
+    streaming_strategy = "direct"
+    if cost is not None and cost > 100000:
+        streaming_strategy = "sse_chunk"
+
+    return PreviewResponse(
+        sql=sql or "-- assembly failed: " + "; ".join(out.get("errors") or []),
+        dialect=dialect,
+        explain=explain,
+        estimated_rows=None,
+        streaming_strategy=streaming_strategy,
+    )
 
 
 @router.post("/sessions/{session_uid}/execute")
@@ -266,13 +317,20 @@ def search_tables(
     limit: int = Query(20, ge=1, le=100),
     current_user: Dict[str, Any] = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """Hybrid arama: ds_db_objects + business_glossary_v2 embedding + cardinality boost."""
+    """Hybrid arama: ds_db_objects + business_glossary embedding + cardinality boost."""
     _require_user_id(current_user)
     with get_db_context() as conn:
         cur = conn.cursor()
         apply_vyra_user_context(cur, current_user)
-        # TODO (FAZ 1 G1.2): eligibility.search_domains(source_id, q, limit)
-    return {"items": [], "query": q, "source_id": source_id}
+        try:
+            items = eligibility.search_domains(
+                cur, source_id=source_id, query=q,
+                user_ctx=current_user, limit=limit,
+            )
+        except Exception as e:
+            logger.warning("[db_smart] search_tables failed source=%s: %s", source_id, e)
+            items = []
+    return {"items": items, "tables": items, "query": q, "source_id": source_id, "count": len(items)}
 
 
 @router.get("/sources/{source_id}/tables/{table_id}/related")
@@ -284,11 +342,31 @@ def related_tables(
 ) -> Dict[str, Any]:
     """FK graph genişletme — direct neighbors + cardinality + junction tespiti."""
     _require_user_id(current_user)
+    neighbors: List[Dict[str, Any]] = []
+    junctions: List[Dict[str, Any]] = []
+    subgraph: Dict[str, Any] = {"nodes": [], "edges": [], "stats": {}}
     with get_db_context() as conn:
         cur = conn.cursor()
         apply_vyra_user_context(cur, current_user)
-        # TODO (FAZ 1 G1.3): fk_graph.expand_with_fk([table_id], depth)
-    return {"neighbors": [], "junctions": [], "source_id": source_id, "table_id": table_id}
+        try:
+            neighbors = fk_graph.expand_with_fk(
+                cur, source_id=source_id, table_ids=[table_id], depth=depth,
+            )
+            subgraph = fk_graph.build_subgraph(
+                cur, source_id=source_id, table_ids=[table_id],
+                user_ctx=current_user, depth=depth,
+            )
+            junctions = fk_graph.detect_junctions(subgraph)
+        except Exception as e:
+            logger.warning("[db_smart] related_tables failed source=%s table=%s: %s",
+                           source_id, table_id, e)
+    return {
+        "neighbors": neighbors,
+        "junctions": junctions,
+        "subgraph": subgraph,
+        "source_id": source_id,
+        "table_id": table_id,
+    }
 
 
 @router.get("/sources/{source_id}/tables/{table_id}/columns")
@@ -299,11 +377,65 @@ def list_columns(
 ) -> Dict[str, Any]:
     """Kolon enrichment + semantic_type + cardinality + sample."""
     _require_user_id(current_user)
+    columns: List[Dict[str, Any]] = []
+    sample: Optional[Dict[str, Any]] = None
     with get_db_context() as conn:
         cur = conn.cursor()
         apply_vyra_user_context(cur, current_user)
-        # TODO (FAZ 1 G1.2): JOIN ds_db_objects + ds_column_enrichments + ds_db_samples
-    return {"columns": [], "source_id": source_id, "table_id": table_id}
+        try:
+            # ds_db_objects.columns_json + ds_column_enrichments (table_name LOWER match)
+            cur.execute("""
+                SELECT o.schema_name, o.object_name, o.columns_json
+                FROM ds_db_objects o
+                WHERE o.source_id = %s AND o.id = %s
+                LIMIT 1
+            """, (int(source_id), int(table_id)))
+            row = cur.fetchone()
+            obj_columns_json = (row[2] if row else None) or []
+            schema = row[0] if row else None
+            obj_name = row[1] if row else None
+
+            # Enrichment: business_name_tr, semantic_type, business_meaning_tr
+            enrich_map: Dict[str, Dict[str, Any]] = {}
+            if obj_name:
+                cur.execute("""
+                    SELECT ce.column_name, ce.semantic_type, ce.business_name_tr,
+                           ce.description_tr
+                    FROM ds_column_enrichments ce
+                    JOIN ds_table_enrichments te ON te.id = ce.table_enrichment_id
+                    WHERE te.source_id = %s
+                      AND LOWER(te.table_name) = LOWER(%s)
+                      AND LOWER(COALESCE(te.schema_name, '')) = LOWER(COALESCE(%s, ''))
+                """, (int(source_id), obj_name, schema or ""))
+                for r in cur.fetchall():
+                    enrich_map[(r[0] or "").lower()] = {
+                        "semantic_type": r[1],
+                        "business_name_tr": r[2],
+                        "description_tr": r[3],
+                    }
+
+            for c in (obj_columns_json or []):
+                col_name = c.get("name") or c.get("column_name") or ""
+                meta = enrich_map.get(col_name.lower(), {})
+                columns.append({
+                    "name": col_name,
+                    "data_type": c.get("type") or c.get("data_type"),
+                    "is_nullable": c.get("nullable", c.get("is_nullable", True)),
+                    "semantic_type": meta.get("semantic_type"),
+                    "business_name_tr": meta.get("business_name_tr"),
+                    "description_tr": meta.get("description_tr"),
+                })
+
+            sample = eligibility.sample_preview(cur, table_id=table_id, user_ctx=current_user)
+        except Exception as e:
+            logger.warning("[db_smart] list_columns failed source=%s table=%s: %s",
+                           source_id, table_id, e)
+    return {
+        "columns": columns,
+        "sample": sample,
+        "source_id": source_id,
+        "table_id": table_id,
+    }
 
 
 # ─────────────────────────────────────────────────────────────
@@ -318,11 +450,38 @@ def list_metrics(
 ) -> Dict[str, Any]:
     """Eligible metric list (skor ile sıralı; threshold > 0.6)."""
     _require_user_id(current_user)
+    items: List[Dict[str, Any]] = []
     with get_db_context() as conn:
         cur = conn.cursor()
         apply_vyra_user_context(cur, current_user)
-        # TODO (FAZ 1 G1.4): metric_engine.list_eligible(source_id, table_signature)
-    return {"items": [], "source_id": source_id, "table_signature": table_signature}
+        try:
+            # FAZ 1 G1.4: dbsmart_metric_library üzerinden basit liste (kategori filtresi P3'te)
+            cur.execute("""
+                SELECT metric_key, name_tr, category, description_tr,
+                       default_viz, applicable_when, sql_templates
+                FROM dbsmart_metric_library
+                WHERE is_active IS TRUE OR is_active IS NULL
+                ORDER BY category, metric_key
+                LIMIT 60
+            """)
+            for r in cur.fetchall():
+                items.append({
+                    "metric_key": r[0],
+                    "name_tr": r[1],
+                    "category": r[2],
+                    "description_tr": r[3],
+                    "default_viz": r[4],
+                    "applicable_when": r[5],
+                    "sql_templates": r[6],
+                })
+        except Exception as e:
+            logger.warning("[db_smart] list_metrics failed: %s", e)
+    return {
+        "items": items,
+        "source_id": source_id,
+        "table_signature": table_signature,
+        "count": len(items),
+    }
 
 
 @router.get("/recommendations/{exec_id}")

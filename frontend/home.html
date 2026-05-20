@@ -205,6 +205,34 @@ body::before{
 .mode-card::before{content:'';position:absolute;top:0;left:0;right:0;height:1.5px;border-radius:10px 10px 0 0;transition:opacity .18s}
 .mode-card.kb::before{background:linear-gradient(90deg,#4D99FF,#7C3AED);opacity:.5}
 .mode-card.chat::before,.mode-card.llm::before{background:linear-gradient(90deg,#7C3AED,#34D399);opacity:.5}
+.mode-card.aki_kesif::before{background:linear-gradient(90deg,#F59E0B,#EC4899);opacity:.5}
+.mode-card.aki_kesif .mc-icon{background:rgba(245,158,11,.12);color:#F59E0B}
+.mode-card.aki_kesif.selected .mc-icon{background:#F59E0B;color:#fff}
+/* v3.30.0 Akıllı Veri Keşfi sihirbaz */
+.db-smart-wizard{display:flex;flex-direction:column;gap:12px;padding:14px;border:1px solid var(--border-default);border-radius:10px;background:var(--bg-elevated);margin:8px 0}
+.db-smart-wizard.hidden{display:none}
+.dsw-header h3{margin:0 0 8px 0;font-size:15px;color:var(--text-primary)}
+.dsw-stepper{display:flex;flex-wrap:wrap;gap:6px}
+.dsw-step{padding:4px 10px;border-radius:6px;font-size:12px;background:var(--bg-default);color:var(--text-secondary);border:1px solid var(--border-default)}
+.dsw-step.active{background:linear-gradient(90deg,#F59E0B,#EC4899);color:#fff;border-color:transparent}
+.dsw-body{min-height:140px}
+.dsw-step-panel{padding:8px 4px}
+.dsw-step-panel.hidden{display:none}
+.dsw-hint{margin:0 0 10px 0;color:var(--text-secondary);font-size:13px}
+.dsw-search-row{display:flex;gap:8px;flex-wrap:wrap}
+.dsw-input{flex:1;min-width:160px;padding:8px 10px;border:1px solid var(--border-default);border-radius:6px;background:var(--bg-default);color:var(--text-primary);font-size:13px}
+.dsw-btn{padding:8px 14px;border:none;border-radius:6px;background:linear-gradient(90deg,#F59E0B,#EC4899);color:#fff;font-weight:600;font-size:13px;cursor:pointer}
+.dsw-btn:hover{filter:brightness(1.08)}
+.dsw-btn:disabled{opacity:.5;cursor:not-allowed;filter:grayscale(.4)}
+.dsw-btn-ghost{padding:8px 14px;border:1px solid var(--border-default);border-radius:6px;background:transparent;color:var(--text-primary);font-size:13px;cursor:pointer}
+.dsw-btn-ghost:disabled{opacity:.4;cursor:not-allowed}
+.dsw-results{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.dsw-result-item{padding:8px 10px;border:1px solid var(--border-default);border-radius:6px;background:var(--bg-default);cursor:pointer;font-size:13px}
+.dsw-result-item:hover{border-color:#F59E0B;background:var(--accent-subtle)}
+.dsw-result-item .dsw-r-title{font-weight:600;color:var(--text-primary)}
+.dsw-result-item .dsw-r-meta{font-size:11px;color:var(--text-secondary);margin-top:2px}
+.dsw-foot{display:flex;justify-content:space-between;align-items:center;padding-top:8px;border-top:1px solid var(--border-default)}
+.dsw-progress{font-size:12px;color:var(--text-secondary)}
 .mode-card:hover{border-color:var(--border-accent);box-shadow:0 4px 16px rgba(77,153,255,.08)}
 .mode-card:hover::before{opacity:1}
 .mode-card.selected{border-color:var(--accent);background:var(--accent-subtle)}
@@ -756,6 +784,18 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
             <div class="mc-desc">Yapay zeka asistanıyla serbest konuşun</div>
           </div>
         </div>
+        <!-- v3.30.0: Akıllı Veri Keşfi (Wizard) — 4. mod -->
+        <div class="mode-card aki_kesif" id="modeAkiKesif" data-feature-key="aki_kesif" onclick="window.selectChatMode('aki_kesif')">
+          <div class="mc-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 3l3 9h12l3-9"/><path d="M6 12l6 9 6-9"/><circle cx="12" cy="6" r="1.5"/>
+            </svg>
+          </div>
+          <div class="mc-body">
+            <div class="mc-title">Akıllı Veri Keşfi</div>
+            <div class="mc-desc">Adım adım sihirbazla rapor üret</div>
+          </div>
+        </div>
         <div class="mode-empty hidden" id="modeAllDeniedNotice">
           <div class="mc-empty-icon">
             <svg viewBox="0 0 24 24" width="48" height="48"><path d="M12 9v4M12 17h.01M21 12A9 9 0 113 12a9 9 0 0118 0z" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
@@ -766,6 +806,48 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
       </div>
     </div>
     <div class="dialog-messages-wrap" id="dialogMessages"></div>
+
+    <!-- v3.30.0: Akıllı Veri Keşfi (Wizard) — 5 adım iskelet (FAZ 1 G1.6) -->
+    <div id="dbSmartWizardPanel" class="db-smart-wizard hidden" role="region" aria-label="Akıllı Veri Keşfi Sihirbazı" hidden>
+      <div class="dsw-header">
+        <h3>Akıllı Veri Keşfi</h3>
+        <div class="dsw-stepper" id="dswStepper" aria-label="Sihirbaz adımları">
+          <span class="dsw-step active" data-step="0">1 · Tablo Seç</span>
+          <span class="dsw-step" data-step="1">2 · İlişkiler</span>
+          <span class="dsw-step" data-step="2">3 · Metrik</span>
+          <span class="dsw-step" data-step="3">4 · Filtre</span>
+          <span class="dsw-step" data-step="4">5 · Önizleme</span>
+        </div>
+      </div>
+      <div class="dsw-body" id="dswBody">
+        <div class="dsw-step-panel" data-step="0" id="dswStep0">
+          <p class="dsw-hint">Aramak istediğiniz veriyi açıklayın (örn. "açık talepler", "müşteri siparişleri").</p>
+          <div class="dsw-search-row">
+            <input type="text" id="dswSearchQ" class="dsw-input" placeholder="Doğal dil ile arayın..." />
+            <select id="dswSourceSelect" class="dsw-input" aria-label="Veri kaynağı"></select>
+            <button id="dswSearchBtn" class="dsw-btn">Tablo Ara</button>
+          </div>
+          <div class="dsw-results" id="dswResults" aria-live="polite"></div>
+        </div>
+        <div class="dsw-step-panel hidden" data-step="1" id="dswStep1">
+          <p class="dsw-hint">FK ilişkili tablolar otomatik önerilecek. (Yükleniyor...)</p>
+        </div>
+        <div class="dsw-step-panel hidden" data-step="2" id="dswStep2">
+          <p class="dsw-hint">Metrik kütüphanesinden seçin veya özel metrik tanımlayın. (Yükleniyor...)</p>
+        </div>
+        <div class="dsw-step-panel hidden" data-step="3" id="dswStep3">
+          <p class="dsw-hint">Filtre kriterlerini belirleyin. (Yükleniyor...)</p>
+        </div>
+        <div class="dsw-step-panel hidden" data-step="4" id="dswStep4">
+          <p class="dsw-hint">SQL önizleme + maliyet tahmini. (Yükleniyor...)</p>
+        </div>
+      </div>
+      <div class="dsw-foot">
+        <button id="dswPrevBtn" class="dsw-btn-ghost" disabled>← Geri</button>
+        <span class="dsw-progress" id="dswProgress">Adım 1 / 5</span>
+        <button id="dswNextBtn" class="dsw-btn">İleri →</button>
+      </div>
+    </div>
 
     <div class="n-input-zone">
       <div class="n-input-shell">
@@ -848,10 +930,15 @@ window.selectChatMode = function(mode) {
   var kb = document.getElementById('modeKb');
   var db = document.getElementById('modeDb');
   var ch = document.getElementById('modeChat');
+  var ak = document.getElementById('modeAkiKesif');
   // Tüm kartlardan selected kaldır
   if (kb) kb.classList.remove('selected');
   if (db) db.classList.remove('selected');
   if (ch) ch.classList.remove('selected');
+  if (ak) ak.classList.remove('selected');
+  // Wizard panelini varsayılan olarak gizle
+  var wiz = document.getElementById('dbSmartWizardPanel');
+  if (wiz) { wiz.classList.add('hidden'); wiz.hidden = true; }
   // v3.19.2: Sub-tab label aktif moda göre güncellenir
   var tabLabel = document.getElementById('tabDialogLabel');
   if (mode === 'kb') {
@@ -871,6 +958,14 @@ window.selectChatMode = function(mode) {
     if (tabLabel) tabLabel.textContent = 'VYRA ile Sohbet';
     if (window.DialogChatModule && window.DialogChatModule.switchToLlmMode) {
       window.DialogChatModule.switchToLlmMode();
+    }
+  } else if (mode === 'aki_kesif') {
+    // v3.30.0 Akıllı Veri Keşfi (Wizard)
+    if (ak) ak.classList.add('selected');
+    if (tabLabel) tabLabel.textContent = 'Akıllı Veri Keşfi';
+    if (wiz) { wiz.classList.remove('hidden'); wiz.hidden = false; }
+    if (window.DbSmartWizardModule && typeof window.DbSmartWizardModule.init === 'function') {
+      window.DbSmartWizardModule.init();
     }
   }
 };
