@@ -92,6 +92,9 @@ def test_router_registers_all_12_endpoints():
         "/api/db-smart/saved-reports/by-token/{token}",
         # FAZ 3 P15 G3.2 — Streaming SSE
         "/api/db-smart/sessions/{session_uid}/execute/stream",
+        # FAZ 3 P19 G3.4 — AST diff + EXPLAIN cache
+        "/api/db-smart/ast/diff",
+        "/api/db-smart/sessions/{session_uid}/explain",
     }
     missing = expected - paths
     assert not missing, f"Missing routes: {missing}"
@@ -508,6 +511,162 @@ def test_ast_patch_session_not_found_404(client_authed, monkeypatch):
         json={"op": "add_column", "args": {"column": {"expr": "t.id"}}},
     )
     assert resp.status_code == 404
+
+
+# ─────────────────────────────────────────────────────────────
+# FAZ 3 P19 G3.4 — AST diff + EXPLAIN cache endpoints
+# ─────────────────────────────────────────────────────────────
+
+def test_ast_patch_reorder_columns_in_whitelist(client_authed, mock_session_with_ast,
+                                                  monkeypatch):
+    """reorder_columns whitelist'e eklendi mi?"""
+    # AST'i 2 kolonlu yap ki reorder anlam ifade etsin
+    ast = {
+        "type": "select",
+        "columns": [{"expr": "t.id"}, {"expr": "t.status"}],
+        "from": {"table": "tickets", "alias": "t"},
+        "filters": [],
+    }
+    monkeypatch.setattr(
+        db_smart_api.session_manager, "load_session",
+        lambda cur, uid, user_ctx: {
+            "session_uid": uid, "current_step": 0, "status": "active",
+            "source_id": 1, "context": {"ast": ast},
+            "dialect": "postgresql", "generated_sql": None,
+            "created_at": None, "last_activity_at": None, "completed_at": None,
+        },
+    )
+    resp = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/ast/patch",
+        json={"op": "reorder_columns",
+              "args": {"order": [{"expr": "t.status"}, {"expr": "t.id"}]}},
+    )
+    assert resp.status_code == 200
+    cols = resp.json()["ast"]["columns"]
+    assert [c["expr"] for c in cols] == ["t.status", "t.id"]
+
+
+def test_ast_diff_returns_summary(client_authed):
+    from_ast = {
+        "type": "select",
+        "columns": [{"expr": "t.id"}],
+        "from": {"table": "tickets", "alias": "t"},
+        "filters": [],
+    }
+    to_ast = {
+        "type": "select",
+        "columns": [{"expr": "t.id"}, {"expr": "t.status"}],
+        "from": {"table": "tickets", "alias": "t"},
+        "filters": [],
+        "limit": 100,
+    }
+    resp = client_authed.post("/api/db-smart/ast/diff",
+                              json={"from_ast": from_ast, "to_ast": to_ast})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["columns"]["added"] == [{"expr": "t.status", "alias": ""}]
+    assert data["limit"]["after"] == 100
+    assert data["summary"]["total_changes"] >= 2
+    assert "columns" in data["summary"]["changed_sections"]
+    assert "limit" in data["summary"]["changed_sections"]
+
+
+def test_ast_diff_identical_zero_changes(client_authed):
+    ast = {
+        "type": "select",
+        "columns": [{"expr": "t.id"}],
+        "from": {"table": "tickets", "alias": "t"},
+    }
+    resp = client_authed.post("/api/db-smart/ast/diff",
+                              json={"from_ast": ast, "to_ast": dict(ast)})
+    assert resp.status_code == 200
+    assert resp.json()["summary"]["total_changes"] == 0
+
+
+def test_explain_endpoint_rejects_non_select(client_authed):
+    resp = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/explain",
+        json={"ast": {"type": "delete"}, "dialect": "postgresql"},
+    )
+    assert resp.status_code == 400
+
+
+def test_explain_endpoint_renders_and_caches(client_authed, monkeypatch):
+    """İlk çağrı: cached=False; ikinci aynı çağrı: cached=True."""
+    # Cache'i temizle (önceki testlerden artakalma olmasın)
+    db_smart_api._EXPLAIN_CACHE.clear()
+    # explain_cost'u stub'la — DB hit etmeden döner
+    monkeypatch.setattr(
+        "app.services.db_smart.query_assembler.explain_cost",
+        lambda cur, sql, dialect, user_ctx, binds=None: 42.5,
+    )
+    ast = {
+        "type": "select",
+        "columns": [{"expr": "t.id"}],
+        "from": {"table": "tickets", "alias": "t"},
+    }
+    body = {"ast": ast, "dialect": "postgresql"}
+    r1 = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/explain",
+        json=body,
+    )
+    assert r1.status_code == 200
+    d1 = r1.json()
+    assert d1["cached"] is False
+    assert d1["explain"]["total_cost"] == 42.5
+    assert "tickets" in d1["sql"]
+
+    r2 = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/explain",
+        json=body,
+    )
+    assert r2.status_code == 200
+    assert r2.json()["cached"] is True
+
+
+def test_explain_cache_ttl_expires(client_authed, monkeypatch):
+    """5sn TTL — sahte zamanlayıcı ile expiration testle."""
+    db_smart_api._EXPLAIN_CACHE.clear()
+    monkeypatch.setattr(
+        "app.services.db_smart.query_assembler.explain_cost",
+        lambda cur, sql, dialect, user_ctx, binds=None: 10.0,
+    )
+    ast = {
+        "type": "select",
+        "columns": [{"expr": "t.id"}],
+        "from": {"table": "tickets", "alias": "t"},
+    }
+    body = {"ast": ast, "dialect": "postgresql"}
+    r1 = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/explain",
+        json=body,
+    )
+    assert r1.json()["cached"] is False
+
+    # TTL'i mock'la — sonraki çağrı expire görsün
+    original_monotonic = db_smart_api._time.monotonic
+    monkeypatch.setattr(db_smart_api._time, "monotonic",
+                        lambda: original_monotonic() + 10.0)
+    r2 = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/explain",
+        json=body,
+    )
+    assert r2.json()["cached"] is False  # expired → yeniden compute
+
+
+def test_explain_endpoint_invalid_ast_render_400(client_authed):
+    """AST render fail (örn. bad identifier) → 400."""
+    db_smart_api._EXPLAIN_CACHE.clear()
+    ast = {
+        "type": "select",
+        "columns": [{"expr": "t.id; DROP TABLE u"}],  # invalid ident
+        "from": {"table": "tickets", "alias": "t"},
+    }
+    resp = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/explain",
+        json={"ast": ast, "dialect": "postgresql"},
+    )
+    assert resp.status_code == 400
 
 
 # ─────────────────────────────────────────────────────────────

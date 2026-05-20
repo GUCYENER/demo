@@ -760,3 +760,143 @@ def test_hint_cross_dialect_ignored(fake_user_ctx):
     out = ar.inject_dialect_hints(r, {"parallel": 4})
     assert "PARALLEL" not in out["sql"]
     assert "parallel" not in out["hints_applied"]
+
+
+# ─────────────────────────────────────────────────────────────
+# FAZ 3 P19 G3.4 — reorder_columns + diff_ast (drag-drop)
+# ─────────────────────────────────────────────────────────────
+
+def test_reorder_columns_basic_swap():
+    src = _base_ast()
+    out = ar.reorder_columns(src, [
+        {"expr": "t.status"},
+        {"expr": "t.id"},
+    ])
+    assert [c["expr"] for c in out["columns"]] == ["t.status", "t.id"]
+    # immutable
+    assert [c["expr"] for c in src["columns"]] == ["t.id", "t.status"]
+
+
+def test_reorder_columns_missing_appended_stable():
+    src = _base_ast()
+    src["columns"].append({"expr": "t.priority", "alias": "prio"})
+    out = ar.reorder_columns(src, [{"expr": "t.priority", "alias": "prio"}])
+    # ilk: explicit; sonra orijinal sırayla kalanlar
+    exprs = [c.get("expr") for c in out["columns"]]
+    assert exprs[0] == "t.priority"
+    assert exprs[1:] == ["t.id", "t.status"]
+
+
+def test_reorder_columns_does_not_add_or_remove():
+    src = _base_ast()
+    out = ar.reorder_columns(src, [
+        {"expr": "t.id"},
+        {"expr": "nonexistent.x"},  # eşleşmez → atlanır
+        {"expr": "t.status"},
+    ])
+    assert len(out["columns"]) == 2
+    assert {c["expr"] for c in out["columns"]} == {"t.id", "t.status"}
+
+
+def test_reorder_columns_rejects_non_list():
+    with pytest.raises(ValueError):
+        ar.reorder_columns(_base_ast(), "not-a-list")
+
+
+def test_reorder_columns_non_select_raises():
+    with pytest.raises(ValueError):
+        ar.reorder_columns({"type": "delete"}, [])
+
+
+def test_diff_ast_identical_no_changes():
+    a = _base_ast()
+    d = ar.diff_ast(a, dict(a))
+    assert d["summary"]["total_changes"] == 0
+    assert d["summary"]["changed_sections"] == []
+    assert d["columns"]["reordered"] is False
+
+
+def test_diff_ast_column_added():
+    a = _base_ast()
+    b = ar.add_column(a, {"expr": "t.priority", "alias": "prio"})
+    d = ar.diff_ast(a, b)
+    assert d["columns"]["added"] == [{"expr": "t.priority", "alias": "prio"}]
+    assert d["columns"]["removed"] == []
+    assert "columns" in d["summary"]["changed_sections"]
+
+
+def test_diff_ast_column_reordered_flag():
+    a = _base_ast()
+    b = ar.reorder_columns(a, [{"expr": "t.status"}, {"expr": "t.id"}])
+    d = ar.diff_ast(a, b)
+    assert d["columns"]["reordered"] is True
+    assert d["columns"]["added"] == []
+    assert d["columns"]["removed"] == []
+
+
+def test_diff_ast_filter_added_removed():
+    a = _base_ast()
+    b = ar.add_filter(a, {"expr": "t.priority", "op": "=", "value": "high"})
+    d = ar.diff_ast(a, b)
+    assert any(f["expr"] == "t.priority" for f in d["filters"]["added"])
+    assert d["filters"]["removed"] == []
+
+    d2 = ar.diff_ast(b, a)
+    assert any(f["expr"] == "t.priority" for f in d2["filters"]["removed"])
+
+
+def test_diff_ast_join_modified_kind():
+    a = _base_ast()
+    b = ar.modify_join(a, "u", kind="LEFT")
+    d = ar.diff_ast(a, b)
+    assert d["joins"]["modified"]
+    assert d["joins"]["modified"][0]["after_kind"] == "LEFT"
+    assert d["joins"]["added"] == []
+    assert d["joins"]["removed"] == []
+
+
+def test_diff_ast_order_by_changed():
+    a = _base_ast()
+    b = ar.reorder_by(a, [{"expr": "t.id", "dir": "DESC"}])
+    d = ar.diff_ast(a, b)
+    assert d["order_by"]["changed"] is True
+    assert d["order_by"]["after"][0]["dir"] == "DESC"
+
+
+def test_diff_ast_limit_changed():
+    a = _base_ast()
+    b = ar.set_limit(a, limit=100)
+    d = ar.diff_ast(a, b)
+    assert d["limit"]["before"] is None
+    assert d["limit"]["after"] == 100
+    assert d["limit"]["changed"] is True
+
+
+def test_diff_ast_summary_counts_total():
+    a = _base_ast()
+    b = ar.add_column(a, {"expr": "t.priority"})
+    b = ar.set_limit(b, limit=10)
+    b = ar.reorder_by(b, [{"expr": "t.id", "dir": "DESC"}])
+    d = ar.diff_ast(a, b)
+    assert d["summary"]["total_changes"] >= 3
+    sects = set(d["summary"]["changed_sections"])
+    assert {"columns", "limit", "order_by"}.issubset(sects)
+
+
+def test_diff_ast_from_changed():
+    a = _base_ast()
+    b = dict(a)
+    b["from"] = {"table": "tickets_archive", "alias": "ta"}
+    d = ar.diff_ast(a, b)
+    assert d["from"]["changed"] is True
+    assert d["from"]["before"].startswith("tickets")
+    assert d["from"]["after"].startswith("tickets_archive")
+
+
+def test_reorder_columns_then_render_keeps_order(fake_user_ctx):
+    a = _base_ast()
+    b = ar.reorder_columns(a, [{"expr": "t.status"}, {"expr": "t.id"}])
+    out = ar.render(b, "postgresql", fake_user_ctx)
+    # SELECT içinde status önce gelmeli
+    head = out["sql"].split("FROM")[0]
+    assert head.index("status") < head.index('"t"."id"') or head.index("status") < head.index("t.id")

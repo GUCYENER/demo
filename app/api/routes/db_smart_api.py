@@ -242,7 +242,7 @@ class AstPatchRequest(BaseModel):
     """FAZ 2 G2.1 — drag-drop AST patch.
 
     op whitelist: add_column / remove_column / add_filter / remove_filter
-                  / modify_join / reorder_by / set_limit
+                  / modify_join / reorder_by / reorder_columns / set_limit
     args: ilgili ast_renderer fonksiyonunun kwargs payload'ı.
     render_preview: True → yanıt SQL/binds da içerir (cost rozet için).
     """
@@ -266,6 +266,7 @@ _AST_OP_WHITELIST = {
     "remove_filter",
     "modify_join",
     "reorder_by",
+    "reorder_columns",   # v3.30.0 FAZ 3 P19 G3.4 — drag-drop SELECT reorder
     "set_limit",
 }
 
@@ -339,6 +340,141 @@ def post_ast_patch(
         binds=binds,
         dialect=dialect_out,
     )
+
+
+# ─────────────────────────────────────────────────────────────
+# v3.30.0 FAZ 3 P19 G3.4 — AST diff API + EXPLAIN cache
+# ─────────────────────────────────────────────────────────────
+
+class AstDiffRequest(BaseModel):
+    """İki AST snapshot arasında yapısal fark — drag-drop "ne değişti?" preview."""
+    from_ast: Dict[str, Any] = Field(default_factory=dict)
+    to_ast: Dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post("/ast/diff")
+def post_ast_diff(
+    body: AstDiffRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """`ast_renderer.diff_ast` çıktısı — DB hit yok, pure compute, <10ms.
+
+    Drag-drop sırasında frontend `from_ast` (önceki snapshot) +
+    `to_ast` (yeni patch sonucu) gönderir. Yanıt: changed_sections summary +
+    her bölüm için added/removed/modified detayları. Sadece auth gerekli.
+    """
+    _require_user_id(current_user)
+    from app.services.db_smart import ast_renderer
+    try:
+        return ast_renderer.diff_ast(body.from_ast or {}, body.to_ast or {})
+    except Exception as e:
+        logger.warning("[db_smart.ast] diff failed: %s", e)
+        raise HTTPException(status_code=400, detail=f"AST diff hatası: {e}")
+
+
+# In-process EXPLAIN cache — 5sn TTL, max 256 entry (FIFO eviction).
+# Drag-drop sırasında aynı AST için tekrar EXPLAIN çağrılmasın diye.
+import hashlib  # noqa: E402
+import json     # noqa: E402
+import time as _time  # noqa: E402
+
+_EXPLAIN_CACHE: Dict[str, Any] = {}
+_EXPLAIN_CACHE_TTL_S = 5.0
+_EXPLAIN_CACHE_MAX = 256
+
+
+def _explain_cache_key(user_id: int, ast: Dict[str, Any], dialect: str) -> str:
+    payload = json.dumps({"u": user_id, "d": dialect, "a": ast},
+                         sort_keys=True, default=str)
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+
+def _explain_cache_get(key: str) -> Optional[Dict[str, Any]]:
+    entry = _EXPLAIN_CACHE.get(key)
+    if not entry:
+        return None
+    if _time.monotonic() - entry["ts"] > _EXPLAIN_CACHE_TTL_S:
+        _EXPLAIN_CACHE.pop(key, None)
+        return None
+    return entry["value"]
+
+
+def _explain_cache_put(key: str, value: Dict[str, Any]) -> None:
+    if len(_EXPLAIN_CACHE) >= _EXPLAIN_CACHE_MAX:
+        # FIFO eviction — en eski entry'yi at
+        try:
+            oldest = next(iter(_EXPLAIN_CACHE))
+            _EXPLAIN_CACHE.pop(oldest, None)
+        except StopIteration:
+            pass
+    _EXPLAIN_CACHE[key] = {"ts": _time.monotonic(), "value": value}
+
+
+class ExplainAstRequest(BaseModel):
+    """EXPLAIN cache — drag-drop sırasında cost rozeti için sub-100ms feedback."""
+    ast: Dict[str, Any] = Field(default_factory=dict)
+    dialect: str = "postgresql"
+
+
+@router.post("/sessions/{session_uid}/explain")
+def post_explain_ast(
+    body: ExplainAstRequest,
+    session_uid: str = Path(..., min_length=8, max_length=64),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """AST → SQL render + EXPLAIN (PG) + 5sn in-process cache.
+
+    Drag-drop sırasında her patch sonrası çağrılır; aynı AST/dialect kombinasyonu
+    için 5sn boyunca cached cost döner (DB hit yok).
+    Cache key: sha1(user_id + dialect + canonical_json(ast)).
+    """
+    uid = _require_user_id(current_user)
+    from app.services.db_smart import ast_renderer, query_assembler
+
+    ast = body.ast or {}
+    dialect = (body.dialect or "postgresql").strip().lower()
+    if not ast or ast.get("type") != "select":
+        raise HTTPException(status_code=400, detail="AST geçersiz (type=select bekleniyor).")
+
+    cache_key = _explain_cache_key(uid, ast, dialect)
+    cached = _explain_cache_get(cache_key)
+    if cached is not None:
+        return {**cached, "cached": True}
+
+    try:
+        rendered = ast_renderer.render(ast, dialect, current_user)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"AST render hatası: {e}")
+
+    sql = rendered.get("sql") or ""
+    cost: Optional[float] = None
+    explain: Dict[str, Any] = {}
+    if sql and dialect == "postgresql":
+        try:
+            with get_db_context() as conn:
+                cur = conn.cursor()
+                apply_vyra_user_context(cur, current_user)
+                cost = query_assembler.explain_cost(
+                    cur, sql, dialect, current_user,
+                    binds=rendered.get("binds"),
+                )
+                if cost is not None:
+                    explain = {"total_cost": cost}
+        except Exception as e:
+            logger.warning("[db_smart.explain] failed uid=%s: %s", session_uid, e)
+
+    streaming_strategy = query_assembler.decide_streaming_strategy(
+        cost=cost, estimated_rows=None,
+    )
+    payload = {
+        "sql": sql,
+        "dialect": dialect,
+        "explain": explain,
+        "streaming_strategy": streaming_strategy,
+        "cached": False,
+    }
+    _explain_cache_put(cache_key, {k: v for k, v in payload.items() if k != "cached"})
+    return payload
 
 
 class PreviewRequest(BaseModel):

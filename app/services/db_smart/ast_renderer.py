@@ -585,6 +585,60 @@ def reorder_by(
     return new_ast
 
 
+def reorder_columns(
+    ast: Dict[str, Any],
+    order: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """SELECT listesini yeniden sırala (drag-drop için).
+
+    `order` her item'i `{expr?, alias?}` formatında; mevcut SELECT
+    kolonlarıyla `expr` veya `alias` üzerinden eşleştirilir. Hiçbir
+    kolon eklenmez / silinmez — eşleşmeyen item atlanır; mevcut SELECT'te
+    kalan ama `order`'da bulunmayan kolonlar sona eklenir (stable).
+
+    immutable: kaynak `ast` değişmez.
+    """
+    if not isinstance(order, list):
+        raise ValueError("reorder_columns: order list olmalı")
+    new_ast = _require_select(ast)
+    cols = list(new_ast.get("columns") or [])
+    if not cols:
+        return new_ast
+
+    def _key(c: Dict[str, Any]) -> Tuple[str, str]:
+        return (c.get("expr") or c.get("column") or "", c.get("alias") or "")
+
+    remaining = {_key(c): c for c in cols}
+    seen = set()
+    new_cols: List[Dict[str, Any]] = []
+    for item in order:
+        if not isinstance(item, dict):
+            continue
+        k = (item.get("expr") or item.get("column") or "", item.get("alias") or "")
+        # Esnek eşleştirme: alias verilmemişse yalnızca expr eşleşmesini ara
+        match = None
+        if k in remaining:
+            match = remaining.pop(k)
+        elif not k[1]:
+            # alias istenmedi → ilk expr eşleşmesini al
+            for rk in list(remaining.keys()):
+                if rk[0] == k[0]:
+                    match = remaining.pop(rk)
+                    break
+        if match is not None and id(match) not in seen:
+            new_cols.append(match)
+            seen.add(id(match))
+    # Eksik kalanları orijinal sırayla sona ekle
+    for c in cols:
+        if _key(c) in remaining:
+            new_cols.append(c)
+            del remaining[_key(c)]
+    if not new_cols:
+        raise ValueError("reorder_columns: en az bir sütun kalmalı")
+    new_ast["columns"] = new_cols
+    return new_ast
+
+
 def set_limit(
     ast: Dict[str, Any],
     limit: Optional[int] = None,
@@ -815,3 +869,156 @@ def inject_dialect_hints(
     out["sql"] = sql
     out["hints_applied"] = applied
     return out
+
+
+# ─────────────────────────────────────────────────────────────
+# AST diff (v3.30.0 FAZ 3 P19 G3.4) — drag-drop "what changed" payload
+# ─────────────────────────────────────────────────────────────
+
+def _col_key(c: Dict[str, Any]) -> Tuple[str, str]:
+    return (c.get("expr") or c.get("column") or "", c.get("alias") or "")
+
+
+def _join_dict(j: Dict[str, Any]) -> Tuple[str, str, str]:
+    tbl = j.get("table") or {}
+    return (
+        tbl.get("alias") or tbl.get("table") or "",
+        (j.get("kind") or "INNER").strip().upper(),
+        (tbl.get("schema") or "") + "." + (tbl.get("table") or ""),
+    )
+
+
+def diff_ast(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
+    """İki AST snapshot arasındaki yapısal farkı döndürür.
+
+    Drag-drop UI tarafında "ne değişti?" preview rozeti, undo/redo summary ve
+    audit log için kullanılır. AST'lerin SELECT root olması beklenir.
+
+    Returns:
+        {
+            "columns": {"added": [...], "removed": [...], "reordered": bool},
+            "filters": {"added": [...], "removed": [...]},
+            "joins":   {"added": [...], "removed": [...], "modified": [...]},
+            "order_by": {"changed": bool, "before": [...], "after": [...]},
+            "limit":   {"before": int|None, "after": int|None, "changed": bool},
+            "offset":  {"before": int|None, "after": int|None, "changed": bool},
+            "from":    {"changed": bool, "before": str|None, "after": str|None},
+            "summary": {"total_changes": int, "changed_sections": [...]},
+        }
+    """
+    a = a or {}
+    b = b or {}
+
+    # Columns
+    a_cols = [_col_key(c) for c in (a.get("columns") or [])]
+    b_cols = [_col_key(c) for c in (b.get("columns") or [])]
+    a_set = set(a_cols)
+    b_set = set(b_cols)
+    col_added = [{"expr": e, "alias": al} for (e, al) in b_cols if (e, al) not in a_set]
+    col_removed = [{"expr": e, "alias": al} for (e, al) in a_cols if (e, al) not in b_set]
+    col_reordered = a_set == b_set and a_cols != b_cols
+
+    # Filters (positional value-aware)
+    a_filt = [_filter_key(f) for f in (a.get("filters") or [])]
+    b_filt = [_filter_key(f) for f in (b.get("filters") or [])]
+    a_filt_set = list(a_filt)
+    b_filt_set = list(b_filt)
+    filt_added: List[Dict[str, Any]] = []
+    filt_removed: List[Dict[str, Any]] = []
+    # multiset diff
+    tmp_a = list(a_filt_set)
+    for f in b_filt_set:
+        if f in tmp_a:
+            tmp_a.remove(f)
+        else:
+            filt_added.append({"expr": f[0], "op": f[1]})
+    tmp_b = list(b_filt_set)
+    for f in a_filt_set:
+        if f in tmp_b:
+            tmp_b.remove(f)
+        else:
+            filt_removed.append({"expr": f[0], "op": f[1]})
+
+    # Joins (alias indexed)
+    a_join_by_alias = {_join_dict(j)[0]: j for j in (a.get("joins") or [])}
+    b_join_by_alias = {_join_dict(j)[0]: j for j in (b.get("joins") or [])}
+    join_added: List[Dict[str, Any]] = []
+    join_removed: List[Dict[str, Any]] = []
+    join_modified: List[Dict[str, Any]] = []
+    for alias, j in b_join_by_alias.items():
+        if alias not in a_join_by_alias:
+            join_added.append({"alias": alias, "kind": j.get("kind"),
+                               "table": (j.get("table") or {}).get("table")})
+        elif _join_key(a_join_by_alias[alias]) != _join_key(j):
+            join_modified.append({"alias": alias,
+                                  "before_kind": a_join_by_alias[alias].get("kind"),
+                                  "after_kind": j.get("kind")})
+    for alias, j in a_join_by_alias.items():
+        if alias not in b_join_by_alias:
+            join_removed.append({"alias": alias, "kind": j.get("kind"),
+                                 "table": (j.get("table") or {}).get("table")})
+
+    # ORDER BY
+    a_ob = [_order_key(o) for o in (a.get("order_by") or [])]
+    b_ob = [_order_key(o) for o in (b.get("order_by") or [])]
+    ob_changed = a_ob != b_ob
+
+    # LIMIT/OFFSET
+    a_lim = a.get("limit") if isinstance(a.get("limit"), int) else None
+    b_lim = b.get("limit") if isinstance(b.get("limit"), int) else None
+    a_off = a.get("offset") if isinstance(a.get("offset"), int) else None
+    b_off = b.get("offset") if isinstance(b.get("offset"), int) else None
+
+    # FROM (table.alias)
+    def _from_str(ast: Dict[str, Any]) -> Optional[str]:
+        fr = ast.get("from") or {}
+        if not isinstance(fr, dict):
+            return None
+        tbl = fr.get("table") or ""
+        ali = fr.get("alias") or ""
+        if not tbl:
+            return None
+        return tbl + ("." + ali if ali else "")
+
+    a_from = _from_str(a)
+    b_from = _from_str(b)
+    from_changed = a_from != b_from
+
+    changed_sections: List[str] = []
+    if col_added or col_removed or col_reordered:
+        changed_sections.append("columns")
+    if filt_added or filt_removed:
+        changed_sections.append("filters")
+    if join_added or join_removed or join_modified:
+        changed_sections.append("joins")
+    if ob_changed:
+        changed_sections.append("order_by")
+    if a_lim != b_lim:
+        changed_sections.append("limit")
+    if a_off != b_off:
+        changed_sections.append("offset")
+    if from_changed:
+        changed_sections.append("from")
+
+    total = (len(col_added) + len(col_removed) + (1 if col_reordered else 0)
+             + len(filt_added) + len(filt_removed)
+             + len(join_added) + len(join_removed) + len(join_modified)
+             + (1 if ob_changed else 0)
+             + (1 if a_lim != b_lim else 0)
+             + (1 if a_off != b_off else 0)
+             + (1 if from_changed else 0))
+
+    return {
+        "columns": {"added": col_added, "removed": col_removed,
+                    "reordered": col_reordered},
+        "filters": {"added": filt_added, "removed": filt_removed},
+        "joins":   {"added": join_added, "removed": join_removed,
+                    "modified": join_modified},
+        "order_by": {"changed": ob_changed,
+                     "before": [{"expr": e, "dir": d} for (e, d) in a_ob],
+                     "after":  [{"expr": e, "dir": d} for (e, d) in b_ob]},
+        "limit":   {"before": a_lim, "after": b_lim, "changed": a_lim != b_lim},
+        "offset":  {"before": a_off, "after": b_off, "changed": a_off != b_off},
+        "from":    {"changed": from_changed, "before": a_from, "after": b_from},
+        "summary": {"total_changes": total, "changed_sections": changed_sections},
+    }
