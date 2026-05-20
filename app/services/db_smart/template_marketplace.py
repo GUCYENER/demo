@@ -85,11 +85,19 @@ def browse(
         where.append("owner_user_id = %s")
         params.append(uid)
     elif owner == "community":
-        where.append("is_official IS FALSE")
-        where.append("(owner_user_id IS NULL OR owner_user_id <> %s)")
+        # A-8 fix: 'community' artık "official + own custom" anlamına gelir
+        # (önceki davranış: tüm diğer kullanıcıların custom template'lerini
+        # leak ediyordu — cross-tenant PII riski).
+        where.append("(is_official IS TRUE OR owner_user_id = %s OR owner_user_id IS NULL)")
         params.append(uid)
     elif owner == "official":
         where.append("is_official IS TRUE")
+    else:
+        # A-8 fix: default 'all' artık own-or-official ile sınırlı.
+        # Önceki davranış: hiç filtre yoktu → tüm kullanıcıların custom
+        # template'leri sızıyordu (sql_templates, description_tr dahil).
+        where.append("(is_official IS TRUE OR owner_user_id = %s OR owner_user_id IS NULL)")
+        params.append(uid)
 
     order_sql = {
         "popular": "usage_count DESC NULLS LAST, success_rate DESC NULLS LAST",
@@ -143,7 +151,13 @@ def get_categories(cur: Any) -> List[Dict[str, Any]]:
 
 
 def get_by_key(cur: Any, metric_key: str, current_user: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Tek bir template detayı (apply için)."""
+    """Tek bir template detayı (apply için).
+
+    A-7 fix (ARES KRITIK): owner filter eklendi — sadece official, NULL-owner
+    (legacy seed) veya çağıran kullanıcının kendi custom template'i döner.
+    Önceki davranış: herhangi bir authenticated user başkasının custom
+    template'inin detayını (sql_templates dahil) çekebiliyordu.
+    """
     uid = int(current_user.get("id") or 0)
     cur.execute(
         """
@@ -154,9 +168,10 @@ def get_by_key(cur: Any, metric_key: str, current_user: Dict[str, Any]) -> Optio
           FROM dbsmart_metric_library
          WHERE metric_key = %s
            AND (is_active IS TRUE OR is_active IS NULL)
+           AND (is_official IS TRUE OR owner_user_id = %s OR owner_user_id IS NULL)
          LIMIT 1
         """,
-        (str(metric_key)[:120],),
+        (str(metric_key)[:120], uid),
     )
     row = cur.fetchone()
     if not row:

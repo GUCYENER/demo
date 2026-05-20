@@ -68,12 +68,22 @@ def test_browse_owner_mine(mock_cur, user42):
     assert items[0]["is_mine"] is True
 
 
-def test_browse_owner_community_excludes_self(mock_cur, user42):
+def test_browse_owner_community_uses_safe_filter(mock_cur, user42):
+    """A-8 fix: 'community' artık 'official + own custom' anlamına gelir
+    (önceki davranış başkalarının custom template'lerini leak ediyordu)."""
     mock_cur.fetchall.return_value = []
     tm.browse(mock_cur, user42, owner="community")
     sql, params = mock_cur.execute.call_args[0]
-    assert "is_official IS FALSE" in sql
-    assert "owner_user_id IS NULL OR owner_user_id <> %s" in sql
+    assert "is_official IS TRUE OR owner_user_id = %s OR owner_user_id IS NULL" in sql
+    assert 42 in params
+
+
+def test_browse_default_all_filters_other_users_custom(mock_cur, user42):
+    """A-8 fix: default 'all' artık own+official+legacy ile sınırlı."""
+    mock_cur.fetchall.return_value = []
+    tm.browse(mock_cur, user42)  # owner='all' default
+    sql, params = mock_cur.execute.call_args[0]
+    assert "is_official IS TRUE OR owner_user_id = %s OR owner_user_id IS NULL" in sql
     assert 42 in params
 
 
@@ -147,3 +157,27 @@ def test_get_by_key_not_found(mock_cur, user42):
     mock_cur.fetchone.return_value = None
     rec = tm.get_by_key(mock_cur, "doesnt_exist", user42)
     assert rec is None
+
+
+def test_get_by_key_applies_owner_filter(mock_cur, user42):
+    """A-7 fix (ARES KRITIK): get_by_key SQL'ine owner filter eklendi —
+    başka kullanıcının custom template detayı (sql_templates dahil) sızmaz.
+    Filter: official OR own OR NULL-legacy."""
+    mock_cur.fetchone.return_value = None
+    tm.get_by_key(mock_cur, "some_key", user42)
+    sql, params = mock_cur.execute.call_args[0]
+    assert "is_official IS TRUE OR owner_user_id = %s OR owner_user_id IS NULL" in sql
+    # metric_key + uid → 2 param
+    assert 42 in params
+    assert "some_key" in params
+
+
+def test_get_by_key_other_user_custom_filtered_by_sql(mock_cur, user42):
+    """A-7 fix: başka user'ın custom template'i fetchone=None döner çünkü
+    SQL'in WHERE clause'una owner filter eklendi — mock fetchone=None ile
+    bu davranışı simüle ediyoruz (production'da DB filter eder)."""
+    mock_cur.fetchone.return_value = None  # SQL filter'da reddedildi
+    rec = tm.get_by_key(mock_cur, "other_user_metric", user42)
+    assert rec is None
+    sql = mock_cur.execute.call_args[0][0]
+    assert "owner_user_id = %s OR owner_user_id IS NULL" in sql
