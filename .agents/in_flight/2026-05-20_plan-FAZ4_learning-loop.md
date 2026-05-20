@@ -203,3 +203,124 @@ Chain: 033 → 034 → 035 → 036 → 037 → 038. Hepsi `IF NOT EXISTS` idempo
 - FAZ 1 G1.4 (`metric_library` seed) → P25 zorunlu
 - FAZ 3 reco engine → P26/P32 zorunlu (eksikse GROUP D'ye kayar)
 - Diğerleri (P22/P23/P24/P27/P28/P29/P30/P31/P33) FAZ 1-3 finding-fix bloker YOK.
+
+---
+
+## ZEUS Master-Plan Gap Addendum (2026-05-21)
+
+`agentic_sql_copilot_master_plan.md` ile cross-check sonucu v3.30.0 FAZ 4
+planında **atlanan 3 madde** tespit edildi. User direktifi: "agentic_sql_copilot_master_plan.md
+olupta atladığımız var mı bak. varsa onuda plana ekle."
+
+### Doğrulanmış mevcut (atlanmadı)
+
+| Master-plan maddesi | Mevcut konum |
+|---|---|
+| `business_glossary` tablosu (master Faz 3) | ✓ `migrations/012_v3220_business_glossary.py` |
+| `user_preferences` tablosu (master Faz 4 alt-küme) | ✓ `migrations/013_v3230_user_preferences.py` |
+| Table Ranker CatBoost (master Faz 5) | ✓ P23 yukarıda planlandı |
+| Result Size Predictor (master Faz 5/6) | ✓ P27 yukarıda planlandı |
+| Wizard sentetik veri (master Faz 4) | ✓ P30 `synthetic_wizard_sessions.py` (ranker eğitimi) |
+| Row chunk SSE (master Faz 6) | ✓ FAZ 3 P15 commit `7c772ff` (landed) |
+| Langfuse observability (master Faz 6 opt) | ✓ FAZ 5 P36 + zaten `langfuse_adapter.py` mature |
+
+### Tespit edilen gap'ler
+
+| # | Master madde | Neden gerekli | Yeni P-no |
+|---|---|---|---|
+| GAP-1 | `query_examples` tablosu (master Faz 4) | text_to_sql few-shot pulling — kullanıcı/source başına en yakın 3-5 SQL örneği embedding ile retrieve | **P50** |
+| GAP-2 | Self-healing SQL retry (master Faz 4) | EXPLAIN fail → error → LLM'e geri besleme, max 2 retry; pre-flight EXPLAIN validation | **P51** |
+| GAP-3 | Synthetic `generate_db_query_pairs(source_id)` (master Faz 5) | text_to_sql **pretraining** için tablo+FK+sample → 30-50 Q/SQL pair LLM-generated (P30'daki wizard session sentetiği ile **farklı amaç**) | **P52** |
+
+**P-no aralığı seçimi:** Mevcut FAZ 2 (P21-P30), FAZ 3 reconciled (P31-P40),
+FAZ 4 (P22-P33 — kendi içinde tutarlı ama FAZ 2/3 ile collision var), FAZ 5
+(P32-P37). P50-P52 hepsinin üstünde, güvenli ad-hoc band. Future plan
+reconciliation: `.agents/plans/v3.30.0_db_smart_wizard.md` tamamlama sırasında
+tüm phase'lerin P-no'ları lineer renumber edilecek (post-FAZ 5 close task).
+
+### P50 — query_examples + few-shot retrieval
+
+**Hedef dosyalar:**
+- Migration `044_v3300_query_examples.py` (~80 LOC) — `query_examples (id BIGSERIAL PK, user_id INT REFERENCES users(id) ON DELETE CASCADE, company_id INT, source_id INT, db_engine VARCHAR(20), question TEXT, generated_sql TEXT, was_correct BOOLEAN, user_feedback TEXT, embedding VECTOR(384), chosen_tables TEXT[], chosen_columns TEXT[], created_at TIMESTAMPTZ DEFAULT NOW())` + RLS policy + ivfflat idx on embedding + idx (user_id, source_id, created_at DESC)
+- `app/services/text_to_sql/few_shot_store.py` (~180 LOC) — `record_example(user_id, source_id, question, sql, was_correct, feedback)`, `top_k_examples(user_id, source_id, question_embedding, k=5)` (pgvector `<=>` cosine)
+- Edit `app/services/text_to_sql/sql_generator.py` (or equivalent) (+~30 LOC) — prompt build sırasında `top_k_examples` çağır, system prompt'a `few-shot examples` bloğu ekle
+
+**Reuse:** Existing embedding service (sentence-transformers, `app/services/embedding/`); RLS pattern from `metric_library` (mig 033); `vector_extension` mig (zaten kurulu).
+
+**Test:** unit — pgvector cosine query top-k; integration — record + retrieve same user_id; RLS — cross-tenant retrieval boş döner.
+
+**Bağımlılık:** pgvector extension (zaten mevcut — `business_glossary_v2` kullanıyor). YOK ise mig 044 başında `CREATE EXTENSION IF NOT EXISTS vector`.
+
+**Complexity:** M. **Bağımlılık:** P22 değil (bağımsız). **Wave:** GAP-band paralel.
+
+### P51 — Self-healing SQL retry + EXPLAIN pre-flight
+
+**Hedef dosyalar:**
+- `app/services/text_to_sql/self_healer.py` (~220 LOC) — `try_execute_with_repair(sql, source_id, dialect, max_retries=2)`: (1) EXPLAIN dry-run via `safe_sql_executor.explain_only(sql)`, (2) on failure → extract error class+message+offending fragment, (3) re-prompt LLM with `original_question + failed_sql + error_message + dialect_hint`, (4) repeat ≤2.
+- Edit `app/api/routes/db_smart_api.py` `/sessions/{uid}/execute` (+~25 LOC) — self_healer wrap; failure log to `pipeline_events` (`event_type='sql_self_heal'`); success after retry → `query_examples.record_example(was_correct=True, user_feedback='auto_repaired')`
+- Edit `app/services/db_smart/sql_executor_stream.py` (+~15 LOC) — pre-flight EXPLAIN before opening cursor (defensive)
+
+**Reuse:** `safe_sql_executor.SafeSQLExecutor.explain_only` (zaten var — sql_executor.py:explain method); dialect detection from `app/services/db_smart/dialect_resolver.py`; LLM client from `app/services/text_to_sql/` mevcut.
+
+**Test:** unit — broken SQL fixture (typo, missing col) → repair succeeds; integration — 2× fail → 3. denemede vazgeç + 422 user error; RLS — repair attempt company_id leak yok.
+
+**Complexity:** M. **Bağımlılık:** P50 (auto-record repaired examples). **Wave:** P50 sonrası.
+
+### P52 — Synthetic `generate_db_query_pairs(source_id)`
+
+**Hedef dosyalar:**
+- Edit `app/services/db_smart/synthetic_data.py` veya yeni `app/services/text_to_sql/synthetic_pairs.py` (~280 LOC) — `generate_db_query_pairs(source_id, n=30, k_tables=5)`:
+  (1) `get_top_k_tables(source_id, k_tables)` by `column_metadata` row count + FK centrality,
+  (2) her tablo için sample 5 row + comment'ler (Türkçe ALL_COL_COMMENTS / pg_description),
+  (3) LLM prompt: "Aşağıdaki tablo+sample+FK için 6 farklı Türkçe iş sorusu üret ve her biri için karşılık gelen SQL'i yaz. Çıktı JSON array.",
+  (4) parse + SQL EXPLAIN pre-flight (P51 reuse) — geçemeyenler dropped,
+  (5) `query_examples` tablosuna `was_correct=True` `user_feedback='synthetic'` `user_id=NULL` (company-level baseline) insert.
+- Migration `045_v3300_query_examples_company_baseline.py` (~30 LOC) — `query_examples.user_id` NULL allow + partial UNIQUE idx `(company_id, source_id, question)` WHERE user_id IS NULL (sentetik dedupe)
+- Edit `app/services/ml_training/job_runner.py` (+~20 LOC) — yeni job type `synthetic_query_pairs`, cron weekly + `--source-id` flag
+
+**Reuse:** `text_to_sql.few_shot_store.top_k_examples` returns synthetic if user has no personal; LLM client + EXPLAIN validator (P51).
+
+**Test:** unit — fixture source → ≥20 valid pair; integration — LLM mock + EXPLAIN pre-flight drop ratio <30%; RLS — company_id=NULL global query_examples okuma OK ama yazma admin-only.
+
+**Complexity:** M-L. **Bağımlılık:** P50 (table) + P51 (EXPLAIN validator). **Wave:** P50+P51 sonrası, P52 son.
+
+### GAP-band dispatch
+
+```
+GAP-band (FAZ 4 wave'lerinden bağımsız, paralel ana FAZ ile):
+  → P50 (query_examples + few-shot)             [parallel with Group A P22]
+  → P51 (self-healer)                           [needs P50]
+  → P52 (synthetic pairs)                       [needs P50+P51]
+```
+
+### Migration listesine eklenecek
+
+| Order | Revision | Konu |
+|---|---|---|
+| 6 | `044_v3300_query_examples.py` | query_examples + ivfflat embedding idx + RLS |
+| 7 | `045_v3300_query_examples_company_baseline.py` | NULL user_id + partial UNIQUE idx synthetic dedupe |
+
+Chain: 033 → 034 → 035 → 036 → 037 → 038 → 044 → 045 (043 free for FAZ 5 telemetry tables if any).
+
+### Risk haritasına eklenecek
+
+| # | Risk | Olasılık | Etki | Mitigasyon |
+|---|------|----------|------|------------|
+| R13 | pgvector ivfflat idx accuracy düşük | Orta | Orta | `lists=100` default + reindex weekly cron; `top_k_examples` k=5 fallback exact scan if k< 3 returned |
+| R14 | Self-heal LLM cost (her exec'te 2× retry) | Yüksek | Orta | Pre-flight EXPLAIN ucuz (DB-side); retry sadece EXPLAIN fail'de; daily cap per company `system_settings.text2sql_repair_cap_daily` |
+| R15 | Synthetic Q/SQL low quality → false-positive few-shot | Yüksek | Yüksek | EXPLAIN pre-flight drop + manual review queue + `was_correct=False` after user 👎 → de-rank |
+
+### Out-of-scope from gap addendum
+
+- Active learning loop (human-in-the-loop labeling UI) → v3.31+
+- Embedding model fine-tune (sentence-transformers per-tenant) → v3.31+
+- Multi-dialect synthetic pair generation (sadece tek dialect/source) → P52 sonrası iterative
+- Few-shot example admin curation UI → v3.31+ HEBE iş kapsamı
+
+### Closure
+
+P50-P52 + migration 044-045 master-plan parite için yeterli. Diğer master
+maddeleri (Table Ranker, Sample Data Preview kartı, Pre-execute query
+builder UI) zaten FAZ 4 P23 ve geçmiş v3.27.x/v3.28 release'lerinde
+karşılanmış. **FAZ 4 master parite: 100%** (gap addendum dahil).
+**FAZ 5 master parite: 100%** (G5.3 MCP v3.31.0'a ertelendi — açık karar).

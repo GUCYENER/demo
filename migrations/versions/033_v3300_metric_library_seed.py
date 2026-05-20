@@ -569,4 +569,4 @@ def downgrade() -> None:
     conn = op.get_bind()
     stmt = text("DELETE FROM dbsmart_metric_library WHERE metric_key = ANY(:keys) AND is_official = TRUE")
     conn.execute(stmt, {"keys": keys})
-    op.execute("DELETE FROM system_settings WHERE key = 'DBSMART_METRIC_SEED_TS'")
+    op.execute("DELETE FROM system_settings WHERE setting_key = 'DBSMART_METRIC_SEED_TS'")
