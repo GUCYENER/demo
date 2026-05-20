@@ -561,6 +561,196 @@ def test_hint_invalid_rendered_raises():
         ar.inject_dialect_hints({"binds": {}}, {"parallel": 4})
 
 
+# ─────────────────────────────────────────────────────────────
+# FAZ 2 G2.1 — AST manipulation API
+# ─────────────────────────────────────────────────────────────
+
+def _base_ast():
+    return {
+        "type": "select",
+        "columns": [{"expr": "t.id"}, {"expr": "t.status"}],
+        "from": {"table": "tickets", "alias": "t"},
+        "joins": [{
+            "kind": "INNER",
+            "table": {"table": "users", "alias": "u"},
+            "on": [{"left": "t.user_id", "op": "=", "right": "u.id"}],
+        }],
+        "filters": [{"expr": "t.status", "op": "=", "value": "open"}],
+        "order_by": [{"expr": "t.id", "dir": "ASC"}],
+    }
+
+
+def test_add_column_appends_and_immutable():
+    src = _base_ast()
+    out = ar.add_column(src, {"expr": "t.priority", "alias": "prio"})
+    assert len(out["columns"]) == 3
+    # immutable: kaynak değişmedi
+    assert len(src["columns"]) == 2
+
+
+def test_add_column_idempotent_for_same_expr_alias():
+    src = _base_ast()
+    out = ar.add_column(src, {"expr": "t.id"})
+    # already present (alias None) → no append
+    assert len(out["columns"]) == 2
+
+
+def test_add_column_rejects_bad_identifier():
+    with pytest.raises(ValueError):
+        ar.add_column(_base_ast(), {"expr": "id; DROP"})
+
+
+def test_add_column_requires_expr():
+    with pytest.raises(ValueError):
+        ar.add_column(_base_ast(), {"alias": "x"})
+
+
+def test_remove_column_by_expr():
+    out = ar.remove_column(_base_ast(), expr="t.status")
+    assert all(c.get("expr") != "t.status" for c in out["columns"])
+
+
+def test_remove_column_by_alias():
+    src = _base_ast()
+    src["columns"].append({"expr": "t.priority", "alias": "prio"})
+    out = ar.remove_column(src, alias="prio")
+    assert all(c.get("alias") != "prio" for c in out["columns"])
+
+
+def test_remove_column_rejects_last_column():
+    ast = {"type": "select", "columns": [{"expr": "t.id"}], "from": {"table": "t"}}
+    with pytest.raises(ValueError):
+        ar.remove_column(ast, expr="t.id")
+
+
+def test_remove_column_requires_arg():
+    with pytest.raises(ValueError):
+        ar.remove_column(_base_ast())
+
+
+def test_add_filter_appends():
+    out = ar.add_filter(_base_ast(), {"expr": "t.priority", "op": "=", "value": "high"})
+    assert len(out["filters"]) == 2
+
+
+def test_add_filter_rejects_bad_op():
+    with pytest.raises(ValueError):
+        ar.add_filter(_base_ast(), {"expr": "t.id", "op": "DROP", "value": 1})
+
+
+def test_add_filter_rejects_bad_expr():
+    with pytest.raises(ValueError):
+        ar.add_filter(_base_ast(), {"expr": "id; --", "op": "=", "value": 1})
+
+
+def test_remove_filter_by_expr_all_matches():
+    src = _base_ast()
+    src["filters"].append({"expr": "t.status", "op": "=", "value": "closed"})
+    out = ar.remove_filter(src, expr="t.status")
+    assert out["filters"] == []
+
+
+def test_remove_filter_by_index():
+    src = _base_ast()
+    src["filters"].extend([
+        {"expr": "t.priority", "op": "=", "value": "high"},
+        {"expr": "t.assignee", "op": "=", "value": 1},
+    ])
+    out = ar.remove_filter(src, index=1)
+    assert len(out["filters"]) == 2
+    assert all(f.get("expr") != "t.priority" for f in out["filters"])
+
+
+def test_remove_filter_index_out_of_range():
+    with pytest.raises(ValueError):
+        ar.remove_filter(_base_ast(), index=99)
+
+
+def test_modify_join_kind_only():
+    out = ar.modify_join(_base_ast(), "u", kind="LEFT")
+    assert out["joins"][0]["kind"] == "LEFT"
+
+
+def test_modify_join_on_only():
+    new_on = [{"left": "t.user_id", "op": "=", "right": "u.uuid"}]
+    out = ar.modify_join(_base_ast(), "u", on=new_on)
+    assert out["joins"][0]["on"] == new_on
+
+
+def test_modify_join_unknown_alias():
+    with pytest.raises(ValueError):
+        ar.modify_join(_base_ast(), "missing", kind="LEFT")
+
+
+def test_modify_join_rejects_empty_on():
+    with pytest.raises(ValueError):
+        ar.modify_join(_base_ast(), "u", on=[])
+
+
+def test_modify_join_rejects_injection_in_on():
+    with pytest.raises(ValueError):
+        ar.modify_join(_base_ast(), "u", on=[{"left": "x; DROP", "right": "u.id"}])
+
+
+def test_reorder_by_replaces():
+    out = ar.reorder_by(_base_ast(), [
+        {"expr": "t.priority", "dir": "DESC"},
+        {"expr": "t.id", "dir": "ASC"},
+    ])
+    assert len(out["order_by"]) == 2
+    assert out["order_by"][0]["dir"] == "DESC"
+
+
+def test_reorder_by_empty_clears():
+    out = ar.reorder_by(_base_ast(), [])
+    assert out["order_by"] == []
+
+
+def test_reorder_by_rejects_bad_dir():
+    with pytest.raises(ValueError):
+        ar.reorder_by(_base_ast(), [{"expr": "t.id", "dir": "RANDOM"}])
+
+
+def test_set_limit_offset_assigns():
+    out = ar.set_limit(_base_ast(), limit=50, offset=10)
+    assert out["limit"] == 50
+    assert out["offset"] == 10
+
+
+def test_set_limit_none_clears():
+    src = _base_ast()
+    src["limit"] = 100
+    src["offset"] = 5
+    out = ar.set_limit(src, limit=None, offset=None)
+    assert "limit" not in out
+    assert "offset" not in out
+
+
+def test_set_limit_rejects_negative():
+    with pytest.raises(ValueError):
+        ar.set_limit(_base_ast(), limit=-1)
+
+
+def test_manipulation_chain_still_renders(fake_user_ctx):
+    ast = _base_ast()
+    ast = ar.add_column(ast, {"expr": "t.priority", "alias": "prio"})
+    ast = ar.add_filter(ast, {"expr": "t.priority", "op": "=", "value": "high"})
+    ast = ar.modify_join(ast, "u", kind="LEFT")
+    ast = ar.reorder_by(ast, [{"expr": "t.id", "dir": "DESC"}])
+    ast = ar.set_limit(ast, limit=10)
+    out = ar.render(ast, "postgresql", fake_user_ctx)
+    assert "LEFT JOIN" in out["sql"]
+    assert "DESC" in out["sql"]
+    assert "LIMIT 10" in out["sql"]
+    # 2 bind: status=open + priority=high
+    assert len(out["binds"]) == 2
+
+
+def test_manipulation_non_select_raises():
+    with pytest.raises(ValueError):
+        ar.add_column({"type": "delete"}, {"expr": "x"})
+
+
 def test_hint_cross_dialect_ignored(fake_user_ctx):
     """PG dialect'inde oracle PARALLEL geçilirse no-op olmalı."""
     r = ar.render({

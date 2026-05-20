@@ -414,6 +414,200 @@ def deserialize_json(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ─────────────────────────────────────────────────────────────
+# FAZ 2 G2.1 — AST manipulation API (drag-drop refinement)
+# ─────────────────────────────────────────────────────────────
+# Bu API frontend drag-drop tarafından çağrılacak. Tüm fonksiyonlar:
+#   - immutable (yeni dict döner, kaynağa dokunmaz)
+#   - identifier whitelist guard'ından geçer (_validate_ident)
+#   - alias-bazlı silme/yer-değiştirme — collision'da ValueError
+#   - state machine context'iyle uyumlu (dbsmart_sessions.context.ast snapshot)
+
+def _require_select(ast: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(ast, dict) or ast.get("type") != "select":
+        raise ValueError("AST root must be type=select")
+    return dict(ast)
+
+
+def add_column(
+    ast: Dict[str, Any],
+    column: Dict[str, Any],
+) -> Dict[str, Any]:
+    """SELECT listesine sütun ekle (duplicate-safe, immutable)."""
+    new_ast = _require_select(ast)
+    expr = column.get("expr") or column.get("column")
+    if not expr:
+        raise ValueError("add_column: 'expr' zorunlu")
+    _validate_ident(expr, allow_star=True)
+    alias = column.get("alias")
+    if alias:
+        _validate_ident(alias)
+    cols = list(new_ast.get("columns") or [])
+    # Aynı expr+alias varsa no-op
+    key = (expr, alias)
+    if any((c.get("expr") or c.get("column"), c.get("alias")) == key for c in cols):
+        return new_ast
+    cols.append({"expr": expr, **({"alias": alias} if alias else {})})
+    new_ast["columns"] = cols
+    return new_ast
+
+
+def remove_column(
+    ast: Dict[str, Any],
+    *,
+    expr: Optional[str] = None,
+    alias: Optional[str] = None,
+) -> Dict[str, Any]:
+    """SELECT'ten sütun çıkar. expr veya alias eşleşmesi yeterli."""
+    if not expr and not alias:
+        raise ValueError("remove_column: expr veya alias verilmeli")
+    new_ast = _require_select(ast)
+    cols = list(new_ast.get("columns") or [])
+    if not cols:
+        return new_ast
+    kept = []
+    for c in cols:
+        c_expr = c.get("expr") or c.get("column")
+        c_alias = c.get("alias")
+        if (expr and c_expr == expr) or (alias and c_alias == alias):
+            continue
+        kept.append(c)
+    # Son sütun da silinemez — render boş SELECT'i reddediyor.
+    if not kept:
+        raise ValueError("remove_column: en az bir sütun kalmalı")
+    new_ast["columns"] = kept
+    return new_ast
+
+
+def add_filter(
+    ast: Dict[str, Any],
+    filt: Dict[str, Any],
+) -> Dict[str, Any]:
+    """WHERE listesine filtre ekle. Mevcut optimize_ast dedup'ı sonraki adımda zaten çalışır."""
+    if not isinstance(filt, dict):
+        raise ValueError("add_filter: filt dict olmalı")
+    expr = filt.get("expr") or filt.get("column")
+    if not expr:
+        raise ValueError("add_filter: 'expr' zorunlu")
+    _validate_ident(expr)
+    _validate_op(filt.get("op", "="))
+    new_ast = _require_select(ast)
+    fl = list(new_ast.get("filters") or [])
+    fl.append(filt)
+    new_ast["filters"] = fl
+    return new_ast
+
+
+def remove_filter(
+    ast: Dict[str, Any],
+    *,
+    expr: Optional[str] = None,
+    index: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Filtre sil — expr (tüm eşleşenler) veya index ile."""
+    if expr is None and index is None:
+        raise ValueError("remove_filter: expr veya index verilmeli")
+    new_ast = _require_select(ast)
+    fl = list(new_ast.get("filters") or [])
+    if index is not None:
+        if index < 0 or index >= len(fl):
+            raise ValueError(f"remove_filter: index {index} out of range")
+        fl.pop(index)
+    else:
+        fl = [f for f in fl if (f.get("expr") or f.get("column")) != expr]
+    new_ast["filters"] = fl
+    return new_ast
+
+
+def modify_join(
+    ast: Dict[str, Any],
+    alias: str,
+    *,
+    kind: Optional[str] = None,
+    on: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """JOIN'in kind veya ON koşullarını değiştir (alias'a göre)."""
+    if not alias:
+        raise ValueError("modify_join: alias zorunlu")
+    _validate_ident(alias)
+    new_ast = _require_select(ast)
+    joins = list(new_ast.get("joins") or [])
+    if not joins:
+        raise ValueError(f"modify_join: '{alias}' JOIN bulunamadı")
+    found = False
+    new_joins = []
+    for j in joins:
+        tbl = j.get("table") or {}
+        if tbl.get("alias") == alias:
+            nj = dict(j)
+            if kind is not None:
+                nj["kind"] = _validate_join_kind(kind)
+            if on is not None:
+                if not isinstance(on, list) or not on:
+                    raise ValueError("modify_join: 'on' boş olamaz")
+                for c in on:
+                    if not c.get("left") or not c.get("right"):
+                        raise ValueError("modify_join: ON left+right zorunlu")
+                    _validate_ident(c["left"])
+                    _validate_ident(c["right"])
+                    _validate_op(c.get("op", "="))
+                nj["on"] = list(on)
+            new_joins.append(nj)
+            found = True
+        else:
+            new_joins.append(j)
+    if not found:
+        raise ValueError(f"modify_join: alias '{alias}' bulunamadı")
+    new_ast["joins"] = new_joins
+    return new_ast
+
+
+def reorder_by(
+    ast: Dict[str, Any],
+    order_list: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """ORDER BY'i tamamen değiştir (frontend drag-drop replace pattern'i)."""
+    if not isinstance(order_list, list):
+        raise ValueError("reorder_by: order_list list olmalı")
+    new_ast = _require_select(ast)
+    valid = []
+    for o in order_list:
+        if not isinstance(o, dict):
+            continue
+        expr = o.get("expr") or o.get("column")
+        if not expr:
+            raise ValueError("reorder_by: 'expr' zorunlu")
+        _validate_ident(expr)
+        direction = (o.get("dir") or "ASC").strip().upper()
+        if direction not in ("ASC", "DESC"):
+            raise ValueError(f"reorder_by: invalid dir {direction!r}")
+        valid.append({"expr": expr, "dir": direction})
+    new_ast["order_by"] = valid
+    return new_ast
+
+
+def set_limit(
+    ast: Dict[str, Any],
+    limit: Optional[int] = None,
+    offset: Optional[int] = None,
+) -> Dict[str, Any]:
+    """LIMIT/OFFSET ata. None → temizle. Negatif değer → ValueError."""
+    new_ast = _require_select(ast)
+    if limit is not None:
+        if not isinstance(limit, int) or limit < 0:
+            raise ValueError("set_limit: limit non-negative int olmalı")
+        new_ast["limit"] = limit
+    else:
+        new_ast.pop("limit", None)
+    if offset is not None:
+        if not isinstance(offset, int) or offset < 0:
+            raise ValueError("set_limit: offset non-negative int olmalı")
+        new_ast["offset"] = offset
+    else:
+        new_ast.pop("offset", None)
+    return new_ast
+
+
+# ─────────────────────────────────────────────────────────────
 # Step 4 — Safe AST optimizations
 # ─────────────────────────────────────────────────────────────
 
