@@ -839,7 +839,10 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
           <p class="dsw-hint">Filtre kriterlerini belirleyin. (Yükleniyor...)</p>
         </div>
         <div class="dsw-step-panel hidden" data-step="4" id="dswStep4" role="tabpanel" aria-labelledby="dswTab4" aria-live="polite" aria-busy="false" hidden>
-          <p class="dsw-hint">SQL önizleme + maliyet tahmini. (Yükleniyor...)</p>
+          <p class="dsw-hint" id="dswStep4Hint">SQL önizleme + maliyet tahmini. (Yükleniyor...)</p>
+          <div id="dswAstEditor" class="dsw-ast-region" role="region" aria-label="AST düzenleyici" hidden></div>
+          <span id="dswAstLive" class="sr-only" aria-live="polite" aria-atomic="true"></span>
+          <pre id="dswLegacyPreview" class="dsw-legacy" data-role="legacy-preview" hidden></pre>
         </div>
       </div>
       <div class="dsw-foot">
