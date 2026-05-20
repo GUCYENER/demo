@@ -148,7 +148,7 @@ def test_eq_filter_uses_bind(fake_user_ctx):
         "type": "select", "columns": [{"expr": "id"}],
         "from": {"table": "t"},
         "filters": [{"expr": "t.status", "op": "=", "value": "open"}],
-    }, "postgresql", fake_user_ctx)
+    }, "postgresql", fake_user_ctx, _rls_already_injected=True)
     assert "%(v_1)s" in out["sql"]
     assert out["binds"]["v_1"] == "open"
 
@@ -158,7 +158,7 @@ def test_in_filter_multiple_binds(fake_user_ctx):
         "type": "select", "columns": [{"expr": "id"}],
         "from": {"table": "t"},
         "filters": [{"expr": "t.status", "op": "IN", "value": ["open", "wip", "closed"]}],
-    }, "postgresql", fake_user_ctx)
+    }, "postgresql", fake_user_ctx, _rls_already_injected=True)
     assert "IN (" in out["sql"]
     assert len(out["binds"]) == 3
 
@@ -169,7 +169,7 @@ def test_in_filter_rejects_empty_list(fake_user_ctx):
             "type": "select", "columns": [{"expr": "id"}],
             "from": {"table": "t"},
             "filters": [{"expr": "t.status", "op": "IN", "value": []}],
-        }, "postgresql", fake_user_ctx)
+        }, "postgresql", fake_user_ctx, _rls_already_injected=True)
 
 
 def test_is_null_no_bind(fake_user_ctx):
@@ -177,7 +177,7 @@ def test_is_null_no_bind(fake_user_ctx):
         "type": "select", "columns": [{"expr": "id"}],
         "from": {"table": "t"},
         "filters": [{"expr": "t.deleted_at", "op": "IS NULL"}],
-    }, "postgresql", fake_user_ctx)
+    }, "postgresql", fake_user_ctx, _rls_already_injected=True)
     assert "IS NULL" in out["sql"]
     assert len(out["binds"]) == 0
 
@@ -188,7 +188,7 @@ def test_between_filter(fake_user_ctx):
         "from": {"table": "t"},
         "filters": [{"expr": "t.created_at", "op": "BETWEEN",
                      "value": ["2026-01-01", "2026-12-31"]}],
-    }, "postgresql", fake_user_ctx)
+    }, "postgresql", fake_user_ctx, _rls_already_injected=True)
     assert "BETWEEN" in out["sql"]
     assert len(out["binds"]) == 2
 
@@ -312,6 +312,73 @@ def test_end_to_end_rls_filter_in_sql(fake_user_ctx):
     assert "company_id" in out["sql"]
     # 2 bind: status + company_id
     assert len(out["binds"]) == 2
+
+
+# ─────────────────────────────────────────────────────────────
+# F-021 (ARES KRİTİK) — render() defense-in-depth RLS auto-injection
+# ─────────────────────────────────────────────────────────────
+
+def test_render_auto_injects_rls_for_non_admin(fake_user_ctx):
+    """Caller `inject_rls`'i atlasa bile non-admin için render otomatik enjekte etmeli."""
+    ast = {
+        "type": "select", "columns": [{"expr": "t.id"}],
+        "from": {"table": "tickets", "alias": "t"},
+        "filters": [{"expr": "t.status", "op": "=", "value": "open"}],
+    }
+    out = ar.render(ast, "postgresql", fake_user_ctx)
+    # Auto-inject: company_id predicate SQL'e düşmeli
+    assert "company_id" in out["sql"]
+    # 2 bind: status=open + company_id=1
+    assert len(out["binds"]) == 2
+    assert 1 in out["binds"].values()
+
+
+def test_render_admin_no_rls(fake_admin_ctx):
+    """Admin user için render company_id filter EKLEMEMELİ."""
+    ast = {
+        "type": "select", "columns": [{"expr": "t.id"}],
+        "from": {"table": "tickets", "alias": "t"},
+        "filters": [{"expr": "t.status", "op": "=", "value": "open"}],
+    }
+    out = ar.render(ast, "postgresql", fake_admin_ctx)
+    assert "company_id" not in out["sql"]
+    # Yalnız 1 bind: status
+    assert len(out["binds"]) == 1
+
+
+def test_render_skip_flag_respected(fake_user_ctx):
+    """`_rls_already_injected=True` flag verilirse render auto-inject etmemeli."""
+    ast = {
+        "type": "select", "columns": [{"expr": "t.id"}],
+        "from": {"table": "tickets", "alias": "t"},
+        "filters": [{"expr": "t.status", "op": "=", "value": "open"}],
+    }
+    out = ar.render(ast, "postgresql", fake_user_ctx, _rls_already_injected=True)
+    assert "company_id" not in out["sql"]
+    assert len(out["binds"]) == 1
+
+
+def test_render_idempotent_when_already_injected(fake_user_ctx):
+    """`inject_rls` çağırılmış AST'i render etmek çift predicate üretmemeli."""
+    ast = {
+        "type": "select", "columns": [{"expr": "t.id"}],
+        "from": {"table": "tickets", "alias": "t"},
+        "filters": [{"expr": "t.status", "op": "=", "value": "open"}],
+    }
+    injected = ar.inject_rls(ast, fake_user_ctx, company_scoped_tables=["t"])
+    # marker mevcut → render skip etmeli, çift inject yok
+    assert injected.get("_rls_injected") is True
+    out = ar.render(injected, "postgresql", fake_user_ctx)
+    # SQL içinde "company_id" tek sefer (predicate dedup + skip).
+    assert out["sql"].count("company_id") == 1
+    # 2 bind: status + tek company_id
+    assert len(out["binds"]) == 2
+
+    # Ek garantı: inject_rls'i iki kez çağırmak da çift predicate üretmemeli.
+    double = ar.inject_rls(injected, fake_user_ctx, company_scoped_tables=["t"])
+    out2 = ar.render(double, "postgresql", fake_user_ctx, _rls_already_injected=True)
+    assert out2["sql"].count("company_id") == 1
+    assert len(out2["binds"]) == 2
 
 
 # ─────────────────────────────────────────────────────────────
@@ -456,7 +523,7 @@ def test_optimize_and_render_consistency(fake_user_ctx):
         "offset": 0,
     }
     opt = ar.optimize_ast(ast)
-    out = ar.render(opt, "postgresql", fake_user_ctx)
+    out = ar.render(opt, "postgresql", fake_user_ctx, _rls_already_injected=True)
     # Tek bind kaldı, OFFSET yok
     assert len(out["binds"]) == 1
     assert "OFFSET" not in out["sql"]
@@ -738,7 +805,7 @@ def test_manipulation_chain_still_renders(fake_user_ctx):
     ast = ar.modify_join(ast, "u", kind="LEFT")
     ast = ar.reorder_by(ast, [{"expr": "t.id", "dir": "DESC"}])
     ast = ar.set_limit(ast, limit=10)
-    out = ar.render(ast, "postgresql", fake_user_ctx)
+    out = ar.render(ast, "postgresql", fake_user_ctx, _rls_already_injected=True)
     assert "LEFT JOIN" in out["sql"]
     assert "DESC" in out["sql"]
     assert "LIMIT 10" in out["sql"]

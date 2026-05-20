@@ -393,7 +393,13 @@ def post_ast_patch(
                 new_ast, current_user,
                 company_scoped_tables=_company_aliases,
             )
-            rendered = ast_renderer.render(guarded_ast, dialect, current_user)
+            # Explicit skip flag: render() defense-in-depth would otherwise
+            # auto-inject RLS again — `inject_rls` is idempotent (predicate
+            # dedup), so this is purely a clarity/perf optimization.
+            rendered = ast_renderer.render(
+                guarded_ast, dialect, current_user,
+                _rls_already_injected=True,
+            )
             sql = rendered["sql"]
             binds = rendered["binds"]
             dialect_out = rendered["dialect"]

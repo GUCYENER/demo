@@ -281,18 +281,84 @@ def _render_limit_offset(d: str, limit: Optional[int], offset: Optional[int]) ->
 # Main render
 # ─────────────────────────────────────────────────────────────
 
+def _auto_detect_company_scoped_aliases(ast: Dict[str, Any]) -> List[str]:
+    """AST'in from + joins yapısından alias listesi türet (defansif RLS için).
+
+    F-021 (ARES KRİTİK) — defansif derinlik: caller `inject_rls`'i atlasa bile
+    `render()` non-admin için otomatik enjekte etsin. Heuristic: tüm tablo
+    alias'larını company-scoped say (over-restrictive ama güvenli). is_admin
+    user için `inject_rls` zaten no-op döner.
+    """
+    aliases: List[str] = []
+    if not isinstance(ast, dict):
+        return aliases
+    src = ast.get("from")
+    if isinstance(src, dict):
+        a = src.get("alias") or src.get("table")
+        if isinstance(a, str) and a:
+            aliases.append(a)
+    joins = ast.get("joins") or []
+    if isinstance(joins, list):
+        for j in joins:
+            if not isinstance(j, dict):
+                continue
+            tbl = j.get("table")
+            if isinstance(tbl, dict):
+                a = tbl.get("alias") or tbl.get("table")
+            else:
+                a = j.get("alias") or (tbl if isinstance(tbl, str) else None)
+            if isinstance(a, str) and a:
+                aliases.append(a)
+    # Dedup, preserve order
+    seen: set = set()
+    out: List[str] = []
+    for a in aliases:
+        if a in seen:
+            continue
+        seen.add(a)
+        out.append(a)
+    return out
+
+
 def render(
     ast: Dict[str, Any],
     dialect: str,
     user_ctx: Optional[Dict[str, Any]] = None,
+    *,
+    _rls_already_injected: bool = False,
 ) -> Dict[str, Any]:
     """AST → {sql, binds, dialect}. (FAZ 0 imzasından geri-uyumlu değiştirildi —
     eski caller `render(...)`'dan dict bekleyecek.)
+
+    F-021 (ARES KRİTİK) — defense-in-depth: non-admin user_ctx için render
+    `inject_rls`'i otomatik çağırır (caller'ın eklediği `_rls_injected=True`
+    marker'ı varsa veya `_rls_already_injected=True` kwarg'ı verildiyse atlar).
+    inject_rls idempotent — double-inject güvenli (predicate-set dedup'ı
+    `optimize_ast` veya DB tarafında zaten gerçekleşir; burada koruyucu skip
+    flag bağlamı için kullanılır).
     """
     if dialect not in SUPPORTED_DIALECTS:
         raise ValueError(f"Unsupported dialect: {dialect}")
     if not isinstance(ast, dict) or ast.get("type") != "select":
         raise ValueError("AST root must be type=select")
+
+    # Defense-in-depth RLS auto-injection.
+    # Skip cases:
+    #   1. Explicit kwarg `_rls_already_injected=True` (caller pre-injected,
+    #      e.g. db_smart_api.py /ast/patch render_preview path).
+    #   2. AST already carries `_rls_injected=True` marker from a prior
+    #      inject_rls call (idempotency guard).
+    #   3. user_ctx missing / admin / role=admin → inject_rls itself no-ops.
+    # If skip conditions not met, call inject_rls with heuristic alias list.
+    if (
+        not _rls_already_injected
+        and not ast.get("_rls_injected")
+        and isinstance(user_ctx, dict)
+        and not (user_ctx.get("is_admin") or user_ctx.get("role") == "admin")
+    ):
+        aliases = _auto_detect_company_scoped_aliases(ast)
+        if aliases and user_ctx.get("company_id") is not None:
+            ast = inject_rls(ast, user_ctx, company_scoped_tables=aliases)
 
     ctx = _RenderCtx(dialect, user_ctx)
     parts: List[str] = []
@@ -306,6 +372,10 @@ def render(
             if not name:
                 raise ValueError("CTE missing 'name'")
             _validate_ident(name)
+            # CTE inner render: outer'da RLS auto-injected oldu; CTE'nin kendi
+            # AST'i de defansif olarak işlensin — ama recursion guard için
+            # `_rls_already_injected` flag'ini *forward etmiyoruz* (CTE
+            # bağımsız AST). inject_rls idempotent.
             inner = render(cte["ast"], dialect, user_ctx)
             cte_strs.append(f"{_q(dialect, name)} AS ({inner['sql']})")
             ctx.binds.update(inner["binds"])
@@ -384,14 +454,31 @@ def inject_rls(
         return ast
 
     filters = list(ast.get("filters") or [])
+    # Idempotency: predicate-level dedup. Same (alias.company_id = value)
+    # triple already present → skip (double-inject safe).
+    company_id_int = int(company_id)
+    existing_keys = {
+        (
+            (f.get("expr") or f.get("column") or ""),
+            (f.get("op") or "=").strip().upper(),
+            f.get("value"),
+        )
+        for f in filters
+        if isinstance(f, dict)
+    }
     for alias in company_scoped_tables:
         if not _QUALIFIED_RE.match(alias):
             continue
+        expr = f"{alias}.company_id"
+        key = (expr, "=", company_id_int)
+        if key in existing_keys:
+            continue
+        existing_keys.add(key)
         # alias.company_id = <company_id>
         filters.append({
-            "expr": f"{alias}.company_id",
+            "expr": expr,
             "op": "=",
-            "value": int(company_id),
+            "value": company_id_int,
         })
     new_ast = dict(ast)
     new_ast["filters"] = filters
