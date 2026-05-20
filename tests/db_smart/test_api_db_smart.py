@@ -807,3 +807,67 @@ def test_execute_stream_returns_sse_response(client_authed, mock_db, monkeypatch
     assert "password" not in (captured.get("source") or {})
     assert "db_password_encrypted" not in (captured.get("source") or {})
     assert captured.get("password") == ""  # encrypted=None → boş plaintext
+
+
+# ---------------------------------------------------------------------------
+# FAZ 3 P18 — Template Marketplace endpoints
+# ---------------------------------------------------------------------------
+
+def test_list_templates_default(client_authed, mock_db, monkeypatch):
+    # template_marketplace.browse'u mock'la — endpoint cur'u doğru kullanıyor mu?
+    captured: Dict[str, Any] = {}
+    def fake_browse(cur, user, **kw):
+        captured["filter"] = kw
+        return [{"metric_key": "oldest_open", "name_tr": "Oldest", "is_mine": False}]
+    monkeypatch.setattr(
+        "app.services.db_smart.template_marketplace.browse",
+        fake_browse,
+    )
+    resp = client_authed.get("/api/db-smart/templates?category=helpdesk&order=popular&limit=10")
+    assert resp.status_code == 200
+    j = resp.json()
+    assert j["count"] == 1
+    assert j["items"][0]["metric_key"] == "oldest_open"
+    assert captured["filter"]["category"] == "helpdesk"
+    assert captured["filter"]["order"] == "popular"
+    assert captured["filter"]["limit"] == 10
+
+
+def test_list_templates_invalid_order_rejected(client_authed, mock_db, monkeypatch):
+    # Pydantic Query pattern → 422 fastapi tarafında
+    resp = client_authed.get("/api/db-smart/templates?order=stupid")
+    assert resp.status_code == 422
+
+
+def test_list_templates_invalid_owner_rejected(client_authed, mock_db):
+    resp = client_authed.get("/api/db-smart/templates?owner=admin")
+    assert resp.status_code == 422
+
+
+def test_template_categories(client_authed, mock_db, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.db_smart.template_marketplace.get_categories",
+        lambda cur: [{"category": "helpdesk", "count": 12}],
+    )
+    resp = client_authed.get("/api/db-smart/templates/categories")
+    assert resp.status_code == 200
+    assert resp.json()["count"] == 1
+
+
+def test_get_template_by_key_found(client_authed, mock_db, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.db_smart.template_marketplace.get_by_key",
+        lambda cur, k, u: {"metric_key": k, "name_tr": "X", "is_mine": False},
+    )
+    resp = client_authed.get("/api/db-smart/templates/oldest_open")
+    assert resp.status_code == 200
+    assert resp.json()["metric_key"] == "oldest_open"
+
+
+def test_get_template_by_key_404(client_authed, mock_db, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.db_smart.template_marketplace.get_by_key",
+        lambda cur, k, u: None,
+    )
+    resp = client_authed.get("/api/db-smart/templates/no_such_thing")
+    assert resp.status_code == 404

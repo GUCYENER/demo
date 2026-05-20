@@ -52,6 +52,7 @@ from app.services.db_smart import (
     recommendation,        # v3.30.0 FAZ 2 P9 G2.3
     custom_metric_parser,  # v3.30.0 FAZ 2 P11 G2.2
     saved_reports,         # v3.30.0 FAZ 3 P13 G3.3
+    template_marketplace,  # v3.30.0 FAZ 3 P18 G3.3
 )
 
 logger = logging.getLogger(__name__)
@@ -1186,3 +1187,79 @@ def post_recommendation_preview(
         "charts": charts.get("items", []),
         "insights": insights,
     }
+
+
+# ─────────────────────────────────────────────────────────────
+# FAZ 3 P18 G3.3 — Template Marketplace (internal)
+# ─────────────────────────────────────────────────────────────
+
+@router.get("/templates")
+def list_templates(
+    category: Optional[str] = Query(default=None, max_length=60),
+    q: Optional[str] = Query(default=None, max_length=80),
+    is_official: Optional[bool] = Query(default=None),
+    owner: str = Query(default="all", pattern="^(all|mine|community|official)$"),
+    order: str = Query(default="popular", pattern="^(popular|recent|name)$"),
+    limit: int = Query(default=50, ge=1, le=200),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Metric library üzerinden filtreli template browse (marketplace).
+
+    Parametre:
+        category: helpdesk/sales/generic vb.
+        q: name_tr/description_tr ILIKE arama (escape edilmiş)
+        is_official: TRUE / FALSE / null
+        owner: mine | community | official | all
+        order: popular | recent | name
+        limit: 1..200
+    """
+    _require_user_id(current_user)
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        apply_vyra_user_context(cur, current_user)
+        try:
+            items = template_marketplace.browse(
+                cur, current_user,
+                category=category, q=q, is_official=is_official,
+                owner=owner, order=order, limit=limit,
+            )
+        except Exception as e:
+            logger.warning("[db_smart] templates browse failed: %s", e)
+            raise HTTPException(status_code=400, detail="Şablon listesi alınamadı.")
+    return {
+        "items": items,
+        "count": len(items),
+        "filter": {
+            "category": category, "q": q, "is_official": is_official,
+            "owner": owner, "order": order, "limit": limit,
+        },
+    }
+
+
+@router.get("/templates/categories")
+def list_template_categories(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Marketplace UI sol panel — kategori + sayım listesi."""
+    _require_user_id(current_user)
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        apply_vyra_user_context(cur, current_user)
+        cats = template_marketplace.get_categories(cur)
+    return {"items": cats, "count": len(cats)}
+
+
+@router.get("/templates/{metric_key}")
+def get_template(
+    metric_key: str = Path(..., min_length=1, max_length=120),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Tek template detayı (apply için: sql_templates / applicable_when / required_features)."""
+    _require_user_id(current_user)
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        apply_vyra_user_context(cur, current_user)
+        rec = template_marketplace.get_by_key(cur, metric_key, current_user)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="Şablon bulunamadı.")
+    return rec
