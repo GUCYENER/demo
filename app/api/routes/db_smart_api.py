@@ -210,6 +210,109 @@ def post_step(
     )
 
 
+class AstPatchRequest(BaseModel):
+    """FAZ 2 G2.1 — drag-drop AST patch.
+
+    op whitelist: add_column / remove_column / add_filter / remove_filter
+                  / modify_join / reorder_by / set_limit
+    args: ilgili ast_renderer fonksiyonunun kwargs payload'ı.
+    render_preview: True → yanıt SQL/binds da içerir (cost rozet için).
+    """
+    op: str
+    args: Dict[str, Any] = Field(default_factory=dict)
+    render_preview: bool = False
+    dialect: Optional[str] = None
+
+
+class AstPatchResponse(BaseModel):
+    ast: Dict[str, Any]
+    sql: Optional[str] = None
+    binds: Optional[Dict[str, Any]] = None
+    dialect: Optional[str] = None
+
+
+_AST_OP_WHITELIST = {
+    "add_column",
+    "remove_column",
+    "add_filter",
+    "remove_filter",
+    "modify_join",
+    "reorder_by",
+    "set_limit",
+}
+
+
+@router.post("/sessions/{session_uid}/ast/patch", response_model=AstPatchResponse)
+def post_ast_patch(
+    body: AstPatchRequest,
+    session_uid: str = Path(..., min_length=8, max_length=64),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> AstPatchResponse:
+    """Drag-drop AST patch — deterministik, LLM-siz (<100ms latency budget).
+
+    ARES: op whitelist + ast_renderer içinde identifier+operator+join-kind guard'ları.
+    """
+    _require_user_id(current_user)
+    op = (body.op or "").strip()
+    if op not in _AST_OP_WHITELIST:
+        raise HTTPException(status_code=400, detail=f"Bilinmeyen AST op: {op!r}")
+
+    from app.services.db_smart import ast_renderer
+
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        apply_vyra_user_context(cur, current_user)
+        ctx = session_manager.load_session(cur, session_uid, current_user)
+        if ctx is None:
+            raise HTTPException(status_code=404, detail="Oturum bulunamadı veya yetkiniz yok.")
+
+        ast = (ctx.get("context") or {}).get("ast") or {}
+        if not ast:
+            raise HTTPException(
+                status_code=409,
+                detail="AST henüz oluşturulmadı. Önce wizard'dan ilerleyin.",
+            )
+
+        fn = getattr(ast_renderer, op, None)
+        if not callable(fn):
+            raise HTTPException(status_code=400, detail=f"AST op çağrılamadı: {op}")
+        try:
+            new_ast = fn(ast, **(body.args or {}))
+        except TypeError as e:
+            # args mismatch — caller hatası
+            raise HTTPException(status_code=400, detail=f"AST args hatası: {e}")
+        except ValueError as e:
+            # identifier/operator whitelist veya semantik guard
+            raise HTTPException(status_code=400, detail=str(e))
+
+        # Patch'i context'e yaz
+        ok = session_manager.update_context(
+            cur, session_uid, {"ast": new_ast}, current_user,
+        )
+        if not ok:
+            raise HTTPException(status_code=404, detail="Oturum bulunamadı (RLS).")
+        conn.commit()
+
+    sql = binds = dialect_out = None
+    if body.render_preview:
+        dialect = body.dialect or ctx.get("dialect") or "postgresql"
+        try:
+            rendered = ast_renderer.render(new_ast, dialect, current_user)
+            sql = rendered["sql"]
+            binds = rendered["binds"]
+            dialect_out = rendered["dialect"]
+        except ValueError as e:
+            # AST patch geçerliydi ama render'da kalan kısımda problem var
+            logger.warning("[db_smart.ast] preview render skipped uid=%s: %s", session_uid, e)
+
+    return AstPatchResponse(
+        ast=new_ast,
+        sql=sql,
+        binds=binds,
+        dialect=dialect_out,
+    )
+
+
 class PreviewRequest(BaseModel):
     """Transient preview: session_manager (G1.7) gelene kadar caller wizard_state'i
     request body'sine koyabilir. Body boşsa session_manager.load_session() denenir."""

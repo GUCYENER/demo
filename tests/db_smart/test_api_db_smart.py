@@ -72,6 +72,7 @@ def test_router_registers_all_12_endpoints():
         "/api/db-smart/sessions/{session_uid}/preview",
         "/api/db-smart/sessions/{session_uid}/execute",
         "/api/db-smart/sessions/{session_uid}/save-report",
+        "/api/db-smart/sessions/{session_uid}/ast/patch",  # FAZ 2 P8 G2.1
         "/api/db-smart/sources",
         "/api/db-smart/sources/{source_id}/tables",
         "/api/db-smart/sources/{source_id}/tables/{table_id}/related",
@@ -226,6 +227,117 @@ def test_get_recommendations_envelope(client_authed):
     resp = client_authed.get("/api/db-smart/recommendations/exec-uuid-123")
     assert resp.status_code == 200
     assert resp.json()["exec_id"] == "exec-uuid-123"
+
+
+# ─────────────────────────────────────────────────────────────
+# FAZ 2 P8 G2.1 — AST patch endpoint
+# ─────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def mock_session_with_ast(monkeypatch):
+    """load_session AST içeren context döner, update_context True döner."""
+    ast = {
+        "type": "select",
+        "columns": [{"expr": "t.id"}],
+        "from": {"table": "tickets", "alias": "t"},
+        "filters": [],
+    }
+    monkeypatch.setattr(
+        db_smart_api.session_manager, "load_session",
+        lambda cur, uid, user_ctx: {
+            "session_uid": uid, "current_step": 0, "status": "active",
+            "source_id": 1, "context": {"ast": ast},
+            "dialect": "postgresql", "generated_sql": None,
+            "created_at": None, "last_activity_at": None, "completed_at": None,
+        },
+    )
+    monkeypatch.setattr(
+        db_smart_api.session_manager, "update_context",
+        lambda cur, uid, partial, user_ctx=None, current_step=None: True,
+    )
+    return ast
+
+
+def test_ast_patch_unknown_op_400(client_authed, mock_session_with_ast):
+    resp = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/ast/patch",
+        json={"op": "DROP_TABLE", "args": {}},
+    )
+    assert resp.status_code == 400
+    assert "Bilinmeyen AST op" in resp.json()["detail"]
+
+
+def test_ast_patch_add_column_success(client_authed, mock_session_with_ast):
+    resp = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/ast/patch",
+        json={"op": "add_column", "args": {"column": {"expr": "t.status"}}},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["ast"]["columns"]) == 2
+    assert data["sql"] is None  # render_preview False
+
+
+def test_ast_patch_add_column_with_render_preview(client_authed, mock_session_with_ast):
+    resp = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/ast/patch",
+        json={
+            "op": "add_column",
+            "args": {"column": {"expr": "t.status"}},
+            "render_preview": True,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["sql"] is not None
+    assert "tickets" in data["sql"]
+    assert data["dialect"] == "postgresql"
+
+
+def test_ast_patch_injection_blocked(client_authed, mock_session_with_ast):
+    resp = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/ast/patch",
+        json={"op": "add_column", "args": {"column": {"expr": "id; DROP TABLE u"}}},
+    )
+    assert resp.status_code == 400
+
+
+def test_ast_patch_args_mismatch_400(client_authed, mock_session_with_ast):
+    resp = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/ast/patch",
+        json={"op": "add_column", "args": {"wrong_kwarg": 1}},
+    )
+    assert resp.status_code == 400
+
+
+def test_ast_patch_no_ast_in_session_409(client_authed, monkeypatch):
+    """AST henüz oluşturulmamışsa 409."""
+    monkeypatch.setattr(
+        db_smart_api.session_manager, "load_session",
+        lambda cur, uid, user_ctx: {
+            "session_uid": uid, "current_step": 0, "status": "active",
+            "source_id": 1, "context": {},  # AST yok
+            "dialect": "postgresql", "generated_sql": None,
+            "created_at": None, "last_activity_at": None, "completed_at": None,
+        },
+    )
+    resp = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/ast/patch",
+        json={"op": "add_column", "args": {"column": {"expr": "t.id"}}},
+    )
+    assert resp.status_code == 409
+
+
+def test_ast_patch_session_not_found_404(client_authed, monkeypatch):
+    monkeypatch.setattr(
+        db_smart_api.session_manager, "load_session",
+        lambda cur, uid, user_ctx: None,
+    )
+    resp = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/ast/patch",
+        json={"op": "add_column", "args": {"column": {"expr": "t.id"}}},
+    )
+    assert resp.status_code == 404
 
 
 # ─────────────────────────────────────────────────────────────
