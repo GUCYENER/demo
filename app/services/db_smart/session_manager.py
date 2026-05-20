@@ -21,10 +21,98 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import uuid
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
+
+# ─────────────────────────────────────────────────────────────
+# L1 cache (Redis-backed, graceful fallback)
+# ─────────────────────────────────────────────────────────────
+# Pattern: app/services/db_learning/result_cache.py — thread-safe lazy
+# singleton + JSON-only serialization (pickle yok → RCE risk azaltma).
+# Redis yoksa in-memory fallback (RedisCache içinde zaten var).
+# Test'lerde patch için `app.services.db_smart.session_manager._SESSION_CACHE`
+# attribute'una set/None yapılabilir.
+
+_SESSION_CACHE = None
+_SESSION_CACHE_LOCK = threading.Lock()
+_SESSION_CACHE_INIT_FAILED = False
+_SESSION_CACHE_TTL = 1800  # 30dk
+_CACHE_KEY_PREFIX = "vyra:dbsmart:sess:"
+
+
+def _get_session_cache():
+    """Lazy singleton accessor — Redis yoksa veya init başarısızsa None döner."""
+    global _SESSION_CACHE, _SESSION_CACHE_INIT_FAILED
+    if _SESSION_CACHE is not None:
+        return _SESSION_CACHE
+    if _SESSION_CACHE_INIT_FAILED:
+        return None
+    with _SESSION_CACHE_LOCK:
+        if _SESSION_CACHE is not None:
+            return _SESSION_CACHE
+        if _SESSION_CACHE_INIT_FAILED:
+            return None
+        try:
+            from app.core.config import settings
+            from app.core.redis_cache import RedisCache
+            url = getattr(settings, "REDIS_URL", "redis://localhost:6379/1")
+            _SESSION_CACHE = RedisCache(
+                redis_url=url,
+                default_ttl=_SESSION_CACHE_TTL,
+                key_prefix=_CACHE_KEY_PREFIX,
+            )
+        except Exception as e:
+            logger.info("[db_smart.session] L1 cache init skipped: %s", e)
+            _SESSION_CACHE_INIT_FAILED = True
+            _SESSION_CACHE = None
+    return _SESSION_CACHE
+
+
+def _cache_key(session_uid: str) -> str:
+    """RedisCache zaten key_prefix uyguluyor → burada sade uid yeter."""
+    return session_uid
+
+
+def _cache_get(session_uid: str) -> Optional[Dict[str, Any]]:
+    cache = _get_session_cache()
+    if cache is None:
+        return None
+    try:
+        raw = cache.get_raw(_cache_key(session_uid))
+        if not raw:
+            return None
+        data = json.loads(raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw)
+        return data if isinstance(data, dict) else None
+    except Exception as e:
+        logger.debug("[db_smart.session] cache_get failed uid=%s: %s", session_uid, e)
+        return None
+
+
+def _cache_set(session_uid: str, payload: Dict[str, Any]) -> None:
+    cache = _get_session_cache()
+    if cache is None:
+        return
+    try:
+        cache.set_raw(
+            _cache_key(session_uid),
+            json.dumps(payload, default=str).encode("utf-8"),
+            ttl=_SESSION_CACHE_TTL,
+        )
+    except Exception as e:
+        logger.debug("[db_smart.session] cache_set failed uid=%s: %s", session_uid, e)
+
+
+def _cache_delete(session_uid: str) -> None:
+    cache = _get_session_cache()
+    if cache is None:
+        return
+    try:
+        cache.delete(_cache_key(session_uid))
+    except Exception as e:
+        logger.debug("[db_smart.session] cache_delete failed uid=%s: %s", session_uid, e)
 
 
 def create_session(
@@ -70,6 +158,25 @@ def create_session(
         "[db_smart.session] created user=%s source=%s uid=%s",
         user_id, source_id, session_uid,
     )
+    # L1 cache: ilk yaratılan oturum minimum payload ile cache'lenir; sonraki
+    # load_session'lar DB hit'sız döner. Hata durumunda sessiz no-op.
+    # ARES: cache'lenmiş payload'a user_id + company_id gömülür → load_session
+    # her cache-hit'inde caller user_ctx ile karşılaştırarak cross-tenant
+    # leak'ini engeller (DB RLS'i atlanmış olsa bile).
+    _cache_set(session_uid, {
+        "session_uid": session_uid,
+        "user_id": int(user_id),
+        "company_id": int(company_id),
+        "current_step": 0,
+        "status": "active",
+        "source_id": source_id,
+        "context": initial_context or {},
+        "dialect": None,
+        "generated_sql": None,
+        "created_at": None,
+        "last_activity_at": None,
+        "completed_at": None,
+    })
     return session_uid
 
 
@@ -100,12 +207,35 @@ def load_session(
         }
         None — oturum yok veya RLS reddetti.
     """
+    # L1 cache hit → DB hit'sız dön. ARES guard: payload'taki user_id/company_id
+    # caller user_ctx ile birebir eşleşmeli, aksi halde cross-tenant leak.
+    # Eşleşmezse cache miss gibi davranıp DB'ye (RLS-bound) git.
+    cached = _cache_get(session_uid)
+    if cached is not None:
+        c_user = cached.get("user_id")
+        c_company = cached.get("company_id")
+        req_user = user_ctx.get("id") if user_ctx else None
+        req_company = user_ctx.get("company_id") if user_ctx else None
+        is_admin = bool(user_ctx and (user_ctx.get("is_admin") or user_ctx.get("role") == "admin"))
+        if is_admin or (
+            c_user is not None and c_company is not None
+            and req_user is not None and req_company is not None
+            and int(c_user) == int(req_user) and int(c_company) == int(req_company)
+        ):
+            # Caller payload'tan user_id/company_id alanlarını görmemeli.
+            out = {k: v for k, v in cached.items() if k not in ("user_id", "company_id")}
+            return out
+        logger.warning(
+            "[db_smart.session] cache cross-tenant mismatch uid=%s — falling back to DB",
+            session_uid,
+        )
     try:
         cur.execute(
             """
             SELECT session_uid::text, current_step, status, source_id,
                    context, dialect, generated_sql,
-                   created_at, last_activity_at, completed_at
+                   created_at, last_activity_at, completed_at,
+                   user_id, company_id
             FROM dbsmart_sessions
             WHERE session_uid = %s::uuid
             """,
@@ -125,7 +255,7 @@ def load_session(
             ctx = json.loads(ctx)
         except Exception:
             ctx = {}
-    return {
+    out = {
         "session_uid": row[0],
         "current_step": int(row[1]) if row[1] is not None else 0,
         "status": row[2],
@@ -137,6 +267,18 @@ def load_session(
         "last_activity_at": row[8].isoformat() if row[8] else None,
         "completed_at": row[9].isoformat() if row[9] else None,
     }
+    # Cache'e (user_id/company_id ile) yaz — ARES guard'ı için.
+    try:
+        row_user_id = row[10] if len(row) > 10 else None
+        row_company_id = row[11] if len(row) > 11 else None
+        if row_user_id is not None and row_company_id is not None:
+            payload = dict(out)
+            payload["user_id"] = int(row_user_id)
+            payload["company_id"] = int(row_company_id)
+            _cache_set(session_uid, payload)
+    except Exception as e:
+        logger.debug("[db_smart.session] post-load cache_set skipped: %s", e)
+    return out
 
 
 def update_context(
@@ -181,7 +323,11 @@ def update_context(
         logger.warning("[db_smart.session] update failed uid=%s: %s", session_uid, e)
         return False
     affected = cur.rowcount if hasattr(cur, "rowcount") else 0
-    return affected is not None and affected > 0
+    ok = affected is not None and affected > 0
+    if ok:
+        # Cache invalidate — bir sonraki load_session DB'den okuyup taze payload yazar.
+        _cache_delete(session_uid)
+    return ok
 
 
 def mark_completed(
@@ -215,7 +361,10 @@ def mark_completed(
     except Exception as e:
         logger.warning("[db_smart.session] mark_completed failed uid=%s: %s", session_uid, e)
         return False
-    return (cur.rowcount or 0) > 0
+    ok = (cur.rowcount or 0) > 0
+    if ok:
+        _cache_delete(session_uid)
+    return ok
 
 
 def mark_abandoned(
@@ -236,4 +385,7 @@ def mark_abandoned(
     except Exception as e:
         logger.warning("[db_smart.session] mark_abandoned failed uid=%s: %s", session_uid, e)
         return False
-    return (cur.rowcount or 0) > 0
+    ok = (cur.rowcount or 0) > 0
+    if ok:
+        _cache_delete(session_uid)
+    return ok

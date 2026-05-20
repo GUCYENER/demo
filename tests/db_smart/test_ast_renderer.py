@@ -323,3 +323,250 @@ def test_serialize_roundtrip():
     snap = ar.serialize_json(ast)
     back = ar.deserialize_json(snap)
     assert back == ast
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 4 — optimize_ast
+# ─────────────────────────────────────────────────────────────
+
+def test_optimize_dedupes_identical_filters():
+    ast = {
+        "type": "select", "columns": [{"expr": "*"}],
+        "from": {"table": "t"},
+        "filters": [
+            {"expr": "t.status", "op": "=", "value": "open"},
+            {"expr": "t.status", "op": "=", "value": "open"},
+            {"expr": "t.priority", "op": "=", "value": "high"},
+        ],
+    }
+    out = ar.optimize_ast(ast)
+    assert len(out["filters"]) == 2
+    assert out["_optimized"] is True
+
+
+def test_optimize_dedupes_in_filter_with_same_value_list():
+    ast = {
+        "type": "select", "columns": [{"expr": "*"}],
+        "from": {"table": "t"},
+        "filters": [
+            {"expr": "t.id", "op": "IN", "value": [1, 2, 3]},
+            {"expr": "t.id", "op": "IN", "value": [1, 2, 3]},
+        ],
+    }
+    out = ar.optimize_ast(ast)
+    assert len(out["filters"]) == 1
+
+
+def test_optimize_keeps_different_filter_values():
+    ast = {
+        "type": "select", "columns": [{"expr": "*"}],
+        "from": {"table": "t"},
+        "filters": [
+            {"expr": "t.status", "op": "=", "value": "open"},
+            {"expr": "t.status", "op": "=", "value": "closed"},
+        ],
+    }
+    out = ar.optimize_ast(ast)
+    assert len(out["filters"]) == 2
+
+
+def test_optimize_dedupes_identical_joins():
+    j = {
+        "kind": "INNER",
+        "table": {"table": "users", "alias": "u"},
+        "on": [{"left": "t.user_id", "op": "=", "right": "u.id"}],
+    }
+    ast = {
+        "type": "select", "columns": [{"expr": "*"}],
+        "from": {"table": "t"},
+        "joins": [j, dict(j)],
+    }
+    out = ar.optimize_ast(ast)
+    assert len(out["joins"]) == 1
+
+
+def test_optimize_dedupes_order_by():
+    ast = {
+        "type": "select", "columns": [{"expr": "*"}],
+        "from": {"table": "t"},
+        "order_by": [
+            {"expr": "t.id", "dir": "ASC"},
+            {"expr": "t.id", "dir": "ASC"},
+            {"expr": "t.id", "dir": "DESC"},  # different direction kept
+        ],
+    }
+    out = ar.optimize_ast(ast)
+    assert len(out["order_by"]) == 2
+
+
+def test_optimize_drops_offset_zero():
+    ast = {
+        "type": "select", "columns": [{"expr": "*"}],
+        "from": {"table": "t"}, "offset": 0,
+    }
+    out = ar.optimize_ast(ast)
+    assert "offset" not in out
+
+
+def test_optimize_keeps_nonzero_offset():
+    ast = {
+        "type": "select", "columns": [{"expr": "*"}],
+        "from": {"table": "t"}, "offset": 5,
+    }
+    out = ar.optimize_ast(ast)
+    assert out["offset"] == 5
+
+
+def test_optimize_recurses_into_cte():
+    ast = {
+        "type": "select", "columns": [{"expr": "*"}],
+        "from": {"table": "o", "alias": "o"},
+        "with": [{
+            "name": "o",
+            "ast": {
+                "type": "select", "columns": [{"expr": "id"}],
+                "from": {"table": "tickets"},
+                "filters": [
+                    {"expr": "status", "op": "=", "value": "open"},
+                    {"expr": "status", "op": "=", "value": "open"},
+                ],
+            },
+        }],
+    }
+    out = ar.optimize_ast(ast)
+    inner = out["with"][0]["ast"]
+    assert len(inner["filters"]) == 1
+    assert inner["_optimized"] is True
+
+
+def test_optimize_passthrough_non_select():
+    assert ar.optimize_ast({"type": "delete"}) == {"type": "delete"}
+    assert ar.optimize_ast([]) == []
+
+
+def test_optimize_and_render_consistency(fake_user_ctx):
+    """Optimized AST hâlâ valid SQL render etmeli."""
+    ast = {
+        "type": "select", "columns": [{"expr": "t.id"}],
+        "from": {"table": "tickets", "alias": "t"},
+        "filters": [
+            {"expr": "t.status", "op": "=", "value": "open"},
+            {"expr": "t.status", "op": "=", "value": "open"},
+        ],
+        "offset": 0,
+    }
+    opt = ar.optimize_ast(ast)
+    out = ar.render(opt, "postgresql", fake_user_ctx)
+    # Tek bind kaldı, OFFSET yok
+    assert len(out["binds"]) == 1
+    assert "OFFSET" not in out["sql"]
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 5 — inject_dialect_hints
+# ─────────────────────────────────────────────────────────────
+
+def test_hint_oracle_parallel(fake_user_ctx):
+    r = ar.render({
+        "type": "select", "columns": [{"expr": "id"}],
+        "from": {"table": "t"},
+    }, "oracle", fake_user_ctx)
+    out = ar.inject_dialect_hints(r, {"parallel": 4})
+    assert "/*+ PARALLEL(4) */" in out["sql"]
+    assert "parallel" in out["hints_applied"]
+
+
+def test_hint_oracle_rejects_out_of_range(fake_user_ctx):
+    r = ar.render({
+        "type": "select", "columns": [{"expr": "id"}],
+        "from": {"table": "t"},
+    }, "oracle", fake_user_ctx)
+    out = ar.inject_dialect_hints(r, {"parallel": 999})
+    assert "PARALLEL" not in out["sql"]
+    assert out["hints_applied"] == []
+
+
+def test_hint_oracle_rejects_nonint_injection(fake_user_ctx):
+    r = ar.render({
+        "type": "select", "columns": [{"expr": "id"}],
+        "from": {"table": "t"},
+    }, "oracle", fake_user_ctx)
+    out = ar.inject_dialect_hints(r, {"parallel": "4) */ DROP TABLE u --"})
+    assert "DROP" not in out["sql"]
+    assert out["hints_applied"] == []
+
+
+def test_hint_mysql_max_execution_time(fake_user_ctx):
+    r = ar.render({
+        "type": "select", "columns": [{"expr": "id"}],
+        "from": {"table": "t"},
+    }, "mysql", fake_user_ctx)
+    out = ar.inject_dialect_hints(r, {"max_execution_time_ms": 30000})
+    assert "/*+ MAX_EXECUTION_TIME(30000) */" in out["sql"]
+
+
+def test_hint_mssql_maxdop_and_recompile(fake_user_ctx):
+    r = ar.render({
+        "type": "select", "columns": [{"expr": "id"}],
+        "from": {"table": "t"},
+    }, "mssql", fake_user_ctx)
+    out = ar.inject_dialect_hints(r, {"maxdop": 4, "recompile": True})
+    assert "OPTION (MAXDOP 4, RECOMPILE)" in out["sql"]
+    assert set(out["hints_applied"]) == {"maxdop", "recompile"}
+
+
+def test_hint_mssql_only_recompile(fake_user_ctx):
+    r = ar.render({
+        "type": "select", "columns": [{"expr": "id"}],
+        "from": {"table": "t"},
+    }, "mssql", fake_user_ctx)
+    out = ar.inject_dialect_hints(r, {"recompile": True})
+    assert out["sql"].endswith("OPTION (RECOMPILE)")
+
+
+def test_hint_postgres_work_mem(fake_user_ctx):
+    r = ar.render({
+        "type": "select", "columns": [{"expr": "id"}],
+        "from": {"table": "t"},
+    }, "postgresql", fake_user_ctx)
+    out = ar.inject_dialect_hints(r, {"work_mem_mb": 64})
+    assert out["pre_sql"] == "SET LOCAL work_mem = '64MB'"
+    assert "work_mem_mb" in out["hints_applied"]
+    # sql değişmemeli
+    assert "work_mem" not in out["sql"]
+
+
+def test_hint_postgres_work_mem_rejects_huge(fake_user_ctx):
+    r = ar.render({
+        "type": "select", "columns": [{"expr": "id"}],
+        "from": {"table": "t"},
+    }, "postgresql", fake_user_ctx)
+    out = ar.inject_dialect_hints(r, {"work_mem_mb": 99999})
+    assert out["pre_sql"] is None
+
+
+def test_hint_no_hints_returns_clean_output(fake_user_ctx):
+    r = ar.render({
+        "type": "select", "columns": [{"expr": "id"}],
+        "from": {"table": "t"},
+    }, "postgresql", fake_user_ctx)
+    out = ar.inject_dialect_hints(r, None)
+    assert out["sql"] == r["sql"]
+    assert out["pre_sql"] is None
+    assert out["hints_applied"] == []
+
+
+def test_hint_invalid_rendered_raises():
+    with pytest.raises(ValueError):
+        ar.inject_dialect_hints({"binds": {}}, {"parallel": 4})
+
+
+def test_hint_cross_dialect_ignored(fake_user_ctx):
+    """PG dialect'inde oracle PARALLEL geçilirse no-op olmalı."""
+    r = ar.render({
+        "type": "select", "columns": [{"expr": "id"}],
+        "from": {"table": "t"},
+    }, "postgresql", fake_user_ctx)
+    out = ar.inject_dialect_hints(r, {"parallel": 4})
+    assert "PARALLEL" not in out["sql"]
+    assert "parallel" not in out["hints_applied"]

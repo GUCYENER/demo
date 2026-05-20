@@ -411,3 +411,213 @@ def serialize_json(ast: Dict[str, Any]) -> Dict[str, Any]:
 def deserialize_json(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     """Snapshot'tan AST geri yükle."""
     return snapshot or {}
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 4 — Safe AST optimizations
+# ─────────────────────────────────────────────────────────────
+
+def _filter_key(f: Dict[str, Any]) -> Tuple:
+    """Hashable key for filter dedup. value/list → tuple for IN/BETWEEN."""
+    expr = f.get("expr") or f.get("column") or ""
+    op = (f.get("op") or "=").strip().upper()
+    val = f.get("value")
+    if isinstance(val, list):
+        val = ("__list__", tuple(val))
+    elif isinstance(val, dict):
+        val = ("__dict__", tuple(sorted(val.items())))
+    return (expr, op, val)
+
+
+def _join_key(j: Dict[str, Any]) -> Tuple:
+    """Hashable key for join dedup (kind + table ref + ON conds)."""
+    kind = (j.get("kind") or "INNER").strip().upper()
+    tbl = j.get("table") or {}
+    tref = (tbl.get("schema") or "", tbl.get("table") or "", tbl.get("alias") or "")
+    on = j.get("on") or []
+    on_key = tuple(
+        ((c.get("left") or ""), (c.get("op") or "=").strip().upper(), (c.get("right") or ""))
+        for c in on
+    )
+    return (kind, tref, on_key)
+
+
+def _order_key(o: Dict[str, Any]) -> Tuple:
+    expr = o.get("expr") or o.get("column") or ""
+    direction = (o.get("dir") or "ASC").strip().upper()
+    return (expr, direction)
+
+
+def optimize_ast(ast: Dict[str, Any], dialect: Optional[str] = None) -> Dict[str, Any]:
+    """AST üzerinde güvenli, reversible optimizasyonlar uygular.
+
+    Adımlar (immutable — yeni dict döner):
+        1. Identical filter dedup (expr+op+value)
+        2. Identical join dedup (kind+table+ON)
+        3. ORDER BY dedup (expr+dir) — ilk geçen kalır
+        4. OFFSET=0 → drop
+        5. WITH (CTE) recursive optimize
+        6. _optimized=True marker
+
+    Not: Bu fonksiyon AST'i yalnız basitleştirir. Subquery↔join veya EXISTS↔IN
+    gibi semantik dönüşümler mevcut flat AST modelinde temsil edilmediği için
+    sonraki bir faza ertelenmiştir; bu bilinçli bir scope kısıtıdır.
+    """
+    if not isinstance(ast, dict):
+        return ast
+    if ast.get("type") != "select":
+        return ast
+
+    new_ast: Dict[str, Any] = dict(ast)
+
+    # 1. Filter dedup (preserve order)
+    filters = ast.get("filters") or []
+    seen_f = set()
+    dedup_f = []
+    for f in filters:
+        if not isinstance(f, dict):
+            continue
+        k = _filter_key(f)
+        if k in seen_f:
+            continue
+        seen_f.add(k)
+        dedup_f.append(f)
+    if dedup_f != filters:
+        new_ast["filters"] = dedup_f
+
+    # 2. Join dedup
+    joins = ast.get("joins") or []
+    seen_j = set()
+    dedup_j = []
+    for j in joins:
+        if not isinstance(j, dict):
+            continue
+        k = _join_key(j)
+        if k in seen_j:
+            continue
+        seen_j.add(k)
+        dedup_j.append(j)
+    if dedup_j != joins:
+        new_ast["joins"] = dedup_j
+
+    # 3. ORDER BY dedup
+    order = ast.get("order_by") or []
+    seen_o = set()
+    dedup_o = []
+    for o in order:
+        if not isinstance(o, dict):
+            continue
+        k = _order_key(o)
+        if k in seen_o:
+            continue
+        seen_o.add(k)
+        dedup_o.append(o)
+    if dedup_o != order:
+        new_ast["order_by"] = dedup_o
+
+    # 4. OFFSET=0 → drop
+    if ast.get("offset") in (0, "0"):
+        new_ast.pop("offset", None)
+
+    # 5. WITH (CTE) recursive
+    with_list = ast.get("with") or []
+    if with_list:
+        new_ast["with"] = [
+            {**cte, "ast": optimize_ast(cte.get("ast") or {}, dialect)}
+            if isinstance(cte, dict) else cte
+            for cte in with_list
+        ]
+
+    new_ast["_optimized"] = True
+    return new_ast
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 5 — Dialect hint injection
+# ─────────────────────────────────────────────────────────────
+
+# Hint güvenlik sınırları (denial-of-service ve syntax-error guard'ı):
+_HINT_MAX_PARALLEL = 64        # Oracle PARALLEL(n)
+_HINT_MAX_MAXDOP = 64          # MSSQL MAXDOP
+_HINT_MAX_MET_MS = 600_000     # MySQL MAX_EXECUTION_TIME 10dk
+_HINT_MAX_WORK_MEM_MB = 4096   # PG work_mem advisory (4GB üst limit)
+
+
+def _safe_int(v: Any, lo: int, hi: int) -> Optional[int]:
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return None
+    if n < lo or n > hi:
+        return None
+    return n
+
+
+def inject_dialect_hints(
+    rendered: Dict[str, Any],
+    hints: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Render edilmiş SQL'e dialect-spesifik hint yorumları ekle.
+
+    Args:
+        rendered: render() çıktısı (sql/binds/dialect).
+        hints: opsiyonel hint dict.
+            - parallel: int — Oracle `/*+ PARALLEL(n) */`
+            - max_execution_time_ms: int — MySQL `/*+ MAX_EXECUTION_TIME(ms) */` (8.0+)
+            - maxdop: int — MSSQL `OPTION (MAXDOP n)`
+            - recompile: bool — MSSQL `OPTION (RECOMPILE)` (maxdop ile birleşebilir)
+            - work_mem_mb: int — PG `SET LOCAL work_mem = 'NMB';` (ayrı pre_sql alanında döner)
+
+    Tüm hint değerleri integer kontrolü ve aralık doğrulamasından geçer; geçersiz
+    olanlar sessizce yok sayılır (SQL injection / DoS guard).
+
+    Returns:
+        Yeni dict: {"sql": ..., "binds": ..., "dialect": ..., "pre_sql": str|None,
+                    "hints_applied": [list of applied hint keys]}
+    """
+    if not isinstance(rendered, dict) or "sql" not in rendered:
+        raise ValueError("inject_dialect_hints: rendered dict bekleniyor")
+    sql = rendered.get("sql") or ""
+    dialect = rendered.get("dialect")
+    out = dict(rendered)
+    out["pre_sql"] = None
+    applied: List[str] = []
+
+    if not hints:
+        out["hints_applied"] = []
+        return out
+
+    if dialect == "oracle":
+        n = _safe_int(hints.get("parallel"), 1, _HINT_MAX_PARALLEL)
+        if n is not None and sql.startswith("SELECT "):
+            sql = "SELECT " + f"/*+ PARALLEL({n}) */ " + sql[len("SELECT "):]
+            applied.append("parallel")
+
+    elif dialect == "mysql":
+        n = _safe_int(hints.get("max_execution_time_ms"), 1, _HINT_MAX_MET_MS)
+        if n is not None and sql.startswith("SELECT "):
+            sql = "SELECT " + f"/*+ MAX_EXECUTION_TIME({n}) */ " + sql[len("SELECT "):]
+            applied.append("max_execution_time_ms")
+
+    elif dialect == "mssql":
+        opts: List[str] = []
+        n = _safe_int(hints.get("maxdop"), 0, _HINT_MAX_MAXDOP)
+        if n is not None:
+            opts.append(f"MAXDOP {n}")
+            applied.append("maxdop")
+        if bool(hints.get("recompile")):
+            opts.append("RECOMPILE")
+            applied.append("recompile")
+        if opts:
+            sql = sql + " OPTION (" + ", ".join(opts) + ")"
+
+    elif dialect == "postgresql":
+        n = _safe_int(hints.get("work_mem_mb"), 1, _HINT_MAX_WORK_MEM_MB)
+        if n is not None:
+            # Caller transaction içinde set edilecek; SET LOCAL → tx kapanınca düşer.
+            out["pre_sql"] = f"SET LOCAL work_mem = '{n}MB'"
+            applied.append("work_mem_mb")
+
+    out["sql"] = sql
+    out["hints_applied"] = applied
+    return out

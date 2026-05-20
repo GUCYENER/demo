@@ -58,6 +58,43 @@ def session_uid_sample():
     return "11111111-2222-3333-4444-555555555555"
 
 
+class _FakeCache:
+    """Minimal RedisCache surface — get_raw/set_raw/delete."""
+    def __init__(self):
+        self.store = {}
+        self.get_calls = 0
+        self.set_calls = 0
+        self.del_calls = 0
+
+    def get_raw(self, key):
+        self.get_calls += 1
+        return self.store.get(key)
+
+    def set_raw(self, key, value, ttl=None):
+        self.set_calls += 1
+        self.store[key] = value
+
+    def delete(self, key):
+        self.del_calls += 1
+        return self.store.pop(key, None) is not None
+
+
+@pytest.fixture(autouse=True)
+def _disable_session_cache(monkeypatch):
+    """Default: cache None → mevcut DB-only test'ler etkilenmez."""
+    monkeypatch.setattr(sm, "_SESSION_CACHE", None, raising=False)
+    monkeypatch.setattr(sm, "_SESSION_CACHE_INIT_FAILED", True, raising=False)
+    monkeypatch.setattr(sm, "_get_session_cache", lambda: None)
+
+
+@pytest.fixture
+def fake_cache(monkeypatch):
+    """Cache enabled: in-memory FakeCache enjekte et."""
+    fc = _FakeCache()
+    monkeypatch.setattr(sm, "_get_session_cache", lambda: fc)
+    return fc
+
+
 def _last_sql(cur: _RecCursor) -> str:
     return cur.executed[-1][0]
 
@@ -119,6 +156,7 @@ def test_load_session_returns_dict(user_ctx, session_uid_sample):
         {"selected_table": "tickets"},
         "postgresql", "SELECT 1",
         now, now, None,
+        7, 42,  # user_id, company_id (P6: cache guard alanları)
     )
     cur = _RecCursor(responses=[row])
     out = sm.load_session(cur, session_uid_sample, user_ctx)
@@ -131,12 +169,15 @@ def test_load_session_returns_dict(user_ctx, session_uid_sample):
     assert out["dialect"] == "postgresql"
     assert out["created_at"] == now.isoformat()
     assert out["completed_at"] is None
+    # Public payload user_id/company_id sızdırmamalı (cache guard internal).
+    assert "user_id" not in out
+    assert "company_id" not in out
 
 
 def test_load_session_normalizes_string_context(user_ctx, session_uid_sample):
     now = datetime(2026, 5, 20, tzinfo=timezone.utc)
     row = (session_uid_sample, 0, "active", None,
-           '{"k": "v"}', None, None, now, now, None)
+           '{"k": "v"}', None, None, now, now, None, 7, 42)
     cur = _RecCursor(responses=[row])
     out = sm.load_session(cur, session_uid_sample, user_ctx)
     assert out["context"] == {"k": "v"}
@@ -252,3 +293,132 @@ def test_mark_abandoned_status_guard(user_ctx, session_uid_sample):
 def test_mark_abandoned_returns_false_on_no_match(user_ctx, session_uid_sample):
     cur = _RecCursor(rowcount=0)
     assert sm.mark_abandoned(cur, session_uid_sample) is False
+
+
+# ─────────────────────────────────────────────────────────────
+# P6 — L1 cache (Redis-backed, graceful)
+# ─────────────────────────────────────────────────────────────
+
+def test_create_session_warms_cache(user_ctx, fake_cache):
+    cur = _RecCursor(responses=[("fake",)])
+    uid = sm.create_session(cur, user_ctx, source_id=3, initial_context={"x": 1})
+    assert fake_cache.set_calls == 1
+    raw = list(fake_cache.store.values())[0]
+    payload = json.loads(raw.decode("utf-8"))
+    assert payload["user_id"] == 7
+    assert payload["company_id"] == 42
+    assert payload["context"] == {"x": 1}
+    assert payload["session_uid"] == uid
+
+
+def test_load_session_cache_hit_skips_db(user_ctx, session_uid_sample, fake_cache):
+    payload = {
+        "session_uid": session_uid_sample,
+        "user_id": 7, "company_id": 42,
+        "current_step": 1, "status": "active",
+        "source_id": None, "context": {"k": "v"},
+        "dialect": None, "generated_sql": None,
+        "created_at": None, "last_activity_at": None, "completed_at": None,
+    }
+    fake_cache.store[session_uid_sample] = json.dumps(payload).encode("utf-8")
+    cur = _RecCursor()
+    out = sm.load_session(cur, session_uid_sample, user_ctx)
+    assert out is not None
+    assert out["context"] == {"k": "v"}
+    # DB hit'i olmadı
+    assert cur.executed == []
+    # Public payload internal alanları sızdırmadı
+    assert "user_id" not in out
+    assert "company_id" not in out
+
+
+def test_load_session_cache_cross_tenant_rejected(user_ctx, session_uid_sample, fake_cache):
+    """ARES: başka tenant'ın cache payload'ı → fallback DB (RLS), not served."""
+    foreign = {
+        "session_uid": session_uid_sample,
+        "user_id": 999, "company_id": 888,
+        "current_step": 0, "status": "active",
+        "source_id": None, "context": {"secret": "leak"},
+        "dialect": None, "generated_sql": None,
+        "created_at": None, "last_activity_at": None, "completed_at": None,
+    }
+    fake_cache.store[session_uid_sample] = json.dumps(foreign).encode("utf-8")
+    # DB'de bu kullanıcı için kayıt yok → None dönmeli
+    cur = _RecCursor(responses=[None])
+    out = sm.load_session(cur, session_uid_sample, user_ctx)
+    assert out is None
+    # DB'ye düştü
+    assert len(cur.executed) == 1
+
+
+def test_load_session_admin_bypass_cache_guard(session_uid_sample, fake_cache):
+    """Admin user_ctx → cache cross-tenant guard'ı atlanır (admin tüm tenant)."""
+    admin = {"id": 1, "company_id": 1, "is_admin": True, "role": "admin"}
+    payload = {
+        "session_uid": session_uid_sample,
+        "user_id": 7, "company_id": 42,
+        "current_step": 1, "status": "active",
+        "source_id": None, "context": {"k": "v"},
+        "dialect": None, "generated_sql": None,
+        "created_at": None, "last_activity_at": None, "completed_at": None,
+    }
+    fake_cache.store[session_uid_sample] = json.dumps(payload).encode("utf-8")
+    cur = _RecCursor()
+    out = sm.load_session(cur, session_uid_sample, admin)
+    assert out is not None
+    assert out["context"] == {"k": "v"}
+    assert cur.executed == []
+
+
+def test_load_session_db_read_warms_cache(user_ctx, session_uid_sample, fake_cache):
+    now = datetime(2026, 5, 20, tzinfo=timezone.utc)
+    row = (session_uid_sample, 0, "active", None, {}, None, None,
+           now, now, None, 7, 42)
+    cur = _RecCursor(responses=[row])
+    out = sm.load_session(cur, session_uid_sample, user_ctx)
+    assert out is not None
+    assert fake_cache.set_calls == 1
+    cached = json.loads(fake_cache.store[session_uid_sample].decode("utf-8"))
+    assert cached["user_id"] == 7
+    assert cached["company_id"] == 42
+
+
+def test_update_context_invalidates_cache(user_ctx, session_uid_sample, fake_cache):
+    fake_cache.store[session_uid_sample] = b'{"stale":true}'
+    cur = _RecCursor(rowcount=1)
+    ok = sm.update_context(cur, session_uid_sample, {"k": "v"})
+    assert ok is True
+    assert fake_cache.del_calls == 1
+    assert session_uid_sample not in fake_cache.store
+
+
+def test_update_context_no_match_does_not_invalidate(session_uid_sample, fake_cache):
+    fake_cache.store[session_uid_sample] = b'{"x":1}'
+    cur = _RecCursor(rowcount=0)
+    ok = sm.update_context(cur, session_uid_sample, {"k": "v"})
+    assert ok is False
+    assert fake_cache.del_calls == 0
+    assert session_uid_sample in fake_cache.store
+
+
+def test_mark_completed_invalidates_cache(session_uid_sample, fake_cache):
+    fake_cache.store[session_uid_sample] = b'{"x":1}'
+    cur = _RecCursor(rowcount=1)
+    assert sm.mark_completed(cur, session_uid_sample) is True
+    assert fake_cache.del_calls == 1
+
+
+def test_mark_abandoned_invalidates_cache(session_uid_sample, fake_cache):
+    fake_cache.store[session_uid_sample] = b'{"x":1}'
+    cur = _RecCursor(rowcount=1)
+    assert sm.mark_abandoned(cur, session_uid_sample) is True
+    assert fake_cache.del_calls == 1
+
+
+def test_cache_get_returns_none_when_cache_disabled(session_uid_sample):
+    """_disable_session_cache aktif → cache None → DB'ye düşer."""
+    cur = _RecCursor(responses=[None])
+    out = sm.load_session(cur, session_uid_sample, {"id": 7, "company_id": 42})
+    assert out is None
+    # Cache disable olunca DB execute edildi
+    assert len(cur.executed) == 1
