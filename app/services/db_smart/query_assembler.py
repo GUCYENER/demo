@@ -207,6 +207,53 @@ def assemble(
 
 
 # ─────────────────────────────────────────────────────────────
+# Streaming strategy (G1.5 Step 7)
+# ─────────────────────────────────────────────────────────────
+
+# Eşikler — UI/exec hattı bu üç moda göre davranır.
+# - direct:    küçük sonuç; tek JSON payload yeterli
+# - cursor:    orta hacim; server-side cursor ile chunked fetch
+# - sse_chunk: büyük hacim; SSE üzerinden satır akışı + back-pressure
+STREAM_DIRECT_MAX_ROWS = 1_000
+STREAM_CURSOR_MAX_ROWS = 100_000
+STREAM_DIRECT_MAX_COST = 1_000.0
+STREAM_CURSOR_MAX_COST = 100_000.0
+
+
+def decide_streaming_strategy(
+    cost: Optional[float] = None,
+    estimated_rows: Optional[int] = None,
+) -> str:
+    """Üç-yollu streaming kararı: direct | cursor | sse_chunk.
+
+    Karar sırası:
+      1. estimated_rows verildiyse satır eşikleri uygulanır.
+      2. yoksa cost verildiyse cost eşikleri uygulanır.
+      3. ikisi de yoksa güvenli default = "direct".
+
+    Args:
+        cost: PG EXPLAIN total_cost (float) veya None
+        estimated_rows: caller'ın tahmini satır sayısı (int) veya None
+
+    Returns:
+        "direct" | "cursor" | "sse_chunk"
+    """
+    if estimated_rows is not None:
+        if estimated_rows < STREAM_DIRECT_MAX_ROWS:
+            return "direct"
+        if estimated_rows <= STREAM_CURSOR_MAX_ROWS:
+            return "cursor"
+        return "sse_chunk"
+    if cost is not None:
+        if cost < STREAM_DIRECT_MAX_COST:
+            return "direct"
+        if cost <= STREAM_CURSOR_MAX_COST:
+            return "cursor"
+        return "sse_chunk"
+    return "direct"
+
+
+# ─────────────────────────────────────────────────────────────
 # explain_cost
 # ─────────────────────────────────────────────────────────────
 

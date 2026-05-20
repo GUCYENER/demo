@@ -173,3 +173,50 @@ def test_metric_template_missing_placeholder(fake_user_ctx):
         },
     }, fake_user_ctx)
     assert out["sql"] is None
+
+
+# ─────────────────────────────────────────────────────────────
+# decide_streaming_strategy (G1.5 Step 7)
+# ─────────────────────────────────────────────────────────────
+
+def test_streaming_default_when_both_none():
+    assert qa.decide_streaming_strategy(cost=None, estimated_rows=None) == "direct"
+
+
+def test_streaming_rows_direct_under_1k():
+    assert qa.decide_streaming_strategy(estimated_rows=999) == "direct"
+    assert qa.decide_streaming_strategy(estimated_rows=0) == "direct"
+
+
+def test_streaming_rows_cursor_between_1k_100k():
+    assert qa.decide_streaming_strategy(estimated_rows=1_000) == "cursor"
+    assert qa.decide_streaming_strategy(estimated_rows=50_000) == "cursor"
+    assert qa.decide_streaming_strategy(estimated_rows=100_000) == "cursor"
+
+
+def test_streaming_rows_sse_over_100k():
+    assert qa.decide_streaming_strategy(estimated_rows=100_001) == "sse_chunk"
+    assert qa.decide_streaming_strategy(estimated_rows=10_000_000) == "sse_chunk"
+
+
+def test_streaming_cost_direct_under_1k():
+    assert qa.decide_streaming_strategy(cost=0.0) == "direct"
+    assert qa.decide_streaming_strategy(cost=999.99) == "direct"
+
+
+def test_streaming_cost_cursor_between_1k_100k():
+    assert qa.decide_streaming_strategy(cost=1_000.0) == "cursor"
+    assert qa.decide_streaming_strategy(cost=99_999.0) == "cursor"
+    assert qa.decide_streaming_strategy(cost=100_000.0) == "cursor"
+
+
+def test_streaming_cost_sse_over_100k():
+    assert qa.decide_streaming_strategy(cost=100_001.0) == "sse_chunk"
+    assert qa.decide_streaming_strategy(cost=5_000_000.0) == "sse_chunk"
+
+
+def test_streaming_rows_takes_precedence_over_cost():
+    # rows < 1k → direct, even when cost is huge
+    assert qa.decide_streaming_strategy(cost=999_999.0, estimated_rows=10) == "direct"
+    # rows > 100k → sse_chunk, even when cost says direct
+    assert qa.decide_streaming_strategy(cost=10.0, estimated_rows=500_000) == "sse_chunk"

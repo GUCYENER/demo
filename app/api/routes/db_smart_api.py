@@ -240,15 +240,19 @@ def post_preview(
         except Exception as e:
             logger.warning("[db_smart] explain failed: %s", e)
 
-    streaming_strategy = "direct"
-    if cost is not None and cost > 100000:
-        streaming_strategy = "sse_chunk"
+    # G1.5 Step 7 — üç-yollu streaming kararı (direct | cursor | sse_chunk)
+    # query_assembler.decide_streaming_strategy() row threshold öncelikli,
+    # cost fallback. estimated_rows FAZ 2'de pg_class.reltuples'tan dolacak.
+    estimated_rows: Optional[int] = None
+    streaming_strategy = query_assembler.decide_streaming_strategy(
+        cost=cost, estimated_rows=estimated_rows,
+    )
 
     return PreviewResponse(
         sql=sql or "-- assembly failed: " + "; ".join(out.get("errors") or []),
         dialect=dialect,
         explain=explain,
-        estimated_rows=None,
+        estimated_rows=estimated_rows,
         streaming_strategy=streaming_strategy,
     )
 

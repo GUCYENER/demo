@@ -17,15 +17,35 @@
     'use strict';
 
     const API_BASE = '/api/db-smart';
+    const TOTAL_STEPS = 5;
     let _state = {
         sessionUid: null,
         currentStep: 0,
         sourceId: null,
         selectedTableId: null,
+        selectedTableObjectName: null,   // P4 fix: actual SQL identifier
+        selectedTableSchema: null,        // P4 fix: schema for base_table
+        selectedTableLabel: null,         // display only — not used in SQL
         selectedTables: [],
         metric: null,
         filters: [],
+        _lastFocusEl: null,               // HEBE Gate: return-focus target
     };
+
+    // HEBE Gate helper: announce + toast fallback
+    function _notify(msg, kind) {
+        if (window.showToast) {
+            try { window.showToast(msg, kind || 'info'); return; } catch (e) { /* fallthrough */ }
+        }
+        // aria-live fallback: write into progress text (polite region)
+        const progress = document.getElementById('dswProgress');
+        if (progress) progress.textContent = msg;
+    }
+
+    function _setBusy(el, busy) {
+        if (!el) return;
+        el.setAttribute('aria-busy', busy ? 'true' : 'false');
+    }
 
     function _authHeaders() {
         const token = localStorage.getItem('access_token') || '';
@@ -51,20 +71,33 @@
     // ============================================
 
     function _setStep(n) {
-        if (n < 0 || n > 4) return;
+        if (n < 0 || n > TOTAL_STEPS - 1) return;
         _state.currentStep = n;
+        // Tablist aria sync: selected step gets aria-selected=true + tabindex=0,
+        // others get aria-selected=false + tabindex=-1 (roving tabindex pattern).
         document.querySelectorAll('.dsw-step').forEach(el => {
-            el.classList.toggle('active', parseInt(el.dataset.step, 10) === n);
+            const s = parseInt(el.dataset.step, 10);
+            const active = (s === n);
+            el.classList.toggle('active', active);
+            el.setAttribute('aria-selected', active ? 'true' : 'false');
+            el.setAttribute('tabindex', active ? '0' : '-1');
         });
         document.querySelectorAll('.dsw-step-panel').forEach(el => {
-            el.classList.toggle('hidden', parseInt(el.dataset.step, 10) !== n);
+            const s = parseInt(el.dataset.step, 10);
+            const hidden = (s !== n);
+            el.classList.toggle('hidden', hidden);
+            if (hidden) {
+                el.setAttribute('hidden', '');
+            } else {
+                el.removeAttribute('hidden');
+            }
         });
         const progress = document.getElementById('dswProgress');
-        if (progress) progress.textContent = 'Adım ' + (n + 1) + ' / 5';
+        if (progress) progress.textContent = 'Adım ' + (n + 1) + ' / ' + TOTAL_STEPS;
         const prev = document.getElementById('dswPrevBtn');
         const next = document.getElementById('dswNextBtn');
         if (prev) prev.disabled = (n === 0);
-        if (next) next.disabled = (n === 4);
+        if (next) next.disabled = (n === TOTAL_STEPS - 1);
         // v3.30.0 P2: adım data fetch (lazy)
         if (typeof _onStepEnter === 'function') _onStepEnter(n);
     }
@@ -118,52 +151,77 @@
         const results = document.getElementById('dswResults');
         if (!results) return;
         if (!sourceId) {
-            results.innerHTML = '<div class="dsw-hint">Lütfen önce veri kaynağı seçin.</div>';
+            results.innerHTML = '<div class="dsw-hint" role="status">Lütfen önce veri kaynağı seçin.</div>';
+            _notify('Önce veri kaynağı seçin.', 'warning');
             return;
         }
         _state.sourceId = parseInt(sourceId, 10);
-        results.innerHTML = '<div class="dsw-hint">Aranıyor...</div>';
+        _setBusy(results, true);
+        results.innerHTML = '<div class="dsw-hint" role="status">Aranıyor...</div>';
         try {
             const url = API_BASE + '/sources/' + sourceId + '/tables?q=' +
                         encodeURIComponent(q) + '&limit=10';
             const data = await _fetchJson(url);
             const items = data.tables || data.items || [];
             if (!items.length) {
-                results.innerHTML = '<div class="dsw-hint">Eşleşen tablo bulunamadı.</div>';
+                results.innerHTML = '<div class="dsw-hint" role="status">Eşleşen tablo bulunamadı.</div>';
                 return;
             }
             results.innerHTML = '';
             items.forEach(t => {
                 const div = document.createElement('div');
                 div.className = 'dsw-result-item';
-                div.setAttribute('data-table-id', t.table_id || t.id || '');
-                const title = (t.business_name_tr || t.object_name || t.table_name || '?');
-                const meta = (t.schema_name ? t.schema_name + '.' : '') +
-                             (t.object_name || t.table_name || '') +
+                div.setAttribute('role', 'option');
+                div.setAttribute('tabindex', '0');
+                div.setAttribute('aria-selected', 'false');
+                const tid = t.table_id || t.id || '';
+                const objectName = t.object_name || t.table_name || '';
+                const schemaName = t.schema_name || null;
+                div.setAttribute('data-table-id', tid);
+                div.setAttribute('data-object-name', objectName);
+                if (schemaName) div.setAttribute('data-schema-name', schemaName);
+                const title = (t.business_name_tr || objectName || '?');
+                const meta = (schemaName ? schemaName + '.' : '') + objectName +
                              (t.row_count_estimate ? ' · ~' + t.row_count_estimate + ' satır' : '') +
                              (t.score != null ? ' · skor ' + t.score : '');
+                div.setAttribute('aria-label', title + ' — ' + meta);
                 div.innerHTML =
                     '<div class="dsw-r-title">' + _escape(title) + '</div>' +
                     '<div class="dsw-r-meta">' + _escape(meta) + '</div>';
-                div.addEventListener('click', () => _selectTable(t.table_id || t.id, title));
+                const onPick = () => _selectTable(tid, title, objectName, schemaName);
+                div.addEventListener('click', onPick);
+                div.addEventListener('keydown', ev => {
+                    if (ev.key === 'Enter' || ev.key === ' ') {
+                        ev.preventDefault();
+                        onPick();
+                    }
+                });
                 results.appendChild(div);
             });
         } catch (e) {
-            results.innerHTML = '<div class="dsw-hint">Hata: ' + _escape(e.message) + '</div>';
+            results.innerHTML = '<div class="dsw-hint" role="status">Hata: ' + _escape(e.message) + '</div>';
+            _notify('Tablo araması başarısız: ' + e.message, 'error');
+        } finally {
+            _setBusy(results, false);
         }
     }
 
-    function _selectTable(tableId, label) {
+    function _selectTable(tableId, label, objectName, schemaName) {
         _state.selectedTableId = parseInt(tableId, 10);
         _state.selectedTables = [_state.selectedTableId];
         _state.selectedTableLabel = label;
+        _state.selectedTableObjectName = objectName || null;
+        _state.selectedTableSchema = schemaName || null;
         document.querySelectorAll('.dsw-result-item').forEach(el => {
             const tid = parseInt(el.getAttribute('data-table-id'), 10);
-            el.style.borderColor = (tid === _state.selectedTableId) ? '#F59E0B' : '';
+            const sel = (tid === _state.selectedTableId);
+            el.style.borderColor = sel ? '#F59E0B' : '';
+            el.setAttribute('aria-selected', sel ? 'true' : 'false');
         });
         // İleri butonu aktive et
         const next = document.getElementById('dswNextBtn');
         if (next) next.disabled = false;
+        _notify('Seçildi: ' + label, 'success');
     }
 
     // ============================================
@@ -174,10 +232,11 @@
         const panel = document.getElementById('dswStep1');
         if (!panel) return;
         if (!_state.selectedTableId || !_state.sourceId) {
-            panel.innerHTML = '<p class="dsw-hint">Önce Adım 1\'de bir tablo seçin.</p>';
+            panel.innerHTML = '<p class="dsw-hint" role="status">Önce Adım 1\'de bir tablo seçin.</p>';
             return;
         }
-        panel.innerHTML = '<p class="dsw-hint">FK ilişkileri yükleniyor...</p>';
+        _setBusy(panel, true);
+        panel.innerHTML = '<p class="dsw-hint" role="status">FK ilişkileri yükleniyor...</p>';
         try {
             const url = API_BASE + '/sources/' + _state.sourceId +
                         '/tables/' + _state.selectedTableId + '/related?depth=1';
@@ -200,7 +259,10 @@
             }
             panel.innerHTML = html;
         } catch (e) {
-            panel.innerHTML = '<p class="dsw-hint">Hata: ' + _escape(e.message) + '</p>';
+            panel.innerHTML = '<p class="dsw-hint" role="status">Hata: ' + _escape(e.message) + '</p>';
+            _notify('İlişkili tablolar yüklenemedi: ' + e.message, 'error');
+        } finally {
+            _setBusy(panel, false);
         }
     }
 
@@ -212,12 +274,18 @@
         const panel = document.getElementById('dswStep2');
         if (!panel) return;
         if (!_state.sourceId) {
-            panel.innerHTML = '<p class="dsw-hint">Önce veri kaynağı seçin.</p>';
+            panel.innerHTML = '<p class="dsw-hint" role="status">Önce veri kaynağı seçin.</p>';
             return;
         }
-        panel.innerHTML = '<p class="dsw-hint">Metrik kütüphanesi yükleniyor...</p>';
+        _setBusy(panel, true);
+        panel.innerHTML = '<p class="dsw-hint" role="status">Metrik kütüphanesi yükleniyor...</p>';
         try {
-            const url = API_BASE + '/metrics?source_id=' + _state.sourceId;
+            // P4 fix: tablo seçildiyse table_id ekle → backend list_eligible() ile
+            // applicable_when filter uygular ve user-pref/usage skor sıralaması döner.
+            let url = API_BASE + '/metrics?source_id=' + _state.sourceId;
+            if (_state.selectedTableId) {
+                url += '&table_id=' + _state.selectedTableId;
+            }
             const data = await _fetchJson(url);
             const items = data.items || [];
             if (!items.length) {
@@ -246,18 +314,34 @@
                 html += '</div>';
             });
             panel.innerHTML = html;
-            // Click binding
+            // Click/keyboard binding + a11y attributes
             panel.querySelectorAll('[data-metric-key]').forEach(el => {
-                el.addEventListener('click', () => {
+                el.setAttribute('role', 'option');
+                el.setAttribute('tabindex', '0');
+                el.setAttribute('aria-selected', 'false');
+                const pick = () => {
                     const mk = el.getAttribute('data-metric-key');
                     _state.metric = items.find(x => x.metric_key === mk) || null;
                     panel.querySelectorAll('[data-metric-key]').forEach(e2 => {
-                        e2.style.borderColor = (e2 === el) ? '#F59E0B' : '';
+                        const sel = (e2 === el);
+                        e2.style.borderColor = sel ? '#F59E0B' : '';
+                        e2.setAttribute('aria-selected', sel ? 'true' : 'false');
                     });
+                    if (_state.metric) _notify('Metrik seçildi: ' + (_state.metric.name_tr || _state.metric.metric_key), 'success');
+                };
+                el.addEventListener('click', pick);
+                el.addEventListener('keydown', ev => {
+                    if (ev.key === 'Enter' || ev.key === ' ') {
+                        ev.preventDefault();
+                        pick();
+                    }
                 });
             });
         } catch (e) {
-            panel.innerHTML = '<p class="dsw-hint">Hata: ' + _escape(e.message) + '</p>';
+            panel.innerHTML = '<p class="dsw-hint" role="status">Hata: ' + _escape(e.message) + '</p>';
+            _notify('Metrik kütüphanesi yüklenemedi: ' + e.message, 'error');
+        } finally {
+            _setBusy(panel, false);
         }
     }
 
@@ -269,10 +353,11 @@
         const panel = document.getElementById('dswStep3');
         if (!panel) return;
         if (!_state.selectedTableId || !_state.sourceId) {
-            panel.innerHTML = '<p class="dsw-hint">Önce tablo seçin.</p>';
+            panel.innerHTML = '<p class="dsw-hint" role="status">Önce tablo seçin.</p>';
             return;
         }
-        panel.innerHTML = '<p class="dsw-hint">Kolonlar yükleniyor...</p>';
+        _setBusy(panel, true);
+        panel.innerHTML = '<p class="dsw-hint" role="status">Kolonlar yükleniyor...</p>';
         try {
             const url = API_BASE + '/sources/' + _state.sourceId +
                         '/tables/' + _state.selectedTableId + '/columns';
@@ -296,7 +381,10 @@
             html += '</div>';
             panel.innerHTML = html;
         } catch (e) {
-            panel.innerHTML = '<p class="dsw-hint">Hata: ' + _escape(e.message) + '</p>';
+            panel.innerHTML = '<p class="dsw-hint" role="status">Hata: ' + _escape(e.message) + '</p>';
+            _notify('Kolonlar yüklenemedi: ' + e.message, 'error');
+        } finally {
+            _setBusy(panel, false);
         }
     }
 
@@ -308,23 +396,33 @@
         const panel = document.getElementById('dswStep4');
         if (!panel) return;
         if (!_state.sessionUid || !_state.selectedTableId) {
-            panel.innerHTML = '<p class="dsw-hint">Önceki adımları tamamlayın.</p>';
+            panel.innerHTML = '<p class="dsw-hint" role="status">Önceki adımları tamamlayın.</p>';
             return;
         }
-        panel.innerHTML = '<p class="dsw-hint">SQL üretiliyor...</p>';
-        // Transient mod: wizard_state'i request body'de gönder (G1.7 öncesi)
+        _setBusy(panel, true);
+        panel.innerHTML = '<p class="dsw-hint" role="status">SQL üretiliyor...</p>';
+        // P4 fix: actual object_name + schema from _selectTable, not display label.
+        // Display label may be a Turkish business name; SQL needs the real identifier.
+        const tableName = _state.selectedTableObjectName ||
+            // fallback (only if older flow set label-only): last segment of label
+            (_state.selectedTableLabel || 'unknown').split('.').pop();
         const wizardState = {
             source_id: _state.sourceId,
             dialect: 'postgresql',
-            base_table: { table: (_state.selectedTableLabel || 'unknown').split('.').pop() },
+            base_table: {
+                schema: _state.selectedTableSchema || undefined,
+                table: tableName,
+                alias: 't',
+            },
             selected_columns: [{ expr: '*' }],
+            company_scoped_aliases: ['t'],  // RLS hint — assembler injects company_id filter
             limit: 100,
         };
         if (_state.metric) {
             wizardState.metric = {
                 metric_key: _state.metric.metric_key,
                 sql_template: (_state.metric.sql_templates || {}).postgresql,
-                placeholders: { table: wizardState.base_table.table, limit: '100' },
+                placeholders: { table: tableName, limit: '100' },
             };
         }
         try {
@@ -335,14 +433,25 @@
             });
             const sql = data.sql || '';
             const cost = (data.explain && data.explain.total_cost) || null;
+            const strategy = data.streaming_strategy || 'direct';
+            const strategyLabel = ({
+                'direct': 'tek istek',
+                'cursor': 'cursor akışı',
+                'sse_chunk': 'SSE chunk',
+            })[strategy] || strategy;
             panel.innerHTML =
-                '<p class="dsw-hint">Önizleme · dialect: ' + _escape(data.dialect || 'postgresql') +
-                (cost != null ? ' · maliyet: ' + cost.toFixed(2) : '') + '</p>' +
+                '<p class="dsw-hint" role="status">Önizleme · dialect: ' + _escape(data.dialect || 'postgresql') +
+                (cost != null ? ' · maliyet: ' + cost.toFixed(2) : '') +
+                ' · akış: ' + _escape(strategyLabel) + '</p>' +
                 '<pre style="background:var(--bg-default);border:1px solid var(--border-default);' +
-                'padding:10px;border-radius:6px;font-size:12px;overflow-x:auto;white-space:pre-wrap">' +
+                'padding:10px;border-radius:6px;font-size:12px;overflow-x:auto;white-space:pre-wrap" ' +
+                'aria-label="Üretilen SQL">' +
                 _escape(sql) + '</pre>';
         } catch (e) {
-            panel.innerHTML = '<p class="dsw-hint">Hata: ' + _escape(e.message) + '</p>';
+            panel.innerHTML = '<p class="dsw-hint" role="status">Hata: ' + _escape(e.message) + '</p>';
+            _notify('Önizleme oluşturulamadı: ' + e.message, 'error');
+        } finally {
+            _setBusy(panel, false);
         }
     }
 
@@ -368,7 +477,55 @@
     // Init
     // ============================================
 
+    // HEBE Gate: ARIA tablist keyboard navigation (Left/Right/Home/End)
+    function _onStepperKeydown(e) {
+        const tabs = Array.from(document.querySelectorAll('.dsw-stepper .dsw-step'));
+        if (!tabs.length) return;
+        const cur = _state.currentStep;
+        let target = -1;
+        switch (e.key) {
+            case 'ArrowRight':
+            case 'ArrowDown':
+                target = Math.min(tabs.length - 1, cur + 1); break;
+            case 'ArrowLeft':
+            case 'ArrowUp':
+                target = Math.max(0, cur - 1); break;
+            case 'Home':
+                target = 0; break;
+            case 'End':
+                target = tabs.length - 1; break;
+            default:
+                return;
+        }
+        e.preventDefault();
+        _setStep(target);
+        if (tabs[target]) tabs[target].focus();
+    }
+
+    // HEBE Gate: panel-level Esc → close wizard + return focus
+    function _onPanelKeydown(e) {
+        if (e.key !== 'Escape') return;
+        const panel = document.getElementById('dbSmartWizardPanel');
+        if (!panel || panel.classList.contains('hidden') || panel.hasAttribute('hidden')) return;
+        e.preventDefault();
+        _closeWizard();
+    }
+
+    function _closeWizard() {
+        const panel = document.getElementById('dbSmartWizardPanel');
+        if (!panel) return;
+        panel.classList.add('hidden');
+        panel.setAttribute('hidden', '');
+        // Return focus to opener if recorded
+        if (_state._lastFocusEl && typeof _state._lastFocusEl.focus === 'function') {
+            try { _state._lastFocusEl.focus(); } catch (e) { /* ignore */ }
+        }
+    }
+
     function init() {
+        // Record opener for return-focus (HEBE Gate)
+        _state._lastFocusEl = document.activeElement;
+
         // Buton binding'leri (idempotent)
         const searchBtn = document.getElementById('dswSearchBtn');
         if (searchBtn && !searchBtn._bound) {
@@ -392,6 +549,27 @@
             });
             searchInput._bound = true;
         }
+        // HEBE Gate: tablist keyboard nav + click activation on step buttons
+        const stepper = document.getElementById('dswStepper');
+        if (stepper && !stepper._bound) {
+            stepper.addEventListener('keydown', _onStepperKeydown);
+            stepper.querySelectorAll('.dsw-step').forEach(tab => {
+                tab.addEventListener('click', () => {
+                    const n = parseInt(tab.dataset.step, 10);
+                    if (!isNaN(n)) {
+                        _setStep(n);
+                        tab.focus();
+                    }
+                });
+            });
+            stepper._bound = true;
+        }
+        // HEBE Gate: Esc handler on the wizard panel
+        const panel = document.getElementById('dbSmartWizardPanel');
+        if (panel && !panel._bound) {
+            panel.addEventListener('keydown', _onPanelKeydown);
+            panel._bound = true;
+        }
         _setStep(0);
         _loadSources();
         _ensureSession();
@@ -399,6 +577,7 @@
 
     window.DbSmartWizardModule = {
         init: init,
+        close: _closeWizard,
         getState: function () { return Object.assign({}, _state); },
     };
 })();
