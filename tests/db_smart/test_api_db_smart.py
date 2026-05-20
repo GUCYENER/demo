@@ -87,6 +87,8 @@ def test_router_registers_all_12_endpoints():
         "/api/db-smart/saved-reports/{report_id}/revoke-share",
         "/api/db-smart/saved-reports/{report_id}/mark-run",
         "/api/db-smart/saved-reports/by-token/{token}",
+        # FAZ 3 P15 G3.2 — Streaming SSE
+        "/api/db-smart/sessions/{session_uid}/execute/stream",
     }
     missing = expected - paths
     assert not missing, f"Missing routes: {missing}"
@@ -718,3 +720,51 @@ def test_share_token_not_found(app_with_router, mock_db, monkeypatch):
     client = TestClient(app_with_router)
     resp = client.get("/api/db-smart/saved-reports/by-token/unknown-token-xx")
     assert resp.status_code == 404
+
+
+# ─────────────────────────────────────────────────────────────
+# FAZ 3 P15 G3.2 — Streaming SSE
+# ─────────────────────────────────────────────────────────────
+
+def test_execute_stream_requires_source_id_or_session(client_authed):
+    # SQL var, source_id yok → 400
+    resp = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/execute/stream",
+        json={"sql": "SELECT 1", "dialect": "postgresql"},
+    )
+    assert resp.status_code == 400
+
+
+def test_execute_stream_source_not_found(client_authed, mock_db):
+    mock_db.fetchone.return_value = None  # data_sources LIMIT 1 boş
+    resp = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/execute/stream",
+        json={"sql": "SELECT 1", "source_id": 999, "dialect": "postgresql"},
+    )
+    assert resp.status_code == 404
+
+
+def test_execute_stream_returns_sse_response(client_authed, mock_db, monkeypatch):
+    mock_db.fetchone.return_value = (
+        1, "pg-src", "postgresql", "localhost", 5432, "db", "u", "p", None,
+    )
+
+    def fake_stream(sql, source, dialect, **kw):
+        yield {"type": "start", "sql_preview": sql}
+        yield {"type": "columns", "columns": ["id"]}
+        yield {"type": "rows", "rows": [[1]], "batch_index": 0}
+        yield {"type": "end", "row_count": 1, "elapsed_ms": 1, "truncated": False}
+
+    from app.services.db_smart import sql_executor_stream as _ses
+    monkeypatch.setattr(_ses, "stream_safe_sql", fake_stream)
+    resp = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/execute/stream",
+        json={"sql": "SELECT 1", "source_id": 1, "dialect": "postgresql"},
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+    body = resp.text
+    assert "event: start" in body
+    assert "event: columns" in body
+    assert "event: rows" in body
+    assert "event: end" in body

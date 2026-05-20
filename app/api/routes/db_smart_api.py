@@ -37,6 +37,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.api.routes.auth import get_current_user
@@ -438,6 +439,125 @@ def post_execute(
         "row_count": 0,
         "status": "stub",
     }
+
+
+class ExecuteStreamRequest(BaseModel):
+    """P15 G3.2 — Streaming SQL execute via SSE."""
+    sql: Optional[str] = Field(default=None, description="Direkt SQL (preview'den)")
+    wizard_state: Optional[Dict[str, Any]] = Field(default=None, description="SQL üretimi için (sql verilmezse assemble edilir)")
+    dialect: str = Field(default="postgresql", max_length=20)
+    source_id: Optional[int] = Field(default=None, ge=1)
+    batch_size: int = Field(default=200, ge=10, le=1000)
+    max_rows: int = Field(default=10_000, ge=1, le=100_000)
+
+
+def _load_source(cur: Any, source_id: int) -> Optional[Dict[str, Any]]:
+    """data_sources kaydını dict olarak getir (stream callable bekliyor)."""
+    cur.execute(
+        """
+        SELECT id, name, db_type, host, port, database_name, username, password,
+               service_name
+        FROM data_sources
+        WHERE id = %s
+        LIMIT 1
+        """,
+        (int(source_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    keys = ["id", "name", "db_type", "host", "port", "database_name",
+            "username", "password", "service_name"]
+    return dict(zip(keys, row))
+
+
+@router.post("/sessions/{session_uid}/execute/stream")
+def post_execute_stream(
+    body: ExecuteStreamRequest,
+    session_uid: str = Path(..., min_length=8, max_length=64),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> StreamingResponse:
+    """P15 G3.2 — Server-Sent Events ile streaming SQL execute.
+
+    SSE event'leri:
+        event: start    — {sql_preview}
+        event: columns  — {columns: [...]}
+        event: rows     — {rows: [...], batch_index}
+        event: end      — {row_count, elapsed_ms, truncated}
+        event: error    — {message}
+
+    PG path: server-side named cursor + fetchmany. Diğer dialect'ler standart
+    cursor + fetchmany (ileride engine-spesifik opt — oracledb arraysize,
+    pymysql SSCursor).
+    """
+    _require_user_id(current_user)
+    # Lazy import — circular guard
+    from app.services.db_smart import sql_executor_stream
+    from app.services.pipeline.streaming_execute import stream_to_sse
+
+    # SQL hazırlığı: body.sql > wizard_state assembly > load session
+    sql_str = (body.sql or "").strip()
+    dialect = body.dialect or "postgresql"
+    src_id = body.source_id
+
+    if not sql_str:
+        from app.services.db_smart import query_assembler
+        wizard_state = body.wizard_state
+        if not wizard_state:
+            with get_db_context() as conn:
+                cur = conn.cursor()
+                apply_vyra_user_context(cur, current_user)
+                loaded = session_manager.load_session(cur, session_uid, current_user)
+            if loaded is None:
+                raise HTTPException(status_code=404, detail="Oturum bulunamadı veya yetkiniz yok.")
+            ctx = (loaded.get("context") if isinstance(loaded, dict) else None) or {}
+            wizard_state = ctx.get("wizard_state") if isinstance(ctx, dict) else None
+            if not src_id and isinstance(loaded, dict):
+                src_id = loaded.get("source_id")
+        if not wizard_state:
+            raise HTTPException(status_code=400, detail="SQL veya wizard_state gerekli.")
+        out = query_assembler.assemble(wizard_state, current_user, dialect=dialect)
+        sql_str = (out.get("sql") or "").strip()
+        if not sql_str:
+            errs = "; ".join(out.get("errors") or [])
+            raise HTTPException(status_code=400, detail=f"SQL üretilemedi: {errs}")
+
+    if not src_id:
+        raise HTTPException(status_code=400, detail="source_id gerekli.")
+
+    # data_sources kaydını yükle (stream_callable bekliyor)
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        apply_vyra_user_context(cur, current_user)
+        src_dict = _load_source(cur, int(src_id))
+    if src_dict is None:
+        raise HTTPException(status_code=404, detail="Veri kaynağı bulunamadı.")
+
+    # SSE generator
+    def _event_stream():
+        try:
+            for evt in sql_executor_stream.stream_safe_sql(
+                sql_str, src_dict, dialect,
+                allowed_tables=None,
+                user_ctx=current_user,
+                batch_size=body.batch_size,
+                max_rows=body.max_rows,
+            ):
+                yield stream_to_sse(evt)
+        except Exception as e:
+            logger.exception("[db_smart.stream] event loop error")
+            import json as _json
+            yield f"event: error\ndata: {_json.dumps({'message': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.post("/sessions/{session_uid}/save-report", response_model=SaveReportResponse)
