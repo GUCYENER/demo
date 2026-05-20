@@ -50,6 +50,7 @@ from app.services.db_smart import (
     metric_engine,   # v3.30.0 FAZ 1 P3 G1.4
     recommendation,        # v3.30.0 FAZ 2 P9 G2.3
     custom_metric_parser,  # v3.30.0 FAZ 2 P11 G2.2
+    saved_reports,         # v3.30.0 FAZ 3 P13 G3.3
 )
 
 logger = logging.getLogger(__name__)
@@ -107,15 +108,38 @@ _VIZ_PATTERN = r"^(" + "|".join(VALID_VIZ_TYPES) + r")$"
 
 
 class SaveReportRequest(BaseModel):
-    title: str = Field(..., min_length=1, max_length=200)
+    # FAZ 3 P13 — `title` legacy alanı; aynı zamanda `name` ile gelen istekleri kabul et
+    title: Optional[str] = Field(default=None, max_length=200)
+    name: Optional[str] = Field(default=None, max_length=200)
     description: Optional[str] = None
     is_public: bool = False
     default_viz: str = Field(default="table", pattern=_VIZ_PATTERN)
+    tags: Optional[List[str]] = None
 
 
 class SaveReportResponse(BaseModel):
     report_id: int
     saved_at: str
+
+
+# FAZ 3 P13 — Saved Reports (CRUD + share)
+class SavedReportUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=200)
+    description: Optional[str] = None
+    tags: Optional[List[str]] = None
+    wizard_state: Optional[Dict[str, Any]] = None
+    last_sql: Optional[str] = None
+    last_dialect: Optional[str] = None
+
+
+class CreateShareTokenRequest(BaseModel):
+    ttl_hours: int = Field(default=24, ge=1, le=720)
+
+
+class CreateShareTokenResponse(BaseModel):
+    share_token: str
+    share_expires_at: Optional[str] = None
+    ttl_hours: int
 
 
 # ─────────────────────────────────────────────────────────────
@@ -422,15 +446,199 @@ def post_save_report(
     session_uid: str = Path(..., min_length=8, max_length=64),
     current_user: Dict[str, Any] = Depends(get_current_user),
 ) -> SaveReportResponse:
-    """dbsmart_saved_reports'a yaz (snapshot of context + SQL + viz)."""
+    """Oturum context'ini dbsmart_saved_reports'a yaz (snapshot of context + SQL + viz).
+
+    P13: session_manager.load_session ile context çekilir; saved_reports.save() ile
+    INSERT yapılır. name/title alanlarından biri kullanılır.
+    """
+    _require_user_id(current_user)
+    raw_name = (body.name or body.title or "").strip()
+    if not raw_name:
+        raise HTTPException(status_code=400, detail="name (veya title) zorunlu.")
+
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        apply_vyra_user_context(cur, current_user)
+        loaded = session_manager.load_session(cur, session_uid, current_user)
+        if loaded is None:
+            raise HTTPException(status_code=404, detail="Oturum bulunamadı veya yetkiniz yok.")
+        ctx = (loaded.get("context") if isinstance(loaded, dict) else None) or {}
+        wizard_state = ctx.get("wizard_state") if isinstance(ctx, dict) else None
+        if not isinstance(wizard_state, dict):
+            wizard_state = dict(ctx) if isinstance(ctx, dict) else {}
+        last_sql = ctx.get("last_sql") if isinstance(ctx, dict) else None
+        last_dialect = ctx.get("dialect") if isinstance(ctx, dict) else None
+        source_id = loaded.get("source_id") if isinstance(loaded, dict) else None
+
+        out = saved_reports.save(
+            cur, current_user,
+            name=raw_name,
+            wizard_state=wizard_state,
+            last_sql=last_sql,
+            last_dialect=last_dialect,
+            source_id=source_id,
+            description=body.description,
+            tags=body.tags,
+        )
+        if out is None:
+            raise HTTPException(status_code=500, detail="Rapor kaydedilemedi.")
+        conn.commit()
+
+    created = out.get("created_at")
+    if hasattr(created, "isoformat"):
+        created = created.isoformat()
+    return SaveReportResponse(report_id=int(out["id"]), saved_at=str(created or ""))
+
+
+# ─────────────────────────────────────────────────────────────
+# FAZ 3 P13 G3.3 — Saved Reports CRUD + Share
+# ─────────────────────────────────────────────────────────────
+
+@router.get("/saved-reports")
+def list_saved_reports(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Kullanıcının kayıtlı raporları (RLS-bound, updated_at DESC)."""
     _require_user_id(current_user)
     with get_db_context() as conn:
         cur = conn.cursor()
         apply_vyra_user_context(cur, current_user)
-        # TODO (FAZ 1 G1): INSERT INTO dbsmart_saved_reports + RETURNING id, saved_at
-    # FAZ 1 stub değeri
-    from datetime import datetime, timezone
-    return SaveReportResponse(report_id=0, saved_at=datetime.now(timezone.utc).isoformat())
+        items = saved_reports.list_for_user(cur, current_user, limit=limit, offset=offset)
+    return {"items": items, "count": len(items), "limit": limit, "offset": offset}
+
+
+@router.get("/saved-reports/{report_id}")
+def get_saved_report(
+    report_id: int = Path(..., ge=1),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Tek rapor — wizard_state + last_sql dahil (RLS-bound)."""
+    _require_user_id(current_user)
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        apply_vyra_user_context(cur, current_user)
+        rep = saved_reports.get_by_id(cur, report_id, current_user)
+    if rep is None:
+        raise HTTPException(status_code=404, detail="Rapor bulunamadı veya yetkiniz yok.")
+    return rep
+
+
+@router.patch("/saved-reports/{report_id}")
+def patch_saved_report(
+    body: SavedReportUpdateRequest,
+    report_id: int = Path(..., ge=1),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Patch update — yalnızca verilen alanlar değişir."""
+    _require_user_id(current_user)
+    patch = body.model_dump(exclude_none=True)
+    if not patch:
+        raise HTTPException(status_code=400, detail="En az bir alan güncellenmeli.")
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        apply_vyra_user_context(cur, current_user)
+        try:
+            ok = saved_reports.update(cur, report_id, current_user, **patch)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if not ok:
+            raise HTTPException(status_code=404, detail="Rapor bulunamadı veya değişiklik yok.")
+        conn.commit()
+    return {"ok": True, "report_id": report_id}
+
+
+@router.post("/saved-reports/{report_id}/share", response_model=CreateShareTokenResponse)
+def post_share_report(
+    body: CreateShareTokenRequest,
+    report_id: int = Path(..., ge=1),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> CreateShareTokenResponse:
+    """Share token üret + is_shared=TRUE + expires_at."""
+    _require_user_id(current_user)
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        apply_vyra_user_context(cur, current_user)
+        try:
+            out = saved_reports.create_share_token(
+                cur, report_id, current_user, ttl_hours=body.ttl_hours,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if out is None:
+            raise HTTPException(status_code=404, detail="Rapor bulunamadı veya yetkiniz yok.")
+        conn.commit()
+    exp = out.get("share_expires_at")
+    if hasattr(exp, "isoformat"):
+        exp = exp.isoformat()
+    return CreateShareTokenResponse(
+        share_token=out["share_token"],
+        share_expires_at=exp,
+        ttl_hours=out["ttl_hours"],
+    )
+
+
+@router.post("/saved-reports/{report_id}/revoke-share")
+def post_revoke_share(
+    report_id: int = Path(..., ge=1),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """is_shared=FALSE; token audit için saklı kalır."""
+    _require_user_id(current_user)
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        apply_vyra_user_context(cur, current_user)
+        ok = saved_reports.revoke_share(cur, report_id, current_user)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Rapor bulunamadı veya yetkiniz yok.")
+        conn.commit()
+    return {"ok": True, "report_id": report_id}
+
+
+@router.post("/saved-reports/{report_id}/mark-run")
+def post_mark_run(
+    report_id: int = Path(..., ge=1),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """run_count++ + last_run_at=NOW(). Snapshot opsiyonel (sonraki iterasyon)."""
+    _require_user_id(current_user)
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        apply_vyra_user_context(cur, current_user)
+        ok = saved_reports.mark_run(cur, report_id, current_user)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Rapor bulunamadı veya yetkiniz yok.")
+        conn.commit()
+    return {"ok": True, "report_id": report_id}
+
+
+# PUBLIC — auth YOK, token-bound erişim. RLS bypass'a güvenmez (saved_reports.get_by_share_token
+# içinde explicit is_shared=TRUE AND share_expires_at > NOW() filtresi var).
+@router.get("/saved-reports/by-token/{token}")
+def get_saved_report_by_token(
+    token: str = Path(..., min_length=8, max_length=128),
+) -> Dict[str, Any]:
+    """PUBLIC share view — token süreli, expiry geçince 404."""
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        # apply_vyra_user_context BİLİNÇLİ OLARAK çağrılmıyor; sorgu explicit filtreliyor
+        rep = saved_reports.get_by_share_token(cur, token)
+    if rep is None:
+        raise HTTPException(status_code=404, detail="Paylaşım bulunamadı veya süresi doldu.")
+    # PII açısından güvenli alanlar — user_id/company_id dışarı sızdırılmıyor
+    return {
+        "id": rep.get("id"),
+        "name": rep.get("name"),
+        "description": rep.get("description"),
+        "source_id": rep.get("source_id"),
+        "wizard_state": rep.get("wizard_state"),
+        "last_sql": rep.get("last_sql"),
+        "last_dialect": rep.get("last_dialect"),
+        "tags": rep.get("tags"),
+        "last_run_snapshot": rep.get("last_run_snapshot"),
+        "share_expires_at": rep.get("share_expires_at"),
+    }
 
 
 # ─────────────────────────────────────────────────────────────

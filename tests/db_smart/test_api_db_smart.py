@@ -80,6 +80,13 @@ def test_router_registers_all_12_endpoints():
         "/api/db-smart/metrics",
         "/api/db-smart/metrics/custom",  # FAZ 2 P11 G2.2
         "/api/db-smart/recommendations/{exec_id}",
+        # FAZ 3 P13 G3.3 — Saved Reports
+        "/api/db-smart/saved-reports",
+        "/api/db-smart/saved-reports/{report_id}",
+        "/api/db-smart/saved-reports/{report_id}/share",
+        "/api/db-smart/saved-reports/{report_id}/revoke-share",
+        "/api/db-smart/saved-reports/{report_id}/mark-run",
+        "/api/db-smart/saved-reports/by-token/{token}",
     }
     missing = expected - paths
     assert not missing, f"Missing routes: {missing}"
@@ -510,3 +517,204 @@ def test_create_session_invokes_rls_context(client_authed, mock_db):
     calls = mock_db.execute.call_args_list
     set_config_calls = [c for c in calls if "set_config" in str(c)]
     assert len(set_config_calls) >= 3
+
+
+# ─────────────────────────────────────────────────────────────
+# FAZ 3 P13 G3.3 — Saved Reports endpoints
+# ─────────────────────────────────────────────────────────────
+
+def test_save_report_requires_name(client_authed):
+    resp = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/save-report",
+        json={"description": "boş"},
+    )
+    assert resp.status_code == 400
+
+
+def test_save_report_404_when_session_missing(client_authed, monkeypatch):
+    monkeypatch.setattr(
+        db_smart_api.session_manager, "load_session",
+        lambda cur, uid, user_ctx: None,
+    )
+    resp = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/save-report",
+        json={"name": "Aylık Satış"},
+    )
+    assert resp.status_code == 404
+
+
+def test_save_report_success(client_authed, monkeypatch):
+    monkeypatch.setattr(
+        db_smart_api.session_manager, "load_session",
+        lambda cur, uid, user_ctx: {
+            "source_id": 3,
+            "context": {
+                "wizard_state": {"step": 5},
+                "last_sql": "SELECT 1",
+                "dialect": "postgresql",
+            },
+        },
+    )
+    captured = {}
+
+    def fake_save(cur, user_ctx, **kw):
+        captured.update(kw)
+        return {"id": 77, "created_at": "2026-05-20T10:00:00"}
+
+    monkeypatch.setattr(db_smart_api.saved_reports, "save", fake_save)
+    resp = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/save-report",
+        json={"name": "Aylık Satış", "description": "Snap", "tags": ["aylık"]},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["report_id"] == 77
+    assert captured["name"] == "Aylık Satış"
+    assert captured["source_id"] == 3
+    assert captured["last_sql"] == "SELECT 1"
+    assert captured["tags"] == ["aylık"]
+
+
+def test_list_saved_reports(client_authed, monkeypatch):
+    monkeypatch.setattr(
+        db_smart_api.saved_reports, "list_for_user",
+        lambda cur, user_ctx, *, limit, offset: [
+            {"id": 1, "name": "R1"}, {"id": 2, "name": "R2"},
+        ],
+    )
+    resp = client_authed.get("/api/db-smart/saved-reports?limit=10")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 2
+    assert data["items"][0]["name"] == "R1"
+
+
+def test_get_saved_report_404(client_authed, monkeypatch):
+    monkeypatch.setattr(
+        db_smart_api.saved_reports, "get_by_id",
+        lambda cur, rid, user_ctx: None,
+    )
+    resp = client_authed.get("/api/db-smart/saved-reports/999")
+    assert resp.status_code == 404
+
+
+def test_get_saved_report_success(client_authed, monkeypatch):
+    monkeypatch.setattr(
+        db_smart_api.saved_reports, "get_by_id",
+        lambda cur, rid, user_ctx: {"id": rid, "name": "R", "wizard_state": {}},
+    )
+    resp = client_authed.get("/api/db-smart/saved-reports/5")
+    assert resp.status_code == 200
+    assert resp.json()["id"] == 5
+
+
+def test_patch_saved_report_empty_body_400(client_authed):
+    resp = client_authed.patch("/api/db-smart/saved-reports/5", json={})
+    assert resp.status_code == 400
+
+
+def test_patch_saved_report_success(client_authed, monkeypatch):
+    captured = {}
+
+    def fake_update(cur, rid, user_ctx, **kw):
+        captured["rid"] = rid
+        captured.update(kw)
+        return True
+
+    monkeypatch.setattr(db_smart_api.saved_reports, "update", fake_update)
+    resp = client_authed.patch(
+        "/api/db-smart/saved-reports/5",
+        json={"name": "Yeni Ad", "tags": ["a"]},
+    )
+    assert resp.status_code == 200
+    assert captured["rid"] == 5
+    assert captured["name"] == "Yeni Ad"
+
+
+def test_share_report_default_ttl(client_authed, monkeypatch):
+    monkeypatch.setattr(
+        db_smart_api.saved_reports, "create_share_token",
+        lambda cur, rid, user_ctx, *, ttl_hours: {
+            "share_token": "tok-XYZ", "share_expires_at": "2026-05-21T10:00:00",
+            "ttl_hours": ttl_hours,
+        },
+    )
+    resp = client_authed.post("/api/db-smart/saved-reports/5/share", json={})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["share_token"] == "tok-XYZ"
+    assert data["ttl_hours"] == 24
+
+
+def test_share_report_invalid_ttl(client_authed):
+    resp = client_authed.post(
+        "/api/db-smart/saved-reports/5/share",
+        json={"ttl_hours": 99999},
+    )
+    assert resp.status_code == 422  # Pydantic validator
+
+
+def test_share_report_404(client_authed, monkeypatch):
+    monkeypatch.setattr(
+        db_smart_api.saved_reports, "create_share_token",
+        lambda cur, rid, user_ctx, *, ttl_hours: None,
+    )
+    resp = client_authed.post("/api/db-smart/saved-reports/5/share", json={"ttl_hours": 12})
+    assert resp.status_code == 404
+
+
+def test_revoke_share_success(client_authed, monkeypatch):
+    monkeypatch.setattr(
+        db_smart_api.saved_reports, "revoke_share",
+        lambda cur, rid, user_ctx: True,
+    )
+    resp = client_authed.post("/api/db-smart/saved-reports/5/revoke-share")
+    assert resp.status_code == 200
+
+
+def test_revoke_share_404(client_authed, monkeypatch):
+    monkeypatch.setattr(
+        db_smart_api.saved_reports, "revoke_share",
+        lambda cur, rid, user_ctx: False,
+    )
+    resp = client_authed.post("/api/db-smart/saved-reports/5/revoke-share")
+    assert resp.status_code == 404
+
+
+def test_mark_run_success(client_authed, monkeypatch):
+    monkeypatch.setattr(
+        db_smart_api.saved_reports, "mark_run",
+        lambda cur, rid, user_ctx: True,
+    )
+    resp = client_authed.post("/api/db-smart/saved-reports/5/mark-run")
+    assert resp.status_code == 200
+
+
+def test_share_token_public_no_auth(app_with_router, mock_db, monkeypatch):
+    """by-token endpoint AUTH GEREKTİRMEZ — TestClient override yokken çalışmalı."""
+    monkeypatch.setattr(
+        db_smart_api.saved_reports, "get_by_share_token",
+        lambda cur, tok: {
+            "id": 5, "user_id": 7, "company_id": 42, "name": "Public R",
+            "last_sql": "SELECT 1", "wizard_state": {}, "tags": [],
+            "share_expires_at": None,
+        },
+    )
+    client = TestClient(app_with_router)
+    resp = client.get("/api/db-smart/saved-reports/by-token/some-share-token-xyz")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["name"] == "Public R"
+    # PII güvenliği: user_id/company_id response'a SIZMAMALI
+    assert "user_id" not in data
+    assert "company_id" not in data
+
+
+def test_share_token_not_found(app_with_router, mock_db, monkeypatch):
+    monkeypatch.setattr(
+        db_smart_api.saved_reports, "get_by_share_token",
+        lambda cur, tok: None,
+    )
+    client = TestClient(app_with_router)
+    resp = client.get("/api/db-smart/saved-reports/by-token/unknown-token-xx")
+    assert resp.status_code == 404
