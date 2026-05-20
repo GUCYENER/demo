@@ -62,9 +62,12 @@ class _FakeConn:
 
 
 def _install_fake_connector(monkeypatch, conn):
-    """ds_learning_service._get_db_connector → conn döndürsün."""
+    """ds_learning_service._get_db_connector → (conn, dialect_str) tuple döndürsün.
+
+    Real signature: _get_db_connector(source: dict, password: str) -> (conn, dialect).
+    """
     fake_mod = ModuleType("app.services.ds_learning_service")
-    fake_mod._get_db_connector = lambda src, dialect: conn
+    fake_mod._get_db_connector = lambda src, password: (conn, "postgresql") if conn is not None else (None, None)
     monkeypatch.setitem(sys.modules, "app.services.ds_learning_service", fake_mod)
 
 

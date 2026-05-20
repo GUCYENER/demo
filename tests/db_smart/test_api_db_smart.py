@@ -37,6 +37,9 @@ def app_with_router():
 def mock_db(monkeypatch):
     """get_db_context'i fake conn ile patch et (cursor calls'unu yakalar)."""
     fake_cur = MagicMock()
+    # session_manager.update_context() / mark_completed() vb. cur.rowcount kontrol eder;
+    # MagicMock varsayılan attribute yerine gerçek int olmalı ki `affected > 0` çalışsın.
+    fake_cur.rowcount = 1
     fake_conn = MagicMock()
     fake_conn.cursor.return_value = fake_cur
 
@@ -735,7 +738,13 @@ def test_execute_stream_requires_source_id_or_session(client_authed):
     assert resp.status_code == 400
 
 
-def test_execute_stream_source_not_found(client_authed, mock_db):
+def test_execute_stream_source_not_found(client_authed, mock_db, monkeypatch):
+    # ARES: permission check geçer ama data_sources kaydı yok → 404
+    from app.api.routes import db_smart_api as _api
+    monkeypatch.setattr(
+        "app.services.data_source_access.user_can_access_source",
+        lambda uid, sid, **kw: True,
+    )
     mock_db.fetchone.return_value = None  # data_sources LIMIT 1 boş
     resp = client_authed.post(
         "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/execute/stream",
@@ -744,12 +753,38 @@ def test_execute_stream_source_not_found(client_authed, mock_db):
     assert resp.status_code == 404
 
 
+def test_execute_stream_permission_denied(client_authed, mock_db, monkeypatch):
+    # ARES: user_can_access_source FALSE → 404 (varlık/yetki sızıntısı önleme)
+    monkeypatch.setattr(
+        "app.services.data_source_access.user_can_access_source",
+        lambda uid, sid, **kw: False,
+    )
+    resp = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/execute/stream",
+        json={"sql": "SELECT 1", "source_id": 1, "dialect": "postgresql"},
+    )
+    assert resp.status_code == 404
+
+
 def test_execute_stream_returns_sse_response(client_authed, mock_db, monkeypatch):
+    # Permission gate açık
+    monkeypatch.setattr(
+        "app.services.data_source_access.user_can_access_source",
+        lambda uid, sid, **kw: True,
+    )
+    # _load_source SELECT layout: (id, company_id, name, db_type, host, port,
+    #                              db_name, db_user, db_password_encrypted)
     mock_db.fetchone.return_value = (
-        1, "pg-src", "postgresql", "localhost", 5432, "db", "u", "p", None,
+        1, 42, "pg-src", "postgresql", "localhost", 5432, "db", "u", None,
     )
 
+    captured: Dict[str, Any] = {}
+
     def fake_stream(sql, source, dialect, **kw):
+        captured["sql"] = sql
+        captured["source"] = source
+        captured["dialect"] = dialect
+        captured["password"] = kw.get("password")
         yield {"type": "start", "sql_preview": sql}
         yield {"type": "columns", "columns": ["id"]}
         yield {"type": "rows", "rows": [[1]], "batch_index": 0}
@@ -768,3 +803,7 @@ def test_execute_stream_returns_sse_response(client_authed, mock_db, monkeypatch
     assert "event: columns" in body
     assert "event: rows" in body
     assert "event: end" in body
+    # ARES: password source dict'e KOYULMAMIŞ — ayrı kwarg
+    assert "password" not in (captured.get("source") or {})
+    assert "db_password_encrypted" not in (captured.get("source") or {})
+    assert captured.get("password") == ""  # encrypted=None → boş plaintext

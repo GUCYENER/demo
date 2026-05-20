@@ -89,7 +89,8 @@ def save(
     name_clean = name.strip()[:_MAX_NAME_LEN]
 
     norm_tags = _normalize_tags(tags)
-    state_json = json.dumps(wizard_state or {})
+    # default=str → datetime/Decimal/UUID gibi non-JSON tipler için güvenli fallback
+    state_json = json.dumps(wizard_state or {}, default=str)
 
     try:
         cur.execute(
@@ -144,7 +145,7 @@ def update(
         params.append(description)
     if wizard_state is not None:
         fields.append("wizard_state = %s::jsonb")
-        params.append(json.dumps(wizard_state))
+        params.append(json.dumps(wizard_state, default=str))
     if last_sql is not None:
         fields.append("last_sql = %s")
         params.append(last_sql)
@@ -380,7 +381,7 @@ def mark_run(
                     updated_at = NOW()
                 WHERE id = %s
                 """,
-                (json.dumps(snapshot), int(report_id)),
+                (json.dumps(snapshot, default=str), int(report_id)),
             )
         return bool(getattr(cur, "rowcount", 0) or 0)
     except Exception as e:

@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_ROWS_STREAM = 10_000
 
 
-def _make_stream_callable(source: Dict[str, Any], dialect: str):
+def _make_stream_callable(source: Dict[str, Any], dialect: str, password: str):
     """SQL alıp stream-aware iterator döndüren callable üretir.
 
     stream_execute() bekliyor: callable(sql, batch_size=N, mode='stream')
@@ -53,6 +53,10 @@ def _make_stream_callable(source: Dict[str, Any], dialect: str):
         - {"columns": [...]}
         - {"rows": [[...], ...]}
         - {"row_count": N, "elapsed_ms": M, "truncated": bool}
+
+    NOT: `password` parametresi ayrı tutulur (source dict'e konmaz) — credential
+    sızıntısı önleme. _get_db_connector(source, password) signature'ı password'ü
+    explicit alır; source dict yalnızca host/port/db_name/db_user içerir.
     """
     def _stream_callable(sql: str, *, batch_size: int = DEFAULT_BATCH_SIZE,
                          mode: str = "stream") -> Iterator[Dict[str, Any]]:
@@ -64,7 +68,12 @@ def _make_stream_callable(source: Dict[str, Any], dialect: str):
         conn = None
         cur = None
         try:
-            conn = _get_db_connector(source, dialect)
+            ret = _get_db_connector(source, password)
+            # _get_db_connector: (conn, dialect_str) tuple döndürür
+            if isinstance(ret, tuple):
+                conn = ret[0]
+            else:
+                conn = ret
             if conn is None:
                 yield {"columns": [], "rows": []}
                 return
@@ -124,6 +133,7 @@ def stream_safe_sql(
     source: Dict[str, Any],
     dialect: str,
     *,
+    password: str = "",
     allowed_tables: Optional[List[str]] = None,
     user_ctx: Optional[Dict[str, Any]] = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
@@ -167,5 +177,5 @@ def stream_safe_sql(
         return
 
     # 4) Stream çalıştır — stream_execute() generic protokole devreder
-    cb = _make_stream_callable(source, dialect)
+    cb = _make_stream_callable(source, dialect, password)
     yield from stream_execute(cb, sql_str, batch_size=batch_size, max_rows=max_rows)

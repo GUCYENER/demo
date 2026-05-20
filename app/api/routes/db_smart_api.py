@@ -451,14 +451,44 @@ class ExecuteStreamRequest(BaseModel):
     max_rows: int = Field(default=10_000, ge=1, le=100_000)
 
 
-def _load_source(cur: Any, source_id: int) -> Optional[Dict[str, Any]]:
-    """data_sources kaydını dict olarak getir (stream callable bekliyor)."""
+def _load_source(
+    cur: Any,
+    source_id: int,
+    current_user: Dict[str, Any],
+) -> Optional[tuple]:
+    """data_sources kaydını yükle + permission gate + password decrypt.
+
+    Returns:
+        (source_dict_no_password, password_plaintext, dialect) tuple veya None.
+
+    ARES guard'ları:
+        - `user_can_access_source(permission='can_execute')` — kullanıcı bu kaynağı
+          execute yetkisiyle açabiliyor mu? (Admin bypass mevcut.)
+        - `password` plaintext döndürülen dict'e KOYULMAZ — ayrı değer.
+        - `db_password_encrypted` → `_decrypt_stored_password()` (Fernet/base64).
+        - SELECT sadece is_active=TRUE kayıtları döner.
+    """
+    # 1) Permission gate (RLS yetmiyor — admin bypass + org membership için explicit)
+    from app.services.data_source_access import user_can_access_source
+    uid = int(current_user.get("id") or 0)
+    is_admin = bool(current_user.get("is_admin", False))
+    if uid <= 0:
+        return None
+    if not user_can_access_source(
+        uid, int(source_id),
+        is_admin=is_admin,
+        permission="can_execute",
+    ):
+        return None
+
+    # 2) Kayıt yükle — gerçek sütun adları (migration 002)
     cur.execute(
         """
-        SELECT id, name, db_type, host, port, database_name, username, password,
-               service_name
+        SELECT id, company_id, name, db_type, host, port,
+               db_name, db_user, db_password_encrypted
         FROM data_sources
         WHERE id = %s
+          AND is_active = TRUE
         LIMIT 1
         """,
         (int(source_id),),
@@ -466,9 +496,33 @@ def _load_source(cur: Any, source_id: int) -> Optional[Dict[str, Any]]:
     row = cur.fetchone()
     if not row:
         return None
-    keys = ["id", "name", "db_type", "host", "port", "database_name",
-            "username", "password", "service_name"]
-    return dict(zip(keys, row))
+    keys = ["id", "company_id", "name", "db_type", "host", "port",
+            "db_name", "db_user", "db_password_encrypted"]
+    rec = dict(zip(keys, row))
+
+    # 3) Password decrypt — _decrypt_stored_password Fernet/base64 fallback
+    password_plain = ""
+    encrypted = rec.pop("db_password_encrypted", None)
+    if encrypted:
+        try:
+            from app.api.routes.data_sources_api import _decrypt_stored_password
+            password_plain = _decrypt_stored_password(encrypted) or ""
+        except Exception as e:
+            logger.warning("[db_smart.stream] password decrypt failed source=%s: %s",
+                           source_id, e)
+            password_plain = ""
+
+    # 4) source dict — _get_db_connector'ın beklediği sade alanlar
+    source_dict = {
+        "id": rec["id"],
+        "db_type": rec["db_type"],
+        "host": rec["host"],
+        "port": rec["port"],
+        "db_name": rec["db_name"],
+        "db_user": rec["db_user"],
+    }
+    dialect = (rec.get("db_type") or "postgresql").lower()
+    return source_dict, password_plain, dialect
 
 
 @router.post("/sessions/{session_uid}/execute/stream")
@@ -525,19 +579,27 @@ def post_execute_stream(
     if not src_id:
         raise HTTPException(status_code=400, detail="source_id gerekli.")
 
-    # data_sources kaydını yükle (stream_callable bekliyor)
+    # data_sources kaydını yükle (permission gate + password decrypt)
     with get_db_context() as conn:
         cur = conn.cursor()
         apply_vyra_user_context(cur, current_user)
-        src_dict = _load_source(cur, int(src_id))
-    if src_dict is None:
-        raise HTTPException(status_code=404, detail="Veri kaynağı bulunamadı.")
+        loaded_src = _load_source(cur, int(src_id), current_user)
+    if loaded_src is None:
+        # 404 vs 403 ayırmıyoruz — varlık vs yetki sızıntısını önler
+        raise HTTPException(status_code=404, detail="Veri kaynağı bulunamadı veya erişim yok.")
+    src_dict, src_password, src_dialect = loaded_src
+    # source.db_type request.dialect ile uyumsuzsa source'a güven (ARES)
+    if src_dialect and src_dialect != dialect:
+        logger.info("[db_smart.stream] dialect override request=%s source=%s",
+                    dialect, src_dialect)
+        dialect = src_dialect
 
     # SSE generator
     def _event_stream():
         try:
             for evt in sql_executor_stream.stream_safe_sql(
                 sql_str, src_dict, dialect,
+                password=src_password,
                 allowed_tables=None,
                 user_ctx=current_user,
                 batch_size=body.batch_size,

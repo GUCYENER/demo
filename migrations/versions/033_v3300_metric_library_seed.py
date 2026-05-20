@@ -552,12 +552,13 @@ def upgrade() -> None:
             "default_viz": m.get("default_viz", "table"),
         })
 
-    # Versiyon marker
+    # Versiyon marker — system_settings (setting_key, setting_value) gerçek şemaya uyumlu
     op.execute("""
-        INSERT INTO system_settings (key, value, description)
+        INSERT INTO system_settings (setting_key, setting_value, description)
         VALUES ('DBSMART_METRIC_SEED_TS', NOW()::text,
                 'v3.30.0 FAZ 1 G1.4 — metric library seed timestamp')
-        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+        ON CONFLICT (setting_key) DO UPDATE
+            SET setting_value = EXCLUDED.setting_value, updated_at = NOW()
     """)
 
 
