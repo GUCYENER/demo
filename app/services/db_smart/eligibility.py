@@ -45,6 +45,27 @@ def _normalize_tr(text: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────
+# LIKE escape (ARES ORTA — kullanıcı term'i %/_/\\ enjekte edemesin)
+# ─────────────────────────────────────────────────────────────
+
+def _escape_like(text: str) -> str:
+    """LIKE meta karakterlerini (\\, %, _) backslash ile escape eder.
+
+    SQL'de ESCAPE '\\' clause'u ile kullanılmalıdır — örn.
+        WHERE col LIKE %s ESCAPE '\\'
+    Aksi halde kullanıcı '%' veya '_' geçirerek tüm satırları taratabilir
+    (glossary structure leak).
+    """
+    if not text:
+        return ""
+    # Önce backslash'i kendisi escape edilmeli (sıra önemli)
+    out = text.replace("\\", "\\\\")
+    out = out.replace("%", "\\%")
+    out = out.replace("_", "\\_")
+    return out
+
+
+# ─────────────────────────────────────────────────────────────
 # pgvector availability check (mevcut rag/hybrid_retrieval pattern'i)
 # ─────────────────────────────────────────────────────────────
 
@@ -100,7 +121,11 @@ def search_domains(
     """
     user_id = user_ctx.get("id")
     norm_q = _normalize_tr(query)
-    like_pattern = f"%{norm_q}%" if norm_q else "%"
+    # ARES ORTA: LIKE meta karakterlerini escape et — '%' / '_' / '\\'
+    # tarafımızdan bind edilmeden önce literal hale getirilmeli ki kullanıcı
+    # term="%" ile tüm glossary'yi taratamasın.
+    safe_q = _escape_like(norm_q)
+    like_pattern = f"%{safe_q}%" if safe_q else "%"
 
     # 1) Frequent tables hint (cold-start sonrası user_preferences set edilmiş olur)
     frequent_table_ids: List[int] = []
@@ -133,10 +158,11 @@ def search_domains(
                 te.category,
                 te.enrichment_score,
                 -- Lexical match flag (kolonun adına dokunmadan)
-                CASE WHEN LOWER(o.object_name) LIKE %s THEN 1 ELSE 0 END AS m_obj,
-                CASE WHEN LOWER(COALESCE(te.business_name_tr,'')) LIKE %s THEN 1 ELSE 0 END AS m_bizname,
-                CASE WHEN LOWER(COALESCE(te.description_tr,''))   LIKE %s THEN 1 ELSE 0 END AS m_desc,
-                CASE WHEN LOWER(COALESCE(te.category,''))         LIKE %s THEN 1 ELSE 0 END AS m_cat
+                -- ESCAPE '\\' → kullanıcı term'indeki %/_ literal eşleşir, wildcard değil.
+                CASE WHEN LOWER(o.object_name) LIKE %s ESCAPE '\' THEN 1 ELSE 0 END AS m_obj,
+                CASE WHEN LOWER(COALESCE(te.business_name_tr,'')) LIKE %s ESCAPE '\' THEN 1 ELSE 0 END AS m_bizname,
+                CASE WHEN LOWER(COALESCE(te.description_tr,''))   LIKE %s ESCAPE '\' THEN 1 ELSE 0 END AS m_desc,
+                CASE WHEN LOWER(COALESCE(te.category,''))         LIKE %s ESCAPE '\' THEN 1 ELSE 0 END AS m_cat
             FROM ds_db_objects o
             LEFT JOIN ds_table_enrichments te
               ON te.source_id = o.source_id
@@ -166,22 +192,70 @@ def search_domains(
     if query_embedding and _pgvector_available(cur) and _glossary_has_embedding_column(cur):
         try:
             company_id = user_ctx.get("company_id")
-            # business_glossary'den mapped_table → cosine en yakın N glossary term'ün
-            # haritalandığı tablolara skor dağıt.
-            cur.execute(
-                """
-                SELECT bg.mapped_table, MAX(1.0 - (bg.embedding <=> %s::vector)) AS sim
-                FROM business_glossary bg
-                WHERE bg.admin_verified = TRUE
-                  AND (%s IS NULL OR bg.company_id = %s)
-                  AND bg.embedding IS NOT NULL
-                  AND bg.mapped_table IS NOT NULL
-                GROUP BY bg.mapped_table
-                ORDER BY sim DESC
-                LIMIT 50
-                """,
-                (query_embedding, company_id, company_id),
-            )
+            is_admin = bool(user_ctx.get("is_admin", False))
+            # ARES KRİTİK: glossary `company_id IS NULL` leak'i — eski sürümde
+            # `(%s IS NULL OR bg.company_id = %s)` predicate'i caller company_id=NULL
+            # gönderdiğinde TÜM tenant glossary kayıtlarını döndürüyordu.
+            # Yeni davranış:
+            #   - company_id verilmişse: kendi tenant satırları VE sistem (NULL company_id)
+            #     fallback satırları — fallback yalnızca admin_verified=TRUE ile sınırlı.
+            #   - company_id NULL ve is_admin=False ise: yalnızca admin_verified=TRUE
+            #     sistem (NULL company_id) satırları → cross-tenant leak yok.
+            #   - is_admin=True ise: NULL company_id sistem satırlarına erişim
+            #     (admin'in cross-tenant taraması RLS katmanında ayrıca yönetilir).
+            # NOT: admin_verified=TRUE filtresi mevcut tasarımda sistem-seed sinyali
+            # olarak kullanılıyor (ayrı bir is_seed kolonu yok — bkz. raporda öneri).
+            if company_id is not None:
+                cur.execute(
+                    """
+                    SELECT bg.mapped_table, MAX(1.0 - (bg.embedding <=> %s::vector)) AS sim
+                    FROM business_glossary bg
+                    WHERE bg.admin_verified = TRUE
+                      AND bg.embedding IS NOT NULL
+                      AND bg.mapped_table IS NOT NULL
+                      AND (
+                            bg.company_id = %s
+                         OR bg.company_id IS NULL  -- sistem (admin_verified) fallback
+                      )
+                    GROUP BY bg.mapped_table
+                    ORDER BY sim DESC
+                    LIMIT 50
+                    """,
+                    (query_embedding, int(company_id)),
+                )
+            elif is_admin:
+                # Admin + company_id yok → yalnızca sistem (NULL) satırları.
+                cur.execute(
+                    """
+                    SELECT bg.mapped_table, MAX(1.0 - (bg.embedding <=> %s::vector)) AS sim
+                    FROM business_glossary bg
+                    WHERE bg.admin_verified = TRUE
+                      AND bg.embedding IS NOT NULL
+                      AND bg.mapped_table IS NOT NULL
+                      AND bg.company_id IS NULL
+                    GROUP BY bg.mapped_table
+                    ORDER BY sim DESC
+                    LIMIT 50
+                    """,
+                    (query_embedding,),
+                )
+            else:
+                # Non-admin + company_id yok → yalnızca sistem fallback satırları.
+                # Cross-tenant leak'i engellemek için company_id IS NULL şart.
+                cur.execute(
+                    """
+                    SELECT bg.mapped_table, MAX(1.0 - (bg.embedding <=> %s::vector)) AS sim
+                    FROM business_glossary bg
+                    WHERE bg.admin_verified = TRUE
+                      AND bg.embedding IS NOT NULL
+                      AND bg.mapped_table IS NOT NULL
+                      AND bg.company_id IS NULL
+                    GROUP BY bg.mapped_table
+                    ORDER BY sim DESC
+                    LIMIT 50
+                    """,
+                    (query_embedding,),
+                )
             # mapped_table → similarity
             glossary_sim: Dict[str, float] = {
                 (r[0] or "").lower(): float(r[1] or 0.0)

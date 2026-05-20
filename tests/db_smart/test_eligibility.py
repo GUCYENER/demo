@@ -25,14 +25,20 @@ def test_normalize_tr_lowercase_diacritics():
 # ─────────────────────────────────────────────────────────────
 
 class _SeqCursor:
-    """Sırayla fetchone/fetchall yanıtları döndürür."""
+    """Sırayla fetchone/fetchall yanıtları döndürür.
+
+    `calls`: her execute çağrısı için (sql, params) tuple'larını saklar —
+    test'ler escape clause / NULL-fallback predicate vb. doğrulayabilir.
+    """
 
     def __init__(self, responses: List[Any]):
         self._resps = responses
         self._idx = 0
         self._last = None
+        self.calls: List[Any] = []
 
     def execute(self, sql, params=None):
+        self.calls.append((sql, params))
         if self._idx < len(self._resps):
             self._last = self._resps[self._idx]
             self._idx += 1
@@ -169,3 +175,167 @@ def test_sample_preview_returns_none_for_non_dict_sample(fake_user_ctx):
     cur = _SeqCursor([("not_a_dict", datetime(2026, 5, 19))])
     out = el.sample_preview(cur, table_id=10, user_ctx=fake_user_ctx)
     assert out is None
+
+
+# ─────────────────────────────────────────────────────────────
+# _escape_like — ARES ORTA finding-2 unit kapsamı
+# ─────────────────────────────────────────────────────────────
+
+def test_escape_like_handles_all_meta_chars():
+    """\\, %, _ → backslash ile escape edilmeli (sıra korunmalı)."""
+    # Backslash önce escape edilmeli ki sonraki %/_ escape'leri çift escape etmesin.
+    assert el._escape_like("a%b") == "a\\%b"
+    assert el._escape_like("a_b") == "a\\_b"
+    assert el._escape_like("a\\b") == "a\\\\b"
+    assert el._escape_like("100%_test") == "100\\%\\_test"
+    assert el._escape_like("") == ""
+    assert el._escape_like(None) == ""
+
+
+# ─────────────────────────────────────────────────────────────
+# Finding 1 — glossary company_id IS NULL leak guard'ı
+# (search_domains semantic ranking yolu)
+# ─────────────────────────────────────────────────────────────
+
+class _GlossaryCursor:
+    """Semantic ranking yolunu da deterministik döndüren mock.
+
+    Sıra:
+      1) user_preferences SELECT          → fetchone
+      2) main lexical SELECT              → fetchall (rows)
+      3) _pgvector_available SELECT       → fetchone (1,) → True
+      4) _glossary_has_embedding_column   → fetchone (1,) → True
+      5) glossary semantic SELECT         → fetchall (sim_rows)
+    """
+
+    def __init__(self, lexical_rows, sim_rows):
+        self._lexical_rows = lexical_rows
+        self._sim_rows = sim_rows
+        self.calls: List[Any] = []
+        self._step = 0
+        self._last = None
+
+    def execute(self, sql, params=None):
+        self.calls.append((sql, params))
+        self._step += 1
+        s = sql.strip().lower()
+        if "dbsmart_user_preferences" in s:
+            self._last = None
+        elif "from ds_db_objects" in s or "ds_db_objects" in s:
+            self._last = self._lexical_rows
+        elif "pg_extension" in s:
+            self._last = (1,)
+        elif "information_schema.columns" in s:
+            self._last = (1,)
+        elif "business_glossary" in s:
+            self._last = self._sim_rows
+        else:
+            self._last = None
+
+    def fetchone(self):
+        if isinstance(self._last, list) and self._last:
+            return self._last[0]
+        return self._last
+
+    def fetchall(self):
+        if isinstance(self._last, list):
+            return self._last
+        return [self._last] if self._last else []
+
+
+def _make_lexical_row(table_id=10, name="tickets"):
+    # (table_id, schema, object_name, object_type, row_cnt,
+    #  business_name_tr, description_tr, category, enrichment_score,
+    #  m_obj, m_bizname, m_desc, m_cat)
+    return (table_id, "public", name, "table", 100, None, None, None, None,
+            0, 0, 0, 0)
+
+
+def test_glossary_null_company_blocked_for_non_admin():
+    """Non-admin + company_id=None: glossary lookup yalnızca
+    `bg.company_id IS NULL` sistem fallback satırlarına kısıtlanmalı —
+    eski `(%s IS NULL OR bg.company_id = %s)` cross-tenant leak'i kapanmalı."""
+    user_ctx = {"id": 99, "company_id": None, "is_admin": False}
+    cur = _GlossaryCursor(
+        lexical_rows=[_make_lexical_row()],
+        sim_rows=[("tickets", 0.9)],
+    )
+    el.search_domains(
+        cur, source_id=1, query="ticket",
+        user_ctx=user_ctx, query_embedding=[0.0] * 4,
+    )
+    # Glossary semantic query bulunmalı
+    gloss_calls = [c for c in cur.calls if "<=>" in c[0]]
+    assert gloss_calls, "semantic glossary query çağrılmadı"
+    sql, params = gloss_calls[0]
+    # Eski leaky predicate ortadan kalkmalı
+    assert "(%s IS NULL OR bg.company_id = %s)" not in sql
+    # Non-admin + company None → company_id IS NULL clause'u mevcut olmalı
+    assert "bg.company_id IS NULL" in sql
+    # Cross-tenant okuma yapılmadığı: params'da company_id bağlanmamalı
+    # (yalnızca embedding parametresi olmalı)
+    assert params is not None
+    assert len(params) == 1
+
+
+def test_glossary_seed_only_for_null_company():
+    """Sistem (NULL company_id) fallback'i yalnızca admin_verified=TRUE
+    satırlarına izin vermeli — seed sinyali olarak admin_verified kullanılıyor."""
+    user_ctx = {"id": 7, "company_id": 1, "is_admin": False}
+    cur = _GlossaryCursor(
+        lexical_rows=[_make_lexical_row()],
+        sim_rows=[("tickets", 0.7)],
+    )
+    el.search_domains(
+        cur, source_id=1, query="t",
+        user_ctx=user_ctx, query_embedding=[0.0] * 4,
+    )
+    gloss_calls = [c for c in cur.calls if "<=>" in c[0]]
+    assert gloss_calls
+    sql, params = gloss_calls[0]
+    # admin_verified TRUE filter → seed-only fallback
+    assert "admin_verified = TRUE" in sql
+    # Kendi tenant satırları VEYA sistem NULL fallback
+    assert "bg.company_id = %s" in sql
+    assert "bg.company_id IS NULL" in sql
+    # Params: embedding + company_id (=1)
+    assert params is not None
+    assert len(params) == 2
+    assert params[1] == 1
+
+
+def test_like_escape_percent_literal():
+    """term='%' kullanıcısı tüm satırları taratmamalı — '%' literal olarak
+    escape edilmiş bir LIKE pattern'e bind edilmeli ve SQL ESCAPE clause'u taşımalı."""
+    cur = _SeqCursor([
+        None,                             # user_pref
+        [_make_lexical_row(name="x")],    # main lexical
+    ])
+    el.search_domains(cur, source_id=1, query="%", user_ctx={"id": 1, "company_id": 1})
+    # En az 2 execute: user_pref + main lexical
+    assert len(cur.calls) >= 2
+    main_sql, main_params = cur.calls[1]
+    # SQL ESCAPE clause kullanılmalı
+    assert "ESCAPE '\\'" in main_sql
+    # LIKE pattern'inde '%' escape edilmiş olmalı → '\%' (literal)
+    # Pattern: '%' + escape('%') + '%' = '%\%%'
+    assert main_params is not None
+    like_patterns = [p for p in main_params if isinstance(p, str) and "\\%" in p]
+    assert like_patterns, f"escape edilmiş '%' pattern bulunamadı: {main_params}"
+    # Tam doğrula: pattern '%\%%' olmalı (norm_q='%', escape → '\%')
+    assert like_patterns[0] == "%\\%%"
+
+
+def test_like_escape_underscore_literal():
+    """term='_' tek karakter wildcard'ı olarak değil, literal '_' olarak
+    eşleştirilmeli; pattern içinde '\\_' bulunmalı ve ESCAPE clause olmalı."""
+    cur = _SeqCursor([
+        None,
+        [_make_lexical_row(name="x")],
+    ])
+    el.search_domains(cur, source_id=1, query="_", user_ctx={"id": 1, "company_id": 1})
+    main_sql, main_params = cur.calls[1]
+    assert "ESCAPE '\\'" in main_sql
+    like_patterns = [p for p in main_params if isinstance(p, str) and "\\_" in p]
+    assert like_patterns, f"escape edilmiş '_' pattern bulunamadı: {main_params}"
+    assert like_patterns[0] == "%\\_%"
