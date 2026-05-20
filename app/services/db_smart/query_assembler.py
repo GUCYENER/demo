@@ -41,6 +41,16 @@ from app.services.db_smart import ast_renderer
 
 logger = logging.getLogger(__name__)
 
+
+class RLSContextError(RuntimeError):
+    """Tenant-scoped query path requires RLS but it could not be applied.
+
+    Raised by assemble() instead of silently emitting tenant-unfiltered SQL.
+    Callers that intentionally need to bypass RLS (admin-only system queries)
+    must opt in explicitly via bypass_rls=True together with an admin user_ctx.
+    """
+
+
 # Placeholder whitelist: yalnızca tanınmış token'lar template'te substitute edilir
 _PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 
@@ -143,13 +153,37 @@ def assemble(
     wizard_state: Dict[str, Any],
     user_ctx: Dict[str, Any],
     dialect: Optional[str] = None,
+    *,
+    bypass_rls: bool = False,
 ) -> Dict[str, Any]:
-    """wizard_state → {sql, ast_json, binds, dialect, warnings, errors}."""
+    """wizard_state → {sql, ast_json, binds, dialect, warnings, errors}.
+
+    Args:
+        wizard_state: wizard state payload (see module docstring).
+        user_ctx: caller identity / RLS context (id, company_id, role, is_admin).
+        dialect: override dialect (default = wizard_state['dialect'] or 'postgresql').
+        bypass_rls: opt-in admin override. When True AND user_ctx.is_admin is True,
+            the free-form AST path is allowed to render without RLS being applied
+            (e.g. cross-tenant system queries). For any other combination — non-admin
+            user, missing company_scoped_aliases, RLS injection that didn't stamp
+            _rls_injected — assemble() now raises RLSContextError instead of
+            silently emitting tenant-unfiltered SQL.
+
+    Raises:
+        RLSContextError: tenant-scoped path could not apply RLS and caller did not
+            (or was not authorized to) request bypass_rls.
+    """
     d = dialect or wizard_state.get("dialect", "postgresql")
     errors = validate(wizard_state)
     if errors:
         return {"sql": None, "ast_json": None, "binds": {},
                 "dialect": d, "warnings": [], "errors": errors}
+
+    is_admin = bool(user_ctx.get("is_admin") or user_ctx.get("role") == "admin")
+    if bypass_rls and not is_admin:
+        raise RLSContextError(
+            "bypass_rls=True requires admin user_ctx (is_admin=True or role='admin')"
+        )
 
     warnings: List[str] = []
     metric = wizard_state.get("metric")
@@ -192,8 +226,30 @@ def assemble(
                 "dialect": d, "warnings": warnings,
                 "errors": [f"render_error: {e}"]}
 
-    if not ast.get("_rls_injected") and not (user_ctx.get("is_admin") or user_ctx.get("role") == "admin"):
-        warnings.append("rls_not_applied (no company_scoped_aliases provided)")
+    if not ast.get("_rls_injected"):
+        # Hard-fail: tenant-scoped query path requires RLS. The previous behaviour
+        # was a silent warning + continue — production callers would not notice
+        # and the query ran without tenant filters (ARES YÜKSEK).
+        if bypass_rls and is_admin:
+            logger.warning(
+                "[db_smart.assembler] RLS bypass authorized for admin user_id=%s "
+                "(bypass_rls=True). Emitting tenant-unfiltered SQL.",
+                user_ctx.get("id"),
+            )
+            warnings.append("rls_bypassed_admin")
+        elif is_admin:
+            # Admin without explicit bypass: keep legacy lenient behaviour
+            # (admins can read across tenants). No warning string is added to
+            # preserve existing caller contracts; callers should switch to
+            # bypass_rls=True for explicit cross-tenant queries.
+            pass
+        else:
+            raise RLSContextError(
+                "RLS context missing: free-form query for non-admin user_ctx "
+                "(id=%s, company_id=%s) requires company_scoped_aliases so that "
+                "inject_rls can stamp tenant filters. Refusing to emit "
+                "tenant-unfiltered SQL." % (user_ctx.get("id"), user_ctx.get("company_id"))
+            )
 
     return {
         "sql": rendered["sql"],

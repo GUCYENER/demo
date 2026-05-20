@@ -49,11 +49,13 @@ def test_validate_passes_minimal():
 # ─────────────────────────────────────────────────────────────
 
 def test_assemble_returns_sql_and_binds(fake_user_ctx):
+    # Tenant-scoped path requires company_scoped_aliases post H-fix.
     out = qa.assemble({
         "source_id": 1, "dialect": "postgresql",
         "base_table": {"table": "tickets", "alias": "t"},
         "selected_columns": [{"expr": "t.id"}, {"expr": "t.status"}],
         "filters": [{"expr": "t.status", "op": "=", "value": "open"}],
+        "company_scoped_aliases": ["t"],
         "limit": 50,
     }, fake_user_ctx)
     assert out["errors"] == []
@@ -73,13 +75,16 @@ def test_assemble_injects_rls_with_alias(fake_user_ctx):
     assert out["ast_json"].get("_rls_injected") is True
 
 
-def test_assemble_warns_when_no_rls_alias(fake_user_ctx):
-    out = qa.assemble({
-        "source_id": 1, "dialect": "postgresql",
-        "base_table": {"table": "tickets", "alias": "t"},
-        "selected_columns": [{"expr": "t.id"}],
-    }, fake_user_ctx)
-    assert any("rls_not_applied" in w for w in out["warnings"])
+def test_assemble_raises_when_no_rls_alias_for_nonadmin(fake_user_ctx):
+    # Hardened behaviour (post ARES YÜKSEK fix): non-admin caller without
+    # company_scoped_aliases must NOT receive tenant-unfiltered SQL — assemble()
+    # raises instead of silently warning + continuing.
+    with pytest.raises(qa.RLSContextError):
+        qa.assemble({
+            "source_id": 1, "dialect": "postgresql",
+            "base_table": {"table": "tickets", "alias": "t"},
+            "selected_columns": [{"expr": "t.id"}],
+        }, fake_user_ctx)
 
 
 def test_assemble_admin_skips_rls_warning(fake_admin_ctx):
@@ -89,6 +94,78 @@ def test_assemble_admin_skips_rls_warning(fake_admin_ctx):
         "selected_columns": [{"expr": "t.id"}],
     }, fake_admin_ctx)
     assert not any("rls_not_applied" in w for w in out["warnings"])
+
+
+# ─────────────────────────────────────────────────────────────
+# ARES YÜKSEK fix: RLS hard-fail + bypass_rls opt-in (H-fix, 2026-05-20)
+# ─────────────────────────────────────────────────────────────
+
+def test_rls_missing_raises(fake_user_ctx):
+    """Non-admin caller without company_scoped_aliases → RLSContextError.
+
+    Previously this path silently appended a warning and emitted tenant-unfiltered
+    SQL; the hardened behaviour refuses to render.
+    """
+    with pytest.raises(qa.RLSContextError) as ei:
+        qa.assemble({
+            "source_id": 1, "dialect": "postgresql",
+            "base_table": {"table": "tickets", "alias": "t"},
+            "selected_columns": [{"expr": "t.id"}],
+        }, fake_user_ctx)
+    msg = str(ei.value)
+    assert "RLS" in msg
+    assert "non-admin" in msg or "company_scoped_aliases" in msg
+
+
+def test_bypass_rls_kwarg_requires_admin(fake_user_ctx, fake_admin_ctx):
+    """bypass_rls=True must be paired with admin user_ctx; otherwise raise."""
+    # Non-admin trying to bypass → must raise
+    with pytest.raises(qa.RLSContextError):
+        qa.assemble(
+            {
+                "source_id": 1, "dialect": "postgresql",
+                "base_table": {"table": "tickets", "alias": "t"},
+                "selected_columns": [{"expr": "t.id"}],
+            },
+            fake_user_ctx,
+            bypass_rls=True,
+        )
+    # Admin with bypass → permitted, SQL emitted, audit warning surfaced
+    out = qa.assemble(
+        {
+            "source_id": 1, "dialect": "postgresql",
+            "base_table": {"table": "tickets", "alias": "t"},
+            "selected_columns": [{"expr": "t.id"}],
+        },
+        fake_admin_ctx,
+        bypass_rls=True,
+    )
+    assert out["sql"]
+    assert out["errors"] == []
+    assert any("rls_bypassed_admin" in w for w in out["warnings"])
+
+
+def test_normal_path_unchanged(fake_user_ctx):
+    """Happy path with company_scoped_aliases still renders SQL with RLS injected.
+
+    Confirms the H-fix did not regress the standard tenant-scoped flow.
+    """
+    out = qa.assemble({
+        "source_id": 1, "dialect": "postgresql",
+        "base_table": {"table": "tickets", "alias": "t"},
+        "selected_columns": [{"expr": "t.id"}, {"expr": "t.status"}],
+        "filters": [{"expr": "t.status", "op": "=", "value": "open"}],
+        "company_scoped_aliases": ["t"],
+        "limit": 50,
+    }, fake_user_ctx)
+    assert out["errors"] == []
+    assert out["sql"]
+    assert "company_id" in out["sql"]
+    assert out["ast_json"].get("_rls_injected") is True
+    assert out["source"] == "ast"
+    # No RLS warning should appear in the normal path
+    assert not any("rls_not_applied" in w for w in out["warnings"])
+    assert not any("rls_bypassed" in w for w in out["warnings"])
 
 
 def test_assemble_propagates_render_errors(fake_user_ctx):
