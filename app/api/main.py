@@ -83,6 +83,8 @@ def _run_schedule_checker():
     _cv_tick = 0
     # v3.29.8 L2 — signal_weight_analyzer tick counter
     _swa_tick = 0
+    # v3.30.0 FAZ 3 P17 — db_smart scheduled reports tick counter
+    _dbsmart_sched_tick = 0
 
     while _scheduler_running:
         try:
@@ -180,6 +182,31 @@ def _run_schedule_checker():
                             )
             except Exception as e:
                 log_error(f"[Scheduler] signal_weight analyzer hatasi: {e}", "scheduler")
+
+            # 6) v3.30.0 FAZ 3 P17 — DB Smart scheduled reports
+            try:
+                dbs_mult = int(getattr(settings, "DBSMART_SCHEDULE_INTERVAL_MULT", 0) or 0)
+                if dbs_mult > 0:
+                    _dbsmart_sched_tick += 1
+                    if _dbsmart_sched_tick >= dbs_mult:
+                        _dbsmart_sched_tick = 0
+                        from app.core.db import get_db_context
+                        from app.services.db_smart.schedule_runner import (
+                            check_dbsmart_scheduled_reports,
+                        )
+                        with get_db_context() as _conn:
+                            with _conn.cursor() as _cur:
+                                stats = check_dbsmart_scheduled_reports(_cur)
+                            _conn.commit()
+                        if stats.get("due", 0) > 0:
+                            log_system_event(
+                                "INFO",
+                                f"[Scheduler] db_smart scheduled: due={stats['due']} "
+                                f"ok={stats['ok']} err={stats['err']}",
+                                "scheduler",
+                            )
+            except Exception as e:
+                log_error(f"[Scheduler] db_smart scheduled report hatasi: {e}", "scheduler")
 
         except Exception as e:
             log_error(f"[Scheduler] Kontrol hatasi: {e}", "scheduler")

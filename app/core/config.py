@@ -209,6 +209,20 @@ class Settings(BaseSettings):
     SIGNAL_WEIGHT_ANALYZER_LAMBDA: float = 0.3        # Yumuşak ayarlama katsayısı
 
     # -------------------------------------------------
+    # DB Smart Wizard — Scheduled Reports (v3.30.0 FAZ 3 P17)
+    # -------------------------------------------------
+    # dbsmart_saved_reports.schedule_cron olan kayıtların periyodik yeniden
+    # çalıştırılması. 0 = off; >0 ise scheduler interval'inin (SCHEDULER_INTERVAL_SECONDS=300s)
+    # katı olarak tick. Default 12 → 12 × 300s = 60 dk (saatlik kontrol).
+    # Her tick: schedule_next_run <= NOW() olan raporlar çalıştırılır,
+    # last_run_snapshot JSONB'ye yazılır, croniter ile bir sonraki çalışma zamanı set'lenir.
+    # E-mail/PDF delivery KAPSAM DIŞI (v3.30.0 plan kararı — in-app snapshot).
+    DBSMART_SCHEDULE_INTERVAL_MULT: int = 12          # 0 = off; 12 ≈ saatlik
+    DBSMART_SCHEDULE_MAX_PER_TICK: int = 20           # Tick başına max çalışan rapor
+    DBSMART_SCHEDULE_QUERY_TIMEOUT_S: int = 60        # Schedule SQL timeout
+    DBSMART_SCHEDULE_MAX_ROWS: int = 5_000            # Snapshot row limit
+
+    # -------------------------------------------------
     # Langfuse Observability (v3.26.0 Faz 5 P2-b — opsiyonel)
     # -------------------------------------------------
     # Boş bırakılırsa Langfuse devre dışı kalır. pipeline_events DB-tabanlı

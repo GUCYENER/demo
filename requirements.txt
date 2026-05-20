@@ -69,6 +69,10 @@ rapidfuzz>=3.0.0
 # --- Utils ---
 tqdm
 
+# --- Cron scheduling (v3.30.0 FAZ 3 P17 — db_smart schedule hook) ---
+# Pure-python cron expression parser; next_run hesaplama (in-process scheduler).
+croniter>=2.0.0
+
 # --- Security / Rate Limiting ---
 slowapi>=0.1.9
 

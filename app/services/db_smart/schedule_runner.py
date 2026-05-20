@@ -1,0 +1,181 @@
+"""DB Smart — Scheduled Report Runner (v3.30.0 FAZ 3 P17 / G3.3 Schedule).
+
+Periyodik olarak `dbsmart_saved_reports.schedule_cron IS NOT NULL` ve
+`schedule_next_run <= NOW()` koşulunu sağlayan raporları yeniden çalıştırır,
+sonucu `last_run_snapshot` JSONB'ye in-app olarak yazar (e-mail/PDF KAPSAM DIŞI),
+croniter ile bir sonraki `schedule_next_run` hesaplar.
+
+Tasarım:
+- in-process scheduler hook'undan (`_run_schedule_checker`) tick counter ile çağrılır
+- DBSMART_SCHEDULE_INTERVAL_MULT × SCHEDULER_INTERVAL_SECONDS aralığında
+- Tick başına `DBSMART_SCHEDULE_MAX_PER_TICK` rapor (varsayılan 20)
+- Her rapor: SafeSQLExecutor(timeout, max_rows) + RLS scope per company
+- Hata: snapshot içine `{"error": ...}` yazılır, akış kırılmaz
+- Reentrancy: schedule_next_run koşullu UPDATE öncesinde aday set sabitlenir (FOR UPDATE SKIP LOCKED)
+"""
+from __future__ import annotations
+
+import json
+import logging
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from app.core.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+def _utcnow() -> datetime:
+    return datetime.now().astimezone()
+
+
+def find_due_reports(cur: Any, limit: int) -> List[Dict[str, Any]]:
+    """schedule_next_run <= NOW() olan raporları FOR UPDATE SKIP LOCKED ile kilitle.
+
+    SKIP LOCKED: aynı tick'te birden fazla worker (gelecekte) ayni satıra
+    çarpmasın diye. Mevcut single-process scheduler için no-op ama future-proof.
+    """
+    cur.execute(
+        """
+        SELECT id, user_id, company_id, source_id,
+               last_sql, last_dialect, schedule_cron,
+               run_count
+          FROM dbsmart_saved_reports
+         WHERE schedule_cron IS NOT NULL
+           AND last_sql IS NOT NULL
+           AND (schedule_next_run IS NULL OR schedule_next_run <= NOW())
+         ORDER BY schedule_next_run NULLS FIRST
+         LIMIT %s
+         FOR UPDATE SKIP LOCKED
+        """,
+        (int(limit),),
+    )
+    cols = ["id", "user_id", "company_id", "source_id",
+            "last_sql", "last_dialect", "schedule_cron", "run_count"]
+    return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def _load_source_for_schedule(cur: Any, source_id: int) -> Optional[Dict[str, Any]]:
+    """data_sources kaydını schedule context için yükle (system-level)."""
+    cur.execute(
+        """
+        SELECT id, db_type, host, port, db_name, db_user, db_password_encrypted
+          FROM data_sources
+         WHERE id = %s AND is_active = TRUE
+         LIMIT 1
+        """,
+        (int(source_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    src = {"id": row[0], "db_type": row[1], "host": row[2], "port": row[3],
+           "db_name": row[4], "db_user": row[5]}
+    encrypted = row[6]
+    if encrypted:
+        try:
+            from app.api.routes.data_sources_api import _decrypt_stored_password
+            src["password"] = _decrypt_stored_password(encrypted) or ""
+        except Exception as e:
+            logger.warning("[schedule_runner] decrypt fail source=%s: %s", source_id, e)
+            src["password"] = ""
+    else:
+        src["password"] = ""
+    return src
+
+
+def _compute_next_run(cron_expr: str, base: Optional[datetime] = None) -> Optional[datetime]:
+    """Croniter ile bir sonraki çalışma zamanını hesapla. Hata olursa None."""
+    try:
+        from croniter import croniter
+        b = base or _utcnow()
+        return croniter(cron_expr, b).get_next(datetime)
+    except Exception as e:
+        logger.warning("[schedule_runner] croniter fail cron=%s: %s", cron_expr, e)
+        return None
+
+
+def run_one(cur: Any, report: Dict[str, Any]) -> Dict[str, Any]:
+    """Tek bir rapor çalıştır → snapshot + next_run hesapla + DB güncelle.
+
+    Returns: {"ok": bool, "report_id": int, "row_count": int|None, "error": str|None}
+    """
+    from app.services.safe_sql_executor import SafeSQLExecutor
+
+    rid = int(report["id"])
+    sql = report["last_sql"]
+    dialect = (report.get("last_dialect") or "postgresql").lower()
+    source_id = report.get("source_id")
+
+    snapshot: Dict[str, Any] = {"executed_at": _utcnow().isoformat(), "dialect": dialect}
+    ok = False
+    row_count: Optional[int] = None
+    err_msg: Optional[str] = None
+
+    try:
+        src = _load_source_for_schedule(cur, int(source_id)) if source_id else None
+        if not src:
+            err_msg = "source_not_found_or_inactive"
+            snapshot["error"] = err_msg
+        else:
+            executor = SafeSQLExecutor(
+                timeout=int(settings.DBSMART_SCHEDULE_QUERY_TIMEOUT_S),
+                max_rows=int(settings.DBSMART_SCHEDULE_MAX_ROWS),
+            )
+            result = executor.execute(sql, src, dialect, use_result_cache=False)
+            if not result.success:
+                err_msg = result.error or "execute_failed"
+                snapshot["error"] = err_msg
+            else:
+                ok = True
+                row_count = int(result.row_count or 0)
+                snapshot.update({
+                    "columns": result.columns or [],
+                    "row_count": row_count,
+                    "truncated": bool(result.truncated),
+                    "elapsed_ms": float(result.elapsed_ms or 0.0),
+                    # Veri payload'ı boyut sınırı: ilk 500 satır snapshot'a girer (UI önizleme)
+                    "rows": (result.data or [])[:500],
+                })
+    except Exception as e:
+        err_msg = f"{type(e).__name__}: {e}"
+        snapshot["error"] = err_msg
+        logger.exception("[schedule_runner] run_one fail report=%s", rid)
+
+    next_run = _compute_next_run(report["schedule_cron"])
+
+    try:
+        cur.execute(
+            """
+            UPDATE dbsmart_saved_reports
+               SET last_run_snapshot = %s::jsonb,
+                   last_run_at       = NOW(),
+                   run_count         = COALESCE(run_count, 0) + 1,
+                   schedule_next_run = %s,
+                   updated_at        = NOW()
+             WHERE id = %s
+            """,
+            (json.dumps(snapshot, default=str), next_run, rid),
+        )
+    except Exception as e:
+        logger.exception("[schedule_runner] UPDATE fail report=%s: %s", rid, e)
+
+    return {"ok": ok, "report_id": rid, "row_count": row_count, "error": err_msg}
+
+
+def check_dbsmart_scheduled_reports(cur: Any) -> Dict[str, int]:
+    """Scheduler tick entry — due raporları işle. Cursor caller'a aittir (commit dışarıda).
+
+    Returns: {"due": N, "ok": K, "err": E}
+    """
+    limit = int(settings.DBSMART_SCHEDULE_MAX_PER_TICK)
+    due = find_due_reports(cur, limit)
+    ok_count = 0
+    err_count = 0
+    for report in due:
+        res = run_one(cur, report)
+        if res["ok"]:
+            ok_count += 1
+        else:
+            err_count += 1
+    return {"due": len(due), "ok": ok_count, "err": err_count}
