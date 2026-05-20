@@ -47,6 +47,7 @@ from app.services.db_smart import (
     state_machine,
     eligibility,     # v3.30.0 FAZ 1 G1.2
     fk_graph,        # v3.30.0 FAZ 1 G1.3
+    metric_engine,   # v3.30.0 FAZ 1 P3 G1.4
 )
 
 logger = logging.getLogger(__name__)
@@ -445,41 +446,67 @@ def list_columns(
 @router.get("/metrics")
 def list_metrics(
     source_id: int = Query(..., ge=1),
-    table_signature: str = Query("", description="Hashed table-id list (sorted)"),
+    table_id: Optional[int] = Query(None, ge=1, description="ds_db_objects.id — eligibility skor için tablo imzası bu id'den türetilir"),
+    table_signature: str = Query("", description="(legacy) Hashed table-id list — UI v3 ile birlikte deprecated; table_id kullanın"),
+    min_score: float = Query(0.6, ge=0.0, le=1.0),
     current_user: Dict[str, Any] = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """Eligible metric list (skor ile sıralı; threshold > 0.6)."""
+    """Eligible metric list (applicable_when match + skor ile sıralı; threshold default 0.6).
+
+    table_id verilirse: metric_engine.list_eligible() çağrılır (skorlu, filtrelenmiş).
+    Aksi halde: tüm aktif metrik listesi döner (geriye dönük uyum).
+    """
     _require_user_id(current_user)
     items: List[Dict[str, Any]] = []
+    signature_meta: Optional[Dict[str, Any]] = None
+
     with get_db_context() as conn:
         cur = conn.cursor()
         apply_vyra_user_context(cur, current_user)
         try:
-            # FAZ 1 G1.4: dbsmart_metric_library üzerinden basit liste (kategori filtresi P3'te)
-            cur.execute("""
-                SELECT metric_key, name_tr, category, description_tr,
-                       default_viz, applicable_when, sql_templates
-                FROM dbsmart_metric_library
-                WHERE is_active IS TRUE OR is_active IS NULL
-                ORDER BY category, metric_key
-                LIMIT 60
-            """)
-            for r in cur.fetchall():
-                items.append({
-                    "metric_key": r[0],
-                    "name_tr": r[1],
-                    "category": r[2],
-                    "description_tr": r[3],
-                    "default_viz": r[4],
-                    "applicable_when": r[5],
-                    "sql_templates": r[6],
-                })
+            if table_id is not None:
+                # FAZ 1 P3 G1.4: tablo imzasına göre eligible + skorlu liste
+                sig = metric_engine.load_table_signature(cur, source_id, table_id)
+                if sig is None:
+                    raise HTTPException(status_code=404, detail="Tablo bulunamadı veya erişim yok.")
+                items = metric_engine.list_eligible(cur, sig, current_user, min_score=min_score)
+                signature_meta = {
+                    "table_id": sig["table_id"],
+                    "object_name": sig["object_name"],
+                    "row_count": sig["row_count"],
+                    "column_count": len(sig["columns"]),
+                }
+            else:
+                # Geriye dönük: tüm aktif metrikleri kategori bazında listele
+                cur.execute("""
+                    SELECT metric_key, name_tr, category, description_tr,
+                           default_viz, applicable_when, sql_templates
+                    FROM dbsmart_metric_library
+                    WHERE is_active IS TRUE OR is_active IS NULL
+                    ORDER BY category, metric_key
+                    LIMIT 60
+                """)
+                for r in cur.fetchall():
+                    items.append({
+                        "metric_key": r[0],
+                        "name_tr": r[1],
+                        "category": r[2],
+                        "description_tr": r[3],
+                        "default_viz": r[4],
+                        "applicable_when": r[5],
+                        "sql_templates": r[6],
+                    })
+        except HTTPException:
+            raise
         except Exception as e:
             logger.warning("[db_smart] list_metrics failed: %s", e)
     return {
         "items": items,
         "source_id": source_id,
+        "table_id": table_id,
         "table_signature": table_signature,
+        "signature": signature_meta,
+        "min_score": min_score,
         "count": len(items),
     }
 
