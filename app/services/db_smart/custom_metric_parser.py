@@ -267,7 +267,29 @@ def parse_to_sql(
         from app.services.safe_sql_executor import check_table_whitelist as _check_whitelist  # type: ignore
 
     intent = extract_intent_heuristic(nl_query)
-    allowed = [n.lower() for n in (allowed_table_names or _extract_allowed_table_names(schema_context))]
+
+    # F-015 fail-closed: None = "kısıtlama yok, schema'dan türet"; [] = "fail closed".
+    # Önceki davranış: caller [] geçerse `or` schema fallback'e düşüyordu →
+    # whitelist check skip oluyordu (fail-open). Fix:
+    if allowed_table_names is not None and isinstance(allowed_table_names, list) \
+            and len(allowed_table_names) == 0:
+        return {
+            "success": False, "sql": None, "intent": intent,
+            "error": "Tablo whitelist boş — özel metrik için en az bir tablo seçilmeli.",
+            "explanation": None,
+        }
+
+    extracted = _extract_allowed_table_names(schema_context)
+    allowed_raw = allowed_table_names if allowed_table_names is not None else extracted
+    allowed = [n.lower() for n in allowed_raw if n]
+
+    # F-015: schema'dan da [] çıkıyorsa fail closed (LLM kısıtsız tablo üretmesin).
+    if not allowed:
+        return {
+            "success": False, "sql": None, "intent": intent,
+            "error": "Tablo whitelist türetilemedi (schema_context boş veya isimsiz).",
+            "explanation": None,
+        }
 
     try:
         gen = _generate_sql(nl_query, schema_context, allowed_tables=allowed)
@@ -289,11 +311,11 @@ def parse_to_sql(
         return {"success": False, "sql": sql, "intent": intent,
                 "error": f"Güvenlik doğrulaması: {err}", "explanation": gen.get("explanation")}
 
-    if allowed:
-        ok_wl, err_wl = _check_whitelist(sql, allowed, dialect=schema_context.get("dialect", "postgresql"))
-        if not ok_wl:
-            return {"success": False, "sql": sql, "intent": intent,
-                    "error": f"Tablo whitelist: {err_wl}", "explanation": gen.get("explanation")}
+    # F-015: allowed her zaman non-empty (yukarıda fail-closed kontrolü var)
+    ok_wl, err_wl = _check_whitelist(sql, allowed, dialect=schema_context.get("dialect", "postgresql"))
+    if not ok_wl:
+        return {"success": False, "sql": sql, "intent": intent,
+                "error": f"Tablo whitelist: {err_wl}", "explanation": gen.get("explanation")}
 
     return {
         "success": True, "sql": sql, "intent": intent,
@@ -343,6 +365,21 @@ def save_custom_metric(
         return None
     if not isinstance(sql, str) or not sql.strip():
         logger.warning("[db_smart.cmp] save_custom_metric: empty sql")
+        return None
+
+    # F-017 defense-in-depth: parse_to_sql atlanıp doğrudan save_custom_metric
+    # çağrılırsa metric_library'ye doğrulanmamış SQL girmesin. validate_sql
+    # SELECT-only + DDL/DML blok + comment-strip yapar.
+    try:
+        from app.services.safe_sql_executor import validate_sql as _validate_sql
+        ok, err = _validate_sql(sql)
+        if not ok:
+            logger.warning(
+                "[db_smart.cmp] save_custom_metric: SQL guvenlik reddi: %s", err,
+            )
+            return None
+    except Exception as e:
+        logger.warning("[db_smart.cmp] save_custom_metric: validate_sql import fail: %s", e)
         return None
 
     metric_key = _make_metric_key(name_tr, int(user_id))

@@ -333,3 +333,66 @@ def test_metric_key_deterministic():
     assert k1 == k2
     assert k1 != k3
     assert k1.startswith("custom_5_")
+
+
+# ---------- F-015 / F-017 fix dogrulama ----------
+
+def test_parse_to_sql_explicit_empty_allowed_fails_closed():
+    """F-015 fix: allowed_table_names=[] artik fail-closed (onceki: silent skip)."""
+    schema_context = {"dialect": "postgresql", "tables": [{"name": "t1", "columns": []}]}
+    res = cmp.parse_to_sql(
+        "test",
+        schema_context,
+        allowed_table_names=[],
+        _generate_sql=lambda *a, **k: {"success": True, "sql": "SELECT 1"},
+        _validate_sql=lambda s: (True, None),
+        _check_whitelist=lambda s, a, **k: (True, None),
+    )
+    assert res["success"] is False
+    assert "whitelist" in (res["error"] or "").lower() or "tablo" in (res["error"] or "").lower()
+
+
+def test_parse_to_sql_schema_extracted_empty_fails_closed():
+    """F-015 fix: schema'da name-li tablo yoksa fail-closed."""
+    schema_context = {"dialect": "postgresql",
+                      "tables": [{"columns": []}, {"columns": []}]}  # name yok
+    res = cmp.parse_to_sql(
+        "test",
+        schema_context,
+        _generate_sql=lambda *a, **k: {"success": True, "sql": "SELECT 1"},
+        _validate_sql=lambda s: (True, None),
+        _check_whitelist=lambda s, a, **k: (True, None),
+    )
+    assert res["success"] is False
+
+
+def test_save_custom_metric_validates_sql_defense():
+    """F-017 fix: save_custom_metric kendi basina validate_sql cagiriyor mu?"""
+    import unittest.mock as um
+
+    cur = _RecCursor(insert_id=42)
+    with um.patch("app.services.safe_sql_executor.validate_sql",
+                  return_value=(False, "DROP TABLE bulundu")):
+        mid = cmp.save_custom_metric(
+            cur, user_ctx={"id": 5, "company_id": 1},
+            name_tr="Bad Metric", sql="DROP TABLE users;",
+            source_id=1,
+        )
+    assert mid is None
+    # INSERT SQL'i hic atilmamis
+    assert not any("INSERT INTO dbsmart_metric_library" in c[0] for c in cur.executed)
+
+
+def test_save_custom_metric_validate_pass_continues():
+    """F-017 fix: validate_sql gecerse INSERT akisi devam eder."""
+    import unittest.mock as um
+
+    cur = _RecCursor(insert_id=42)
+    with um.patch("app.services.safe_sql_executor.validate_sql",
+                  return_value=(True, None)):
+        mid = cmp.save_custom_metric(
+            cur, user_ctx={"id": 5, "company_id": 1},
+            name_tr="Good Metric", sql="SELECT COUNT(*) FROM tickets",
+            source_id=1,
+        )
+    assert mid == 42

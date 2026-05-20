@@ -30,6 +30,7 @@ Event taxonomy (Prompt I):
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import threading
@@ -55,6 +56,12 @@ _PII_CACHE_TTL_SEC = 60
 _SATISFACTION_MIN = -1
 _SATISFACTION_MAX = 5
 _DURATION_MAX_MS = 2_147_483_647  # PG INTEGER upper bound
+
+# F-009: SQL/query yükü tutan ortak key isimleri — bu key'lerin string
+# değeri >32ch ise hash ile redact edilir (literal PII payload sızıntısını
+# defense-in-depth ile kapatır).
+_SQL_BEARING_KEYS = frozenset({"sql", "query", "statement", "sql_executed",
+                                "raw_sql", "last_sql"})
 
 # source_id → (set[column_name], unix_ts_loaded). Process-local cache.
 _PII_CACHE: Dict[int, tuple] = {}
@@ -103,26 +110,58 @@ def _load_pii_columns(cur: Any, source_id: int) -> Set[str]:
         return cols
 
 
+def _hash_redact(v: Any) -> Dict[str, Any]:
+    """F-009: değer fingerprint'i (sha1[:7]) + redacted bayrağı.
+
+    String için 'sql_hash' (SQL-bearing key'ler için), diğer tipler için
+    'value_hash'. Korelasyon hâlâ mümkün (aynı SQL → aynı hash) ama
+    literal içerik DB'de durmaz.
+    """
+    try:
+        s = v if isinstance(v, str) else json.dumps(v, default=str, sort_keys=True)
+        h = hashlib.sha1(s.encode("utf-8", errors="replace")).hexdigest()[:7]
+    except Exception:
+        h = "no_hash"
+    return {"_redacted": True, "value_hash": h}
+
+
 def _mask_payload(payload: Any, pii_cols: Set[str]) -> Any:
     """Payload ağacında pii_cols ile eşleşen key'lerin değerini maskeler.
 
-    - dict: key match → değer '***MASKED***'; değilse recursive scan.
+    - dict: key match (F-010: case-insensitive) → değer '***MASKED***';
+            SQL-bearing key + uzun string (F-009) → hash dict; değilse recursive scan.
     - list/tuple: her eleman recursive scan.
     - primitive: dokunma.
     Returns: yeni nesne (immutable koruma).
     """
-    if not pii_cols or payload is None:
+    # F-009: SQL-bearing redaction PII liste boş olsa bile aktif — kritik.
+    if payload is None:
         return payload
+    # F-010: pii_cols karşılaştırması için lower-cased set
+    pii_lower: Set[str] = {c.lower() for c in pii_cols} if pii_cols else set()
+    return _mask_payload_inner(payload, pii_lower)
+
+
+def _mask_payload_inner(payload: Any, pii_lower: Set[str]) -> Any:
     if isinstance(payload, dict):
         out: Dict[str, Any] = {}
         for k, v in payload.items():
-            if isinstance(k, str) and k in pii_cols:
-                out[k] = _MASK_VALUE
-            else:
-                out[k] = _mask_payload(v, pii_cols)
+            if isinstance(k, str):
+                kl = k.lower()
+                # F-010: PII key match case-insensitive
+                if pii_lower and kl in pii_lower:
+                    out[k] = _MASK_VALUE
+                    continue
+                # F-009: SQL-bearing key → uzun string'i hash ile redact
+                if kl in _SQL_BEARING_KEYS and isinstance(v, str) and len(v) > 32:
+                    r = _hash_redact(v)
+                    r["value_hash"] = f"sql:{r['value_hash']}"
+                    out[k] = r
+                    continue
+            out[k] = _mask_payload_inner(v, pii_lower)
         return out
     if isinstance(payload, (list, tuple)):
-        masked = [_mask_payload(item, pii_cols) for item in payload]
+        masked = [_mask_payload_inner(item, pii_lower) for item in payload]
         return masked if isinstance(payload, list) else tuple(masked)
     return payload
 

@@ -294,3 +294,55 @@ def test_track_explicit_duration_overrides_measured(fake_user_ctx):
         ev["duration_ms"] = 999
     _, params = [c for c in cur.executed if "INSERT" in c[0]][0]
     assert params[9] == 999
+
+
+# ---------- F-009 / F-010 fix dogrulama ----------
+
+def test_mask_payload_case_insensitive_key_match(fake_user_ctx):
+    """F-010 fix: PII key match case-insensitive olmali.
+    pii_cols = {'email'} ; payload key 'Email' / 'EMAIL' → maskelenmeli."""
+    cur = _FakeCursor(pii_rows=[("email",)], insert_id=99)
+    lr.record(
+        cur, "FilterApplied", fake_user_ctx,
+        suggestion_shown={"Email": "ali@x.com", "EMAIL": "veli@x.com", "other": "x"},
+        source_id=10,
+    )
+    insert_calls = [c for c in cur.executed if "INSERT" in c[0]]
+    assert insert_calls
+    params = insert_calls[0][1]
+    payload = json.loads(params[5])
+    assert payload["Email"] == "***MASKED***"
+    assert payload["EMAIL"] == "***MASKED***"
+    assert payload["other"] == "x"
+
+
+def test_mask_payload_sql_bearing_key_hash_redacted(fake_user_ctx):
+    """F-009 fix: 'sql'/'query' key altindaki uzun string hash-redact edilir
+    (literal PII payload sizintisi kapali). PII liste boş olsa bile aktif."""
+    cur = _FakeCursor(pii_rows=[], insert_id=99)
+    long_sql = "SELECT * FROM customers WHERE email='ali@x.com' AND tc='12345678901'"
+    lr.record(
+        cur, "SQLGenerated", fake_user_ctx,
+        suggestion_shown={"sql": long_sql, "short": "ok"},
+        source_id=10,
+    )
+    params = [c for c in cur.executed if "INSERT" in c[0]][0][1]
+    payload = json.loads(params[5])
+    assert isinstance(payload["sql"], dict)
+    assert payload["sql"].get("_redacted") is True
+    assert payload["sql"].get("value_hash", "").startswith("sql:")
+    assert payload["short"] == "ok"  # kisa string dokunulmadi
+    assert "ali@x.com" not in json.dumps(payload)  # literal PII gitmedi
+
+
+def test_mask_payload_short_sql_not_hashed(fake_user_ctx):
+    """F-009 boundary: <=32 char SQL string hash edilmez (debugging icin)."""
+    cur = _FakeCursor(pii_rows=[], insert_id=99)
+    lr.record(
+        cur, "SQLGenerated", fake_user_ctx,
+        suggestion_shown={"sql": "SELECT 1"},  # <=32 char
+        source_id=10,
+    )
+    params = [c for c in cur.executed if "INSERT" in c[0]][0][1]
+    payload = json.loads(params[5])
+    assert payload["sql"] == "SELECT 1"
