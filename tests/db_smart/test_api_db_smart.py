@@ -1030,3 +1030,112 @@ def test_get_template_by_key_404(client_authed, mock_db, monkeypatch):
     )
     resp = client_authed.get("/api/db-smart/templates/no_such_thing")
     assert resp.status_code == 404
+
+
+# ─────────────────────────────────────────────────────────────
+# F-021 / F-020 / N-4 — ARES security fixes (db_smart_api.py)
+# ─────────────────────────────────────────────────────────────
+
+def test_ast_patch_render_preview_injects_rls(client_authed, mock_session_with_ast):
+    """F-021 ARES KRİTİK: render_preview=True path'i inject_rls çağırmalı.
+
+    Non-admin user (is_admin=False, company_id=1) için preview SQL'inde
+    company_id filter görünmeli. Aksi halde preview SQL başka bir oturuma
+    copy-paste edildiğinde cross-tenant veri sızıntısı olur.
+    """
+    resp = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/ast/patch",
+        json={
+            "op": "add_column",
+            "args": {"column": {"expr": "t.status"}},
+            "render_preview": True,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["sql"] is not None
+    sql_lower = (data["sql"] or "").lower()
+    # inject_rls "{alias}.company_id" filter ekler → SQL'de company_id geçmeli
+    assert "company_id" in sql_lower, (
+        "render_preview SQL inject_rls çıktısını içermiyor — cross-tenant risk!"
+    )
+
+
+def test_ast_patch_render_preview_admin_no_rls(app_with_router, mock_db,
+                                                mock_session_with_ast):
+    """Admin user için inject_rls no-op döner — RLS filter eklenmemeli."""
+    def _fake_admin():
+        return {"id": 1, "username": "admin", "company_id": 1,
+                "role": "admin", "is_admin": True}
+
+    app_with_router.dependency_overrides[get_current_user] = _fake_admin
+    admin_client = TestClient(app_with_router)
+    resp = admin_client.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/ast/patch",
+        json={
+            "op": "add_column",
+            "args": {"column": {"expr": "t.status"}},
+            "render_preview": True,
+        },
+    )
+    assert resp.status_code == 200
+    # Admin path'inde company_id filter beklenmiyor (ama SQL render başarılı)
+    assert resp.json()["sql"] is not None
+
+
+def test_set_limit_upper_bound_clamped(client_authed, mock_session_with_ast):
+    """F-020 ARES ORTA: args.limit > 10M → 10M'e clamp edilmeli.
+
+    ast_renderer.set_limit upper bound check yok; user `limit=10**12`
+    gönderirse `LIMIT 1000000000000` SQL — PG için OOM / syntax risk.
+    db_smart_api dispatcher clamp ediyor.
+    """
+    resp = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/ast/patch",
+        json={"op": "set_limit", "args": {"limit": 10**12}},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    # AST'deki limit clamp'lendi mi?
+    assert data["ast"].get("limit") == 10_000_000, (
+        f"set_limit 10M'e clamp edilmedi, got: {data['ast'].get('limit')!r}"
+    )
+
+
+def test_set_limit_below_cap_unchanged(client_authed, mock_session_with_ast):
+    """Cap altındaki normal değerler değiştirilmemeli."""
+    resp = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/ast/patch",
+        json={"op": "set_limit", "args": {"limit": 5000}},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["ast"].get("limit") == 5000
+
+
+def test_explain_cache_thread_safe(monkeypatch):
+    """N-4: _EXPLAIN_CACHE concurrent put/get race olmamalı.
+
+    Lock altında FIFO eviction + KeyError defense ile KeyError/RuntimeError
+    fırlatmamalı. 8 worker × 200 iterasyon = 1600 put + 1600 get.
+    """
+    import concurrent.futures as _cf
+
+    db_smart_api._EXPLAIN_CACHE.clear()
+
+    def _worker(seed: int) -> int:
+        errors = 0
+        for i in range(200):
+            key = f"k-{seed}-{i % 50}"  # bazı key'ler tekrarlasın
+            try:
+                db_smart_api._explain_cache_put(key, {"v": i})
+                db_smart_api._explain_cache_get(key)
+            except Exception:
+                errors += 1
+        return errors
+
+    with _cf.ThreadPoolExecutor(max_workers=8) as ex:
+        results = list(ex.map(_worker, range(8)))
+
+    assert sum(results) == 0, f"Concurrent cache erişiminde hata: {results}"
+    # Cache MAX sınırını aşmamış olmalı
+    assert len(db_smart_api._EXPLAIN_CACHE) <= db_smart_api._EXPLAIN_CACHE_MAX
