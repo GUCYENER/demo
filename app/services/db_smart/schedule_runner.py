@@ -32,6 +32,9 @@ def _utcnow() -> datetime:
 def find_due_reports(cur: Any, limit: int) -> List[Dict[str, Any]]:
     """schedule_next_run <= NOW() olan raporları FOR UPDATE SKIP LOCKED ile kilitle.
 
+    T-4 fix: NULL schedule_next_run yalnızca first-run (last_run_at IS NULL)
+    için eligible. Önceki davranış: invalid cron sonrası NULL'da kalmış
+    record her tick'te re-run ediyordu (sonsuz döngü).
     SKIP LOCKED: aynı tick'te birden fazla worker (gelecekte) ayni satıra
     çarpmasın diye. Mevcut single-process scheduler için no-op ama future-proof.
     """
@@ -43,7 +46,10 @@ def find_due_reports(cur: Any, limit: int) -> List[Dict[str, Any]]:
           FROM dbsmart_saved_reports
          WHERE schedule_cron IS NOT NULL
            AND last_sql IS NOT NULL
-           AND (schedule_next_run IS NULL OR schedule_next_run <= NOW())
+           AND (
+                (schedule_next_run IS NULL AND last_run_at IS NULL)
+                OR schedule_next_run <= NOW()
+               )
          ORDER BY schedule_next_run NULLS FIRST
          LIMIT %s
          FOR UPDATE SKIP LOCKED
@@ -53,6 +59,66 @@ def find_due_reports(cur: Any, limit: int) -> List[Dict[str, Any]]:
     cols = ["id", "user_id", "company_id", "source_id",
             "last_sql", "last_dialect", "schedule_cron", "run_count"]
     return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def _verify_owner_auth(cur: Any, user_id: Any, source_id: Any) -> tuple:
+    """A-4: rapor çalışmadan ÖNCE owner'ın hâlâ aktif + source'a erişimi var mı?
+
+    Returns: (ok: bool, reason: Optional[str])
+    - reason 'user_not_found' | 'user_inactive' | 'access_revoked' | 'missing'
+    """
+    if not user_id or not source_id:
+        return (False, "missing")
+    cur.execute(
+        "SELECT is_active FROM users WHERE id = %s LIMIT 1",
+        (int(user_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return (False, "user_not_found")
+    if not bool(row[0]):
+        return (False, "user_inactive")
+    # can_execute on source: user-direct OR org-membership
+    cur.execute(
+        """
+        SELECT 1
+          FROM data_source_permissions p
+          LEFT JOIN user_organizations uo
+                 ON uo.user_id = %s
+                AND p.subject_type = 'org'
+                AND uo.org_id = p.subject_id
+         WHERE p.source_id = %s
+           AND p.can_execute = TRUE
+           AND ((p.subject_type = 'user' AND p.subject_id = %s)
+                OR (p.subject_type = 'org' AND uo.id IS NOT NULL))
+         LIMIT 1
+        """,
+        (int(user_id), int(source_id), int(user_id)),
+    )
+    if cur.fetchone() is None:
+        return (False, "access_revoked")
+    return (True, None)
+
+
+def _auto_pause(cur: Any, report_id: int, snapshot: Dict[str, Any]) -> None:
+    """A-4/T-4 fix: schedule_cron=NULL ile raporu otomatik durdur.
+
+    Snapshot içine 'error' alanı yazılır; ileride UI 'paused' badge gösterir.
+    """
+    try:
+        cur.execute(
+            """
+            UPDATE dbsmart_saved_reports
+               SET schedule_cron     = NULL,
+                   last_run_snapshot = %s::jsonb,
+                   last_run_at       = NOW(),
+                   updated_at        = NOW()
+             WHERE id = %s
+            """,
+            (json.dumps(snapshot, default=str), int(report_id)),
+        )
+    except Exception as e:  # pragma: no cover - DB failure path
+        logger.exception("[schedule_runner] _auto_pause fail report=%s: %s", report_id, e)
 
 
 def _load_source_for_schedule(cur: Any, source_id: int) -> Optional[Dict[str, Any]]:
@@ -112,6 +178,15 @@ def run_one(cur: Any, report: Dict[str, Any]) -> Dict[str, Any]:
     row_count: Optional[int] = None
     err_msg: Optional[str] = None
 
+    # A-4: auth re-check — query çalışmadan ÖNCE owner'ın aktif + erişimi var mı?
+    auth_ok, auth_reason = _verify_owner_auth(cur, report.get("user_id"), source_id)
+    if not auth_ok:
+        err_msg = f"auth_revoked:{auth_reason}"
+        snapshot["error"] = err_msg
+        _auto_pause(cur, rid, snapshot)
+        return {"ok": False, "report_id": rid, "row_count": None, "error": err_msg}
+
+    src: Optional[Dict[str, Any]] = None
     try:
         src = _load_source_for_schedule(cur, int(source_id)) if source_id else None
         if not src:
@@ -141,8 +216,36 @@ def run_one(cur: Any, report: Dict[str, Any]) -> Dict[str, Any]:
         err_msg = f"{type(e).__name__}: {e}"
         snapshot["error"] = err_msg
         logger.exception("[schedule_runner] run_one fail report=%s", rid)
+    finally:
+        # A-5: defense-in-depth — execute sonrası password'ü dict'ten temizle
+        # (snapshot'a sızmasın, log/repr'da görünmesin).
+        if isinstance(src, dict) and "password" in src:
+            src["password"] = ""
 
     next_run = _compute_next_run(report["schedule_cron"])
+
+    # T-4: invalid cron → auto-pause (schedule_cron NULL, run_count++)
+    if next_run is None:
+        if "error" not in snapshot:
+            snapshot["error"] = "invalid_cron"
+        snapshot["cron"] = report.get("schedule_cron")
+        try:
+            cur.execute(
+                """
+                UPDATE dbsmart_saved_reports
+                   SET schedule_cron     = NULL,
+                       last_run_snapshot = %s::jsonb,
+                       last_run_at       = NOW(),
+                       run_count         = COALESCE(run_count, 0) + 1,
+                       schedule_next_run = NULL,
+                       updated_at        = NOW()
+                 WHERE id = %s
+                """,
+                (json.dumps(snapshot, default=str), rid),
+            )
+        except Exception as e:
+            logger.exception("[schedule_runner] T-4 auto-pause UPDATE fail report=%s: %s", rid, e)
+        return {"ok": ok, "report_id": rid, "row_count": row_count, "error": err_msg or "invalid_cron"}
 
     try:
         cur.execute(
