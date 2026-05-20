@@ -48,6 +48,7 @@ from app.services.db_smart import (
     eligibility,     # v3.30.0 FAZ 1 G1.2
     fk_graph,        # v3.30.0 FAZ 1 G1.3
     metric_engine,   # v3.30.0 FAZ 1 P3 G1.4
+    recommendation,  # v3.30.0 FAZ 2 P9 G2.3
 )
 
 logger = logging.getLogger(__name__)
@@ -653,10 +654,50 @@ def get_recommendations(
     exec_id: str = Path(..., min_length=1, max_length=64),
     current_user: Dict[str, Any] = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """Sonuç analizi → rapor önerisi (Prompt H)."""
+    """Sonuç analizi → rapor önerisi (Prompt H).
+
+    FAZ 2 P9: gerçek dbsmart_executions/dbsmart_report_recommendations entegrasyonu
+    bandit + öğrenme döngüsüyle (FAZ 4) bağlanacak. Şimdilik exec_id resolution
+    stub — caller mevcut sonucu /recommendations/preview ile transient analiz edebilir.
+    """
     _require_user_id(current_user)
     with get_db_context() as conn:
         cur = conn.cursor()
         apply_vyra_user_context(cur, current_user)
-        # TODO (FAZ 2): dbsmart_report_recommendations'tan bandit-skorlu öneriler
+        # TODO (FAZ 4): dbsmart_report_recommendations'tan bandit-skorlu öneriler
     return {"exec_id": exec_id, "recommendations": []}
+
+
+class RecommendPreviewRequest(BaseModel):
+    """FAZ 2 P9 G2.3 — Transient recommendation: caller execute sonucundan
+    rows+columns ile direkt analiz çağırır (exec history persist YOK).
+    """
+    columns: List[str] = Field(default_factory=list)
+    rows: List[Any] = Field(default_factory=list)
+    max_results: int = Field(default=5, ge=1, le=20)
+
+
+@router.post("/recommendations/preview")
+def post_recommendation_preview(
+    body: RecommendPreviewRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Transient sonuç → chart önerileri + insight'lar (deterministik, LLM-siz).
+
+    Latency budget: <50ms (rows sampled to first 500). Saf hesap, RLS gerekmez
+    (caller'ın elindeki veri zaten kendi yetkisinde toplandı).
+    """
+    _require_user_id(current_user)
+    try:
+        charts = recommendation.recommend_charts(
+            body.rows, body.columns, max_results=body.max_results,
+        )
+        insights = recommendation.detect_insights(body.rows, body.columns)
+    except Exception as e:
+        logger.warning("[db_smart.recommend] preview failed: %s", e)
+        raise HTTPException(status_code=400, detail=f"Recommend hesabı başarısız: {e}")
+    return {
+        "profile": charts.get("profile"),
+        "charts": charts.get("items", []),
+        "insights": insights,
+    }

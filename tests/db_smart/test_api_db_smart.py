@@ -229,6 +229,41 @@ def test_get_recommendations_envelope(client_authed):
     assert resp.json()["exec_id"] == "exec-uuid-123"
 
 
+def test_recommendations_preview_returns_charts_and_insights(client_authed):
+    """FAZ 2 P9 G2.3 — transient öneri endpoint'i."""
+    resp = client_authed.post(
+        "/api/db-smart/recommendations/preview",
+        json={
+            "columns": ["status", "cnt"],
+            "rows": [["open", 10], ["closed", 20], ["wip", 5]],
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "charts" in data and "insights" in data and "profile" in data
+    vizs = [c["viz"] for c in data["charts"]]
+    assert "donut" in vizs  # 3 kategori
+
+
+def test_recommendations_preview_empty_rows(client_authed):
+    resp = client_authed.post(
+        "/api/db-smart/recommendations/preview",
+        json={"columns": ["x"], "rows": []},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["charts"] == []
+
+
+def test_recommendations_preview_outlier_insight(client_authed):
+    resp = client_authed.post(
+        "/api/db-smart/recommendations/preview",
+        json={"columns": ["v"], "rows": [[10], [12], [11], [9], [13], [500]]},
+    )
+    assert resp.status_code == 200
+    kinds = [i["kind"] for i in resp.json()["insights"]]
+    assert "outlier_high" in kinds
+
+
 # ─────────────────────────────────────────────────────────────
 # FAZ 2 P8 G2.1 — AST patch endpoint
 # ─────────────────────────────────────────────────────────────
