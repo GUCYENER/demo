@@ -141,8 +141,16 @@ def create_session(
     with get_db_context() as conn:
         cur = conn.cursor()
         apply_vyra_user_context(cur, current_user)
-        # FAZ 1 stub — session_manager gerçek INSERT FAZ 1 G1 dolduracak.
-        session_uid = session_manager.create_session(current_user, body.source_id)
+        try:
+            session_uid = session_manager.create_session(
+                cur, current_user, body.source_id,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except RuntimeError as e:
+            # RLS reddi veya INSERT failure → 403
+            raise HTTPException(status_code=403, detail=str(e))
+        conn.commit()
     return CreateSessionResponse(session_uid=session_uid, current_step=0, status="active")
 
 
@@ -156,10 +164,9 @@ def get_session(
     with get_db_context() as conn:
         cur = conn.cursor()
         apply_vyra_user_context(cur, current_user)
-        ctx = session_manager.load_session(session_uid, current_user)
+        ctx = session_manager.load_session(cur, session_uid, current_user)
     if ctx is None:
-        # FAZ 1 stub — gerçek 404 mantığı session_manager dolunca devreye girer.
-        return {"session_uid": session_uid, "context": {}, "current_step": 0, "status": "stub"}
+        raise HTTPException(status_code=404, detail="Oturum bulunamadı veya yetkiniz yok.")
     return ctx
 
 
@@ -172,12 +179,28 @@ def post_step(
     step_n: int = Path(..., ge=0, le=len(state_machine.WIZARD_NODES) - 1),
     current_user: Dict[str, Any] = Depends(get_current_user),
 ) -> StepResponse:
-    """Kullanıcı seçimini kaydet + next step önerilerini döner."""
+    """Kullanıcı seçimini kaydet + next step önerilerini döner.
+
+    P5: state_machine sonucu ek olarak session_manager.update_context ile
+    DB'ye persiste edilir (context'e step_{n} key'i altında payload yazılır).
+    """
     _require_user_id(current_user)
     with get_db_context() as conn:
         cur = conn.cursor()
         apply_vyra_user_context(cur, current_user)
         result = state_machine.run_wizard_step(session_uid, step_n, body.payload, current_user)
+        # P5: payload + current_step persist
+        partial = {("step_" + str(step_n)): body.payload}
+        # state_machine bir merge ipucu döndürdüyse (context_patch), onu da uygula
+        ctx_patch = result.get("context_patch") if isinstance(result, dict) else None
+        if isinstance(ctx_patch, dict):
+            partial.update(ctx_patch)
+        next_step = result.get("next_step")
+        session_manager.update_context(
+            cur, session_uid, partial,
+            current_user, current_step=next_step if next_step is not None else step_n,
+        )
+        conn.commit()
     return StepResponse(
         session_uid=session_uid,
         current_step=step_n,
@@ -210,8 +233,15 @@ def post_preview(
 
     wizard_state: Optional[Dict[str, Any]] = body.wizard_state if body else None
     if not wizard_state:
-        loaded = session_manager.load_session(session_uid, current_user)
-        wizard_state = (loaded or {}).get("wizard_state") if loaded else None
+        # P5: gerçek session_manager.load_session — cursor RLS-scoped.
+        with get_db_context() as _conn_lookup:
+            _cur_lookup = _conn_lookup.cursor()
+            apply_vyra_user_context(_cur_lookup, current_user)
+            loaded = session_manager.load_session(_cur_lookup, session_uid, current_user)
+        # Context içine wizard_state'i step_* anahtarlarından inşa etmek state_machine
+        # işi; ham context'i transient wizard_state olarak kullan.
+        ctx = (loaded or {}).get("context") if loaded else None
+        wizard_state = ctx.get("wizard_state") if isinstance(ctx, dict) else None
 
     if not wizard_state:
         # G1.7 öncesi: state bulunmadıysa boş şablonu döndür
