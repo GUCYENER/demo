@@ -36,6 +36,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import threading
 import time as _time
 from typing import Any, Dict, List, Optional
 
@@ -273,6 +274,52 @@ _AST_OP_WHITELIST = {
     "set_limit",
 }
 
+# F-020 (ARES ORTA): set_limit dispatch'inde args.limit üst sınır clamp'i.
+# ast_renderer.set_limit non-negative int'i kabul eder ama upper-bound yok →
+# `limit: 10**18` → SQL syntax error / OOM riski. Bu dosyada clamp ederek
+# ast_renderer.py'ye dokunmuyoruz (başka agent'lar paralel çalışıyor).
+_AST_SET_LIMIT_MAX = 10_000_000  # 10M satır cap
+
+
+def _detect_company_scoped_aliases(ast: Dict[str, Any]) -> List[str]:
+    """AST'in from + joins yapısından alias listesi türet.
+
+    F-021 (ARES KRİTİK) fix: `/ast/patch render_preview=true` path'i
+    `inject_rls`'i atlıyordu — preview SQL'i başka context'e copy-paste
+    edilirse cross-tenant sızıntı riski. Heuristic: tüm tablo alias'larını
+    company-scoped say (over-restrictive ama güvenli). is_admin user için
+    `inject_rls` zaten no-op döner; non-admin için company_id filter
+    eklenir (alias.company_id = <ctx.company_id>).
+    """
+    aliases: List[str] = []
+    if not isinstance(ast, dict):
+        return aliases
+    src = ast.get("from")
+    if isinstance(src, dict):
+        a = src.get("alias") or src.get("table")
+        if isinstance(a, str) and a:
+            aliases.append(a)
+    joins = ast.get("joins") or []
+    if isinstance(joins, list):
+        for j in joins:
+            if not isinstance(j, dict):
+                continue
+            tbl = j.get("table")
+            if isinstance(tbl, dict):
+                a = tbl.get("alias") or tbl.get("table") or tbl.get("name")
+            else:
+                a = j.get("alias") or (tbl if isinstance(tbl, str) else None)
+            if isinstance(a, str) and a:
+                aliases.append(a)
+    # Dedup, sıralı
+    seen = set()
+    out: List[str] = []
+    for a in aliases:
+        if a not in seen:
+            seen.add(a)
+            out.append(a)
+    return out
+
 
 @router.post("/sessions/{session_uid}/ast/patch", response_model=AstPatchResponse)
 def post_ast_patch(
@@ -308,6 +355,14 @@ def post_ast_patch(
         fn = getattr(ast_renderer, op, None)
         if not callable(fn):
             raise HTTPException(status_code=400, detail=f"AST op çağrılamadı: {op}")
+
+        # F-020: set_limit dispatch'inde args.limit clamp (10M cap).
+        # _AST_OP_WHITELIST kontrolünden SONRA, fn(...) çağrısından ÖNCE.
+        if op == "set_limit" and isinstance(body.args, dict) and "limit" in body.args:
+            _lim = body.args.get("limit")
+            if isinstance(_lim, int) and _lim > _AST_SET_LIMIT_MAX:
+                body.args["limit"] = _AST_SET_LIMIT_MAX
+
         try:
             new_ast = fn(ast, **(body.args or {}))
         except TypeError as e:
@@ -329,7 +384,16 @@ def post_ast_patch(
     if body.render_preview:
         dialect = body.dialect or ctx.get("dialect") or "postgresql"
         try:
-            rendered = ast_renderer.render(new_ast, dialect, current_user)
+            # F-021 (ARES KRİTİK): render'dan ÖNCE inject_rls — preview SQL
+            # başka path'e copy-paste edilirse cross-tenant sızıntı olmasın.
+            # company_scoped_aliases AST'in from+joins yapısından heuristic
+            # olarak türetilir; admin için inject_rls no-op döner.
+            _company_aliases = _detect_company_scoped_aliases(new_ast)
+            guarded_ast = ast_renderer.inject_rls(
+                new_ast, current_user,
+                company_scoped_tables=_company_aliases,
+            )
+            rendered = ast_renderer.render(guarded_ast, dialect, current_user)
             sql = rendered["sql"]
             binds = rendered["binds"]
             dialect_out = rendered["dialect"]
@@ -377,9 +441,13 @@ def post_ast_diff(
 
 # In-process EXPLAIN cache — 5sn TTL, max 256 entry (FIFO eviction).
 # Drag-drop sırasında aynı AST için tekrar EXPLAIN çağrılmasın diye.
+# N-4: dict mutation thread-safe değil; FIFO eviction'da next(iter(...)) +
+# pop arasında concurrent put → KeyError race riski. Module-level Lock ile
+# get/put kritik bölgeleri serialize.
 _EXPLAIN_CACHE: Dict[str, Any] = {}
 _EXPLAIN_CACHE_TTL_S = 5.0
 _EXPLAIN_CACHE_MAX = 256
+_EXPLAIN_CACHE_LOCK = threading.Lock()
 
 
 def _explain_cache_key(user_id: int, ast: Dict[str, Any], dialect: str) -> str:
@@ -389,24 +457,27 @@ def _explain_cache_key(user_id: int, ast: Dict[str, Any], dialect: str) -> str:
 
 
 def _explain_cache_get(key: str) -> Optional[Dict[str, Any]]:
-    entry = _EXPLAIN_CACHE.get(key)
-    if not entry:
-        return None
-    if _time.monotonic() - entry["ts"] > _EXPLAIN_CACHE_TTL_S:
-        _EXPLAIN_CACHE.pop(key, None)
-        return None
-    return entry["value"]
+    with _EXPLAIN_CACHE_LOCK:
+        entry = _EXPLAIN_CACHE.get(key)
+        if not entry:
+            return None
+        if _time.monotonic() - entry["ts"] > _EXPLAIN_CACHE_TTL_S:
+            _EXPLAIN_CACHE.pop(key, None)
+            return None
+        return entry["value"]
 
 
 def _explain_cache_put(key: str, value: Dict[str, Any]) -> None:
-    if len(_EXPLAIN_CACHE) >= _EXPLAIN_CACHE_MAX:
-        # FIFO eviction — en eski entry'yi at
-        try:
-            oldest = next(iter(_EXPLAIN_CACHE))
-            _EXPLAIN_CACHE.pop(oldest, None)
-        except StopIteration:
-            pass
-    _EXPLAIN_CACHE[key] = {"ts": _time.monotonic(), "value": value}
+    with _EXPLAIN_CACHE_LOCK:
+        if len(_EXPLAIN_CACHE) >= _EXPLAIN_CACHE_MAX:
+            # FIFO eviction — en eski entry'yi at
+            try:
+                oldest = next(iter(_EXPLAIN_CACHE))
+                _EXPLAIN_CACHE.pop(oldest, None)
+            except (StopIteration, KeyError):
+                # KeyError: concurrent eviction (lock altında olsa da defansif)
+                pass
+        _EXPLAIN_CACHE[key] = {"ts": _time.monotonic(), "value": value}
 
 
 class ExplainAstRequest(BaseModel):
