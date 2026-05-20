@@ -78,6 +78,7 @@ def test_router_registers_all_12_endpoints():
         "/api/db-smart/sources/{source_id}/tables/{table_id}/related",
         "/api/db-smart/sources/{source_id}/tables/{table_id}/columns",
         "/api/db-smart/metrics",
+        "/api/db-smart/metrics/custom",  # FAZ 2 P11 G2.2
         "/api/db-smart/recommendations/{exec_id}",
     }
     missing = expected - paths
@@ -262,6 +263,128 @@ def test_recommendations_preview_outlier_insight(client_authed):
     assert resp.status_code == 200
     kinds = [i["kind"] for i in resp.json()["insights"]]
     assert "outlier_high" in kinds
+
+
+# ─────────────────────────────────────────────────────────────
+# FAZ 2 P11 G2.2 — Custom Metric NL→SQL endpoint
+# ─────────────────────────────────────────────────────────────
+
+def test_custom_metric_returns_sql_without_save(client_authed, monkeypatch):
+    """parse_to_sql happy path + save=False → kayıt yok."""
+    monkeypatch.setattr(
+        db_smart_api.custom_metric_parser, "build_metric_schema_context",
+        lambda cur, sid, tids, dialect="postgresql": {
+            "source_name": "ACME", "dialect": "postgresql",
+            "tables": [{"name": "orders", "columns": [{"name": "amount", "data_type": "DECIMAL"}],
+                        "col_enrichments": {}}],
+        },
+    )
+    monkeypatch.setattr(
+        db_smart_api.custom_metric_parser, "parse_to_sql",
+        lambda q, ctx, **kw: {
+            "success": True, "sql": "SELECT SUM(amount) FROM orders",
+            "intent": {"agg_func": "SUM"}, "error": None, "explanation": "Toplam",
+        },
+    )
+
+    resp = client_authed.post(
+        "/api/db-smart/metrics/custom",
+        json={
+            "nl_query": "Toplam satış",
+            "source_id": 1,
+            "table_ids": [10],
+            "save": False,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    assert "SUM(amount)" in data["sql"]
+    assert data["intent"]["agg_func"] == "SUM"
+    assert data["saved_metric_id"] is None
+    assert data["metric_key"] is None
+
+
+def test_custom_metric_save_requires_name(client_authed):
+    resp = client_authed.post(
+        "/api/db-smart/metrics/custom",
+        json={"nl_query": "Toplam satış", "source_id": 1, "table_ids": [10], "save": True},
+    )
+    assert resp.status_code == 400
+    assert "name_tr" in resp.json()["detail"]
+
+
+def test_custom_metric_invalid_viz_rejected(client_authed):
+    resp = client_authed.post(
+        "/api/db-smart/metrics/custom",
+        json={"nl_query": "Toplam satış", "source_id": 1, "table_ids": [10],
+              "default_viz": "totally_fake_viz"},
+    )
+    assert resp.status_code == 400
+
+
+def test_custom_metric_save_inserts(client_authed, monkeypatch):
+    """save=True → save_custom_metric çağrılır, saved_metric_id döner."""
+    monkeypatch.setattr(
+        db_smart_api.custom_metric_parser, "build_metric_schema_context",
+        lambda cur, sid, tids, dialect="postgresql": {
+            "source_name": "ACME", "dialect": "postgresql",
+            "tables": [{"name": "orders", "columns": [], "col_enrichments": {}}],
+        },
+    )
+    monkeypatch.setattr(
+        db_smart_api.custom_metric_parser, "parse_to_sql",
+        lambda q, ctx, **kw: {
+            "success": True, "sql": "SELECT SUM(amount) FROM orders",
+            "intent": {"agg_func": "SUM"}, "error": None, "explanation": "X",
+        },
+    )
+    monkeypatch.setattr(
+        db_smart_api.custom_metric_parser, "save_custom_metric",
+        lambda cur, **kw: 77,
+    )
+
+    resp = client_authed.post(
+        "/api/db-smart/metrics/custom",
+        json={
+            "nl_query": "Toplam satış",
+            "source_id": 1,
+            "table_ids": [10],
+            "save": True,
+            "name_tr": "Aylık Toplam Satış",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    assert data["saved_metric_id"] == 77
+    assert data["metric_key"] and data["metric_key"].startswith("custom_42_")
+
+
+def test_custom_metric_llm_failure_returns_success_false(client_authed, monkeypatch):
+    monkeypatch.setattr(
+        db_smart_api.custom_metric_parser, "build_metric_schema_context",
+        lambda cur, sid, tids, dialect="postgresql": {
+            "source_name": "ACME", "dialect": "postgresql",
+            "tables": [{"name": "orders", "columns": [], "col_enrichments": {}}],
+        },
+    )
+    monkeypatch.setattr(
+        db_smart_api.custom_metric_parser, "parse_to_sql",
+        lambda q, ctx, **kw: {
+            "success": False, "sql": None,
+            "intent": {"agg_func": None}, "error": "LLM zaman aşımı", "explanation": None,
+        },
+    )
+
+    resp = client_authed.post(
+        "/api/db-smart/metrics/custom",
+        json={"nl_query": "Toplam satış", "source_id": 1, "table_ids": [10]},
+    )
+    # Endpoint kullanıcı hatası değil — 200 + success=False
+    assert resp.status_code == 200
+    assert resp.json()["success"] is False
+    assert "LLM zaman aşımı" in resp.json()["error"]
 
 
 # ─────────────────────────────────────────────────────────────

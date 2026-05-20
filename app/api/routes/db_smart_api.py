@@ -48,7 +48,8 @@ from app.services.db_smart import (
     eligibility,     # v3.30.0 FAZ 1 G1.2
     fk_graph,        # v3.30.0 FAZ 1 G1.3
     metric_engine,   # v3.30.0 FAZ 1 P3 G1.4
-    recommendation,  # v3.30.0 FAZ 2 P9 G2.3
+    recommendation,        # v3.30.0 FAZ 2 P9 G2.3
+    custom_metric_parser,  # v3.30.0 FAZ 2 P11 G2.2
 )
 
 logger = logging.getLogger(__name__)
@@ -647,6 +648,100 @@ def list_metrics(
         "min_score": min_score,
         "count": len(items),
     }
+
+
+# ─────────────────────────────────────────────────────────────
+# FAZ 2 P11 G2.2 — Custom Metric NL→SQL
+# ─────────────────────────────────────────────────────────────
+
+class CustomMetricRequest(BaseModel):
+    """Türkçe doğal dil metrik tanımı → SQL + opsiyonel kütüphaneye kaydet."""
+    nl_query: str = Field(..., min_length=2, max_length=2000)
+    source_id: int = Field(..., ge=1)
+    table_ids: List[int] = Field(default_factory=list, max_length=10)
+    dialect: str = Field(default="postgresql", max_length=20)
+    save: bool = Field(default=False, description="True → dbsmart_metric_library'ye kaydet")
+    name_tr: Optional[str] = Field(default=None, max_length=160, description="save=True ise zorunlu")
+    description_tr: Optional[str] = Field(default=None, max_length=2000)
+    default_viz: str = Field(default="table", max_length=40)
+
+
+class CustomMetricResponse(BaseModel):
+    success: bool
+    sql: Optional[str] = None
+    intent: Dict[str, Any] = Field(default_factory=dict)
+    error: Optional[str] = None
+    explanation: Optional[str] = None
+    saved_metric_id: Optional[int] = None
+    metric_key: Optional[str] = None
+
+
+@router.post("/metrics/custom", response_model=CustomMetricResponse)
+def post_custom_metric(
+    body: CustomMetricRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> CustomMetricResponse:
+    """Doğal dilden özel metrik üret + opsiyonel olarak kütüphaneye kaydet.
+
+    Pipeline:
+        1. Schema context build (table_ids ile slim — LLM'in görmesi gereken
+           tablo/kolon kümesi sınırlı tutulur, prompt boyutu küçük).
+        2. parse_to_sql → generate_sql + validate_sql + check_table_whitelist.
+        3. save=True ise dbsmart_metric_library INSERT (is_official=FALSE).
+
+    save=True ama name_tr boş → 400.
+    table_ids boş → parser zaten error döner; status 200 (success=False).
+    """
+    _require_user_id(current_user)
+    if body.save and not (body.name_tr and body.name_tr.strip()):
+        raise HTTPException(status_code=400, detail="save=True için name_tr zorunlu.")
+    if body.default_viz not in VALID_VIZ_TYPES:
+        raise HTTPException(status_code=400, detail=f"Geçersiz viz tipi: {body.default_viz}")
+
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        apply_vyra_user_context(cur, current_user)
+        try:
+            schema_ctx = custom_metric_parser.build_metric_schema_context(
+                cur, body.source_id, body.table_ids, dialect=body.dialect,
+            )
+        except Exception as e:
+            logger.warning("[db_smart] custom_metric schema build failed: %s", e)
+            raise HTTPException(status_code=500, detail=f"Schema context kurulumu başarısız: {e}")
+
+        result = custom_metric_parser.parse_to_sql(body.nl_query, schema_ctx)
+
+        saved_id: Optional[int] = None
+        metric_key: Optional[str] = None
+        if result.get("success") and body.save:
+            metric_key = custom_metric_parser._make_metric_key(
+                body.name_tr or "", int(current_user["id"]),
+            )
+            saved_id = custom_metric_parser.save_custom_metric(
+                cur,
+                user_ctx=current_user,
+                name_tr=body.name_tr or "",
+                sql=result["sql"],
+                source_id=body.source_id,
+                description_tr=body.description_tr,
+                default_viz=body.default_viz,
+                intent=result.get("intent"),
+            )
+            if saved_id is not None:
+                try:
+                    conn.commit()
+                except Exception:
+                    pass
+
+    return CustomMetricResponse(
+        success=bool(result.get("success")),
+        sql=result.get("sql"),
+        intent=result.get("intent") or {},
+        error=result.get("error"),
+        explanation=result.get("explanation"),
+        saved_metric_id=saved_id,
+        metric_key=metric_key if saved_id is not None else None,
+    )
 
 
 @router.get("/recommendations/{exec_id}")
