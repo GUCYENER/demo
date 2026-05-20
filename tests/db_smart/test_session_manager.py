@@ -299,9 +299,26 @@ def test_mark_abandoned_returns_false_on_no_match(user_ctx, session_uid_sample):
 # P6 — L1 cache (Redis-backed, graceful)
 # ─────────────────────────────────────────────────────────────
 
-def test_create_session_warms_cache(user_ctx, fake_cache):
+def test_cache_not_populated_before_commit(user_ctx, fake_cache):
+    """ARES YÜKSEK: create_session içinde cache yazılmamalı (caller commit
+    etmeden cache phantom oturum tutar). Cache ancak commit sonrası
+    cache_warm_created() ile warm-up edilir."""
     cur = _RecCursor(responses=[("fake",)])
     uid = sm.create_session(cur, user_ctx, source_id=3, initial_context={"x": 1})
+    assert isinstance(uid, str)
+    # Önce INSERT yapıldı, AMA cache henüz yazılmadı.
+    assert fake_cache.set_calls == 0
+    assert fake_cache.store == {}
+
+
+def test_cache_populated_after_commit(user_ctx, fake_cache):
+    """ARES YÜKSEK: caller conn.commit() başarılı olduktan sonra
+    cache_warm_created() explicit çağrıldığında cache doğru payload ile dolar."""
+    cur = _RecCursor(responses=[("fake",)])
+    uid = sm.create_session(cur, user_ctx, source_id=3, initial_context={"x": 1})
+    # Commit phase'i simüle et:
+    assert fake_cache.set_calls == 0
+    sm.cache_warm_created(uid, user_ctx, source_id=3, initial_context={"x": 1})
     assert fake_cache.set_calls == 1
     raw = list(fake_cache.store.values())[0]
     payload = json.loads(raw.decode("utf-8"))
@@ -309,6 +326,16 @@ def test_create_session_warms_cache(user_ctx, fake_cache):
     assert payload["company_id"] == 42
     assert payload["context"] == {"x": 1}
     assert payload["session_uid"] == uid
+    assert payload["status"] == "active"
+    assert payload["current_step"] == 0
+
+
+def test_cache_warm_created_noop_without_user_or_company(fake_cache):
+    """cache_warm_created defensive: user_id/company_id eksikse sessiz no-op."""
+    sm.cache_warm_created("uid-x", {"id": None, "company_id": 1})
+    sm.cache_warm_created("uid-y", {"id": 1, "company_id": None})
+    sm.cache_warm_created("uid-z", {})
+    assert fake_cache.set_calls == 0
 
 
 def test_load_session_cache_hit_skips_db(user_ctx, session_uid_sample, fake_cache):
@@ -351,23 +378,51 @@ def test_load_session_cache_cross_tenant_rejected(user_ctx, session_uid_sample, 
     assert len(cur.executed) == 1
 
 
-def test_load_session_admin_bypass_cache_guard(session_uid_sample, fake_cache):
-    """Admin user_ctx → cache cross-tenant guard'ı atlanır (admin tüm tenant)."""
+def test_admin_does_not_bypass_company_scoping(session_uid_sample, fake_cache):
+    """ARES KRİTİK: is_admin=True cache cross-tenant erişimini side-effect
+    olarak açmamalı. Admin user_ctx company_id != cache payload company_id ise
+    cache HIT yerine MISS davranışı → DB'ye (RLS-bound) düşmeli.
+
+    apply_vyra_user_context admin'in OWN company_id'sini set eder; cache path
+    bunu bypass ederse downstream sorgular admin'in kendi tenant'ı dışındaki
+    veriyi sızdırır. Cross-tenant erişim ancak ayrı explicit admin API ile
+    yapılabilir."""
     admin = {"id": 1, "company_id": 1, "is_admin": True, "role": "admin"}
-    payload = {
+    foreign_payload = {
         "session_uid": session_uid_sample,
-        "user_id": 7, "company_id": 42,
+        "user_id": 7, "company_id": 42,  # admin'in (1) DIŞINDA bir tenant
+        "current_step": 1, "status": "active",
+        "source_id": None, "context": {"secret": "other-tenant"},
+        "dialect": None, "generated_sql": None,
+        "created_at": None, "last_activity_at": None, "completed_at": None,
+    }
+    fake_cache.store[session_uid_sample] = json.dumps(foreign_payload).encode("utf-8")
+    # DB'de admin'in kendi tenant'ında bu uid yok → None dönmeli (RLS).
+    cur = _RecCursor(responses=[None])
+    out = sm.load_session(cur, session_uid_sample, admin)
+    # Cache HIT direkt servis edilmedi; DB'ye düştü; DB None döndü → None.
+    assert out is None
+    assert len(cur.executed) == 1  # DB fallback gerçekleşti
+
+
+def test_admin_cache_hit_only_when_same_tenant(session_uid_sample, fake_cache):
+    """Admin'in OWN tenant'ında cache hit normal şekilde servis edilebilir
+    (same-tenant payload eşleşmesi). is_admin flag'i guard'ı atlatmamalı."""
+    admin = {"id": 1, "company_id": 1, "is_admin": True, "role": "admin"}
+    own_tenant_payload = {
+        "session_uid": session_uid_sample,
+        "user_id": 1, "company_id": 1,  # admin'in OWN tenant'ı
         "current_step": 1, "status": "active",
         "source_id": None, "context": {"k": "v"},
         "dialect": None, "generated_sql": None,
         "created_at": None, "last_activity_at": None, "completed_at": None,
     }
-    fake_cache.store[session_uid_sample] = json.dumps(payload).encode("utf-8")
+    fake_cache.store[session_uid_sample] = json.dumps(own_tenant_payload).encode("utf-8")
     cur = _RecCursor()
     out = sm.load_session(cur, session_uid_sample, admin)
     assert out is not None
     assert out["context"] == {"k": "v"}
-    assert cur.executed == []
+    assert cur.executed == []  # cache HIT, DB'ye düşmedi
 
 
 def test_load_session_db_read_warms_cache(user_ctx, session_uid_sample, fake_cache):

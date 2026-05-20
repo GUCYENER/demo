@@ -158,26 +158,54 @@ def create_session(
         "[db_smart.session] created user=%s source=%s uid=%s",
         user_id, source_id, session_uid,
     )
-    # L1 cache: ilk yaratılan oturum minimum payload ile cache'lenir; sonraki
-    # load_session'lar DB hit'sız döner. Hata durumunda sessiz no-op.
-    # ARES: cache'lenmiş payload'a user_id + company_id gömülür → load_session
-    # her cache-hit'inde caller user_ctx ile karşılaştırarak cross-tenant
-    # leak'ini engeller (DB RLS'i atlanmış olsa bile).
-    _cache_set(session_uid, {
-        "session_uid": session_uid,
-        "user_id": int(user_id),
-        "company_id": int(company_id),
-        "current_step": 0,
-        "status": "active",
-        "source_id": source_id,
-        "context": initial_context or {},
-        "dialect": None,
-        "generated_sql": None,
-        "created_at": None,
-        "last_activity_at": None,
-        "completed_at": None,
-    })
+    # ARES YÜKSEK fix: cache warm-up burada YAPILMAZ. Caller'ın transaction'ı
+    # rollback ederse cache phantom oturum tutar → sonraki load'lar stale/leaked
+    # state döner. Caller, conn.commit() başarılı olduktan sonra opsiyonel
+    # `cache_warm_created(...)` çağırabilir; aksi halde ilk load_session DB'den
+    # okuyup cache'i taze payload ile kendisi warm-up eder (idempotent).
     return session_uid
+
+
+def cache_warm_created(
+    session_uid: str,
+    user_ctx: Dict[str, Any],
+    source_id: Optional[int] = None,
+    initial_context: Optional[Dict[str, Any]] = None,
+    current_step: int = 0,
+    status: str = "active",
+) -> None:
+    """create_session sonrası COMMIT BAŞARILI olunca caller'ın elle çağırması
+    için warm-up helper. Hata durumunda sessiz no-op (cache opsiyonel).
+
+    Args:
+        session_uid: create_session'ın döndürdüğü uid.
+        user_ctx: create_session'a verilen user_ctx (id + company_id zorunlu).
+        source_id: opsiyonel.
+        initial_context: opsiyonel başlangıç context.
+        current_step / status: warm-up payload default'ları.
+    """
+    user_id = user_ctx.get("id") if user_ctx else None
+    company_id = user_ctx.get("company_id") if user_ctx else None
+    if user_id is None or company_id is None:
+        return
+    try:
+        _cache_set(session_uid, {
+            "session_uid": session_uid,
+            "user_id": int(user_id),
+            "company_id": int(company_id),
+            "current_step": current_step,
+            "status": status,
+            "source_id": source_id,
+            "context": initial_context or {},
+            "dialect": None,
+            "generated_sql": None,
+            "created_at": None,
+            "last_activity_at": None,
+            "completed_at": None,
+        })
+    except Exception as e:
+        logger.debug("[db_smart.session] cache_warm_created skipped uid=%s: %s",
+                     session_uid, e)
 
 
 def load_session(
@@ -210,14 +238,20 @@ def load_session(
     # L1 cache hit → DB hit'sız dön. ARES guard: payload'taki user_id/company_id
     # caller user_ctx ile birebir eşleşmeli, aksi halde cross-tenant leak.
     # Eşleşmezse cache miss gibi davranıp DB'ye (RLS-bound) git.
+    #
+    # ARES KRİTİK fix: admin için de aynı company_id eşleşmesi şarttır.
+    # `is_admin=True` cross-tenant cache hit'ini açmak, admin'in kendi tenant
+    # context'i dışındaki bir oturumu side-effect olarak okumasına yol açar
+    # (apply_vyra_user_context admin'in OWN company_id'sini set eder; cache
+    # path bunu bypass etmemeli). Cross-tenant erişim açık ayrı admin API ile
+    # yapılmalı, is_admin flag'inin yan etkisi olarak değil.
     cached = _cache_get(session_uid)
     if cached is not None:
         c_user = cached.get("user_id")
         c_company = cached.get("company_id")
         req_user = user_ctx.get("id") if user_ctx else None
         req_company = user_ctx.get("company_id") if user_ctx else None
-        is_admin = bool(user_ctx and (user_ctx.get("is_admin") or user_ctx.get("role") == "admin"))
-        if is_admin or (
+        if (
             c_user is not None and c_company is not None
             and req_user is not None and req_company is not None
             and int(c_user) == int(req_user) and int(c_company) == int(req_company)
