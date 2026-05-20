@@ -808,6 +808,20 @@ def test_reorder_columns_non_select_raises():
         ar.reorder_columns({"type": "delete"}, [])
 
 
+def test_reorder_columns_duplicate_keys_defensive():
+    """Aynı (expr, alias) key'iyle iki kolon olsa bile (yapı normalde imkansız —
+    add_column idempotent — ama defensif) hiçbir kolon kaybolmamalı."""
+    src = {
+        "type": "select",
+        "columns": [{"expr": "t.id"}, {"expr": "t.id"}, {"expr": "t.status"}],
+        "from": {"table": "tickets", "alias": "t"},
+    }
+    out = ar.reorder_columns(src, [{"expr": "t.status"}])
+    # 3 kolon korundu, eşleşen önce
+    assert len(out["columns"]) == 3
+    assert out["columns"][0]["expr"] == "t.status"
+
+
 def test_diff_ast_identical_no_changes():
     a = _base_ast()
     d = ar.diff_ast(a, dict(a))

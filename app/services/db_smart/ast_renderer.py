@@ -608,31 +608,28 @@ def reorder_columns(
     def _key(c: Dict[str, Any]) -> Tuple[str, str]:
         return (c.get("expr") or c.get("column") or "", c.get("alias") or "")
 
-    remaining = {_key(c): c for c in cols}
-    seen = set()
+    # Index-based remaining tracker — duplicate (expr,alias) key'lere karşı dayanıklı
+    # (add_column idempotent guard'ı bunu engellese de defensive).
+    remaining_idx: List[int] = list(range(len(cols)))
     new_cols: List[Dict[str, Any]] = []
     for item in order:
         if not isinstance(item, dict):
             continue
-        k = (item.get("expr") or item.get("column") or "", item.get("alias") or "")
-        # Esnek eşleştirme: alias verilmemişse yalnızca expr eşleşmesini ara
-        match = None
-        if k in remaining:
-            match = remaining.pop(k)
-        elif not k[1]:
-            # alias istenmedi → ilk expr eşleşmesini al
-            for rk in list(remaining.keys()):
-                if rk[0] == k[0]:
-                    match = remaining.pop(rk)
-                    break
-        if match is not None and id(match) not in seen:
-            new_cols.append(match)
-            seen.add(id(match))
-    # Eksik kalanları orijinal sırayla sona ekle
-    for c in cols:
-        if _key(c) in remaining:
-            new_cols.append(c)
-            del remaining[_key(c)]
+        k_expr = item.get("expr") or item.get("column") or ""
+        k_alias = item.get("alias") or ""
+        # Exact match (expr+alias) öncelikli; alias verilmediyse expr eşleşmesi
+        match_idx = None
+        for i in remaining_idx:
+            ck = _key(cols[i])
+            if ck == (k_expr, k_alias) or (not k_alias and ck[0] == k_expr):
+                match_idx = i
+                break
+        if match_idx is not None:
+            new_cols.append(cols[match_idx])
+            remaining_idx.remove(match_idx)
+    # Eksik kalanları orijinal sırayla sona ekle (stable)
+    for i in remaining_idx:
+        new_cols.append(cols[i])
     if not new_cols:
         raise ValueError("reorder_columns: en az bir sütun kalmalı")
     new_ast["columns"] = new_cols

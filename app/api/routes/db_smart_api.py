@@ -33,7 +33,10 @@ FAZ 1 status:
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import time as _time
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
@@ -374,10 +377,6 @@ def post_ast_diff(
 
 # In-process EXPLAIN cache — 5sn TTL, max 256 entry (FIFO eviction).
 # Drag-drop sırasında aynı AST için tekrar EXPLAIN çağrılmasın diye.
-import hashlib  # noqa: E402
-import json     # noqa: E402
-import time as _time  # noqa: E402
-
 _EXPLAIN_CACHE: Dict[str, Any] = {}
 _EXPLAIN_CACHE_TTL_S = 5.0
 _EXPLAIN_CACHE_MAX = 256
