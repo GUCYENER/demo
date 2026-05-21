@@ -253,6 +253,70 @@ def stream_safe_sql(
         yield {"type": "error", "message": f"Desteklenmeyen dialect: {dialect}"}
         return
 
-    # 4) Stream çalıştır — stream_execute() generic protokole devreder
-    cb = _make_stream_callable(source, dialect, password)
-    yield from stream_execute(cb, sql_str, batch_size=batch_size, max_rows=max_rows)
+    # 4) Concurrency guard
+    if not _concurrency_guard.try_acquire(timeout_s=2.0):
+        yield {"type": "queued", "message": "Sorgu kuyruğunda bekliyor..."}
+        _settings = __import__("app.core.config", fromlist=["settings"]).settings
+        if not _concurrency_guard.try_acquire(timeout_s=float(
+            getattr(_settings, "DBSMART_STREAM_QUEUE_TIMEOUT_S", 30)
+        )):
+            yield {"type": "error", "message": "Kuyruk zaman aşımı (503). Daha sonra tekrar deneyin."}
+            return
+
+    try:
+        # 5) Stream çalıştır — stream_execute() generic protokole devreder
+        cancel_token = _CancelToken()
+        cb = _make_stream_callable(source, dialect, password)
+        for event in stream_execute(cb, sql_str, batch_size=batch_size, max_rows=max_rows):
+            if cancel_token.is_set():
+                yield {"type": "error", "message": "Sorgu iptal edildi."}
+                return
+            yield event
+    finally:
+        _concurrency_guard.release()
+
+
+# ─────────────────────────────────────────────────────────────
+# P36 — Backpressure cancel token
+# ─────────────────────────────────────────────────────────────
+
+import threading as _threading
+
+
+class _CancelToken:
+    """Thread-safe cancel token for backpressure."""
+    def __init__(self):
+        self._event = _threading.Event()
+
+    def set(self):
+        self._event.set()
+
+    def is_set(self) -> bool:
+        return self._event.is_set()
+
+
+# ─────────────────────────────────────────────────────────────
+# P37 — Concurrency guard
+# ─────────────────────────────────────────────────────────────
+
+class _ConcurrencyGuard:
+    """BoundedSemaphore wrapper for max concurrent streams."""
+    def __init__(self, max_concurrent: int = 5):
+        self._sem = _threading.BoundedSemaphore(max_concurrent)
+
+    def try_acquire(self, timeout_s: float = 2.0) -> bool:
+        return self._sem.acquire(blocking=True, timeout=timeout_s)
+
+    def release(self):
+        try:
+            self._sem.release()
+        except ValueError:
+            pass
+
+
+_concurrency_guard = _ConcurrencyGuard(
+    max_concurrent=int(getattr(
+        __import__("app.core.config", fromlist=["settings"]).settings,
+        "DBSMART_STREAM_MAX_CONCURRENT", 5
+    ))
+)
