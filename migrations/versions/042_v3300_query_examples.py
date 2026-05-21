@@ -118,9 +118,9 @@ def upgrade() -> None:
                 EXECUTE 'CREATE INDEX IF NOT EXISTS idx_query_examples_embedding_cosine
                          ON query_examples USING ivfflat (embedding vector_cosine_ops)
                          WITH (lists = 100)';
-            EXCEPTION WHEN OTHERS THEN
-                -- ivfflat unavailable on this pgvector build — skip silently.
-                NULL;
+            EXCEPTION
+                WHEN undefined_object THEN NULL;  -- ivfflat access method unavailable
+                WHEN duplicate_table THEN NULL;    -- index already exists
             END;
         END IF;
     END $$;

@@ -72,6 +72,11 @@
   "wizard.error.sql_guard_deny": "Query blocked by safety guard.",
   "wizard.error.eligibility_empty": "No eligible metrics found for this table.",
 
+  "wizard.step3.selectTableFirst": "Please select a table first.",
+  "wizard.step3.loading": "Loading columns...",
+  "wizard.step3.noColumns": "No column metadata found for this table.",
+  "wizard.step3.loadError": "Columns failed to load",
+
   "wizard.toast.select_source": "Select a data source first.",
   "wizard.toast.table_selected": "Selected: {label}",
   "wizard.toast.metric_selected": "Metric selected: {label}",

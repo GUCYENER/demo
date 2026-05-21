@@ -72,6 +72,11 @@
   "wizard.error.sql_guard_deny": "Sorgu güvenlik kontrolüne takıldı.",
   "wizard.error.eligibility_empty": "Bu tabloya uygun metrik bulunamadı.",
 
+  "wizard.step3.selectTableFirst": "Önce tablo seçin.",
+  "wizard.step3.loading": "Kolonlar yükleniyor...",
+  "wizard.step3.noColumns": "Bu tablo için kolon metadata'sı bulunamadı.",
+  "wizard.step3.loadError": "Kolonlar yüklenemedi",
+
   "wizard.toast.select_source": "Önce veri kaynağı seçin.",
   "wizard.toast.table_selected": "Seçildi: {label}",
   "wizard.toast.metric_selected": "Metrik seçildi: {label}",

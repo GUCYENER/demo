@@ -370,18 +370,18 @@
         const panel = document.getElementById('dswStep3');
         if (!panel) return;
         if (!_state.selectedTableId || !_state.sourceId) {
-            panel.innerHTML = '<p class="dsw-hint" role="status">Önce tablo seçin.</p>';
+            panel.innerHTML = '<p class="dsw-hint" role="status">' + _t('wizard.step3.selectTableFirst') + '</p>';
             return;
         }
         _setBusy(panel, true);
-        panel.innerHTML = '<p class="dsw-hint" role="status">Kolonlar yükleniyor...</p>';
+        panel.innerHTML = '<p class="dsw-hint" role="status">' + _t('wizard.step3.loading') + '</p>';
         try {
             const url = API_BASE + '/sources/' + _state.sourceId +
                         '/tables/' + _state.selectedTableId + '/columns';
             const data = await _fetchJson(url);
             const cols = data.columns || [];
             if (!cols.length) {
-                panel.innerHTML = '<p class="dsw-hint">Bu tablo için kolon metadata\'sı bulunamadı.</p>';
+                panel.innerHTML = '<p class="dsw-hint">' + _t('wizard.step3.noColumns') + '</p>';
                 return;
             }
             let html = '<p class="dsw-hint">' + cols.length +
@@ -398,8 +398,8 @@
             html += '</div>';
             panel.innerHTML = html;
         } catch (e) {
-            panel.innerHTML = '<p class="dsw-hint" role="status">Hata: ' + _escape(e.message) + '</p>';
-            _notify('Kolonlar yüklenemedi: ' + e.message, 'error');
+            panel.innerHTML = '<p class="dsw-hint" role="status">' + _t('wizard.error.generic') + ': ' + _escape(e.message) + '</p>';
+            _notify(_t('wizard.step3.loadError') + ': ' + e.message, 'error');
         } finally {
             _setBusy(panel, false);
         }
