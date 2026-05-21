@@ -54,6 +54,7 @@ from app.services.db_smart import (
     fk_graph,        # v3.30.0 FAZ 1 G1.3
     metric_engine,   # v3.30.0 FAZ 1 P3 G1.4
     recommendation,        # v3.30.0 FAZ 2 P9 G2.3
+    insight_detector,      # v3.30.0 FAZ 2 P28
     custom_metric_parser,  # v3.30.0 FAZ 2 P11 G2.2
     saved_reports,         # v3.30.0 FAZ 3 P13 G3.3
     template_marketplace,  # v3.30.0 FAZ 3 P18 G3.3
@@ -1373,6 +1374,16 @@ class RecommendPreviewRequest(BaseModel):
     columns: List[str] = Field(default_factory=list)
     rows: List[Any] = Field(default_factory=list)
     max_results: int = Field(default=5, ge=1, le=20)
+    # v3.30.0 FAZ 2 P28 — deep insights (z-score seasonal + slope reversal +
+    # missing category). Default False → backward compatible.
+    deep: bool = Field(default=False)
+    deep_time_col: Optional[str] = Field(default=None, max_length=120)
+    deep_value_col: Optional[str] = Field(default=None, max_length=120)
+    deep_category_col: Optional[str] = Field(default=None, max_length=120)
+    deep_expected_categories: List[str] = Field(default_factory=list)
+    deep_z_threshold: float = Field(default=2.5, ge=0.0, le=10.0)
+    deep_slope_window: int = Field(default=3, ge=2, le=30)
+    deep_confidence_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
 
 
 @router.post("/recommendations/preview")
@@ -1384,6 +1395,8 @@ def post_recommendation_preview(
 
     Latency budget: <50ms (rows sampled to first 500). Saf hesap, RLS gerekmez
     (caller'ın elindeki veri zaten kendi yetkisinde toplandı).
+
+    body.deep=True → P28 derin tespitler (insights_v2 alanı eklenir).
     """
     _require_user_id(current_user)
     try:
@@ -1394,11 +1407,36 @@ def post_recommendation_preview(
     except Exception as e:
         logger.warning("[db_smart.recommend] preview failed: %s", e)
         raise HTTPException(status_code=400, detail=f"Recommend hesabı başarısız: {e}")
-    return {
+    resp: Dict[str, Any] = {
         "profile": charts.get("profile"),
         "charts": charts.get("items", []),
         "insights": insights,
     }
+    if body.deep:
+        series = [r for r in body.rows if isinstance(r, dict)]
+        deep_insights: List[Dict[str, Any]] = []
+        try:
+            if body.deep_time_col and body.deep_value_col:
+                deep_insights.extend(insight_detector.detect_z_score_seasonality(
+                    series, body.deep_time_col, body.deep_value_col,
+                    threshold=body.deep_z_threshold,
+                ))
+                deep_insights.extend(insight_detector.detect_slope_reversal(
+                    series, body.deep_time_col, body.deep_value_col,
+                    window=body.deep_slope_window,
+                ))
+            if body.deep_category_col and body.deep_expected_categories:
+                deep_insights.extend(insight_detector.detect_missing_category(
+                    series, body.deep_expected_categories, body.deep_category_col,
+                ))
+            deep_insights = insight_detector.confidence_guard(
+                deep_insights, threshold=body.deep_confidence_threshold,
+            )
+        except Exception as e:
+            logger.warning("[db_smart.recommend] deep insight failed: %s", e)
+            deep_insights = []
+        resp["insights_v2"] = deep_insights
+    return resp
 
 
 # ─────────────────────────────────────────────────────────────

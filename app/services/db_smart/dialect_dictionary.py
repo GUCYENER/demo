@@ -40,12 +40,17 @@ from typing import Any, Dict, List, Mapping, Optional
 FEATURE_KEYS = (
     "supports_ilike",
     "supports_lateral",
-    "supports_grouping_sets",
+    "supports_grouping_sets",  # GROUPING SETS / CUBE / ROLLUP (P31)
+    "supports_cube",           # P31 — PG/Oracle/MSSQL
+    "supports_rollup",         # P31 — PG/Oracle/MSSQL/MySQL(8.0+)
     "supports_recursive_cte",
     "supports_window",
     "supports_string_agg",
     "supports_array_agg",
     "supports_jsonb_agg",
+    "supports_jsonb_build_object",  # P31 — PG-specific jsonb constructor
+    "supports_jsonb_object_agg",    # P31 — PG-specific jsonb aggregator
+    "supports_brin",                # P31 — PG BRIN scan hint marker
     "supports_listagg",
     "supports_pivot",
     "supports_fetch_first",   # SQL:2008 FETCH FIRST N ROWS ONLY
@@ -70,13 +75,17 @@ def _feature_dict(**flags: bool) -> Mapping[str, bool]:
 _FEATURES: Mapping[str, Mapping[str, bool]] = MappingProxyType({
     "postgresql": _feature_dict(
         supports_ilike=True, supports_lateral=True, supports_grouping_sets=True,
+        supports_cube=True, supports_rollup=True,
         supports_recursive_cte=True, supports_window=True,
         supports_string_agg=True, supports_array_agg=True, supports_jsonb_agg=True,
+        supports_jsonb_build_object=True, supports_jsonb_object_agg=True,
+        supports_brin=True,
         supports_fetch_first=True, supports_offset_limit=True,
         supports_with_clause=True, case_sensitive_identifiers=True,
     ),
     "oracle": _feature_dict(
         supports_ilike=False, supports_lateral=True, supports_grouping_sets=True,
+        supports_cube=True, supports_rollup=True,
         supports_recursive_cte=True, supports_window=True,
         supports_listagg=True, supports_pivot=True,
         supports_fetch_first=True,
@@ -85,6 +94,7 @@ _FEATURES: Mapping[str, Mapping[str, bool]] = MappingProxyType({
     ),
     "mssql": _feature_dict(
         supports_ilike=False, supports_lateral=True, supports_grouping_sets=True,
+        supports_cube=True, supports_rollup=True,
         supports_recursive_cte=True, supports_window=True,
         supports_string_agg=True,  # 2017+
         supports_pivot=True,
@@ -93,6 +103,7 @@ _FEATURES: Mapping[str, Mapping[str, bool]] = MappingProxyType({
     ),
     "mysql": _feature_dict(
         supports_ilike=False, supports_lateral=True, supports_grouping_sets=False,
+        supports_rollup=True,         # MySQL: WITH ROLLUP modifier (8.0+)
         supports_recursive_cte=True,  # 8.0+
         supports_window=True,         # 8.0+
         supports_string_agg=False,    # GROUP_CONCAT alternatif
@@ -117,6 +128,13 @@ _SYNTAX: Mapping[str, Mapping[str, str]] = MappingProxyType({
         "case_insensitive_like": "ILIKE",
         "current_date": "CURRENT_DATE",
         "current_timestamp": "NOW()",
+        # P31 — group/lateral/hint markers (rendered tokens; not bind vehicles)
+        "grouping_sets": "GROUPING SETS ({sets})",
+        "cube": "CUBE ({cols})",
+        "rollup": "ROLLUP ({cols})",
+        "lateral_keyword": "LATERAL",
+        "brin_hint_comment": "/*+ SeqScan(brin_advisory) */",
+        "parallel_workers_setting": "SET LOCAL parallel_workers_per_gather = {n}",
     }),
     "oracle": MappingProxyType({
         "ident_quote_open": '"',
@@ -165,6 +183,10 @@ _FUNCTIONS: Mapping[str, Mapping[str, Optional[str]]] = MappingProxyType({
         "group_concat": "STRING_AGG({arg0}, {sep})",
         "array_agg":    "ARRAY_AGG({arg0})",
         "jsonb_agg":    "JSONB_AGG({arg0})",
+        # P31 — jsonb constructor + aggregator + regexp_replace
+        "jsonb_build_object": "JSONB_BUILD_OBJECT({arg0}, {arg1})",
+        "jsonb_object_agg":   "JSONB_OBJECT_AGG({arg0}, {arg1})",
+        "regexp_replace":     "REGEXP_REPLACE({arg0}, {arg1}, {arg2})",
         "median":       "PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY {arg0})",
         "date_trunc":   "DATE_TRUNC({arg1}, {arg0})",
         "date_diff":    "({arg0} - {arg1})",
@@ -220,7 +242,11 @@ _FUNCTIONS: Mapping[str, Mapping[str, Optional[str]]] = MappingProxyType({
 # ─────────────────────────────────────────────────────────────
 
 _HINT_CATALOG: Mapping[str, tuple] = MappingProxyType({
-    "postgresql": ("work_mem_mb", "enable_seqscan"),
+    # P31 — PG: brin scan marker + parallel_workers_per_gather knob added
+    "postgresql": (
+        "work_mem_mb", "enable_seqscan", "brin",
+        "parallel_workers_per_gather",
+    ),
     "oracle":     ("parallel", "result_cache", "index", "materialize"),
     "mssql":      ("maxdop", "recompile", "optimize_for_unknown"),
     "mysql":      ("max_execution_time_ms", "sql_no_cache"),

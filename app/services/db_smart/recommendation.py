@@ -18,6 +18,8 @@ Tasarım notları:
 from __future__ import annotations
 
 import logging
+import math
+import statistics
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
@@ -328,3 +330,365 @@ def detect_insights(
         if tr:
             insights.append(tr)
     return insights
+
+
+# ─────────────────────────────────────────────────────────────
+# FAZ 2 P27 — Deep shape profiling + 12-pattern rule engine
+# ─────────────────────────────────────────────────────────────
+
+def _skewness(nums: List[float]) -> float:
+    """Sample skewness (3rd standardised moment, Fisher-Pearson)."""
+    n = len(nums)
+    if n < 3:
+        return 0.0
+    m = sum(nums) / n
+    var = sum((x - m) ** 2 for x in nums) / n
+    if var <= 0:
+        return 0.0
+    sd = math.sqrt(var)
+    return (sum((x - m) ** 3 for x in nums) / n) / (sd ** 3)
+
+
+def _histogram_peaks(nums: List[float], bins: int = 10) -> int:
+    """Return count of local maxima in `bins`-bin histogram."""
+    if len(nums) < bins:
+        return 0
+    lo, hi = min(nums), max(nums)
+    if hi == lo:
+        return 0
+    width = (hi - lo) / bins
+    counts = [0] * bins
+    for v in nums:
+        idx = int((v - lo) / width)
+        if idx == bins:
+            idx = bins - 1
+        counts[idx] += 1
+    peaks = 0
+    for i in range(bins):
+        left = counts[i - 1] if i > 0 else -1
+        right = counts[i + 1] if i < bins - 1 else -1
+        if counts[i] > left and counts[i] > right and counts[i] >= 2:
+            peaks += 1
+    return peaks
+
+
+def _distribution_shape(nums: List[float]) -> str:
+    """Classify distribution: uniform / skewed_left / skewed_right / bimodal / unknown."""
+    if len(nums) < 3:
+        return "unknown"
+    if len(set(nums)) == 1:
+        return "uniform"
+    peaks = _histogram_peaks(nums, bins=10)
+    if peaks >= 2:
+        return "bimodal"
+    sk = _skewness(nums)
+    if sk > 0.5:
+        return "skewed_right"
+    if sk < -0.5:
+        return "skewed_left"
+    # Spread test — coefficient of variation low → uniform
+    m = sum(nums) / len(nums)
+    if m != 0:
+        sd = statistics.pstdev(nums)
+        if abs(sd / m) < 0.15:
+            return "uniform"
+    return "unknown"
+
+
+def _pearson(xs: List[float], ys: List[float]) -> float:
+    """Pearson r between two equal-length numeric lists."""
+    n = min(len(xs), len(ys))
+    if n < 2:
+        return 0.0
+    xs2, ys2 = xs[:n], ys[:n]
+    mx = sum(xs2) / n
+    my = sum(ys2) / n
+    num = sum((xs2[i] - mx) * (ys2[i] - my) for i in range(n))
+    dx = math.sqrt(sum((x - mx) ** 2 for x in xs2))
+    dy = math.sqrt(sum((y - my) ** 2 for y in ys2))
+    if dx == 0 or dy == 0:
+        return 0.0
+    return num / (dx * dy)
+
+
+def _pairwise_correlations(
+    cols: Dict[str, List[float]],
+    *,
+    top_k: int = 10,
+) -> List[Dict[str, Any]]:
+    """Compute pearson r for top-`top_k` highest-variance numeric columns."""
+    if len(cols) < 2:
+        return []
+    variances: List[Tuple[str, float]] = []
+    for name, vals in cols.items():
+        if len(vals) >= 2:
+            variances.append((name, statistics.pvariance(vals)))
+    variances.sort(key=lambda kv: -kv[1])
+    chosen = [name for name, _ in variances[:top_k]]
+    out: List[Dict[str, Any]] = []
+    for i, a in enumerate(chosen):
+        for b in chosen[i + 1:]:
+            r = _pearson(cols[a], cols[b])
+            out.append({"x": a, "y": b, "r": round(r, 4)})
+    return out
+
+
+def _detect_hierarchy(
+    rows: List[Any],
+    columns: List[str],
+    profile_cols: List[Dict[str, Any]],
+) -> List[Dict[str, str]]:
+    """Detect parent→child column pairs (B nests under A; A has ≤20 distinct; B ≥5x A)."""
+    out: List[Dict[str, str]] = []
+    cats = [c for c in profile_cols if c["type"] == "categorical"]
+    if len(cats) < 2:
+        return out
+    by_col: Dict[str, List[Any]] = {c: [] for c in columns}
+    for row in rows[:_MAX_ROWS_SAMPLE]:
+        tup = _row_to_tuple(row, columns)
+        for i, c in enumerate(columns):
+            if i < len(tup):
+                by_col[c].append(tup[i])
+    for a in cats:
+        a_card = a["cardinality"]
+        if a_card == 0 or a_card > 20:
+            continue
+        for b in cats:
+            if a["name"] == b["name"]:
+                continue
+            b_card = b["cardinality"]
+            if b_card < a_card * 5:
+                continue
+            # Each B value must nest under exactly one A value
+            mapping: Dict[Any, Any] = {}
+            nests = True
+            for av, bv in zip(by_col[a["name"]], by_col[b["name"]]):
+                if av is None or bv is None:
+                    continue
+                if bv in mapping and mapping[bv] != av:
+                    nests = False
+                    break
+                mapping[bv] = av
+            if nests and mapping:
+                out.append({"parent": a["name"], "child": b["name"]})
+    return out
+
+
+def _seasonality_zscore(
+    timestamps: List[Any],
+    values: List[float],
+    *,
+    threshold: float = 2.5,
+) -> List[Dict[str, Any]]:
+    """Weekday-partitioned z-score outliers (avoid weekday-of-week false positives)."""
+    buckets: Dict[int, List[Tuple[int, float]]] = {}
+    for idx, (ts, v) in enumerate(zip(timestamps, values)):
+        if ts is None or v is None:
+            continue
+        if isinstance(ts, datetime):
+            wd = ts.weekday()
+        elif isinstance(ts, date):
+            wd = ts.weekday()
+        else:
+            continue
+        buckets.setdefault(wd, []).append((idx, float(v)))
+    anomalies: List[Dict[str, Any]] = []
+    for wd, items in buckets.items():
+        if len(items) < 3:
+            continue
+        vs = [v for _, v in items]
+        m = sum(vs) / len(vs)
+        sd = statistics.pstdev(vs)
+        if sd == 0:
+            continue
+        for idx, v in items:
+            z = (v - m) / sd
+            if abs(z) >= threshold:
+                anomalies.append({
+                    "index": idx,
+                    "weekday": wd,
+                    "value": v,
+                    "z": round(z, 3),
+                })
+    return anomalies
+
+
+def _slope(values: List[float]) -> float:
+    """Simple OLS slope of values vs index 0..n-1."""
+    n = len(values)
+    if n < 2:
+        return 0.0
+    xs = list(range(n))
+    mx = sum(xs) / n
+    my = sum(values) / n
+    num = sum((xs[i] - mx) * (values[i] - my) for i in range(n))
+    den = sum((x - mx) ** 2 for x in xs)
+    if den == 0:
+        return 0.0
+    return num / den
+
+
+def _slope_sign_change(values: List[float], window: int = 3) -> bool:
+    """True if last `window` slope sign differs from prior `window` slope sign."""
+    if len(values) < window * 2:
+        return False
+    prior = _slope(values[-2 * window:-window])
+    recent = _slope(values[-window:])
+    if prior == 0 or recent == 0:
+        return False
+    return (prior > 0) != (recent > 0)
+
+
+def analyze_shape(data: List[Dict[str, Any]], numeric_cols: List[str]) -> Dict[str, Any]:
+    """Deep statistical profile: distribution shape, correlations, hierarchy, seasonality, slope reversals."""
+    sample = (data or [])[:_MAX_ROWS_SAMPLE]
+    columns = list(numeric_cols) if numeric_cols else []
+    by_num: Dict[str, List[float]] = {}
+    for col in columns:
+        vals: List[float] = []
+        for row in sample:
+            if not isinstance(row, dict):
+                continue
+            v = row.get(col)
+            if v is None or isinstance(v, bool):
+                continue
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                continue
+        by_num[col] = vals
+
+    shapes: Dict[str, str] = {col: _distribution_shape(vals) for col, vals in by_num.items()}
+    correlations = _pairwise_correlations(by_num, top_k=10)
+
+    # Hierarchy needs all columns + their categorical profile
+    all_cols = list(sample[0].keys()) if sample and isinstance(sample[0], dict) else columns
+    prof_cols = []
+    for c in all_cols:
+        vals_any = [row.get(c) for row in sample if isinstance(row, dict)]
+        prof_cols.append({
+            "name": c,
+            "type": _infer_col_type(vals_any),
+            "cardinality": _cardinality(vals_any),
+        })
+    hierarchy = _detect_hierarchy(sample, all_cols, prof_cols)
+
+    # Seasonality + slope reversal (if a temporal column is present)
+    temporal_cols = [c["name"] for c in prof_cols if c["type"] == "temporal"]
+    seasonality: Dict[str, List[Dict[str, Any]]] = {}
+    slope_changes: Dict[str, bool] = {}
+    if temporal_cols and columns:
+        ts_col = temporal_cols[0]
+        ts_vals = [row.get(ts_col) for row in sample if isinstance(row, dict)]
+        for ncol in columns:
+            nvals = [row.get(ncol) for row in sample if isinstance(row, dict)]
+            try:
+                nvals_f = [float(v) if v is not None and not isinstance(v, bool) else None for v in nvals]
+            except (TypeError, ValueError):
+                nvals_f = []
+            seasonality[ncol] = _seasonality_zscore(ts_vals, nvals_f)
+            clean = [v for v in nvals_f if v is not None]
+            slope_changes[ncol] = _slope_sign_change(clean)
+
+    return {
+        "row_count": len(data or []),
+        "sample_count": len(sample),
+        "shapes": shapes,
+        "correlations": correlations,
+        "hierarchy": hierarchy,
+        "seasonality_anomalies": seasonality,
+        "slope_reversals": slope_changes,
+    }
+
+
+def score_recommendations(
+    recommendations: List[Dict[str, Any]],
+    context: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """Composite-score & stable-sort recos by relevance × shape_fit × user_history_weight."""
+    if not recommendations:
+        return []
+    shape_fit = context.get("shape_fit", {}) if isinstance(context, dict) else {}
+    history = context.get("user_history_weight", {}) if isinstance(context, dict) else {}
+    out: List[Dict[str, Any]] = []
+    for idx, rec_item in enumerate(recommendations):
+        viz = rec_item.get("viz", "")
+        relevance = float(rec_item.get("confidence", 0.5))
+        s_fit = float(shape_fit.get(viz, 1.0))
+        u_hist = float(history.get(viz, 1.0))
+        score = round(relevance * s_fit * u_hist, 6)
+        enriched = dict(rec_item)
+        enriched["score"] = score
+        enriched["_orig_idx"] = idx
+        out.append(enriched)
+    # Stable sort: desc by score, asc by original index for ties
+    out.sort(key=lambda r: (-r["score"], r["_orig_idx"]))
+    for r in out:
+        r.pop("_orig_idx", None)
+    return out
+
+
+def _rule_engine_12pattern(
+    shape_info: Dict[str, Any],
+    data_meta: Dict[str, Any],
+) -> List[str]:
+    """12-branch pattern → viz mapping (Prompt H §2). Returns list of viz keys."""
+    out: List[str] = []
+    n_cat = int(data_meta.get("categorical_count", 0))
+    n_num = int(data_meta.get("numeric_count", 0))
+    n_temp = int(data_meta.get("temporal_count", 0))
+    row_count = int(data_meta.get("row_count", 0))
+    max_card = int(data_meta.get("max_cardinality", 0))
+    has_hierarchy = bool(shape_info.get("hierarchy"))
+    has_flow = bool(data_meta.get("has_flow", False))
+    has_funnel_steps = bool(data_meta.get("has_funnel_steps", False))
+    has_date_grid = bool(data_meta.get("has_date_grid", False))
+    shapes = shape_info.get("shapes", {}) if isinstance(shape_info, dict) else {}
+    correlations = shape_info.get("correlations", []) if isinstance(shape_info, dict) else []
+
+    # 1) heatmap — 2 categorical + 1 numeric, moderate cardinality
+    if n_cat >= 2 and n_num >= 1 and max_card <= 50:
+        out.append("heatmap")
+    # 2) sankey — flow metadata (source/target/value)
+    if has_flow and n_num >= 1:
+        out.append("sankey")
+    # 3) funnel — ordered steps + 1 numeric (counts)
+    if has_funnel_steps and n_num >= 1:
+        out.append("funnel")
+    # 4) sunburst — hierarchy + 1 numeric
+    if has_hierarchy and n_num >= 1:
+        out.append("sunburst")
+    # 5) calendar — temporal + numeric + day-grid metadata
+    if has_date_grid and n_temp >= 1 and n_num >= 1:
+        out.append("calendar")
+    # 6) box — single numeric with skewed/bimodal shape
+    if n_num >= 1 and any(s in ("skewed_left", "skewed_right", "bimodal") for s in shapes.values()):
+        out.append("box")
+    # 7) stacked_bar — 2 categorical + 1 numeric, smaller cardinality
+    if n_cat >= 2 and n_num >= 1 and max_card <= 20 and "heatmap" not in out:
+        out.append("stacked_bar")
+    # 8) multi_line — temporal + numeric + a low-card categorical grouping
+    if n_temp >= 1 and n_num >= 1 and n_cat >= 1 and max_card <= 8:
+        out.append("multi_line")
+    # 9) area — temporal + single numeric, cumulative-friendly
+    if n_temp >= 1 and n_num >= 1 and n_cat == 0:
+        out.append("area")
+    # 10) scatter — ≥2 numeric with at least one strong-|r| pair
+    if n_num >= 2 and any(abs(c.get("r", 0)) >= 0.5 for c in correlations):
+        out.append("scatter")
+    # 11) treemap — hierarchy OR high cardinality categorical
+    if has_hierarchy or (n_cat >= 1 and max_card > 30):
+        if "treemap" not in out:
+            out.append("treemap")
+    # 12) donut — single low-card categorical + numeric
+    if n_cat == 1 and n_num >= 1 and max_card <= 6 and row_count >= 1:
+        out.append("donut")
+
+    # Keep only valid viz keys, preserve order, drop duplicates
+    seen: set = set()
+    uniq: List[str] = []
+    for v in out:
+        if v in VALID_VIZ_TYPES and v not in seen:
+            seen.add(v)
+            uniq.append(v)
+    return uniq

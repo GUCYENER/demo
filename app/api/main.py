@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import auth, chat, health, rag as rag_routes, tickets, llm_config, prompts, users, system, websocket as ws_routes, organizations, feedback, dialog, permissions, assets, ldap_settings, domain_org_api, widget as widget_routes, companies, address, data_sources_api, sql_audit_api, themes, db_export, feature_permissions, agentic_query_api, metrics_api, db_learning_api, query_state_api, query_builder_api, signal_weight_api, db_smart_api
+from app.api.routes import _metrics as prom_metrics_route  # v3.30.0 FAZ 5 P36
 from app.core.config import settings
 from app.core.db import init_db
 from app.core.rate_limiter import limiter, get_rate_limit_handler, get_rate_limit_exception
@@ -374,6 +375,26 @@ def create_app() -> FastAPI:
     app.include_router(query_builder_api.router)  # v3.29.7 G3 - Multi-table Query Builder (suggest-path + preview)
     app.include_router(signal_weight_api.router)  # v3.29.8 L3 - multi_signal_rank weight tuner admin API
     app.include_router(db_smart_api.router)  # v3.30.0 - Akıllı Veri Keşfi (DB Smart Wizard)
+    app.include_router(prom_metrics_route.router, tags=["observability"])  # v3.30.0 FAZ 5 P36 - /metrics
+
+    # v3.30.0 FAZ 5 P36 — Observability init (OTel + Prometheus).
+    # Both helpers no-op silently if deps missing or settings disabled,
+    # so this never blocks startup.
+    try:
+        from app.services.observability.otel_setup import init_otel
+        from app.services.observability.prometheus_metrics import init_prometheus
+
+        otel_active = init_otel(app, settings)
+        prom_active = init_prometheus(settings)
+        import logging as _obs_logging
+        _obs_logging.getLogger("vyra").info(
+            "[observability] otel=%s prom=%s", otel_active, prom_active
+        )
+    except Exception as _obs_err:
+        import logging as _obs_logging
+        _obs_logging.getLogger("vyra").warning(
+            "[observability] init skipped: %s", _obs_err
+        )
 
     from pathlib import Path
     from fastapi.responses import FileResponse

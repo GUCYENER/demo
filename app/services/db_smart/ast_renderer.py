@@ -46,7 +46,27 @@ ALLOWED_OPS = {
     "BETWEEN", "NOT BETWEEN",
 }
 
-ALLOWED_JOINS = {"INNER", "LEFT", "RIGHT", "FULL", "LEFT OUTER", "RIGHT OUTER", "FULL OUTER"}
+ALLOWED_JOINS = {
+    "INNER", "LEFT", "RIGHT", "FULL",
+    "LEFT OUTER", "RIGHT OUTER", "FULL OUTER",
+    # P31 — PostgreSQL LATERAL join kinds. Renderer maps these to "<kind> JOIN
+    # LATERAL <table_ref>" pattern. Other dialects accept INNER/LEFT LATERAL
+    # syntactically (Oracle 12c+, MSSQL via CROSS/OUTER APPLY translation
+    # delegated to caller; here we render LATERAL verbatim — caller is
+    # responsible for dialect-compat gating via dialect_dictionary.supports).
+    "CROSS LATERAL", "INNER LATERAL", "LEFT LATERAL", "LEFT OUTER LATERAL",
+}
+
+# P31 — GROUP BY extension kinds (dict-form items in ast["group_by"])
+ALLOWED_GROUP_KINDS = {"grouping_sets", "cube", "rollup"}
+
+# P31 — PostgreSQL jsonb constructor / aggregator function whitelist for
+# column-expression form: {"func": <name>, "args": [<ident>, ...], "alias": ...}
+ALLOWED_PG_FUNCS = {
+    "jsonb_build_object",
+    "jsonb_object_agg",
+    "regexp_replace",
+}
 
 
 # ─────────────────────────────────────────────────────────────

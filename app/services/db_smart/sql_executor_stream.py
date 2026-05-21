@@ -44,6 +44,77 @@ logger = logging.getLogger(__name__)
 # <200ms içinde almalı. Bigger jobs separate "export" path'inden gidecek.
 DEFAULT_MAX_ROWS_STREAM = 10_000
 
+# Engine cursor batch tuning — Oracle/MSSQL fetch tuning hedef değeri.
+# psycopg2 zaten itersize=batch_size kullanır; bu sabit non-PG path için.
+ENGINE_FETCH_BATCH = 500
+
+
+def _configure_engine_cursor(cursor: Any, dialect: str) -> Dict[str, Any]:
+    """Engine-spesifik cursor optimizasyonlarını uygular (P35).
+
+    Returns:
+        Uygulanan ayarların dict'i (test/observability — set edilen attr'lar).
+        Driver yoksa / attr yoksa boş dict döner, exception SWALLOW edilir;
+        caller fallback generic fetchmany(batch_size) loop'una düşer.
+
+    Dialect davranışı:
+        - oracle  : `arraysize` ve `prefetchrows` = ENGINE_FETCH_BATCH (oracledb)
+        - mssql   : özel attr yok; fetchmany batch zaten caller'da uygulanır
+                    (pymssql/pyodbc — buffer flag pyodbc'de mevcut; opsiyonel)
+        - mysql   : pymysql.cursors.SSCursor sınıfı ile kıyas + setattr yapılamaz
+                    (cursor class connect aşamasında seçilir); burada yalnızca
+                    cursorclass info'su loglanır. Server-side cursor geçişi
+                    ds_learning_service tarafında P36'da yapılacak.
+        - postgresql: hiçbir şey yapma (named cursor + itersize caller'da).
+    """
+    applied: Dict[str, Any] = {}
+    d = (dialect or "").lower().strip()
+
+    if d == "oracle":
+        # oracledb cursor.arraysize / prefetchrows — fetchmany batch boyutunu
+        # network round-trip seviyesinde artırır. Attr yoksa setattr yine ekler
+        # ama driver davranışını etkilemez; hasattr ile koruma.
+        try:
+            if hasattr(cursor, "arraysize"):
+                cursor.arraysize = ENGINE_FETCH_BATCH
+                applied["arraysize"] = ENGINE_FETCH_BATCH
+            if hasattr(cursor, "prefetchrows"):
+                cursor.prefetchrows = ENGINE_FETCH_BATCH
+                applied["prefetchrows"] = ENGINE_FETCH_BATCH
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.debug("[db_smart.stream] oracle cursor tune skipped: %s", exc)
+
+    elif d == "mssql":
+        # pyodbc cursor.arraysize destekler; pymssql etmez. hasattr ile guard.
+        try:
+            if hasattr(cursor, "arraysize"):
+                cursor.arraysize = ENGINE_FETCH_BATCH
+                applied["arraysize"] = ENGINE_FETCH_BATCH
+        except Exception as exc:  # pragma: no cover
+            logger.debug("[db_smart.stream] mssql cursor tune skipped: %s", exc)
+
+    elif d == "mysql":
+        # SSCursor sınıf bilgisi — cursor class connect aşamasında belirlenir.
+        # Burada yalnızca lazy import + debug log; runtime davranış değişmez.
+        try:
+            import pymysql.cursors as _pmcur  # noqa: F401
+            ss_cls = getattr(_pmcur, "SSCursor", None)
+            if ss_cls is not None:
+                applied["preferred_cursorclass"] = "SSCursor"
+                if not isinstance(cursor, ss_cls):
+                    logger.debug(
+                        "[db_smart.stream] mysql cursor is %s; SSCursor recommended "
+                        "for streaming (set via connect(cursorclass=SSCursor))",
+                        type(cursor).__name__,
+                    )
+        except ImportError:
+            logger.debug("[db_smart.stream] pymysql not installed; mysql tune skipped")
+        except Exception as exc:  # pragma: no cover
+            logger.debug("[db_smart.stream] mysql cursor tune skipped: %s", exc)
+
+    # postgresql: caller named cursor + itersize set ediyor → no-op
+    return applied
+
 
 def _make_stream_callable(source: Dict[str, Any], dialect: str, password: str):
     """SQL alıp stream-aware iterator döndüren callable üretir.
@@ -90,8 +161,14 @@ def _make_stream_callable(source: Dict[str, Any], dialect: str, password: str):
                     cur = conn.cursor()
             else:
                 # Oracle / MSSQL / MySQL — standart cursor + fetchmany(batch_size)
-                # Engine-specific optimizasyon (arraysize, SSCursor) sonraki sprint.
                 cur = conn.cursor()
+
+            # Engine-specific cursor tuning (P35). Hata → swallowed; generic
+            # fetchmany(batch_size) fallback caller'da zaten mevcut.
+            try:
+                _configure_engine_cursor(cur, dialect)
+            except Exception as exc:  # pragma: no cover
+                logger.debug("[db_smart.stream] engine cursor config skipped: %s", exc)
 
             cur.execute(sql)
             cols = [d[0] for d in (cur.description or [])]

@@ -231,6 +231,20 @@ class Settings(BaseSettings):
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"
 
+    # -------------------------------------------------
+    # OpenTelemetry + Prometheus (v3.30.0 FAZ 5 P36)
+    # -------------------------------------------------
+    # OTel OTLP HTTP trace endpoint (örn. http://otel-collector:4318/v1/traces).
+    # Boş bırakılırsa OTel devre dışı (no-op tracer). pipeline_events DB-tabanlı
+    # observability her hâlükârda çalışmaya devam eder.
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = ""
+    # Prometheus custom metric kayıtları (wizard_completed_total vs.) için ana flag.
+    # False ise tüm metric helper'ları no-op olur; /metrics endpoint 403/503 döner.
+    PROMETHEUS_ENABLED: bool = False
+    # /metrics endpoint IP allowlist (virgülle ayrılmış). Boş = kapalı (default).
+    # Örn: "10.0.0.5,10.0.0.6". Dev için "0.0.0.0/0" → explicit open.
+    METRICS_IP_ALLOWLIST: str = ""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

@@ -37,6 +37,31 @@ except Exception:
     _HAS_LANGGRAPH = False
     logger.info("[db_smart] LangGraph yuklu degil — sequential fallback aktif")
 
+# v3.30.0 FAZ 5 P36 — Observability sinks (OTel span + Prometheus counters).
+# Imports are defensive: missing deps must NOT break state machine execution.
+try:
+    from app.services.observability.otel_setup import span as _otel_span  # type: ignore
+    from app.services.observability.prometheus_metrics import get as _prom  # type: ignore
+except Exception:  # pragma: no cover
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _otel_span(name: str, **attributes: Any):  # type: ignore
+        yield None
+
+    class _NoOpMetric:
+        def labels(self, *a: Any, **k: Any) -> "_NoOpMetric":
+            return self
+
+        def inc(self, *a: Any, **k: Any) -> None:
+            return None
+
+        def observe(self, *a: Any, **k: Any) -> None:
+            return None
+
+    def _prom(name: str) -> Any:  # type: ignore
+        return _NoOpMetric()
+
 
 # ---------------------------------------------------------------------------
 # Node sırası (immutable kontrat — UI stepper bu sırayla render eder)
@@ -209,10 +234,27 @@ def run_wizard_step(
     next_step = step + 1 if step + 1 < len(WIZARD_NODES) else None
     status = "stub" if step + 1 < len(WIZARD_NODES) else "completed"
 
-    logger.info(
-        "[db_smart] step %s node=%s session=%s payload_keys=%s",
-        step, node, session_uid, list((payload or {}).keys()),
-    )
+    # v3.30.0 FAZ 5 P36 — OTel span + Prometheus counters around step dispatch.
+    # pipeline_events remains the funnel ground truth; these are sinks only.
+    with _otel_span(
+        "dbsmart.wizard_step",
+        session_uid=session_uid,
+        step=step,
+        node=node,
+        status=status,
+    ):
+        logger.info(
+            "[db_smart] step %s node=%s session=%s payload_keys=%s",
+            step, node, session_uid, list((payload or {}).keys()),
+        )
+        try:
+            if step == 0:
+                _prom("wizard_started_total").inc()
+            if status == "completed":
+                _prom("wizard_completed_total").inc()
+        except Exception:
+            # Telemetry must never break business flow.
+            pass
 
     return {
         "session_uid": session_uid,
