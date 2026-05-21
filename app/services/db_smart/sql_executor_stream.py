@@ -257,9 +257,11 @@ def stream_safe_sql(
     if not _concurrency_guard.try_acquire(timeout_s=2.0):
         yield {"type": "queued", "message": "Sorgu kuyruğunda bekliyor..."}
         _settings = __import__("app.core.config", fromlist=["settings"]).settings
-        if not _concurrency_guard.try_acquire(timeout_s=float(
-            getattr(_settings, "DBSMART_STREAM_QUEUE_TIMEOUT_S", 30)
-        )):
+        try:
+            _queue_timeout = float(getattr(_settings, "DBSMART_STREAM_QUEUE_TIMEOUT_S", 30))
+        except (TypeError, ValueError):
+            _queue_timeout = 30.0
+        if not _concurrency_guard.try_acquire(timeout_s=_queue_timeout):
             yield {"type": "error", "message": "Kuyruk zaman aşımı (503). Daha sonra tekrar deneyin."}
             return
 
@@ -314,9 +316,11 @@ class _ConcurrencyGuard:
             pass
 
 
-_concurrency_guard = _ConcurrencyGuard(
-    max_concurrent=int(getattr(
+try:
+    _max_concurrent = int(getattr(
         __import__("app.core.config", fromlist=["settings"]).settings,
         "DBSMART_STREAM_MAX_CONCURRENT", 5
     ))
-)
+except (TypeError, ValueError, ImportError):
+    _max_concurrent = 5
+_concurrency_guard = _ConcurrencyGuard(max_concurrent=_max_concurrent)

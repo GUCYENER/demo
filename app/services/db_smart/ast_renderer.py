@@ -521,7 +521,11 @@ def inject_rls(
     filters = list(ast.get("filters") or [])
     # Idempotency: predicate-level dedup. Same (alias.company_id = value)
     # triple already present → skip (double-inject safe).
-    company_id_int = int(company_id)
+    try:
+        company_id_int = int(company_id)
+    except (TypeError, ValueError):
+        logger.warning("[ast_renderer] invalid company_id=%r, skipping RLS", company_id)
+        return ast
     existing_keys = {
         (
             (f.get("expr") or f.get("column") or ""),
