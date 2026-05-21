@@ -339,3 +339,87 @@ def track(
             record(cur, action, user_ctx, **merged)
         except Exception as e:
             logger.warning("[db_smart.lr] track() record failed: %s", e)
+
+
+# ─────────────────────────────────────────────────────────────
+# P30a — Batch record + partition rotate
+# ─────────────────────────────────────────────────────────────
+
+def record_batch(
+    cur,
+    events: list[dict],
+    user_ctx: dict,
+    *,
+    _skip_pii: bool = False,
+) -> int:
+    """Batch insert çoklu event. PII masking per-event uygulanır.
+
+    Returns inserted count. Graceful: hatalı tek event batch'i kırmaz.
+    """
+    if not events:
+        return 0
+
+    inserted = 0
+    for ev in events:
+        try:
+            action = ev.get("action", "Unknown")
+            fields = {k: v for k, v in ev.items() if k != "action"}
+            record(cur, action, user_ctx, **fields)
+            inserted += 1
+        except Exception as e:
+            logger.warning("[db_smart.lr] record_batch single event failed: %s", e)
+    return inserted
+
+
+def partition_rotate(cur) -> dict:
+    """Ay sonu partition oluşturma. Mevcut + sonraki ay partition'larını kontrol eder.
+
+    Returns: {"created": [...], "skipped": [...]}
+    """
+    from datetime import datetime, timedelta
+
+    now = datetime.now()
+    created = []
+    skipped = []
+
+    for offset in (0, 1):
+        target = now.replace(day=1) + timedelta(days=32 * offset)
+        target = target.replace(day=1)
+        part_name = f"dbsmart_interactions_{target.strftime('%Y_%m')}"
+        start_date = target.strftime("%Y-%m-01")
+        next_month = (target.replace(day=1) + timedelta(days=32)).replace(day=1)
+        end_date = next_month.strftime("%Y-%m-01")
+
+        try:
+            cur.execute(
+                "SELECT 1 FROM pg_class WHERE relname = %s AND relkind = 'r'",
+                (part_name,),
+            )
+            if cur.fetchone():
+                skipped.append(part_name)
+                continue
+
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS {part_name}
+                PARTITION OF dbsmart_interactions
+                FOR VALUES FROM ('{start_date}') TO ('{end_date}')
+            """)
+            # Re-apply RLS policy to child partition
+            cur.execute(f"""
+                DO $$ BEGIN
+                    EXECUTE format(
+                        'CREATE POLICY pol_dbsmart_interactions_isolation ON %I '
+                        'USING (user_id = NULLIF(current_setting(''vyra.user_id'', TRUE), '''')::int '
+                        'OR current_setting(''vyra.is_admin'', TRUE) = ''true'')',
+                        '{part_name}'
+                    );
+                EXCEPTION WHEN duplicate_object THEN NULL;
+                END $$
+            """)
+            created.append(part_name)
+            logger.info("[db_smart.lr] partition created: %s", part_name)
+        except Exception as e:
+            logger.warning("[db_smart.lr] partition_rotate %s failed: %s", part_name, e)
+            skipped.append(part_name)
+
+    return {"created": created, "skipped": skipped}

@@ -437,3 +437,136 @@ def save_custom_metric(
     except Exception as e:
         logger.warning("[db_smart.cmp] save_custom_metric INSERT failed: %s", e)
         return None
+
+
+# ─────────────────────────────────────────────────────────────
+# P26 — Clarification question generator + promote stub
+# ─────────────────────────────────────────────────────────────
+
+def generate_clarification_question(
+    parse_result: Dict[str, Any],
+    source_id: int,
+    *,
+    candidate_tables: Optional[List[str]] = None,
+    candidate_date_cols: Optional[List[str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Belirsiz parse sonuçları için TR açıklama sorusu üretir.
+
+    Returns dict with {question, choices, field} or None if clarification
+    is not needed (confidence >= 0.7 and no ambiguity detected).
+    """
+    if not parse_result:
+        return None
+
+    confidence = parse_result.get("confidence", 1.0)
+    intent = parse_result.get("intent") or {}
+    agg_func = intent.get("agg_func") if isinstance(intent, dict) else None
+
+    # Case 1: Multiple candidate tables (ambiguous entity)
+    if candidate_tables and len(candidate_tables) > 1:
+        return {
+            "question": "Hangi tabloyu kastediyorsunuz?",
+            "choices": candidate_tables[:10],
+            "field": "table",
+        }
+
+    # Case 2: Missing date column when time window detected
+    tw = intent.get("time_window") if isinstance(intent, dict) else None
+    if tw and candidate_date_cols and len(candidate_date_cols) > 1:
+        return {
+            "question": "Tarih kolonu olarak hangisini kullanayım?",
+            "choices": candidate_date_cols[:10],
+            "field": "date",
+        }
+
+    # Case 3: Unclear aggregate function
+    if confidence < 0.7 and agg_func is None:
+        return {
+            "question": "Hangi hesaplama türünü yapmamı istersiniz?",
+            "choices": ["SUM (Toplam)", "AVG (Ortalama)", "COUNT (Adet)",
+                        "MAX (En yüksek)", "MIN (En düşük)"],
+            "field": "aggregate",
+        }
+
+    # Case 4: General low confidence
+    if confidence < 0.5:
+        return {
+            "question": "Metrik tanımınız belirsiz. Lütfen daha açık bir ifade kullanır mısınız?",
+            "choices": [],
+            "field": "general",
+        }
+
+    return None
+
+
+def promote_to_official(
+    custom_metric_id: int,
+    *,
+    cur=None,
+    min_user_count: int = 50,
+    min_success_rate: float = 0.8,
+) -> Dict[str, Any]:
+    """STUB: custom metriği official'a promote etme uygunluk kontrolü.
+
+    FAZ 4 governance flow'u bu stub'ı gerçek implementasyona çevirecek.
+    Şimdilik sadece uygunluk raporu döner, DB'ye yazmaz.
+
+    Returns:
+        {"eligible": bool, "reason": str | None, "proposal": dict | None}
+    """
+    if cur is None:
+        return {"eligible": False, "reason": "DB bağlantısı yok (stub)", "proposal": None}
+
+    try:
+        # Check usage stats (placeholder query — FAZ 4'te gerçek interaction count)
+        cur.execute(
+            """SELECT COUNT(DISTINCT di.user_id) AS user_count,
+                      COALESCE(AVG(CASE WHEN di.action = 'MetricChosen' THEN 1.0 ELSE 0.0 END), 0) AS success_rate
+               FROM dbsmart_interactions di
+               WHERE di.payload->>'metric_id' = %s::text
+                 AND di.recorded_at >= NOW() - INTERVAL '90 days'""",
+            (str(custom_metric_id),),
+        )
+        row = cur.fetchone()
+        if not row:
+            return {"eligible": False, "reason": "Kullanım verisi bulunamadı.", "proposal": None}
+
+        user_count = row[0] if not isinstance(row, dict) else row.get("user_count", 0)
+        success_rate = float(row[1] if not isinstance(row, dict) else row.get("success_rate", 0))
+
+        if user_count < min_user_count:
+            return {
+                "eligible": False,
+                "reason": f"Yeterli kullanıcı sayısına ulaşılmadı ({user_count}/{min_user_count}).",
+                "proposal": None,
+            }
+        if success_rate < min_success_rate:
+            return {
+                "eligible": False,
+                "reason": f"Başarı oranı yetersiz ({success_rate:.0%} < {min_success_rate:.0%}).",
+                "proposal": None,
+            }
+
+        # Eligible — build proposal (not applied)
+        cur.execute(
+            "SELECT metric_key, name_tr, sql_template, source_id FROM dbsmart_metric_library WHERE id = %s",
+            (custom_metric_id,),
+        )
+        metric_row = cur.fetchone()
+        if not metric_row:
+            return {"eligible": False, "reason": "Metrik bulunamadı.", "proposal": None}
+
+        return {
+            "eligible": True,
+            "reason": None,
+            "proposal": {
+                "metric_key": metric_row[0] if not isinstance(metric_row, dict) else metric_row.get("metric_key"),
+                "name_tr": metric_row[1] if not isinstance(metric_row, dict) else metric_row.get("name_tr"),
+                "user_count": user_count,
+                "success_rate": round(success_rate, 4),
+                "action": "SET is_official=TRUE, owner_user_id=NULL (FAZ 4 governance)",
+            },
+        }
+    except Exception as e:
+        logger.warning("[db_smart.cmp] promote_to_official check failed: %s", e)
+        return {"eligible": False, "reason": f"Kontrol hatası: {e}", "proposal": None}

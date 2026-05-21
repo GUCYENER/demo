@@ -387,3 +387,205 @@ def mark_run(
     except Exception as e:
         logger.warning("[db_smart.sr] mark_run %s failed: %s", report_id, e)
         return False
+
+
+# ─────────────────────────────────────────────────────────────
+# P38 — Share audience + audit log
+# ─────────────────────────────────────────────────────────────
+
+_VALID_AUDIENCES = ("public", "tenant", "users")
+_MAX_AUDIT_ENTRIES = 20
+
+
+def create_share_token_with_audience(
+    cur,
+    report_id: int,
+    user_ctx: dict,
+    *,
+    audience: str = "public",
+    allowed_user_ids: Optional[List[int]] = None,
+    ttl_hours: int = 720,
+) -> Optional[Dict[str, Any]]:
+    """Share token oluşturur audience bilgisiyle (P38).
+
+    audience: 'public' (herkes), 'tenant' (aynı company), 'users' (belirli kullanıcılar).
+    """
+    if audience not in _VALID_AUDIENCES:
+        return None
+
+    if audience == "users" and not allowed_user_ids:
+        return None
+
+    token = secrets.token_urlsafe(32)
+    user_id = user_ctx.get("user_id")
+    allowed_ids = allowed_user_ids[:50] if allowed_user_ids else None
+
+    try:
+        # Update share columns
+        cur.execute(
+            """
+            UPDATE dbsmart_saved_reports
+            SET is_shared = TRUE,
+                share_token = %s,
+                share_expires_at = NOW() + (%s || ' hours')::interval,
+                share_audience = %s,
+                share_allowed_user_ids = %s,
+                share_audit = (
+                    COALESCE(share_audit, '[]'::jsonb) || %s::jsonb
+                ),
+                updated_at = NOW()
+            WHERE id = %s
+            RETURNING id, share_token, share_expires_at, share_audience
+            """,
+            (
+                token,
+                str(ttl_hours),
+                audience,
+                allowed_ids,
+                json.dumps([{
+                    "action": "share_created",
+                    "audience": audience,
+                    "by_user_id": user_id,
+                    "at": "now()",
+                    "allowed_user_ids": allowed_ids,
+                }]),
+                int(report_id),
+            ),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+
+        # Trim audit to MAX entries
+        _trim_audit(cur, report_id)
+
+        return {
+            "token": token,
+            "expires_at": str(row[2]) if row[2] else None,
+            "audience": audience,
+        }
+    except Exception as e:
+        logger.warning("[db_smart.sr] create_share_token_with_audience failed: %s", e)
+        return None
+
+
+def check_share_audience(
+    cur,
+    token: str,
+    viewer_user_id: Optional[int] = None,
+    viewer_company_id: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """Token doğrulaması + audience kontrolü.
+
+    Returns report dict if allowed, None if denied/expired/missing.
+    """
+    try:
+        cur.execute(
+            """
+            SELECT id, user_id, company_id, share_audience,
+                   share_allowed_user_ids, share_expires_at,
+                   name, last_run_snapshot, wizard_state
+            FROM dbsmart_saved_reports
+            WHERE share_token = %s
+              AND is_shared = TRUE
+              AND share_expires_at > NOW()
+            """,
+            (token,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+
+        report_id, owner_user_id, report_company_id = row[0], row[1], row[2]
+        audience = row[3] or "public"
+        allowed_ids = row[4]
+
+        # Audience check
+        if audience == "tenant":
+            if viewer_company_id is None or viewer_company_id != report_company_id:
+                return None
+        elif audience == "users":
+            if not allowed_ids or viewer_user_id not in allowed_ids:
+                return None
+        # "public" → always allowed
+
+        # Append audit entry
+        _append_audit(cur, report_id, {
+            "action": "share_viewed",
+            "viewer_user_id": viewer_user_id,
+            "at": "now()",
+        })
+
+        return {
+            "id": report_id,
+            "name": row[6],
+            "last_run_snapshot": row[7],
+            "wizard_state": row[8],
+        }
+    except Exception as e:
+        logger.warning("[db_smart.sr] check_share_audience failed: %s", e)
+        return None
+
+
+def revoke_share_token(cur, report_id: int, user_ctx: dict) -> bool:
+    """Share token'ı iptal eder (is_shared=FALSE)."""
+    try:
+        _append_audit(cur, report_id, {
+            "action": "share_revoked",
+            "by_user_id": user_ctx.get("user_id"),
+            "at": "now()",
+        })
+        cur.execute(
+            """
+            UPDATE dbsmart_saved_reports
+            SET is_shared = FALSE, updated_at = NOW()
+            WHERE id = %s
+            """,
+            (int(report_id),),
+        )
+        return bool(getattr(cur, "rowcount", 0) or 0)
+    except Exception as e:
+        logger.warning("[db_smart.sr] revoke_share_token failed: %s", e)
+        return False
+
+
+def _append_audit(cur, report_id: int, entry: dict):
+    """Audit log'a yeni entry ekler (max 20)."""
+    try:
+        cur.execute(
+            """
+            UPDATE dbsmart_saved_reports
+            SET share_audit = (
+                COALESCE(share_audit, '[]'::jsonb) || %s::jsonb
+            )
+            WHERE id = %s
+            """,
+            (json.dumps([entry]), int(report_id)),
+        )
+        _trim_audit(cur, report_id)
+    except Exception:
+        pass
+
+
+def _trim_audit(cur, report_id: int):
+    """Audit log'u MAX_AUDIT_ENTRIES'e kırpar (en yeniler kalır)."""
+    try:
+        cur.execute(
+            f"""
+            UPDATE dbsmart_saved_reports
+            SET share_audit = (
+                SELECT jsonb_agg(elem)
+                FROM (
+                    SELECT elem
+                    FROM jsonb_array_elements(COALESCE(share_audit, '[]'::jsonb)) AS elem
+                    ORDER BY elem->>'at' DESC NULLS LAST
+                    LIMIT {_MAX_AUDIT_ENTRIES}
+                ) sub
+            )
+            WHERE id = %s
+              AND jsonb_array_length(COALESCE(share_audit, '[]'::jsonb)) > {_MAX_AUDIT_ENTRIES}
+            """,
+            (int(report_id),),
+        )
+    except Exception:
+        pass

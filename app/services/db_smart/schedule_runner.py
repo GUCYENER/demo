@@ -282,3 +282,98 @@ def check_dbsmart_scheduled_reports(cur: Any) -> Dict[str, int]:
         else:
             err_count += 1
     return {"due": len(due), "ok": ok_count, "err": err_count}
+
+
+# ─────────────────────────────────────────────────────────────
+# P39 — Cron validation helper
+# ─────────────────────────────────────────────────────────────
+
+_TR_DESCRIPTIONS = {
+    "minute": "dakikada bir",
+    "hour": "saatte bir",
+    "day": "günde bir",
+    "month": "ayda bir",
+    "year": "yılda bir",
+}
+
+
+def validate_cron(expr: str) -> Dict[str, Any]:
+    """Cron ifadesini doğrular, TR açıklama + sonraki 3 çalışma zamanını döner.
+
+    Returns:
+        {"valid": bool, "error": str | None, "description": str,
+         "next_3_runs": list[str]}
+    """
+    if not expr or not isinstance(expr, str) or not expr.strip():
+        return {
+            "valid": False,
+            "error": "Cron ifadesi boş olamaz.",
+            "description": "",
+            "next_3_runs": [],
+        }
+
+    expr = expr.strip()
+
+    try:
+        from croniter import croniter
+    except ImportError:
+        return {
+            "valid": False,
+            "error": "croniter kütüphanesi yüklü değil.",
+            "description": "",
+            "next_3_runs": [],
+        }
+
+    if not croniter.is_valid(expr):
+        return {
+            "valid": False,
+            "error": f"Geçersiz cron ifadesi: '{expr}'",
+            "description": "",
+            "next_3_runs": [],
+        }
+
+    try:
+        base = _utcnow()
+        cron = croniter(expr, base)
+        next_runs = [cron.get_next(datetime).isoformat() for _ in range(3)]
+
+        # Simple TR description
+        parts = expr.split()
+        desc = _build_cron_description_tr(parts)
+
+        return {
+            "valid": True,
+            "error": None,
+            "description": desc,
+            "next_3_runs": next_runs,
+        }
+    except Exception as e:
+        return {
+            "valid": False,
+            "error": f"Cron hesaplama hatası: {e}",
+            "description": "",
+            "next_3_runs": [],
+        }
+
+
+def _build_cron_description_tr(parts: List[str]) -> str:
+    """5-field cron parçalarından basit TR açıklama oluşturur."""
+    if len(parts) < 5:
+        return "Özel zamanlama"
+
+    minute, hour, dom, month, dow = parts[:5]
+
+    if minute == "0" and hour == "0" and dom == "1" and month == "*":
+        return "Her ayın 1'inde gece yarısı UTC"
+    if minute == "0" and hour == "0" and dom == "*" and month == "*" and dow == "*":
+        return "Her gün gece yarısı UTC"
+    if minute == "0" and hour != "*" and dom == "*" and month == "*" and dow == "*":
+        return f"Her gün {hour}:00 UTC"
+    if minute != "*" and hour == "*" and dom == "*":
+        if minute.startswith("*/"):
+            interval = minute[2:]
+            return f"Her {interval} dakikada bir"
+    if minute == "0" and hour == "0" and dow in ("1", "MON"):
+        return "Her Pazartesi gece yarısı UTC"
+
+    return f"Cron: {' '.join(parts)}"
