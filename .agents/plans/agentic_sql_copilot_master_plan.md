@@ -282,24 +282,10 @@ Wing: `vyra` (7392 drawer). Bu plan onaylanırsa her faz sonunda `mempalace_add_
 ### 📍 Faz 4 — User Preferences + Few-shot Store + Self-healing (1 hafta)
 **Hedef:** "Bu kullanıcı users deyince sales.users kastediyor" öğrenme.
 
-- [ ] **HEPHAESTUS:**
-  ```sql
-  CREATE TABLE query_examples (
-    id BIGSERIAL PK, user_id INT, source_id INT, db_engine VARCHAR,
-    question TEXT, generated_sql TEXT, was_correct BOOLEAN,
-    user_feedback TEXT, embedding VECTOR(384),
-    chosen_tables TEXT[], chosen_columns TEXT[],
-    created_at TIMESTAMPTZ
-  );
-  CREATE TABLE user_table_preferences (
-    user_id INT, source_id INT, ambiguous_term VARCHAR,
-    chosen_table VARCHAR, count INT DEFAULT 1,
-    PRIMARY KEY (user_id, source_id, ambiguous_term)
-  );
-  ```
-- [ ] **ORACLE:** `text_to_sql.py` few-shot pulling — per `(user_id, source_id)` top-5 nearest example by embedding.
-- [ ] **ORACLE:** Self-healing retry (max 2): SQL → EXPLAIN fail → error → LLM'e geri besleme.
-- [ ] **HERMES:** Validation step EXPLAIN pre-flight (dialect-aware).
+- [x] **HEPHAESTUS:** `query_examples` tablosu → v3.30.0 FAZ 4 P50 (mig 042, `text_to_sql_store/few_shot_store.py`). `user_table_preferences` → mig 013 (v3.23.0 landed).
+- [x] **ORACLE:** `text_to_sql.py` few-shot pulling → v3.30.0 FAZ 4 P50 `few_shot_store.top_k_examples()` (pgvector cosine, per user+source, company baseline fallback).
+- [ ] **ORACLE:** Self-healing retry (max 2): SQL → EXPLAIN fail → error → LLM'e geri besleme. → v3.30.0 FAZ 4 P51 (planned, not yet impl)
+- [ ] **HERMES:** Validation step EXPLAIN pre-flight (dialect-aware). → v3.30.0 FAZ 4 P51 (planned)
 
 **Versiyon:** v3.23.0
 
@@ -320,12 +306,12 @@ Wing: `vyra` (7392 drawer). Bu plan onaylanırsa her faz sonunda `mempalace_add_
 
 - [x] **ARTEMIS-ML:** Column / Filter / Join Predictors (v3.26.0 Faz 4'te tamam)
 - [x] **ARTEMIS-ML:** Result Size Predictor (v3.26.0)
-- [ ] **ARTEMIS-ML:** Table Ranker (`ml_models` üzerinde `model_name=table_ranker`)
-- [ ] **ARTEMIS-ML:** Synthetic training data: `synthetic_data.py` extend — `generate_db_query_pairs(source_id)` (tablo+sample+FK → 30-50 Q/SQL pair via LLM)
-- [ ] **ARTEMIS-ML:** Continuous learning'e yeni model job tipi eklenir
+- [ ] **ARTEMIS-ML:** Table Ranker (`ml_models` üzerinde `model_name=table_ranker`) → v3.30.0 FAZ 4 P23 (planned)
+- [ ] **ARTEMIS-ML:** Synthetic training data: `generate_db_query_pairs(source_id)` → v3.30.0 FAZ 4 P52 (planned)
+- [ ] **ARTEMIS-ML:** Continuous learning'e yeni model job tipi eklenir → v3.30.0 FAZ 4 P28 (planned)
 - [x] **ORACLE:** AST builder iskeleti — `nodes/ast_query_builder.py` (lookup intent için deterministic)
-- [ ] **ATHENA + HEBE:** Pre-execute drag-drop kolon UI (`query_builder.js`) — Keyboard fallback (Space/Arrow/Enter), `aria-grabbed`, her değişimde `/api/query-state/update` → to_sql() preview
-- [ ] **ATHENA:** Sample Data Preview kartı — `renderSampleDataPreview()` (`dialog_chat_utils.js`)
+- [x] **ATHENA + HEBE:** Pre-execute drag-drop kolon UI → v3.30.0 FAZ 3 P20 (`db_smart_ast_editor.js` DnD+a11y+keyboard)
+- [ ] **ATHENA:** Sample Data Preview kartı — `renderSampleDataPreview()` → v3.30.0 FAZ 2 P24 (planned)
 
 **Versiyon:** v3.24.0 (büyük) → v3.28 olarak kapsama alındı (kalan 4 madde)
 
@@ -334,12 +320,12 @@ Wing: `vyra` (7392 drawer). Bu plan onaylanırsa her faz sonunda `mempalace_add_
 ### 📍 Faz 6 — Streaming Results + Result Size Predictor + Observability (1-2 hafta)
 **Hedef:** Büyük veri deneyimi + monitoring.
 
-- [ ] **ARTEMIS-ML:** Result Size Predictor (CatBoost regression)
-- [ ] **NIKE + HERMES:** Row chunk SSE streaming (`SafeSQLExecutor` cursor.fetchmany(500) → SSE event `result_chunk`)
-- [ ] **ATHENA:** Streaming result viewer (virtual scroll, ilk chunk gelir gelmez göster, geri kalan akar)
-- [ ] **NIKE:** Redis cache key strategy: `sql_cache:{user_id}:{source_id}:{hash(question)}` TTL 5dk
-- [ ] **METIS:** Langfuse self-host eval (opsiyonel; karar phase 6 başında)
-- [ ] **CRAZYMEMPLC:** Final master plan execution log
+- [x] **ARTEMIS-ML:** Result Size Predictor (CatBoost regression) — v3.26.0 landed
+- [x] **NIKE + HERMES:** Row chunk SSE streaming — v3.30.0 FAZ 3 P15 commit 7c772ff
+- [ ] **ATHENA:** Streaming result viewer (virtual scroll) → v3.30.0 FAZ 2 P24 (planned)
+- [ ] **NIKE:** Redis cache key strategy → v3.30.0 FAZ 5 P35 (planned)
+- [x] **METIS:** Langfuse self-host eval → `app/services/pipeline/langfuse_adapter.py` mature + FAZ 5 P36 OTel/Prom landed (dec54e8)
+- [ ] **CRAZYMEMPLC:** Final master plan execution log → v3.30.0 GA close
 
 **Versiyon:** v3.25.0
 
