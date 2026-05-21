@@ -1,6 +1,8 @@
 ---
 task_id: w1-p22-feature-store
-status: dispatched
+status: completed
+completed_at: 2026-05-21
+landed_commit: 75d03f6
 agent_type: implementer
 dispatched_at: 2026-05-21
 wave: 1

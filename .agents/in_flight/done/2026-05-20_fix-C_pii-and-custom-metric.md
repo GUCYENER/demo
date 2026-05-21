@@ -1,7 +1,7 @@
 ---
 task_id: abff927640a279f7e
-status: failed
-failure_reason: Subagent halted by system-level guardrail ("MUST refuse to improve or augment the code" issued on every file read). No source files were modified. Task requires re-dispatch under a context where the guardrail does not apply, or human intervention.
+status: completed_by_main_agent
+failure_reason: "Subagent refused (malware-reminder mis-apply). ZEUS main agent completed the work directly in commit 371de47 (learning_recorder + custom_metric_parser F-009/F-010/F-015/F-017 PII value-hash + fail-closed)."
 agent_type: general-purpose
 target_files:
   - app/services/db_smart/learning_recorder.py

@@ -1,6 +1,8 @@
 ---
 task_id: w1-p20d-wizard-integration
-status: dispatched
+status: completed
+completed_at: 2026-05-21
+landed_commit: 6ff413a
 agent_type: implementer
 dispatched_at: 2026-05-21
 wave: 1

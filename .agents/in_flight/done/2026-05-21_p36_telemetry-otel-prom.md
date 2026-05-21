@@ -1,6 +1,8 @@
 ---
 task_id: w1-p36-telemetry-otel-prom
-status: dispatched
+status: completed
+completed_at: 2026-05-21
+landed_commit: dec54e8
 agent_type: implementer
 dispatched_at: 2026-05-21
 wave: 1
