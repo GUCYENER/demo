@@ -284,8 +284,8 @@ Wing: `vyra` (7392 drawer). Bu plan onaylanırsa her faz sonunda `mempalace_add_
 
 - [x] **HEPHAESTUS:** `query_examples` tablosu → v3.30.0 FAZ 4 P50 (mig 042, `text_to_sql_store/few_shot_store.py`). `user_table_preferences` → mig 013 (v3.23.0 landed).
 - [x] **ORACLE:** `text_to_sql.py` few-shot pulling → v3.30.0 FAZ 4 P50 `few_shot_store.top_k_examples()` (pgvector cosine, per user+source, company baseline fallback).
-- [ ] **ORACLE:** Self-healing retry (max 2): SQL → EXPLAIN fail → error → LLM'e geri besleme. → v3.30.0 FAZ 4 P51 (planned, not yet impl)
-- [ ] **HERMES:** Validation step EXPLAIN pre-flight (dialect-aware). → v3.30.0 FAZ 4 P51 (planned)
+- [x] **ORACLE:** Self-healing retry (max 2): SQL → EXPLAIN fail → error → LLM'e geri besleme. → v3.30.0 FAZ 4 P51 (`text_to_sql_store/self_healer.py` — 7fd8868)
+- [x] **HERMES:** Validation step EXPLAIN pre-flight (dialect-aware). → v3.30.0 FAZ 4 P51 (dialect-aware EXPLAIN in self_healer._build_explain_sql)
 
 **Versiyon:** v3.23.0
 

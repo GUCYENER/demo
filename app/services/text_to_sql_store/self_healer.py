@@ -188,7 +188,8 @@ def _validate_repaired(cur, sql: str) -> bool:
     """Basic SQL validation (safe_sql_executor pattern reuse)."""
     try:
         from app.services.safe_sql_executor import validate_sql
-        return validate_sql(sql)
+        is_valid, _err = validate_sql(sql)
+        return is_valid
     except ImportError:
         # Fallback: basic checks
         upper = sql.strip().upper()

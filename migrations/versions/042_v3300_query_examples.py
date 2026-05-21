@@ -42,7 +42,7 @@ from typing import Sequence, Union
 from alembic import op
 
 revision: str = "042_v3300_query_examples"
-down_revision: Union[str, None] = "033_v3300_metric_library_seed"
+down_revision: Union[str, None] = "037_v3300_feature_store_mvs"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

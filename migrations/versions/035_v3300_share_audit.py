@@ -18,7 +18,7 @@ import sqlalchemy as sa
 
 
 revision = '035_v3300_share_audit'
-down_revision = '033_v3300_metric_library_seed'
+down_revision = '034_v3300_dbsmart_interactions_partitioning'
 branch_labels = None
 depends_on = None
 
