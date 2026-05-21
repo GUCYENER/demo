@@ -58,6 +58,11 @@ FEATURE_KEYS = (
     "supports_offset_limit",  # PG/MySQL/MSSQL2012+ standart OFFSET..LIMIT
     "supports_with_clause",
     "supports_connect_by",
+    "supports_nvl2",              # P32 — Oracle NVL2()
+    "supports_decode",            # P32 — Oracle DECODE()
+    "supports_cross_apply",       # P32 — MSSQL CROSS APPLY (LATERAL equiv)
+    "supports_outer_apply",       # P32 — MSSQL OUTER APPLY (LEFT LATERAL equiv)
+    "supports_json_table",        # P32 — MySQL 8.0.17+ JSON_TABLE
     "case_sensitive_identifiers",
 )
 
@@ -90,6 +95,7 @@ _FEATURES: Mapping[str, Mapping[str, bool]] = MappingProxyType({
         supports_listagg=True, supports_pivot=True,
         supports_fetch_first=True,
         supports_with_clause=True, supports_connect_by=True,
+        supports_nvl2=True, supports_decode=True,
         case_sensitive_identifiers=False,
     ),
     "mssql": _feature_dict(
@@ -98,6 +104,7 @@ _FEATURES: Mapping[str, Mapping[str, bool]] = MappingProxyType({
         supports_recursive_cte=True, supports_window=True,
         supports_string_agg=True,  # 2017+
         supports_pivot=True,
+        supports_cross_apply=True, supports_outer_apply=True,  # LATERAL eşdeğeri
         supports_top=True, supports_offset_limit=True, supports_fetch_first=True,
         supports_with_clause=True, case_sensitive_identifiers=False,
     ),
@@ -107,6 +114,7 @@ _FEATURES: Mapping[str, Mapping[str, bool]] = MappingProxyType({
         supports_recursive_cte=True,  # 8.0+
         supports_window=True,         # 8.0+
         supports_string_agg=False,    # GROUP_CONCAT alternatif
+        supports_json_table=True,     # 8.0.17+
         supports_offset_limit=True,
         supports_with_clause=True, case_sensitive_identifiers=False,
     ),
@@ -146,6 +154,14 @@ _SYNTAX: Mapping[str, Mapping[str, str]] = MappingProxyType({
         "case_insensitive_like": "LOWER({col}) LIKE LOWER({val})",
         "current_date": "TRUNC(SYSDATE)",
         "current_timestamp": "SYSTIMESTAMP",
+        # P32 — Oracle-specific hierarchical + pivot syntax
+        "connect_by": "CONNECT BY {prior_expr}",
+        "start_with": "START WITH {expr}",
+        "pivot": "PIVOT ({agg} FOR {col} IN ({values}))",
+        "unpivot": "UNPIVOT ({value_col} FOR {name_col} IN ({cols}))",
+        "grouping_sets": "GROUPING SETS ({sets})",
+        "cube": "CUBE ({cols})",
+        "rollup": "ROLLUP ({cols})",
     }),
     "mssql": MappingProxyType({
         "ident_quote_open": "[",
@@ -157,6 +173,17 @@ _SYNTAX: Mapping[str, Mapping[str, str]] = MappingProxyType({
         "case_insensitive_like": "LOWER({col}) LIKE LOWER({val})",
         "current_date": "CAST(GETDATE() AS DATE)",
         "current_timestamp": "SYSDATETIME()",
+        # P32 — MSSQL-specific APPLY + PIVOT + OPTION hints
+        "cross_apply": "CROSS APPLY {table_expr}",
+        "outer_apply": "OUTER APPLY {table_expr}",
+        "pivot": "PIVOT ({agg} FOR {col} IN ({values}))",
+        "unpivot": "UNPIVOT ({value_col} FOR {name_col} IN ({cols}))",
+        "option_maxdop": "OPTION (MAXDOP {n})",
+        "option_recompile": "OPTION (RECOMPILE)",
+        "option_optimize_unknown": "OPTION (OPTIMIZE FOR UNKNOWN)",
+        "grouping_sets": "GROUPING SETS ({sets})",
+        "cube": "CUBE ({cols})",
+        "rollup": "ROLLUP ({cols})",
     }),
     "mysql": MappingProxyType({
         "ident_quote_open": "`",
@@ -168,6 +195,10 @@ _SYNTAX: Mapping[str, Mapping[str, str]] = MappingProxyType({
         "case_insensitive_like": "LIKE",
         "current_date": "CURDATE()",
         "current_timestamp": "NOW()",
+        # P32 — MySQL-specific
+        "with_rollup": "WITH ROLLUP",  # GROUP BY col1, col2 WITH ROLLUP
+        "json_table": "JSON_TABLE({json_expr}, {path} COLUMNS ({col_defs}))",
+        "recursive_cte": "WITH RECURSIVE {name} AS ({query})",
     }),
 })
 
@@ -207,6 +238,14 @@ _FUNCTIONS: Mapping[str, Mapping[str, Optional[str]]] = MappingProxyType({
         "substring":    "SUBSTR({arg0}, {arg1}, {arg2})",
         "now":          "SYSTIMESTAMP",
         "regex_match":  "REGEXP_LIKE({arg0}, {arg1})",
+        # P32 — Oracle-specific functions
+        "nvl2":         "NVL2({arg0}, {arg1}, {arg2})",
+        "decode":       "DECODE({arg0}, {arg1}, {arg2})",
+        "connect_by_root":       "CONNECT_BY_ROOT {arg0}",
+        "sys_connect_by_path":   "SYS_CONNECT_BY_PATH({arg0}, {arg1})",
+        "regexp_replace":        "REGEXP_REPLACE({arg0}, {arg1}, {arg2})",
+        "to_char":      "TO_CHAR({arg0}, {arg1})",
+        "to_date":      "TO_DATE({arg0}, {arg1})",
     }),
     "mssql": MappingProxyType({
         "string_agg":   "STRING_AGG({arg0}, {sep})",
@@ -220,6 +259,12 @@ _FUNCTIONS: Mapping[str, Mapping[str, Optional[str]]] = MappingProxyType({
         "substring":    "SUBSTRING({arg0}, {arg1}, {arg2})",
         "now":          "SYSDATETIME()",
         "regex_match":  None,  # built-in regex yok
+        # P32 — MSSQL-specific functions
+        "iif":          "IIF({arg0}, {arg1}, {arg2})",
+        "try_convert":  "TRY_CONVERT({arg0}, {arg1})",
+        "format":       "FORMAT({arg0}, {arg1})",
+        "isdate":       "ISDATE({arg0})",
+        "isnull":       "ISNULL({arg0}, {arg1})",
     }),
     "mysql": MappingProxyType({
         "string_agg":   "GROUP_CONCAT({arg0} SEPARATOR {sep})",
@@ -233,6 +278,13 @@ _FUNCTIONS: Mapping[str, Mapping[str, Optional[str]]] = MappingProxyType({
         "substring":    "SUBSTRING({arg0}, {arg1}, {arg2})",
         "now":          "NOW()",
         "regex_match":  "{arg0} REGEXP {arg1}",
+        # P32 — MySQL-specific functions
+        "group_concat_order": "GROUP_CONCAT({arg0} ORDER BY {arg1} SEPARATOR {sep})",
+        "ifnull":       "IFNULL({arg0}, {arg1})",
+        "if_expr":      "IF({arg0}, {arg1}, {arg2})",
+        "json_extract": "JSON_EXTRACT({arg0}, {arg1})",
+        "json_unquote": "JSON_UNQUOTE({arg0})",
+        "regexp_replace": "REGEXP_REPLACE({arg0}, {arg1}, {arg2})",
     }),
 })
 
@@ -247,9 +299,15 @@ _HINT_CATALOG: Mapping[str, tuple] = MappingProxyType({
         "work_mem_mb", "enable_seqscan", "brin",
         "parallel_workers_per_gather",
     ),
-    "oracle":     ("parallel", "result_cache", "index", "materialize"),
-    "mssql":      ("maxdop", "recompile", "optimize_for_unknown"),
-    "mysql":      ("max_execution_time_ms", "sql_no_cache"),
+    # P32 — Oracle: full scan, no_merge, use_hash added
+    "oracle":     ("parallel", "result_cache", "index", "materialize",
+                   "full", "no_merge", "use_hash", "leading"),
+    # P32 — MSSQL: hash/merge join hints, fast N rows
+    "mssql":      ("maxdop", "recompile", "optimize_for_unknown",
+                   "hash_join", "merge_join", "fast_rows"),
+    # P32 — MySQL: no_index_merge, join_order
+    "mysql":      ("max_execution_time_ms", "sql_no_cache",
+                   "no_index_merge", "join_order"),
 })
 
 

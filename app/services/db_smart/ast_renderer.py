@@ -49,12 +49,10 @@ ALLOWED_OPS = {
 ALLOWED_JOINS = {
     "INNER", "LEFT", "RIGHT", "FULL",
     "LEFT OUTER", "RIGHT OUTER", "FULL OUTER",
-    # P31 — PostgreSQL LATERAL join kinds. Renderer maps these to "<kind> JOIN
-    # LATERAL <table_ref>" pattern. Other dialects accept INNER/LEFT LATERAL
-    # syntactically (Oracle 12c+, MSSQL via CROSS/OUTER APPLY translation
-    # delegated to caller; here we render LATERAL verbatim — caller is
-    # responsible for dialect-compat gating via dialect_dictionary.supports).
+    # P31 — PostgreSQL LATERAL join kinds
     "CROSS LATERAL", "INNER LATERAL", "LEFT LATERAL", "LEFT OUTER LATERAL",
+    # P32 — MSSQL CROSS/OUTER APPLY (LATERAL eşdeğeri)
+    "CROSS APPLY", "OUTER APPLY",
 }
 
 # P31 — GROUP BY extension kinds (dict-form items in ast["group_by"])
@@ -239,6 +237,11 @@ def _render_join(ctx: _RenderCtx, j: Dict[str, Any]) -> str:
     d = ctx.dialect
     kind = _validate_join_kind(j.get("kind", "INNER"))
     table_sql = _render_table_ref(d, j.get("table") or {})
+
+    # P32 — MSSQL CROSS APPLY / OUTER APPLY: ON clause yok
+    if kind in ("CROSS APPLY", "OUTER APPLY"):
+        return f"{kind} {table_sql}"
+
     on = j.get("on") or []
     if not on:
         raise ValueError("JOIN missing 'on' clauses")
@@ -419,18 +422,60 @@ def render(
     for j in ast.get("joins") or []:
         parts.append(_render_join(ctx, j))
 
+    # P32 — Oracle CONNECT BY (hierarchical query; FROM'dan sonra, WHERE'den önce)
+    connect_by = ast.get("connect_by")
+    if connect_by and dialect == "oracle":
+        start_with = ast.get("start_with")
+        if start_with:
+            _validate_ident(start_with.get("expr", ""))
+            sw_ph = ctx.add_bind(start_with.get("value"), hint="sw")
+            parts.append(f"START WITH {_q(dialect, start_with['expr'])} = {sw_ph}")
+        cb_expr = connect_by.get("prior_expr", "")
+        cb_parent = connect_by.get("parent_expr", "")
+        if cb_expr and cb_parent:
+            _validate_ident(cb_expr)
+            _validate_ident(cb_parent)
+            parts.append(f"CONNECT BY PRIOR {_q(dialect, cb_expr)} = {_q(dialect, cb_parent)}")
+
     # WHERE
     filters = ast.get("filters") or []
     if filters:
         where_parts = [_render_filter(ctx, f) for f in filters]
         parts.append("WHERE " + " AND ".join(where_parts))
 
-    # GROUP BY
+    # GROUP BY (P32: dict-form GROUPING SETS/CUBE/ROLLUP + MySQL WITH ROLLUP)
     gb = ast.get("group_by") or []
     if gb:
+        gb_parts: List[str] = []
+        has_rollup_modifier = False
         for g in gb:
-            _validate_ident(g)
-        parts.append("GROUP BY " + ", ".join(_q(dialect, g) for g in gb))
+            if isinstance(g, str):
+                _validate_ident(g)
+                gb_parts.append(_q(dialect, g))
+            elif isinstance(g, dict):
+                # {"kind": "grouping_sets"|"cube"|"rollup", "columns": [...]}
+                gkind = (g.get("kind") or "").lower()
+                if gkind not in ALLOWED_GROUP_KINDS:
+                    raise ValueError(f"GROUP BY kind not allowed: {gkind!r}")
+                gcols = g.get("columns") or []
+                for gc in gcols:
+                    _validate_ident(gc)
+                gcol_str = ", ".join(_q(dialect, gc) for gc in gcols)
+                if gkind == "grouping_sets":
+                    gb_parts.append(f"GROUPING SETS ({gcol_str})")
+                elif gkind == "cube":
+                    gb_parts.append(f"CUBE ({gcol_str})")
+                elif gkind == "rollup":
+                    if dialect == "mysql":
+                        # MySQL: GROUP BY col1, col2 WITH ROLLUP
+                        gb_parts.append(gcol_str)
+                        has_rollup_modifier = True
+                    else:
+                        gb_parts.append(f"ROLLUP ({gcol_str})")
+        gb_clause = "GROUP BY " + ", ".join(gb_parts)
+        if has_rollup_modifier:
+            gb_clause += " WITH ROLLUP"
+        parts.append(gb_clause)
 
     # HAVING
     having = ast.get("having") or []
@@ -940,16 +985,38 @@ def inject_dialect_hints(
         return out
 
     if dialect == "oracle":
+        # P32 — Oracle hint accumulator (birden fazla hint /*+ ... */ içinde birleşir)
+        ora_hints: List[str] = []
         n = _safe_int(hints.get("parallel"), 1, _HINT_MAX_PARALLEL)
-        if n is not None and sql.startswith("SELECT "):
-            sql = "SELECT " + f"/*+ PARALLEL({n}) */ " + sql[len("SELECT "):]
+        if n is not None:
+            ora_hints.append(f"PARALLEL({n})")
             applied.append("parallel")
+        if bool(hints.get("full")):
+            ora_hints.append("FULL(t)")
+            applied.append("full")
+        if bool(hints.get("no_merge")):
+            ora_hints.append("NO_MERGE")
+            applied.append("no_merge")
+        if bool(hints.get("result_cache")):
+            ora_hints.append("RESULT_CACHE")
+            applied.append("result_cache")
+        if ora_hints and sql.startswith("SELECT "):
+            hint_str = " ".join(ora_hints)
+            sql = "SELECT " + f"/*+ {hint_str} */ " + sql[len("SELECT "):]
 
     elif dialect == "mysql":
+        # P32 — MySQL hint accumulator
+        my_hints: List[str] = []
         n = _safe_int(hints.get("max_execution_time_ms"), 1, _HINT_MAX_MET_MS)
-        if n is not None and sql.startswith("SELECT "):
-            sql = "SELECT " + f"/*+ MAX_EXECUTION_TIME({n}) */ " + sql[len("SELECT "):]
+        if n is not None:
+            my_hints.append(f"MAX_EXECUTION_TIME({n})")
             applied.append("max_execution_time_ms")
+        if bool(hints.get("no_index_merge")):
+            my_hints.append("NO_INDEX_MERGE(t)")
+            applied.append("no_index_merge")
+        if my_hints and sql.startswith("SELECT "):
+            hint_str = " ".join(my_hints)
+            sql = "SELECT " + f"/*+ {hint_str} */ " + sql[len("SELECT "):]
 
     elif dialect == "mssql":
         opts: List[str] = []
@@ -960,6 +1027,16 @@ def inject_dialect_hints(
         if bool(hints.get("recompile")):
             opts.append("RECOMPILE")
             applied.append("recompile")
+        if bool(hints.get("hash_join")):
+            opts.append("HASH JOIN")
+            applied.append("hash_join")
+        if bool(hints.get("merge_join")):
+            opts.append("MERGE JOIN")
+            applied.append("merge_join")
+        n2 = _safe_int(hints.get("fast_rows"), 1, 10000)
+        if n2 is not None:
+            opts.append(f"FAST {n2}")
+            applied.append("fast_rows")
         if opts:
             sql = sql + " OPTION (" + ", ".join(opts) + ")"
 

@@ -313,6 +313,28 @@ def create_app() -> FastAPI:
             response.headers["Access-Control-Allow-Origin"] = "*"
         return response
     
+    # 🔒 v3.30.0 P40 — CSP + X-Frame-Options middleware
+    @app.middleware("http")
+    async def csp_middleware(request: Request, call_next):
+        """Embed path'ler hariç tüm sayfalar için X-Frame-Options: DENY.
+        /embed/* path'leri CSP frame-ancestors ile kısıtlanır (config'den)."""
+        response = await call_next(request)
+        path = request.url.path
+        if path.startswith("/embed/"):
+            allowed_origins = getattr(settings, "EMBED_FRAME_ANCESTORS", "'self'")
+            response.headers["Content-Security-Policy"] = (
+                f"frame-ancestors {allowed_origins}; "
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data:; "
+                "connect-src 'self'"
+            )
+        else:
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
+
     # 📊 Request Logging Middleware (v2.27.2)
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
@@ -395,6 +417,16 @@ def create_app() -> FastAPI:
         _obs_logging.getLogger("vyra").warning(
             "[observability] init skipped: %s", _obs_err
         )
+
+    # v3.30.0 P40 — Embed route alias (/embed/report/{token} → CSP-gated path)
+    from fastapi.responses import HTMLResponse as _EmbedHTML
+
+    @app.get("/embed/report/{token}")
+    async def embed_report_csp(token: str):
+        """CSP frame-ancestors ile kısıtlanan embed shell.
+        Gerçek data /api/db-smart/saved-reports/by-token/{token} üzerinden alınır."""
+        from app.api.routes.db_smart_api import _EMBED_HTML_TEMPLATE
+        return _EmbedHTML(content=_EMBED_HTML_TEMPLATE, status_code=200)
 
     from pathlib import Path
     from fastapi.responses import FileResponse

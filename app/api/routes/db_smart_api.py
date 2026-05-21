@@ -1038,6 +1038,88 @@ def get_saved_report_by_token(
 
 
 # ─────────────────────────────────────────────────────────────
+# P40 — Embed iframe endpoint (token-bound, CSP-gated)
+# ─────────────────────────────────────────────────────────────
+
+from fastapi.responses import HTMLResponse
+
+_EMBED_HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VYRA — Paylaşılan Rapor</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:system-ui,-apple-system,sans-serif;background:#f8f9fa;color:#1a1a2e}
+  .embed-wrap{max-width:960px;margin:24px auto;padding:0 16px}
+  .embed-header{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+  .embed-header h2{font-size:18px;font-weight:600}
+  .embed-meta{font-size:13px;color:#6c757d;margin-bottom:12px}
+  .embed-table{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;
+    overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+  .embed-table th{background:#e9ecef;text-align:left;padding:10px 14px;font-size:13px;
+    font-weight:600;border-bottom:2px solid #dee2e6}
+  .embed-table td{padding:10px 14px;font-size:13px;border-bottom:1px solid #f1f3f5}
+  .embed-table tr:hover td{background:#f8f9fa}
+  .embed-footer{margin-top:16px;font-size:11px;color:#adb5bd;text-align:center}
+  .embed-err{padding:40px;text-align:center;color:#dc3545}
+  .embed-sql{background:#f1f3f5;border-radius:6px;padding:12px;font-family:monospace;
+    font-size:12px;overflow-x:auto;margin-bottom:16px;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<div class="embed-wrap" id="root">
+  <div class="embed-header"><h2 id="rName">—</h2></div>
+  <div class="embed-meta" id="rMeta"></div>
+  <div class="embed-sql" id="rSql" style="display:none"></div>
+  <table class="embed-table" id="rTable"><thead id="rHead"></thead><tbody id="rBody"></tbody></table>
+  <div class="embed-footer">VYRA Embedded Report</div>
+</div>
+<script>
+(function(){
+  var token=location.pathname.split('/').pop();
+  if(!token){document.getElementById('root').innerHTML='<div class="embed-err">Token bulunamadı.</div>';return;}
+  fetch('/api/db-smart/saved-reports/by-token/'+encodeURIComponent(token))
+    .then(function(r){if(!r.ok)throw new Error(r.status);return r.json()})
+    .then(function(d){
+      document.getElementById('rName').textContent=d.name||'Rapor';
+      document.getElementById('rMeta').textContent=(d.description||'')
+        +(d.share_expires_at?' — Son geçerlilik: '+d.share_expires_at:'');
+      if(d.last_sql){var el=document.getElementById('rSql');el.style.display='block';el.textContent=d.last_sql;}
+      var snap=d.last_run_snapshot;
+      if(snap&&snap.columns&&snap.rows){
+        var hRow='<tr>'+snap.columns.map(function(c){return '<th>'+esc(c)+'</th>'}).join('')+'</tr>';
+        document.getElementById('rHead').innerHTML=hRow;
+        var body=snap.rows.map(function(r){
+          return '<tr>'+r.map(function(v){return '<td>'+esc(v===null?'—':v)+'</td>'}).join('')+'</tr>'
+        }).join('');
+        document.getElementById('rBody').innerHTML=body;
+      }
+    })
+    .catch(function(e){document.getElementById('root').innerHTML='<div class="embed-err">Rapor yüklenemedi ('+e.message+')</div>';});
+  function esc(s){var d=document.createElement('div');d.textContent=String(s);return d.innerHTML;}
+})();
+</script>
+</body>
+</html>"""
+
+
+@router.get("/embed/{token}", response_class=HTMLResponse)
+def embed_report(
+    token: str = Path(..., min_length=8, max_length=128),
+):
+    """P40 — iframe embed edilebilir rapor sayfası.
+
+    CSP frame-ancestors kısıtlaması main.py middleware'inde uygulanır
+    (EMBED_FRAME_ANCESTORS config).
+    """
+    # Token validation is deferred to the JS fetch call (by-token endpoint).
+    # This endpoint only serves the shell HTML; data flows via the API.
+    return HTMLResponse(content=_EMBED_HTML_TEMPLATE, status_code=200)
+
+
+# ─────────────────────────────────────────────────────────────
 # Discovery (sources, tables, columns, related)
 # ─────────────────────────────────────────────────────────────
 
