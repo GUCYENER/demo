@@ -34480,6 +34480,15 @@ window.ThemePickerPopup = (function () {
 
     const API_BASE = '/api/db-smart';
     const TOTAL_STEPS = 5;
+
+    // v3.30.0 FAZ 5 P34 — i18n helper (VyraI18n yüklü değilse key passthrough)
+    function _t(key, params) {
+        if (window.VyraI18n && typeof window.VyraI18n.t === 'function') {
+            return window.VyraI18n.t(key, params);
+        }
+        return key;
+    }
+
     let _state = {
         sessionUid: null,
         currentStep: 0,
@@ -34491,8 +34500,15 @@ window.ThemePickerPopup = (function () {
         selectedTables: [],
         metric: null,
         filters: [],
+        currentAst: null,                 // P20-D: server-canonical AST snapshot
         _lastFocusEl: null,               // HEBE Gate: return-focus target
     };
+
+    // P20-D — Step 4 AST editor mount lifecycle
+    const AST_EDITOR_STEP_IDX = 4;        // 0-based: 5. adım (Önizleme + AST)
+    const PREVIEW_REFRESH_DEBOUNCE_MS = 300;
+    let _astEditorMounted = false;
+    let _previewRefreshTimer = null;
 
     // HEBE Gate helper: announce + toast fallback
     function _notify(msg, kind) {
@@ -34534,6 +34550,10 @@ window.ThemePickerPopup = (function () {
 
     function _setStep(n) {
         if (n < 0 || n > TOTAL_STEPS - 1) return;
+        // P20-D: leaving Step 4 (AST editor host) → unmount + abort in-flight fetches.
+        if (_state.currentStep === AST_EDITOR_STEP_IDX && n !== AST_EDITOR_STEP_IDX) {
+            _unmountAstEditor();
+        }
         _state.currentStep = n;
         // Tablist aria sync: selected step gets aria-selected=true + tabindex=0,
         // others get aria-selected=false + tabindex=-1 (roving tabindex pattern).
@@ -34555,7 +34575,7 @@ window.ThemePickerPopup = (function () {
             }
         });
         const progress = document.getElementById('dswProgress');
-        if (progress) progress.textContent = 'Adım ' + (n + 1) + ' / ' + TOTAL_STEPS;
+        if (progress) progress.textContent = _t('wizard.step.indicator', { current: n + 1, total: TOTAL_STEPS });
         const prev = document.getElementById('dswPrevBtn');
         const next = document.getElementById('dswNextBtn');
         if (prev) prev.disabled = (n === 0);
@@ -34599,7 +34619,7 @@ window.ThemePickerPopup = (function () {
             if (sel.options.length === 0) {
                 const opt = document.createElement('option');
                 opt.value = '';
-                opt.textContent = '(Erişilebilir veri kaynağı yok)';
+                opt.textContent = _t('wizard.empty.sources');
                 sel.appendChild(opt);
             }
         } catch (e) {
@@ -34613,20 +34633,20 @@ window.ThemePickerPopup = (function () {
         const results = document.getElementById('dswResults');
         if (!results) return;
         if (!sourceId) {
-            results.innerHTML = '<div class="dsw-hint" role="status">Lütfen önce veri kaynağı seçin.</div>';
-            _notify('Önce veri kaynağı seçin.', 'warning');
+            results.innerHTML = '<div class="dsw-hint" role="status">' + _escape(_t('wizard.hint.select_source_first')) + '</div>';
+            _notify(_t('wizard.toast.select_source'), 'warning');
             return;
         }
         _state.sourceId = parseInt(sourceId, 10);
         _setBusy(results, true);
-        results.innerHTML = '<div class="dsw-hint" role="status">Aranıyor...</div>';
+        results.innerHTML = '<div class="dsw-hint" role="status">' + _escape(_t('wizard.hint.searching')) + '</div>';
         try {
             const url = API_BASE + '/sources/' + sourceId + '/tables?q=' +
                         encodeURIComponent(q) + '&limit=10';
             const data = await _fetchJson(url);
             const items = data.tables || data.items || [];
             if (!items.length) {
-                results.innerHTML = '<div class="dsw-hint" role="status">Eşleşen tablo bulunamadı.</div>';
+                results.innerHTML = '<div class="dsw-hint" role="status">' + _escape(_t('wizard.empty.tables')) + '</div>';
                 return;
             }
             results.innerHTML = '';
@@ -34661,8 +34681,8 @@ window.ThemePickerPopup = (function () {
                 results.appendChild(div);
             });
         } catch (e) {
-            results.innerHTML = '<div class="dsw-hint" role="status">Hata: ' + _escape(e.message) + '</div>';
-            _notify('Tablo araması başarısız: ' + e.message, 'error');
+            results.innerHTML = '<div class="dsw-hint" role="status">' + _escape(_t('wizard.error.generic', { message: e.message })) + '</div>';
+            _notify(_t('wizard.error.search_failed', { message: e.message }), 'error');
         } finally {
             _setBusy(results, false);
         }
@@ -34683,7 +34703,7 @@ window.ThemePickerPopup = (function () {
         // İleri butonu aktive et
         const next = document.getElementById('dswNextBtn');
         if (next) next.disabled = false;
-        _notify('Seçildi: ' + label, 'success');
+        _notify(_t('wizard.toast.table_selected', { label: label }), 'success');
     }
 
     // ============================================
@@ -34854,21 +34874,11 @@ window.ThemePickerPopup = (function () {
     // Step 4 — Preview (SQL + cost)
     // ============================================
 
-    async function _loadPreview() {
-        const panel = document.getElementById('dswStep4');
-        if (!panel) return;
-        if (!_state.sessionUid || !_state.selectedTableId) {
-            panel.innerHTML = '<p class="dsw-hint" role="status">Önceki adımları tamamlayın.</p>';
-            return;
-        }
-        _setBusy(panel, true);
-        panel.innerHTML = '<p class="dsw-hint" role="status">SQL üretiliyor...</p>';
-        // P4 fix: actual object_name + schema from _selectTable, not display label.
-        // Display label may be a Turkish business name; SQL needs the real identifier.
+    // P20-D: wizard_state üretimi tek bir yere alındı (preview + AST mount paylaşır).
+    function _buildWizardState() {
         const tableName = _state.selectedTableObjectName ||
-            // fallback (only if older flow set label-only): last segment of label
             (_state.selectedTableLabel || 'unknown').split('.').pop();
-        const wizardState = {
+        const ws = {
             source_id: _state.sourceId,
             dialect: 'postgresql',
             base_table: {
@@ -34881,12 +34891,29 @@ window.ThemePickerPopup = (function () {
             limit: 100,
         };
         if (_state.metric) {
-            wizardState.metric = {
+            ws.metric = {
                 metric_key: _state.metric.metric_key,
                 sql_template: (_state.metric.sql_templates || {}).postgresql,
                 placeholders: { table: tableName, limit: '100' },
             };
         }
+        return ws;
+    }
+
+    async function _loadPreview() {
+        const panel = document.getElementById('dswStep4');
+        const hint = document.getElementById('dswStep4Hint');
+        const legacy = document.getElementById('dswLegacyPreview');
+        if (!panel) return;
+        if (!_state.sessionUid || !_state.selectedTableId) {
+            if (hint) hint.textContent = 'Önceki adımları tamamlayın.';
+            if (legacy) { legacy.textContent = ''; legacy.setAttribute('hidden', ''); }
+            return;
+        }
+        _setBusy(panel, true);
+        if (hint) hint.textContent = 'SQL üretiliyor...';
+        // P4 fix: actual object_name + schema from _selectTable, not display label.
+        const wizardState = _buildWizardState();
         try {
             const url = API_BASE + '/sessions/' + _state.sessionUid + '/preview';
             const data = await _fetchJson(url, {
@@ -34901,20 +34928,99 @@ window.ThemePickerPopup = (function () {
                 'cursor': 'cursor akışı',
                 'sse_chunk': 'SSE chunk',
             })[strategy] || strategy;
-            panel.innerHTML =
-                '<p class="dsw-hint" role="status">Önizleme · dialect: ' + _escape(data.dialect || 'postgresql') +
-                (cost != null ? ' · maliyet: ' + cost.toFixed(2) : '') +
-                ' · akış: ' + _escape(strategyLabel) + '</p>' +
-                '<pre style="background:var(--bg-default);border:1px solid var(--border-default);' +
-                'padding:10px;border-radius:6px;font-size:12px;overflow-x:auto;white-space:pre-wrap" ' +
-                'aria-label="Üretilen SQL">' +
-                _escape(sql) + '</pre>';
+            if (hint) {
+                hint.textContent = 'Önizleme · dialect: ' + (data.dialect || 'postgresql') +
+                    (cost != null ? ' · maliyet: ' + cost.toFixed(2) : '') +
+                    ' · akış: ' + strategyLabel;
+            }
+            // P20-D: SQL legacy <pre> slot'una yazılır — AST editor mount edildiyse gizli.
+            if (legacy) {
+                legacy.textContent = sql;
+                legacy.setAttribute('aria-label', 'Üretilen SQL');
+                if (!_astEditorMounted) legacy.removeAttribute('hidden');
+            }
         } catch (e) {
-            panel.innerHTML = '<p class="dsw-hint" role="status">Hata: ' + _escape(e.message) + '</p>';
+            if (hint) hint.textContent = 'Hata: ' + e.message;
             _notify('Önizleme oluşturulamadı: ' + e.message, 'error');
         } finally {
             _setBusy(panel, false);
         }
+    }
+
+    // P20-D: debounced preview refresh after AST onChange.
+    function _refreshPreviewIfActive() {
+        if (_state.currentStep !== AST_EDITOR_STEP_IDX) return;
+        if (_previewRefreshTimer) clearTimeout(_previewRefreshTimer);
+        _previewRefreshTimer = setTimeout(() => {
+            _previewRefreshTimer = null;
+            _loadPreview();
+        }, PREVIEW_REFRESH_DEBOUNCE_MS);
+    }
+
+    // P20-D: build minimal starter AST from wizard_state when none exists yet.
+    function _buildStarterAst() {
+        const ws = _buildWizardState();
+        return {
+            dialect: ws.dialect,
+            from: { schema: ws.base_table.schema || null, table: ws.base_table.table, alias: 't' },
+            select: (ws.selected_columns || []).map(c => c.expr || '*'),
+            filters: [],
+            order_by: [],
+            joins: [],
+            limit: ws.limit || 100,
+        };
+    }
+
+    // P20-D: mount AST editor into #dswAstEditor slot.
+    function _mountAstEditor() {
+        if (_astEditorMounted) return;
+        const slot = document.getElementById('dswAstEditor');
+        if (!slot) return;
+        const Editor = window.DbSmartAstEditor;
+        if (!Editor || typeof Editor.mount !== 'function') {
+            console.warn('[db_smart_wizard] DbSmartAstEditor not loaded; legacy preview only');
+            // Defansif: legacy preview görünür kalsın.
+            const legacy = document.getElementById('dswLegacyPreview');
+            if (legacy) legacy.removeAttribute('hidden');
+            return;
+        }
+        const initialAst = _state.currentAst || _buildStarterAst();
+        _state.currentAst = initialAst;
+        // Legacy preview'ı gizle — AST editor canonical olur.
+        const legacy = document.getElementById('dswLegacyPreview');
+        if (legacy) legacy.setAttribute('hidden', '');
+        try {
+            Editor.mount(slot, {
+                sessionUid: _state.sessionUid,
+                dialect: 'postgresql',
+                ast: initialAst,
+                fetchJson: _fetchJson,
+                onChange: function (newAst /*, newSql */) {
+                    _state.currentAst = newAst;
+                    _refreshPreviewIfActive();
+                },
+            });
+            _astEditorMounted = true;
+        } catch (e) {
+            console.warn('[db_smart_wizard] AST editor mount failed:', e);
+            if (legacy) legacy.removeAttribute('hidden');
+        }
+    }
+
+    function _unmountAstEditor() {
+        if (!_astEditorMounted) return;
+        const Editor = window.DbSmartAstEditor;
+        if (Editor && typeof Editor.unmount === 'function') {
+            try { Editor.unmount(); } catch (e) { /* ignore */ }
+        }
+        _astEditorMounted = false;
+        if (_previewRefreshTimer) {
+            clearTimeout(_previewRefreshTimer);
+            _previewRefreshTimer = null;
+        }
+        // Legacy preview tekrar görünür — kullanıcı 4. adıma dönerse _loadPreview yine yazar.
+        const legacy = document.getElementById('dswLegacyPreview');
+        if (legacy && legacy.textContent) legacy.removeAttribute('hidden');
     }
 
     // Step değişiminde data fetch tetikle
@@ -34922,7 +35028,12 @@ window.ThemePickerPopup = (function () {
         if (n === 1) _loadRelated();
         else if (n === 2) _loadMetrics();
         else if (n === 3) _loadColumns();
-        else if (n === 4) _loadPreview();
+        else if (n === AST_EDITOR_STEP_IDX) {
+            // P20-D: preview önce — AST editor mount sırasında lastExplain için
+            // sunucudan cost rozetini çağırır; sonra AST editor mount edilir.
+            _loadPreview();
+            _mountAstEditor();
+        }
     }
 
     // ============================================
@@ -34976,6 +35087,8 @@ window.ThemePickerPopup = (function () {
     function _closeWizard() {
         const panel = document.getElementById('dbSmartWizardPanel');
         if (!panel) return;
+        // P20-D: panel kapatılırken AST editor mount edilmişse temizle.
+        if (_astEditorMounted) _unmountAstEditor();
         panel.classList.add('hidden');
         panel.setAttribute('hidden', '');
         // Return focus to opener if recorded
