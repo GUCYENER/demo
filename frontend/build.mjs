@@ -81,6 +81,7 @@ const JS_FILES = [
     'assets/js/modules/solution_display.js',
     'assets/js/modules/ml_training.js',
     'assets/js/modules/ticket_chat.js',
+    'assets/js/modules/virtual_scroll_table.js', // v3.30.0 Faz 6 — dialog_chat_utils'ten ÖNCE (window.VirtualScrollTable)
     'assets/js/modules/dialog_chat_utils.js',
     'assets/js/modules/dialog_voice.js',
     'assets/js/modules/dialog_images.js',

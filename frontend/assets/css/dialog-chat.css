@@ -2926,6 +2926,30 @@
     border-top: 1px solid rgba(245, 158, 11, 0.2);
 }
 
+/* ── v3.30.0: Virtual Scroll Table ── */
+.db-vs-viewport {
+    max-height: 480px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(96,165,250,.3) transparent;
+}
+.db-vs-viewport::-webkit-scrollbar { width: 6px; }
+.db-vs-viewport::-webkit-scrollbar-thumb { background: rgba(96,165,250,.3); border-radius: 3px; }
+.db-vs-header { position: sticky; top: 0; z-index: 2; }
+.db-vs-rows { width: 100%; border-collapse: collapse; }
+.db-vs-rows td { height: 32px; box-sizing: border-box; }
+.db-vs-badge {
+    display: inline-block;
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(96, 165, 250, 0.15);
+    color: #60a5fa;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+[data-virtual="true"] .db-vs-body { will-change: top; }
+
 /* ── Export Bar ── */
 .db-export-bar {
     display: flex;

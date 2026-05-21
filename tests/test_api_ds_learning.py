@@ -147,7 +147,7 @@ class TestLearningResultsEndpoint:
                     headers=ds_auth_headers
                 )
 
-        mock_fn.assert_called_once_with(mock_conn, 2, "aggregate_query", None, 10)
+        mock_fn.assert_called_once_with(mock_conn, 2, "aggregate_query", None, 10, 0, None)
         assert response.status_code == 200
 
     def test_default_limit_is_50(self, ds_learning_client, ds_auth_headers, mock_learning_results_data):
@@ -163,7 +163,7 @@ class TestLearningResultsEndpoint:
                     headers=ds_auth_headers
                 )
 
-        mock_fn.assert_called_once_with(mock_conn, 2, None, None, 50)
+        mock_fn.assert_called_once_with(mock_conn, 2, None, None, 50, 0, None)
 
     def test_unauthorized_returns_401(self, ds_learning_client):
         """Auth olmadan 401 dönmeli."""
