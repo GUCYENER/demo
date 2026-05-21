@@ -33,6 +33,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import threading
 import time
 from contextlib import contextmanager
@@ -386,6 +387,11 @@ def partition_rotate(cur) -> dict:
         target = now.replace(day=1) + timedelta(days=32 * offset)
         target = target.replace(day=1)
         part_name = f"dbsmart_interactions_{target.strftime('%Y_%m')}"
+        # Defense-in-depth: validate generated partition name before SQL use
+        if not re.match(r"^dbsmart_interactions_\d{4}_\d{2}$", part_name):
+            logger.warning("[db_smart.lr] invalid partition name: %s", part_name)
+            skipped.append(part_name)
+            continue
         start_date = target.strftime("%Y-%m-01")
         next_month = (target.replace(day=1) + timedelta(days=32)).replace(day=1)
         end_date = next_month.strftime("%Y-%m-01")
