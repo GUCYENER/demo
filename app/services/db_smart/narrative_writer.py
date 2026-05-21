@@ -16,6 +16,7 @@ Tasarım:
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any, Dict, List, Optional
@@ -225,7 +226,6 @@ def generate_narrative(
     )
 
     try:
-        import json as _json
         response = call_llm_api(
             [{"role": "user", "content": prompt}],
             temperature=0.4,

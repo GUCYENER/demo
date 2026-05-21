@@ -10,6 +10,7 @@ Scheduler hook: app/main.py in-process scheduler'a wired edilir.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Any, Dict
 
@@ -78,7 +79,15 @@ def _archive_old_partitions(cur, max_age_days: int = 90) -> int:
         logger.warning("[retention] list partitions failed: %s", e)
         return 0
 
+    # Defense-in-depth: partition name whitelist (prevent SQL injection from
+    # pg_class.relname — extremely unlikely but safe is safe).
+    _PART_RE = re.compile(r"^dbsmart_interactions_\d{4}_\d{2}$")
+
     for part_name in partitions:
+        if not _PART_RE.match(part_name):
+            logger.warning("[retention] skipping unexpected partition name: %s", part_name)
+            continue
+
         # Extract YYYY_MM from partition name
         suffix = part_name.replace("dbsmart_interactions_", "")
         if suffix >= cutoff_str:
