@@ -6,7 +6,7 @@ Create Date: 2026-05-21
 
 FAZ 2 P30 — Implicit Learning Closure
 --------------------------------------
-dbsmart_interactions tablosunu RANGE partition by recorded_at (monthly) olarak
+dbsmart_interactions tablosunu RANGE partition by created_at (monthly) olarak
 dönüştürür. Archive tablosu + bandit/analytics index eklenir.
 
 Strateji:
@@ -44,9 +44,20 @@ def upgrade():
         conn.execute(sa.text("SELECT 1"))  # noop
     else:
         # --- 2. Convert to partitioned table ---
-        row_count = conn.execute(sa.text(
-            "SELECT COUNT(*) FROM dbsmart_interactions"
-        )).scalar() or 0
+        # Table may not exist yet (clean install) — check first
+        table_exists = conn.execute(sa.text("""
+            SELECT EXISTS (
+                SELECT 1 FROM pg_class c
+                JOIN pg_namespace n ON c.relnamespace = n.oid
+                WHERE c.relname = 'dbsmart_interactions' AND n.nspname = 'public'
+            )
+        """)).scalar()
+
+        row_count = 0
+        if table_exists:
+            row_count = conn.execute(sa.text(
+                "SELECT COUNT(*) FROM dbsmart_interactions"
+            )).scalar() or 0
 
         if row_count == 0:
             # Empty table — simple recreate
@@ -56,17 +67,19 @@ def upgrade():
             conn.execute(sa.text("""
                 CREATE TABLE dbsmart_interactions (
                     id BIGSERIAL,
+                    session_id INT,
                     user_id INT NOT NULL,
                     company_id INT NOT NULL,
-                    session_uid VARCHAR(64),
-                    source_id INT,
-                    action VARCHAR(64) NOT NULL,
-                    payload JSONB DEFAULT '{}'::jsonb,
+                    step SMALLINT,
+                    action VARCHAR(60) NOT NULL,
+                    suggestion_shown JSONB,
+                    suggestion_accepted JSONB,
+                    user_override JSONB,
                     satisfaction SMALLINT,
                     duration_ms INT,
-                    recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    PRIMARY KEY (id, recorded_at)
-                ) PARTITION BY RANGE (recorded_at)
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (id, created_at)
+                ) PARTITION BY RANGE (created_at)
             """))
         else:
             # Has data — rename + copy
@@ -76,17 +89,19 @@ def upgrade():
             conn.execute(sa.text("""
                 CREATE TABLE dbsmart_interactions (
                     id BIGSERIAL,
+                    session_id INT,
                     user_id INT NOT NULL,
                     company_id INT NOT NULL,
-                    session_uid VARCHAR(64),
-                    source_id INT,
-                    action VARCHAR(64) NOT NULL,
-                    payload JSONB DEFAULT '{}'::jsonb,
+                    step SMALLINT,
+                    action VARCHAR(60) NOT NULL,
+                    suggestion_shown JSONB,
+                    suggestion_accepted JSONB,
+                    user_override JSONB,
                     satisfaction SMALLINT,
                     duration_ms INT,
-                    recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    PRIMARY KEY (id, recorded_at)
-                ) PARTITION BY RANGE (recorded_at)
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (id, created_at)
+                ) PARTITION BY RANGE (created_at)
             """))
 
         # Enable RLS on parent
@@ -134,10 +149,12 @@ def upgrade():
         if row_count > 0:
             conn.execute(sa.text("""
                 INSERT INTO dbsmart_interactions
-                    (user_id, company_id, session_uid, source_id, action,
-                     payload, satisfaction, duration_ms, recorded_at)
-                SELECT user_id, company_id, session_uid, source_id, action,
-                       payload, satisfaction, duration_ms, recorded_at
+                    (session_id, user_id, company_id, step, action,
+                     suggestion_shown, suggestion_accepted, user_override,
+                     satisfaction, duration_ms, created_at)
+                SELECT session_id, user_id, company_id, step, action,
+                       suggestion_shown, suggestion_accepted, user_override,
+                       satisfaction, duration_ms, created_at
                 FROM dbsmart_interactions_old
             """))
             conn.execute(sa.text("""
@@ -172,7 +189,7 @@ def upgrade():
     # --- 4. Bandit / analytics index ---
     conn.execute(sa.text("""
         CREATE INDEX IF NOT EXISTS idx_dbsmart_inter_user_action_ts
-        ON dbsmart_interactions (user_id, action, recorded_at DESC)
+        ON dbsmart_interactions (user_id, action, created_at DESC)
     """))
 
 

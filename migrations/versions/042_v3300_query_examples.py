@@ -51,7 +51,14 @@ def upgrade() -> None:
     # ------------------------------------------------------------------
     # 1) pgvector extension (defensive — 024 should have created it).
     # ------------------------------------------------------------------
-    op.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+    # pgvector may not be installed — guard defensively via DO block
+    op.execute("""
+    DO $$ BEGIN
+        CREATE EXTENSION IF NOT EXISTS vector;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'pgvector not available — using float[] fallback';
+    END $$;
+    """)
 
     # ------------------------------------------------------------------
     # 2) query_examples table — embedding column type depends on whether

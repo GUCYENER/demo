@@ -161,20 +161,20 @@ def upgrade() -> None:
     fk_deg AS (
         SELECT
             t.id AS table_id,
-            ((SELECT COUNT(*) FROM ds_relationships r WHERE r.from_table_id = t.id) +
-             (SELECT COUNT(*) FROM ds_relationships r WHERE r.to_table_id   = t.id))::int AS deg
+            ((SELECT COUNT(*) FROM ds_db_relationships r WHERE r.source_id = t.source_id AND r.from_table = t.object_name) +
+             (SELECT COUNT(*) FROM ds_db_relationships r WHERE r.source_id = t.source_id AND r.to_table   = t.object_name))::int AS deg
         FROM ds_db_objects t
     ),
     pii_cnt AS (
         SELECT
             te.source_id    AS source_id,
             te.schema_name  AS schema_name,
-            te.object_name  AS object_name,
+            te.table_name   AS object_name,
             COUNT(*) FILTER (WHERE ce.is_pii = TRUE) AS pii_n,
             COUNT(*)                                  AS col_n
         FROM ds_column_enrichments ce
         JOIN ds_table_enrichments te ON te.id = ce.table_enrichment_id
-        GROUP BY te.source_id, te.schema_name, te.object_name
+        GROUP BY te.source_id, te.schema_name, te.table_name
     ),
     glossary_cnt AS (
         SELECT

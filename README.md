@@ -116,6 +116,16 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 - 🐛 `wizard.js` Step 3 i18n hardcoded strings → `_t()` calls
 - 🐛 Migration 042 `EXCEPTION WHEN OTHERS` → narrowed to `undefined_object` + `duplicate_table`
 
+**Migration Fix'leri (v3.30.0 stabilizasyon):**
+- 🔧 **Migration 034:** `dbsmart_interactions` partitioned table kolon isimleri SCHEMA_SQL ile hizalandı (`session_uid`→`session_id`, `payload`→`suggestion_shown/accepted/user_override`, `recorded_at`→`created_at`) + clean-install guard (`pg_class` check)
+- 🔧 **Migration 037:** Feature Store MV'leri düzeltildi — `ds_relationships`→`ds_db_relationships`, `from_table_id`→`from_table` (VARCHAR FK), `te.object_name`→`te.table_name`
+- 🔧 **Migration 042:** pgvector `CREATE EXTENSION` — `DO $$ BEGIN ... EXCEPTION WHEN OTHERS` guard (pgvector yüklü olmayan ortamlar için `float[]` fallback)
+
+**Session Timeout İyileştirmeleri:**
+- ⏰ **30dk → 60dk:** `SESSION_WARN_AT_SECONDS = 60 * 60` + modal mesajı güncellendi
+- 🔐 **Login guard:** `startSessionTimer()` içine `access_token` kontrolü — giriş yapmadan timer başlamaz
+- 🔄 **"Devam Et" butonu fix:** `refreshToken` hatasında `_forceLogout()` yerine oturumu uzatıp warning toast gösteriyor
+
 **Master Plan Status:** Faz 0-6 tüm maddeler ✅ (27/27). Tek kalan: final execution log.
 - 📋 **Plan:** `.agents/plans/v3.30.0_db_smart_wizard.md` + `.agents/plans/agentic_sql_copilot_master_plan.md`
 

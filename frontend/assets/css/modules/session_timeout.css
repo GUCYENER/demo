@@ -1,7 +1,7 @@
 /* ============================================================
    VYRA — Session Timeout Modal (v3.28.1)
    ============================================================
-   30 dk pasif oturum -> 15 sn countdown popup -> auto-logout
+   60 dk pasif oturum -> 15 sn countdown popup -> auto-logout
    ya da "Devam Et" ile refresh-token üzerinden uzatma.
    SaaS standartlarına uyumlu: role=dialog, aria-modal, focus trap,
    reduced-motion fallback, brand-token kullanan progress bar.

@@ -16944,12 +16944,12 @@ window.SystemManagerModule = (function () {
     // v2.53.1: Sayaç son login zamanından itibaren sayar.
     // login.js başarılı girişte session_start_time'ı set eder.
     // PC kapansa/tarayıcı kapansa bile sonraki login'de sıfırlanır.
-    // v3.28.1: 30 dk threshold -> 15 sn countdown popup -> refresh veya auto-logout.
+    // v3.28.1: 60 dk threshold -> 15 sn countdown popup -> refresh veya auto-logout.
     let sessionStartTime = null;
     let sessionTimerInterval = null;
 
     // v3.28.1 — Session timeout config
-    const SESSION_WARN_AT_SECONDS = 30 * 60;       // 30 dakika
+    const SESSION_WARN_AT_SECONDS = 60 * 60;       // 60 dakika
     const SESSION_LOGOUT_COUNTDOWN_SECONDS = 15;   // popup içi countdown
 
     let _sessionWarningShown = false;
@@ -16958,6 +16958,10 @@ window.SystemManagerModule = (function () {
     let _previousFocusEl = null;
 
     function startSessionTimer() {
+        // Login olmadan timer başlatma — access_token yoksa kullanıcı giriş yapmamış
+        const token = localStorage.getItem('access_token');
+        if (!token) return;
+
         const storedStartTime = localStorage.getItem('session_start_time');
 
         if (storedStartTime) {
@@ -17018,7 +17022,7 @@ window.SystemManagerModule = (function () {
             }
         }
 
-        // v3.28.1 — 30 dk dolunca tek-seferlik uyarı popup'ı
+        // v3.28.1 — 60 dk dolunca tek-seferlik uyarı popup'ı
         if (diff >= SESSION_WARN_AT_SECONDS && !_sessionWarningShown) {
             _showSessionWarning();
         }
@@ -17039,7 +17043,7 @@ window.SystemManagerModule = (function () {
             +       '</h3>'
             +     '</div>'
             +     '<div class="modal-body">'
-            +       '<p>30 dakikadır oturumdasınız. Oturumu sürdürmek istiyor musunuz?</p>'
+            +       '<p>60 dakikadır oturumdasınız. Oturumu sürdürmek istiyor musunuz?</p>'
             +       '<p class="session-countdown-line">'
             +         '<strong id="sessionLogoutCountdown">15</strong> saniye içinde otomatik çıkış yapılacak.'
             +       '</p>'
@@ -17124,7 +17128,8 @@ window.SystemManagerModule = (function () {
         _previousFocusEl = null;
     }
 
-    async function _onSessionContinue() {
+    async function _onSessionContinue(e) {
+        if (e) { e.preventDefault(); e.stopPropagation(); }
         const btn = document.getElementById('sessionContinueBtn');
         if (btn) {
             btn.classList.add('is-loading');
@@ -17135,7 +17140,7 @@ window.SystemManagerModule = (function () {
             if (window.VYRA_API && typeof window.VYRA_API.refreshToken === 'function') {
                 await window.VYRA_API.refreshToken();
             }
-            // Sayacı sıfırla — yeni 30 dk window
+            // Sayacı sıfırla — yeni 60 dk window
             sessionStartTime = new Date();
             localStorage.setItem('session_start_time', sessionStartTime.toISOString());
             _sessionWarningShown = false;
@@ -17144,8 +17149,15 @@ window.SystemManagerModule = (function () {
                 window.showToast('Oturumunuz yenilendi.', 'success');
             }
         } catch (err) {
-            console.warn('[SessionTimeout] refresh hata, otomatik çıkış:', err);
-            _forceLogout();
+            console.warn('[SessionTimeout] refresh hata, oturum uzatıldı (offline):', err);
+            // Token refresh başarısız olsa bile oturumu uzat (offline/network hatası)
+            sessionStartTime = new Date();
+            localStorage.setItem('session_start_time', sessionStartTime.toISOString());
+            _sessionWarningShown = false;
+            _hideSessionWarning();
+            if (window.showToast) {
+                window.showToast('Oturum uzatıldı (bağlantı kontrol edin).', 'warning');
+            }
         } finally {
             if (btn) {
                 btn.classList.remove('is-loading');
