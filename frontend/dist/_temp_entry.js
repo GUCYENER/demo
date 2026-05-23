@@ -7569,10 +7569,17 @@ window.DialogChatUtils = (function () {
     function renderReportTemplates(templates, message, onSelect) {
         const id = 'rptmpl_' + Date.now();
 
-        window[id + '_pick'] = function(hint) {
-            if (typeof onSelect === 'function') onSelect(hint);
-            const card = document.getElementById(id);
-            if (card) card.remove();
+        // v3.33.0: Callback artık full template objesini alır (sadece hint değil) —
+        // çağıran taraf seçilen şablonun başlığını user-side message bubble olarak
+        // diyaloğa basabilsin (önceden kullanıcı seçimi sessizdi).
+        window[id + '_pick'] = function(idx) {
+            try {
+                const picked = (templates && templates[idx]) || null;
+                if (picked && typeof onSelect === 'function') onSelect(picked);
+            } finally {
+                const card = document.getElementById(id);
+                if (card) card.remove();
+            }
         };
 
         let html = `<div class="db-template-card" id="${id}">`;
@@ -7585,8 +7592,7 @@ window.DialogChatUtils = (function () {
         templates.forEach((t, i) => {
             const title = escapeHtml(t.title || `Seçenek ${i + 1}`);
             const desc = escapeHtml(t.description || '');
-            const hint = escapeHtml(t.hint || t.title || '');
-            html += `<button class="db-template-btn" onclick="window['${id}_pick']('${hint}')">`;
+            html += `<button class="db-template-btn" onclick="window['${id}_pick'](${i})">`;
             html += `<div class="db-template-btn-title">${title}</div>`;
             if (desc) html += `<div class="db-template-btn-desc">${desc}</div>`;
             html += `</button>`;
@@ -7699,6 +7705,62 @@ window.DialogChatUtils = (function () {
     }
 
     /**
+     * v3.33.0 — Basit SQL formatter (gösterim için indentation).
+     *
+     * Strateji: Major keyword'lerden önce newline (+ ana cümlede sıfır indent,
+     * JOIN/ON/AND/OR'da 2 boşluk indent). Tam bir parser değil — string-literal
+     * içindeki keyword'lere dokunmaz (regex sonra string-aware split).
+     *
+     * Ham SQL `Kopyala` butonu için korunur; yalnızca <pre> içeriği formatlanır.
+     */
+    function _formatSqlForDisplay(rawSql) {
+        if (!rawSql || typeof rawSql !== 'string') return '';
+        // Tek satıra indir (mevcut whitespace'i normalize et)
+        let sql = rawSql.replace(/\s+/g, ' ').trim();
+
+        // String literal'ları placeholder'la (parantez sayımı bozulmasın)
+        const literals = [];
+        sql = sql.replace(/'([^']|'')*'/g, (m) => {
+            literals.push(m);
+            return `__VYRA_STR_${literals.length - 1}__`;
+        });
+
+        // Major top-level keyword'lerden önce çift newline yerine tek newline.
+        const TOP = [
+            'SELECT', 'FROM', 'WHERE', 'GROUP BY', 'HAVING', 'ORDER BY',
+            'LIMIT', 'OFFSET', 'FETCH FIRST', 'UNION ALL', 'UNION',
+            'INTERSECT', 'EXCEPT', 'WITH'
+        ];
+        for (const kw of TOP) {
+            const re = new RegExp('\\s+' + kw.replace(/ /g, '\\s+') + '\\b', 'gi');
+            sql = sql.replace(re, '\n' + kw);
+        }
+        // JOIN/ON/AND/OR — 2 boşluk indent (top-level kelimelerin devamı)
+        const SUB = [
+            'LEFT OUTER JOIN', 'RIGHT OUTER JOIN', 'FULL OUTER JOIN',
+            'LEFT JOIN', 'RIGHT JOIN', 'FULL JOIN', 'INNER JOIN',
+            'CROSS JOIN', 'JOIN', 'ON', 'AND', 'OR'
+        ];
+        for (const kw of SUB) {
+            const re = new RegExp('\\s+' + kw.replace(/ /g, '\\s+') + '\\b', 'gi');
+            sql = sql.replace(re, '\n  ' + kw);
+        }
+
+        // SELECT içindeki virgülleri yeni satır + 2 boşluk indent (kolon listesi okunsun)
+        // Yalnızca ilk SELECT bloğu (FROM'a kadar) için uygula — alt sorgularda zaten
+        // boşluklar görünür ölçüde, regex maliyetini sınırla.
+        sql = sql.replace(/^SELECT\s+([\s\S]*?)(\nFROM\b)/i, (m, cols, fromKw) => {
+            const formatted = cols.split(',').map(c => c.trim()).join(',\n  ');
+            return 'SELECT\n  ' + formatted + fromKw;
+        });
+
+        // Placeholder'ları geri koy
+        sql = sql.replace(/__VYRA_STR_(\d+)__/g, (_, i) => literals[parseInt(i, 10)] || '');
+
+        return sql;
+    }
+
+    /**
      * SQL içeriğini tam ekran modal'da gösterir.
      * @param {string} sql - Gösterilecek SQL metni
      */
@@ -7709,7 +7771,9 @@ window.DialogChatUtils = (function () {
         const modal = document.createElement('div');
         modal.id = 'vyra-sql-modal';
 
-        const escapedSql = escapeHtml(sql || '');
+        // v3.33.0: pretty-print yalnızca görüntü için; kopyalama ham SQL'i kullanır.
+        const prettySql = _formatSqlForDisplay(sql || '');
+        const escapedSql = escapeHtml(prettySql);
 
         modal.innerHTML =
             `<div class="vyra-sql-modal-overlay" id="vyra-sql-overlay">` +
@@ -9643,10 +9707,15 @@ window.DialogTicketModule = (function () {
             statusEl.textContent = data.warnings && data.warnings.length
                 ? `Uyarılar: ${data.warnings.join('; ')}`
                 : 'SQL hazır.';
-            sqlBox.textContent = data.sql || '';
+            // v3.33.0: display_sql tercih (backend `%s` placeholder'ları
+            // _inline_literal whitelist'iyle güvenli inline etti). display_sql
+            // None ise (güvensiz tip) ham sql fallback'i basılır.
+            sqlBox.textContent = data.display_sql || data.sql || '';
             _announce(root, 'SQL üretildi');
 
-            // v3.32.0: SQL'i state'e cache'le ve action butonlarını aktif et
+            // v3.32.0: SQL'i state'e cache'le ve action butonlarını aktif et.
+            // NOT: execute path backend'de inline ediyor, bu yüzden state.lastSql
+            // hâlâ ham `%s`'li sürüm — execute body re-build ediliyor zaten.
             state.lastSql = data.sql || '';
             state.lastParams = data.params || [];
             _enableActionButtons(root, !!state.lastSql);
@@ -11936,6 +12005,14 @@ window.DialogChatModule = (function () {
             let elapsedTickHandle = null;
             let elapsedSeconds = 0;
             let activeJobId = null;
+            // v3.33.0 — Backend olay sırası: done → followup → saved.
+            // 'followup' geldiğinde savedMessageId hâlâ null (saved sonra geliyor),
+            // bu yüzden "Son konu ile ilgili sor" badge data-anchor-id'si boş
+            // kalıyordu ve badge HİÇ render edilmiyordu (ilk sorguda regression).
+            // Çözüm: followup payload'unu buffer'la, saved gelince (veya stream
+            // bitince fallback) güncel savedMessageId ile birlikte render et.
+            let pendingFollowupSuggestions = null;
+            let followupAlreadyRendered = false;
             const _formatElapsed = (sec) => {
                 const s = Math.max(0, parseInt(sec) || 0);
                 if (s < 60) return `${s}s`;
@@ -12024,6 +12101,13 @@ window.DialogChatModule = (function () {
                                 if (isDbMode && savedMessageId) {
                                     lastDbAssistantMessageId = savedMessageId;
                                 }
+                                // v3.33.0: followup render'ı buradan kaldırıldı.
+                                // Sebep: badge artık `.db-export-bar` içine append
+                                // ediliyor, ama export bar table render'ı POST-LOOP
+                                // yapılıyor → in-loop render yaptığımızda DOM'da
+                                // export bar henüz yok, badge fallback olarak
+                                // dikey yığılıyordu. Render tek noktada: post-loop
+                                // fallback bloğu (export bar artık DOM'da).
                                 break;
 
                             // v4.0: Disambiguation v1 — aynı isimde çoklu tablo (geri uyumlu)
@@ -12118,9 +12202,28 @@ window.DialogChatModule = (function () {
                                     const origQuery = content; // closure
                                     const tmplHtml = window.DialogChatUtils.renderReportTemplates(
                                         templates, sMsg,
-                                        (hint) => {
-                                            // Kullanıcı şablon seçti — report_template ile yeniden gönder
-                                            _sendDbMessageWithHint(origQuery, null, hint);
+                                        // v3.33.0: callback artık full template objesi alıyor.
+                                        // Kullanıcı seçimi user-side bubble olarak diyaloğa
+                                        // basılır → konuşma akışında "kim ne seçti" izlenebilir
+                                        // olur (önceden seçim sessiz uçuyor, sadece sonuç
+                                        // görünüyordu).
+                                        (picked) => {
+                                            const _title = (picked && picked.title) || '';
+                                            const _desc  = (picked && picked.description) || '';
+                                            const _hintS = (picked && picked.hint) || '';
+                                            // v3.33.0 — Yalnız `hint` kısa/jenerik kalıyordu;
+                                            // LLM şablonlarda asıl semantik (JOIN edilecek
+                                            // tablo adları, segment kırılımları vs.)
+                                            // `description` içinde. Backend SQL generator'a
+                                            // tam bağlam iletmek için title + description +
+                                            // hint birleşik gönderilir.
+                                            const _payload = [_title, _desc, _hintS]
+                                                .filter(s => s && String(s).trim())
+                                                .join(' — ');
+                                            if (_title) {
+                                                addUserMessage(_title);
+                                            }
+                                            _sendDbMessageWithHint(origQuery, null, _payload || _hintS || _title);
                                         }
                                     );
                                     _insertInteractiveBlock(tmplHtml);
@@ -12302,47 +12405,17 @@ window.DialogChatModule = (function () {
                             // "🔗 Önceki konu ile ilgili soru sor" badge eklenir.
                             // Kullanıcı tıklayınca pendingFollowupAnchorId ayarlanır,
                             // textarea'ya odaklanılır, placeholder güncellenir.
+                            // v3.33.0: Render ertelendi — backend 'followup' eventi 'saved'
+                            // eventinden ÖNCE geliyor; savedMessageId henüz null olduğu için
+                            // badge HİÇ basılamıyordu. Buffer'lıyoruz, 'saved' handler'ı
+                            // ya da post-loop fallback render edecek.
                             case 'followup': {
                                 const { suggestions: fuSugg } = eventData;
                                 if (fuSugg?.length) {
-                                    const fuHtml = window.DialogChatUtils.renderFollowUpChips(
-                                        fuSugg,
-                                        (q) => {
-                                            // Kullanıcı follow-up seçti — normal DB sorgusu gönder
-                                            const inputEl = document.getElementById('dialogInput');
-                                            if (inputEl) {
-                                                inputEl.value = q;
-                                                handleSendMessage();
-                                            }
-                                        }
-                                    );
-                                    // v3.16.0: DB modunda badge'i chip listesinin başına ekle.
-                                    let prefixHtml = '';
-                                    if (isDbMode && lastDbAssistantMessageId) {
-                                        prefixHtml = `<button type="button" class="db-followup-anchor-badge" data-anchor-id="${lastDbAssistantMessageId}" title="Sonraki mesaj son sorgu üzerinde devam edecek — tablo + bağlam korunur"><i class="fa-solid fa-link"></i> Son konu ile ilgili sor</button>`;
-                                    }
-                                    _insertInteractiveBlock(prefixHtml + fuHtml);
-                                    // Badge tıklama handler'ı
-                                    if (prefixHtml) {
-                                        try {
-                                            const badges = document.querySelectorAll('.db-followup-anchor-badge[data-anchor-id]');
-                                            badges.forEach((btn) => {
-                                                if (btn.dataset.bound === '1') return;
-                                                btn.dataset.bound = '1';
-                                                btn.addEventListener('click', () => {
-                                                    const aid = parseInt(btn.dataset.anchorId, 10);
-                                                    if (!aid) return;
-                                                    pendingFollowupAnchorId = aid;
-                                                    _showFollowupIndicator(aid);
-                                                    const inp = document.getElementById('dialogInput');
-                                                    if (inp) {
-                                                        inp.placeholder = '↪ Son sorgu üzerinde devam edin (tablo + bağlam korunacak)...';
-                                                        inp.focus();
-                                                    }
-                                                });
-                                            });
-                                        } catch (_e) { /* sessiz */ }
-                                    }
+                                    // v3.33.0: yalnız buffer'la. Render post-loop'ta,
+                                    // export bar DOM'a eklendikten SONRA yapılır
+                                    // (badge `.db-export-bar` içine append edilir).
+                                    pendingFollowupSuggestions = fuSugg;
                                 }
                                 break;
                             }
@@ -12409,7 +12482,18 @@ window.DialogChatModule = (function () {
                 // soru + sonuç (tablo) görünür kalsın. Stream içeriği zaten satır satır
                 // birikmiş "UpdateUserId: ..., UpdateUserTime: ..." dökümü; tablo render
                 // edildikten sonra redundant.
-                if (!isDbOnly) {
+                //
+                // v3.33.0 — DB-Only empty/error rendering regression fix:
+                // Önceki kural narrative'i istisnasız gizliyordu; ancak raw_data boş
+                // (empty result / error / timeout / cancelled) durumlarda tabular blok
+                // da render olmadığı için kullanıcı sadece skeleton'lu preview kartı
+                // veya SQL butonu görüyor, "sonuç gelmedi" hissi yaşıyordu (özellikle
+                // 'son konu ile ilgili sor' follow-up'larında belirgin).
+                // Kural: narrative'i yalnızca BAŞARILI tabular blok varken gizle.
+                const _dbHasTabular = !!(finalMetadata
+                    && Array.isArray(finalMetadata.raw_data) && finalMetadata.raw_data.length > 0
+                    && Array.isArray(finalMetadata.columns) && finalMetadata.columns.length > 0);
+                if (!isDbOnly || !_dbHasTabular) {
                     addAssistantMessage(msgObj, savedQuickReply, true, responseTime);
                 }
 
@@ -12440,6 +12524,17 @@ window.DialogChatModule = (function () {
                     if (blockHtml) {
                         _insertInteractiveBlock(blockHtml);
                     }
+                }
+
+                // v3.33.0: Followup chips + "Son konu ile ilgili sor" badge —
+                // table + exportbar DOM'a basıldıktan SONRA render edilir.
+                // Badge `.db-export-bar` içine (Kopyala butonu sağına) append
+                // edilir → kullanıcı export aksiyonlarıyla aynı satırda görür.
+                if (pendingFollowupSuggestions && !followupAlreadyRendered) {
+                    const _anchor = savedMessageId || lastDbAssistantMessageId || null;
+                    _renderFollowupBlock(pendingFollowupSuggestions, _anchor, isDbMode);
+                    followupAlreadyRendered = true;
+                    pendingFollowupSuggestions = null;
                 }
 
                 // Response time'ı backend'e kaydet
@@ -12581,6 +12676,76 @@ window.DialogChatModule = (function () {
         container.scrollTop = container.scrollHeight;
     }
 
+    /**
+     * v3.33.0: Follow-up chips + (DB modunda) "Son konu ile ilgili sor" anchor badge'i render eder.
+     * Eskiden `case 'followup'` içinde inline'dı; ancak backend event sırası
+     * done → followup → saved olduğu için `lastDbAssistantMessageId` henüz null'dı,
+     * badge'in `data-anchor-id`'si üretilemiyordu. Bu yardımcıyı `case 'saved'`
+     * ve post-stream fallback noktalarından çağırarak gerçek anchorId ile render
+     * ediliyor.
+     */
+    function _renderFollowupBlock(suggestions, anchorId, isDbMode) {
+        if (!suggestions || !suggestions.length) return;
+        const fuHtml = window.DialogChatUtils.renderFollowUpChips(
+            suggestions,
+            (q) => {
+                const inputEl = document.getElementById('dialogInput');
+                if (inputEl) {
+                    inputEl.value = q;
+                    handleSendMessage();
+                }
+            }
+        );
+        // v3.33.0 (UX): Chip listesi her zaman ayrı blok olarak basılır.
+        _insertInteractiveBlock(fuHtml);
+
+        // "Son konu ile ilgili sor" badge'i artık chips bloğunun üstüne değil,
+        // en son export bar'ın (İndir: Excel/Word/PDF/Kopyala) sağına eklenir
+        // — kullanıcı export aksiyonlarıyla aynı satırda görür, dikey gürültü
+        // azalır. Export bar yoksa (sonuç boş / tablo render edilmemiş) eski
+        // davranışa düş: chips bloğunun üstüne ekle.
+        if (isDbMode && anchorId) {
+            const badgeHtml = `<button type="button" class="db-followup-anchor-badge" data-anchor-id="${anchorId}" title="Sonraki mesaj son sorgu üzerinde devam edecek — tablo + bağlam korunur"><i class="fa-solid fa-link"></i> Son konu ile ilgili sor</button>`;
+            try {
+                const container = document.getElementById('dialogMessages');
+                const exportBars = container ? container.querySelectorAll('.db-export-bar') : [];
+                const lastExportBar = exportBars.length ? exportBars[exportBars.length - 1] : null;
+                if (lastExportBar && !lastExportBar.querySelector('.db-followup-anchor-badge')) {
+                    // Wrapper div oluştur (innerHTML ile inject etmek yerine
+                    // DOM API kullanmak event handler bind'ini tek node'a sabitler)
+                    const tmp = document.createElement('div');
+                    tmp.innerHTML = badgeHtml;
+                    const btn = tmp.firstChild;
+                    if (btn) lastExportBar.appendChild(btn);
+                } else {
+                    // Fallback — export bar yoksa chips bloğunun ÜSTÜNE ekle
+                    _insertInteractiveBlock(badgeHtml);
+                }
+            } catch (_e) {
+                _insertInteractiveBlock(badgeHtml);
+            }
+            // Badge click handler — DOM'a artık eklendi, tek noktadan bind.
+            try {
+                const badges = document.querySelectorAll('.db-followup-anchor-badge[data-anchor-id]');
+                badges.forEach((btn) => {
+                    if (btn.dataset.bound === '1') return;
+                    btn.dataset.bound = '1';
+                    btn.addEventListener('click', () => {
+                        const aid = parseInt(btn.dataset.anchorId, 10);
+                        if (!aid) return;
+                        pendingFollowupAnchorId = aid;
+                        _showFollowupIndicator(aid);
+                        const inp = document.getElementById('dialogInput');
+                        if (inp) {
+                            inp.placeholder = '↪ Son sorgu üzerinde devam edin (tablo + bağlam korunacak)...';
+                            inp.focus();
+                        }
+                    });
+                });
+            } catch (_e) { /* sessiz */ }
+        }
+    }
+
     // v3.16.0: Follow-up çıpası aktifken textarea üstünde gösterilen rozet.
     // Kullanıcı çıpadan vazgeçerse X ile kapatabilir.
     function _showFollowupIndicator(anchorId) {
@@ -12633,6 +12798,19 @@ window.DialogChatModule = (function () {
             content: query,
             source_type: 'db',
         };
+        // v3.33.0 — Backend `dialog.py:386` source_type='db' iken `source_id`
+        // ZORUNLU; eksikse 400 "Veritabanı modunda bir veri kaynağı seçmelisiniz"
+        // dönüyor → frontend "İstek gönderilemedi" toast'u atıyordu.
+        // Disambig kartı veya rapor şablonu seçimi sonrası yeniden POST'ta da
+        // selector'dan source_id'yi alıp body'ye ekle (ana handleSendMessage
+        // ile aynı pattern: window.DbSourceSelector.getSelectedSourceId()).
+        try {
+            if (window.DbSourceSelector
+                && typeof window.DbSourceSelector.getSelectedSourceId === 'function') {
+                const _sid = window.DbSourceSelector.getSelectedSourceId();
+                if (_sid != null) body.source_id = _sid;
+            }
+        } catch (_e) { /* sessiz */ }
         if (schemaHint) body.schema_hint = schemaHint;
         if (reportTemplate) body.report_template = reportTemplate;
 
@@ -12657,6 +12835,13 @@ window.DialogChatModule = (function () {
             let finalContent = null;
             let finalMetadata = null;
             let buffer = '';
+            // v3.33.0: ana handleSendMessage ile parity — followup + saved
+            // payload'larını buffer'la, post-loop'ta (table/exportbar DOM'da
+            // hazır olunca) _renderFollowupBlock ile badge'i export bar'a
+            // append et.
+            let hintSavedMessageId = null;
+            let hintPendingFollowup = null;
+            let hintFollowupRendered = false;
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -12684,12 +12869,21 @@ window.DialogChatModule = (function () {
                                 finalContent = ev.data.content;
                                 finalMetadata = ev.data.metadata || {};
                                 break;
+                            case 'saved': {
+                                // SSE event şeması: handleSendMessage'dakiyle
+                                // aynı yapıda — message_id top-level. Defansif
+                                // olarak ev.data altını da kontrol et.
+                                const _mid = ev.message_id ?? (ev.data && ev.data.message_id);
+                                if (_mid) {
+                                    hintSavedMessageId = _mid;
+                                    lastDbAssistantMessageId = _mid;
+                                }
+                                break;
+                            }
                             case 'followup': {
-                                const { suggestions: fs } = ev.data;
+                                const { suggestions: fs } = ev.data || ev;
                                 if (fs?.length) {
-                                    const fHtml = window.DialogChatUtils.renderFollowUpChips(fs,
-                                        (q) => { const inp = document.getElementById('dialogInput'); if (inp) { inp.value = q; handleSendMessage(); } });
-                                    _insertInteractiveBlock(fHtml);
+                                    hintPendingFollowup = fs;
                                 }
                                 break;
                             }
@@ -12706,17 +12900,47 @@ window.DialogChatModule = (function () {
 
             if (streamingEl) streamingEl.remove();
             if (finalContent) {
+                const isDbOnly = !!finalMetadata?.db_only;
+                // v3.33.0: ana handleSendMessage ile aynı kural — narrative
+                // sadece BAŞARILI tabular blok varken gizlenir (boş/hatalı
+                // sonuçta kullanıcı en azından açıklayıcı metni görsün).
+                const _dbHasTabular = !!(finalMetadata
+                    && Array.isArray(finalMetadata.raw_data) && finalMetadata.raw_data.length > 0
+                    && Array.isArray(finalMetadata.columns) && finalMetadata.columns.length > 0);
                 const msgObj = { id: 0, role: 'assistant', content: finalContent, content_type: 'text', metadata: finalMetadata, created_at: new Date().toISOString() };
-                addAssistantMessage(msgObj, null, true, '');
+                if (!isDbOnly || !_dbHasTabular) {
+                    addAssistantMessage(msgObj, null, true, '');
+                }
 
-                if (finalMetadata?.db_only && finalMetadata?.raw_data?.length > 0) {
+                // v3.33.0: SQL butonu, tablo + export bar — ana handler ile parity.
+                if (isDbOnly) {
                     const cols = finalMetadata.columns || [];
                     const rows = finalMetadata.raw_data || [];
-                    if (cols.length > 0) {
+                    const sqlText = finalMetadata.sql_executed || finalMetadata.sql || '';
+                    let blockHtml = '';
+                    if (rows.length > 0 && cols.length > 0) {
                         const tblHtml = window.DialogChatUtils.renderSQLResultTable(cols, rows, finalMetadata);
-                        const expHtml = window.DialogChatUtils.renderExportBar(cols, rows, { title: 'VYRA Sorgu Sonucu', query, sql: finalMetadata.sql_executed });
-                        _insertInteractiveBlock(tblHtml + expHtml);
+                        const expHtml = window.DialogChatUtils.renderExportBar(cols, rows, { title: 'VYRA Sorgu Sonucu', query, sql: sqlText });
+                        blockHtml += tblHtml + expHtml;
                     }
+                    // SQL butonu — her DB yanıtında (sonuç boş olsa da) göster.
+                    if (sqlText) {
+                        blockHtml += window.DialogChatUtils.renderSQLButton(sqlText);
+                    }
+                    if (blockHtml) {
+                        _insertInteractiveBlock(blockHtml);
+                    }
+                }
+
+                // v3.33.0: Followup + badge — ana flow ile parity.
+                // Export bar yukarıda DOM'a basıldı → badge `.db-export-bar`
+                // içine append edilebilir.
+                if (hintPendingFollowup && !hintFollowupRendered) {
+                    const _isDbModeLocal = !!finalMetadata?.db_only;
+                    const _anchor = hintSavedMessageId || lastDbAssistantMessageId || null;
+                    _renderFollowupBlock(hintPendingFollowup, _anchor, _isDbModeLocal);
+                    hintFollowupRendered = true;
+                    hintPendingFollowup = null;
                 }
             }
         } catch (err) {
@@ -35697,6 +35921,457 @@ window.ThemePickerPopup = (function () {
 })();
 
 
+/* === assets/js/modules/db_smart_picker.js === */
+/**
+ * VYRA — Akıllı Veri Keşfi · Tablo Seçici Alt-Modal (v3.34.0)
+ * =============================================================
+ * Wizard step 1'deki "Tablo Seç" butonundan açılır.
+ *
+ * Özellikler:
+ *   - Sol panel: yetkili tabloları listeler (semantic Türkçe ad + schema.object_name)
+ *   - Üstte Türkçe-uyumlu (büyük/küçük + İŞĞÜÖÇı normalize) arama
+ *   - Çoklu seçim (checkbox); ilk seçilen "ana tablo" olarak işaretlenir
+ *   - Sağ panel: ana tablonun FK ilişkili tablolarını checkbox ile listeler
+ *   - "Seç ve Kapat" → onConfirm({ primary, joins }) callback
+ *
+ * Backend: yeni endpoint gerekmez — mevcut iki endpoint reuse:
+ *   GET /api/db-smart/sources/{source_id}/tables?q=<q>&limit=200
+ *   GET /api/db-smart/sources/{source_id}/tables/{table_id}/related?depth=1
+ */
+(function () {
+    'use strict';
+
+    const API_BASE = '/api/db-smart';
+
+    // ---- Türkçe normalizasyon (frontend arama için) ----
+    const _TR_MAP = { 'İ': 'i', 'I': 'i', 'ı': 'i', 'Ş': 's', 'ş': 's',
+                       'Ğ': 'g', 'ğ': 'g', 'Ü': 'u', 'ü': 'u',
+                       'Ö': 'o', 'ö': 'o', 'Ç': 'c', 'ç': 'c' };
+    function _normTR(s) {
+        if (!s) return '';
+        let out = '';
+        const str = String(s);
+        for (let i = 0; i < str.length; i++) {
+            const ch = str.charAt(i);
+            out += (_TR_MAP[ch] || ch);
+        }
+        return out.toLowerCase();
+    }
+
+    function _escape(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function _authHeaders() {
+        const token = localStorage.getItem('access_token') || '';
+        return { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' };
+    }
+
+    async function _fetchJson(url) {
+        const res = await fetch(url, { headers: _authHeaders() });
+        if (!res.ok) {
+            const txt = await res.text().catch(() => '');
+            throw new Error(res.status + ': ' + (txt || res.statusText));
+        }
+        return res.json();
+    }
+
+    // ---- State ----
+    const _state = {
+        open: false,
+        sourceId: null,
+        tables: [],         // [{ table_id, schema, name, label, _nl, _nn, _nf }] — _nX = pre-normalized TR strings
+        filtered: [],
+        primaryId: null,    // ilk seçilen ana tablo
+        joins: new Map(),   // table_id -> { table_id, schema, name, label }
+        fkById: new Map(),  // table_id -> { table_id, schema, name, label, is_junction }
+        fkLoadedFor: null,  // cache: skip _loadFk if same primary
+        fkLoading: false,
+        prevFocus: null,
+        onConfirm: null,
+        onCancel: null,
+        initialQuery: '',
+    };
+
+    // ---- Selectors ----
+    function $(id) { return document.getElementById(id); }
+
+    function _show(el) { if (el) { el.hidden = false; el.classList.remove('hidden'); } }
+    function _hide(el) { if (el) { el.hidden = true; el.classList.add('hidden'); } }
+
+    // ---- Rendering ----
+    function _renderList() {
+        const list = $('dswPickerList');
+        const count = $('dswPickerCount');
+        if (!list) return;
+        const items = _state.filtered;
+        count && (count.textContent = items.length + ' tablo');
+        if (!items.length) {
+            list.innerHTML = '<div class="dsw-picker-empty">Eşleşen tablo yok.</div>';
+            return;
+        }
+        const html = items.map(t => {
+            const checked = (t.table_id === _state.primaryId || _state.joins.has(t.table_id));
+            const isPrimary = (t.table_id === _state.primaryId);
+            const semantic = t.label || t.name || '?';
+            const tech = (t.schema ? t.schema + '.' : '') + (t.name || '');
+            return '<label class="dsw-picker-row' + (isPrimary ? ' is-primary' : '') + (checked ? ' is-checked' : '') + '"' +
+                   ' data-table-id="' + _escape(t.table_id) + '">' +
+                     '<input type="checkbox" class="dsw-picker-cb" data-table-id="' + _escape(t.table_id) + '"' +
+                       (checked ? ' checked' : '') + ' aria-label="' + _escape(semantic) + ' seç" />' +
+                     '<span class="dsw-picker-row-main">' +
+                       '<span class="dsw-picker-row-title">' + _escape(semantic) +
+                         (isPrimary ? ' <em class="dsw-picker-badge">ANA</em>' : '') +
+                       '</span>' +
+                       '<span class="dsw-picker-row-meta">' + _escape(tech) + '</span>' +
+                     '</span>' +
+                   '</label>';
+        }).join('');
+        list.innerHTML = html;
+    }
+
+    function _renderFkPane() {
+        const pane = $('dswPickerFkList');
+        const hint = $('dswPickerFkHint');
+        if (!pane) return;
+        if (_state.primaryId == null) {
+            hint && (hint.textContent = 'Önce sol panelden bir tablo seçin.');
+            pane.innerHTML = '';
+            return;
+        }
+        if (_state.fkLoading) {
+            hint && (hint.textContent = 'FK ilişkiler yükleniyor…');
+            pane.innerHTML = '<div class="dsw-picker-empty">Yükleniyor…</div>';
+            return;
+        }
+        if (!_state.fkById.size) {
+            hint && (hint.textContent = 'Bu tablo için FK ilişkisi bulunamadı.');
+            pane.innerHTML = '<div class="dsw-picker-empty">FK ilişkisi yok.</div>';
+            return;
+        }
+        hint && (hint.textContent = _state.fkById.size + ' ilişkili tablo');
+        const parts = [];
+        _state.fkById.forEach((n, tid) => {
+            const checked = _state.joins.has(tid);
+            const junc = n.is_junction ? ' · <em>junction</em>' : '';
+            const tech = (n.schema ? n.schema + '.' : '') + n.name;
+            parts.push(
+                '<label class="dsw-picker-fk-row' + (checked ? ' is-checked' : '') + '" data-fk-id="' + _escape(tid) + '">' +
+                  '<input type="checkbox" class="dsw-picker-fk-cb" data-fk-id="' + _escape(tid) + '"' +
+                    (checked ? ' checked' : '') + ' aria-label="' + _escape(n.label) + ' join adayı" />' +
+                  '<span class="dsw-picker-row-main">' +
+                    '<span class="dsw-picker-row-title">' + _escape(n.label) + '</span>' +
+                    '<span class="dsw-picker-row-meta">' + _escape(tech) + junc + '</span>' +
+                  '</span>' +
+                '</label>'
+            );
+        });
+        pane.innerHTML = parts.join('');
+    }
+
+    function _renderSummary() {
+        const sum = $('dswPickerSummary');
+        const confirm = $('dswPickerConfirm');
+        const primaryCount = _state.primaryId != null ? 1 : 0;
+        const joinCount = _state.joins.size;
+        const total = primaryCount + joinCount;
+        if (sum) {
+            if (!total) sum.textContent = 'Seçim yok';
+            else if (primaryCount && joinCount) sum.textContent = '1 ana + ' + joinCount + ' join adayı';
+            else if (primaryCount) sum.textContent = '1 ana tablo seçildi';
+            else sum.textContent = joinCount + ' tablo';
+        }
+        if (confirm) confirm.disabled = (primaryCount === 0);
+    }
+
+    // ---- Data ----
+    async function _loadTables() {
+        const list = $('dswPickerList');
+        if (list) list.setAttribute('aria-busy', 'true');
+        try {
+            const q = _state.initialQuery || '';
+            const url = API_BASE + '/sources/' + _state.sourceId + '/tables?q=' +
+                        encodeURIComponent(q) + '&limit=200';
+            const data = await _fetchJson(url);
+            // Pre-normalize label/name/full at load → filter loop becomes O(N) indexOf
+            // on cached strings instead of O(N × 3 × normTR) per keystroke.
+            const items = (data.tables || data.items || []).map(t => {
+                const schema = t.schema_name || t.schema || null;
+                const name = t.object_name || t.table_name || '';
+                const label = t.business_name_tr || name || '?';
+                const full = (schema ? schema + '.' : '') + name;
+                return {
+                    table_id: t.table_id || t.id,
+                    schema: schema,
+                    name: name,
+                    label: label,
+                    _nl: _normTR(label),
+                    _nn: _normTR(name),
+                    _nf: _normTR(full),
+                };
+            });
+            _state.tables = items;
+            _applyFilter('');
+        } catch (e) {
+            console.warn('[DbSmartPicker] table load failed:', e);
+            if (list) list.innerHTML = '<div class="dsw-picker-empty">Tablolar yüklenemedi: ' + _escape(e.message) + '</div>';
+        } finally {
+            if (list) list.setAttribute('aria-busy', 'false');
+        }
+    }
+
+    async function _loadFk(primaryId) {
+        // Cache: same primary, already loaded → no refetch
+        if (_state.fkLoadedFor === primaryId && !_state.fkLoading) {
+            _renderFkPane();
+            return;
+        }
+        _state.fkLoadedFor = primaryId;
+        _state.fkLoading = true;
+        _state.fkById = new Map();
+        _renderFkPane();
+        try {
+            const url = API_BASE + '/sources/' + _state.sourceId +
+                        '/tables/' + primaryId + '/related?depth=1';
+            const data = await _fetchJson(url);
+            const neighbors = (data.neighbors || []).concat(data.junctions || []);
+            const map = new Map();
+            neighbors.forEach(n => {
+                const tid = n.table_id != null ? n.table_id
+                          : (n.id != null ? n.id : (n.schema + '.' + n.table));
+                map.set(tid, {
+                    table_id: tid,
+                    schema: n.schema,
+                    name: n.table,
+                    label: n.business_name_tr || n.table,
+                    is_junction: !!n.is_junction,
+                });
+            });
+            if (_state.primaryId === primaryId) _state.fkById = map;
+        } catch (e) {
+            console.warn('[DbSmartPicker] FK load failed:', e);
+            if (_state.primaryId === primaryId) _state.fkById = new Map();
+        } finally {
+            _state.fkLoading = false;
+            if (_state.primaryId === primaryId) _renderFkPane();
+        }
+    }
+
+    function _applyFilter(rawQ) {
+        const q = _normTR(rawQ || '');
+        if (!q) {
+            _state.filtered = _state.tables.slice();
+        } else {
+            _state.filtered = _state.tables.filter(t =>
+                t._nl.indexOf(q) >= 0 || t._nn.indexOf(q) >= 0 || t._nf.indexOf(q) >= 0
+            );
+        }
+        _renderList();
+    }
+
+    // ---- Event handlers ----
+    function _coerceId(raw) {
+        const n = parseInt(raw, 10);
+        return isNaN(n) ? raw : n;
+    }
+
+    // Update is-primary / is-checked classes on visible list rows without
+    // full innerHTML rebuild (avoids reflow on every checkbox click).
+    function _refreshListRowClasses() {
+        const list = $('dswPickerList');
+        if (!list) return;
+        list.querySelectorAll('.dsw-picker-row').forEach(row => {
+            const tid = _coerceId(row.getAttribute('data-table-id'));
+            const isPrimary = (tid === _state.primaryId);
+            const isChecked = isPrimary || _state.joins.has(tid);
+            row.classList.toggle('is-primary', isPrimary);
+            row.classList.toggle('is-checked', isChecked);
+            const titleEl = row.querySelector('.dsw-picker-row-title');
+            const hasBadge = titleEl && titleEl.querySelector('.dsw-picker-badge');
+            if (isPrimary && !hasBadge && titleEl) {
+                const em = document.createElement('em');
+                em.className = 'dsw-picker-badge';
+                em.textContent = 'ANA';
+                titleEl.appendChild(document.createTextNode(' '));
+                titleEl.appendChild(em);
+            } else if (!isPrimary && hasBadge) {
+                hasBadge.remove();
+            }
+            // Sync checkbox state (e.g. when primary uncheck demotes another row)
+            const cb = row.querySelector('.dsw-picker-cb');
+            if (cb && cb.checked !== isChecked) cb.checked = isChecked;
+        });
+    }
+
+    function _onListClick(e) {
+        const cb = e.target.closest('.dsw-picker-cb');
+        if (!cb) return;
+        const numId = _coerceId(cb.getAttribute('data-table-id'));
+        const item = _state.tables.find(t => String(t.table_id) === String(numId));
+        if (!item) return;
+
+        const wasPrimary = (_state.primaryId === numId);
+        const wasJoin = _state.joins.has(numId);
+        let primaryChanged = false;
+
+        if (cb.checked) {
+            if (_state.primaryId == null) {
+                _state.primaryId = numId;
+                primaryChanged = true;
+            } else if (!wasPrimary) {
+                _state.joins.set(numId, item);
+            }
+        } else {
+            if (wasPrimary) {
+                _state.primaryId = null;
+                _state.fkById = new Map();
+                _state.fkLoadedFor = null;
+                if (_state.joins.size > 0) {
+                    const firstId = _state.joins.keys().next().value;
+                    _state.joins.delete(firstId);
+                    _state.primaryId = firstId;
+                }
+                primaryChanged = true;
+            } else if (wasJoin) {
+                _state.joins.delete(numId);
+            }
+        }
+        _refreshListRowClasses();
+        if (primaryChanged) {
+            if (_state.primaryId != null) _loadFk(_state.primaryId);
+            else _renderFkPane();
+        }
+        _renderSummary();
+    }
+
+    function _onFkClick(e) {
+        const cb = e.target.closest('.dsw-picker-fk-cb');
+        if (!cb) return;
+        const numId = _coerceId(cb.getAttribute('data-fk-id'));
+        const meta = _state.fkById.get(numId);
+        if (!meta) return;
+        if (cb.checked) {
+            _state.joins.set(numId, meta);
+        } else {
+            _state.joins.delete(numId);
+        }
+        // Only the affected row's class toggle is needed
+        const row = cb.closest('.dsw-picker-fk-row');
+        if (row) row.classList.toggle('is-checked', cb.checked);
+        _renderSummary();
+    }
+
+    function _onSearchInput(e) {
+        _applyFilter(e.target.value || '');
+    }
+
+    function _onClick(e) {
+        const action = e.target.closest('[data-action]');
+        if (!action) return;
+        const a = action.getAttribute('data-action');
+        if (a === 'cancel') {
+            close(true);
+        } else if (a === 'confirm') {
+            _confirm();
+        }
+    }
+
+    function _onKeydown(e) {
+        if (!_state.open) return;
+        if (e.key === 'Escape') {
+            e.stopPropagation();
+            close(true);
+        }
+    }
+
+    function _confirm() {
+        if (_state.primaryId == null) return;
+        const primary = _state.tables.find(t => t.table_id === _state.primaryId) || null;
+        const joins = Array.from(_state.joins.values());
+        const cb = _state.onConfirm;
+        close(false);
+        if (typeof cb === 'function') {
+            try { cb({ primary: primary, joins: joins }); } catch (err) { console.error('[DbSmartPicker] onConfirm error:', err); }
+        }
+    }
+
+    // ---- Public open / close ----
+    function open(opts) {
+        opts = opts || {};
+        if (_state.open) return;
+        const modal = $('dbSmartPickerModal');
+        if (!modal) {
+            console.warn('[DbSmartPicker] modal DOM bulunamadı');
+            return;
+        }
+        _state.sourceId = opts.sourceId;
+        _state.initialQuery = opts.initialQuery || '';
+        _state.onConfirm = typeof opts.onConfirm === 'function' ? opts.onConfirm : null;
+        _state.onCancel = typeof opts.onCancel === 'function' ? opts.onCancel : null;
+        _state.primaryId = null;
+        _state.joins = new Map();
+        _state.fkById = new Map();
+        _state.fkLoadedFor = null;
+        _state.tables = [];
+        _state.filtered = [];
+        _state.prevFocus = document.activeElement;
+
+        // DOM-scoped listeners are idempotent (attached once to persistent nodes).
+        // Document-scoped keydown is attached per-open and removed on close to
+        // avoid accumulation and to keep the global keyboard surface minimal.
+        if (!modal._bound) {
+            modal.addEventListener('click', _onClick);
+            const search = $('dswPickerSearch');
+            search && search.addEventListener('input', _onSearchInput);
+            const list = $('dswPickerList');
+            list && list.addEventListener('change', _onListClick);
+            const fkList = $('dswPickerFkList');
+            fkList && fkList.addEventListener('change', _onFkClick);
+            const overlay = modal.querySelector('[data-role="overlay"]');
+            overlay && overlay.addEventListener('click', function () { close(true); });
+            modal._bound = true;
+        }
+        document.addEventListener('keydown', _onKeydown);
+
+        // Pre-populate search input
+        const search = $('dswPickerSearch');
+        if (search) search.value = _state.initialQuery;
+
+        _show(modal);
+        document.body.classList.add('dsw-picker-open');
+        _state.open = true;
+
+        _renderList();
+        _renderFkPane();
+        _renderSummary();
+
+        // Focus search
+        setTimeout(function () { try { search && search.focus(); } catch (e) {} }, 30);
+
+        // Load tables
+        _loadTables();
+    }
+
+    function close(viaCancel) {
+        if (!_state.open) return;
+        const modal = $('dbSmartPickerModal');
+        _hide(modal);
+        document.body.classList.remove('dsw-picker-open');
+        _state.open = false;
+        document.removeEventListener('keydown', _onKeydown);
+        const cb = _state.onCancel;
+        try { _state.prevFocus && _state.prevFocus.focus(); } catch (e) {}
+        if (viaCancel && typeof cb === 'function') {
+            try { cb(); } catch (e) {}
+        }
+    }
+
+    window.DbSmartPicker = { open: open, close: function () { close(true); } };
+})();
+
+
 /* === assets/js/modules/db_smart_wizard.js === */
 /**
  * VYRA Akıllı Veri Keşfi — DB Smart Wizard (v3.30.0 FAZ 1 G1.6)
@@ -35863,6 +36538,73 @@ window.ThemePickerPopup = (function () {
         } catch (e) {
             console.warn('[db_smart_wizard] _loadSources failed:', e);
         }
+    }
+
+    // v3.34.0 — Tablo Seçici alt-modal entegrasyonu
+    function _openPicker() {
+        const sourceId = (document.getElementById('dswSourceSelect') || {}).value || '';
+        if (!sourceId) {
+            _notify(_t('wizard.toast.select_source'), 'warning');
+            return;
+        }
+        if (!window.DbSmartPicker || typeof window.DbSmartPicker.open !== 'function') {
+            console.warn('[db_smart_wizard] DbSmartPicker yüklü değil');
+            return;
+        }
+        _state.sourceId = parseInt(sourceId, 10);
+        const initialQ = (document.getElementById('dswSearchQ') || {}).value || '';
+        window.DbSmartPicker.open({
+            sourceId: _state.sourceId,
+            initialQuery: initialQ,
+            onConfirm: function (sel) { _onPickerConfirm(sel); },
+        });
+    }
+
+    function _onPickerConfirm(sel) {
+        if (!sel || !sel.primary) return;
+        const primary = sel.primary;
+        const joins = sel.joins || [];
+        // Ana tablo state'i (mevcut alanlar)
+        _state.selectedTableId = parseInt(primary.table_id, 10);
+        _state.selectedTableObjectName = primary.name || null;
+        _state.selectedTableSchema = primary.schema || null;
+        _state.selectedTableLabel = primary.label || primary.name;
+        _state.selectedTables = [_state.selectedTableId].concat(
+            joins.map(j => (j.table_id != null && !isNaN(parseInt(j.table_id, 10)))
+                              ? parseInt(j.table_id, 10) : j.table_id)
+        );
+        // Join adayları — step 2 (FK) için bilgilendirici
+        _state.joinCandidates = joins.slice();
+        // Adım 1'de seçimleri göster (kullanıcı isteği: step 1'de kal)
+        _renderSelectedSummary(primary, joins);
+        // İleri butonu aktive et
+        const next = document.getElementById('dswNextBtn');
+        if (next) next.disabled = false;
+        _notify(_t('wizard.toast.table_selected', { label: primary.label || primary.name }), 'success');
+    }
+
+    function _renderSelectedSummary(primary, joins) {
+        const results = document.getElementById('dswResults');
+        if (!results) return;
+        const escape = _escape;
+        const items = [
+            '<li class="is-primary" title="Ana tablo">★ ' + escape(primary.label || primary.name) +
+            ' <span style="opacity:.7;font-family:ui-monospace,monospace">' +
+            escape((primary.schema ? primary.schema + '.' : '') + (primary.name || '')) + '</span></li>'
+        ].concat(joins.map(j =>
+            '<li title="Join adayı">' + escape(j.label || j.name) +
+            ' <span style="opacity:.7;font-family:ui-monospace,monospace">' +
+            escape((j.schema ? j.schema + '.' : '') + (j.name || '')) + '</span></li>'
+        ));
+        const total = 1 + joins.length;
+        results.innerHTML =
+            '<div class="dsw-selected-summary">' +
+              '<h4>Seçilen tablolar (' + total + ')</h4>' +
+              '<ul>' + items.join('') + '</ul>' +
+              '<button type="button" class="dsw-selected-edit" id="dswSelectedEdit">Seçimi düzenle…</button>' +
+            '</div>';
+        const editBtn = document.getElementById('dswSelectedEdit');
+        if (editBtn) editBtn.addEventListener('click', _openPicker);
     }
 
     async function _searchTables() {
@@ -36361,9 +37103,11 @@ window.ThemePickerPopup = (function () {
         });
 
         // Buton binding'leri (idempotent)
+        // v3.34.0 — "Tablo Seç" butonu artık DbSmartPicker alt-modal'ını açar.
+        // Eski inline arama fallback olarak input Enter ile hâlâ erişilebilir.
         const searchBtn = document.getElementById('dswSearchBtn');
         if (searchBtn && !searchBtn._bound) {
-            searchBtn.addEventListener('click', _searchTables);
+            searchBtn.addEventListener('click', _openPicker);
             searchBtn._bound = true;
         }
         const prev = document.getElementById('dswPrevBtn');

@@ -165,6 +165,73 @@
         }
     }
 
+    // v3.34.0 — Tablo Seçici alt-modal entegrasyonu
+    function _openPicker() {
+        const sourceId = (document.getElementById('dswSourceSelect') || {}).value || '';
+        if (!sourceId) {
+            _notify(_t('wizard.toast.select_source'), 'warning');
+            return;
+        }
+        if (!window.DbSmartPicker || typeof window.DbSmartPicker.open !== 'function') {
+            console.warn('[db_smart_wizard] DbSmartPicker yüklü değil');
+            return;
+        }
+        _state.sourceId = parseInt(sourceId, 10);
+        const initialQ = (document.getElementById('dswSearchQ') || {}).value || '';
+        window.DbSmartPicker.open({
+            sourceId: _state.sourceId,
+            initialQuery: initialQ,
+            onConfirm: function (sel) { _onPickerConfirm(sel); },
+        });
+    }
+
+    function _onPickerConfirm(sel) {
+        if (!sel || !sel.primary) return;
+        const primary = sel.primary;
+        const joins = sel.joins || [];
+        // Ana tablo state'i (mevcut alanlar)
+        _state.selectedTableId = parseInt(primary.table_id, 10);
+        _state.selectedTableObjectName = primary.name || null;
+        _state.selectedTableSchema = primary.schema || null;
+        _state.selectedTableLabel = primary.label || primary.name;
+        _state.selectedTables = [_state.selectedTableId].concat(
+            joins.map(j => (j.table_id != null && !isNaN(parseInt(j.table_id, 10)))
+                              ? parseInt(j.table_id, 10) : j.table_id)
+        );
+        // Join adayları — step 2 (FK) için bilgilendirici
+        _state.joinCandidates = joins.slice();
+        // Adım 1'de seçimleri göster (kullanıcı isteği: step 1'de kal)
+        _renderSelectedSummary(primary, joins);
+        // İleri butonu aktive et
+        const next = document.getElementById('dswNextBtn');
+        if (next) next.disabled = false;
+        _notify(_t('wizard.toast.table_selected', { label: primary.label || primary.name }), 'success');
+    }
+
+    function _renderSelectedSummary(primary, joins) {
+        const results = document.getElementById('dswResults');
+        if (!results) return;
+        const escape = _escape;
+        const items = [
+            '<li class="is-primary" title="Ana tablo">★ ' + escape(primary.label || primary.name) +
+            ' <span style="opacity:.7;font-family:ui-monospace,monospace">' +
+            escape((primary.schema ? primary.schema + '.' : '') + (primary.name || '')) + '</span></li>'
+        ].concat(joins.map(j =>
+            '<li title="Join adayı">' + escape(j.label || j.name) +
+            ' <span style="opacity:.7;font-family:ui-monospace,monospace">' +
+            escape((j.schema ? j.schema + '.' : '') + (j.name || '')) + '</span></li>'
+        ));
+        const total = 1 + joins.length;
+        results.innerHTML =
+            '<div class="dsw-selected-summary">' +
+              '<h4>Seçilen tablolar (' + total + ')</h4>' +
+              '<ul>' + items.join('') + '</ul>' +
+              '<button type="button" class="dsw-selected-edit" id="dswSelectedEdit">Seçimi düzenle…</button>' +
+            '</div>';
+        const editBtn = document.getElementById('dswSelectedEdit');
+        if (editBtn) editBtn.addEventListener('click', _openPicker);
+    }
+
     async function _searchTables() {
         const q = (document.getElementById('dswSearchQ') || {}).value || '';
         const sourceId = (document.getElementById('dswSourceSelect') || {}).value || '';
@@ -661,9 +728,11 @@
         });
 
         // Buton binding'leri (idempotent)
+        // v3.34.0 — "Tablo Seç" butonu artık DbSmartPicker alt-modal'ını açar.
+        // Eski inline arama fallback olarak input Enter ile hâlâ erişilebilir.
         const searchBtn = document.getElementById('dswSearchBtn');
         if (searchBtn && !searchBtn._bound) {
-            searchBtn.addEventListener('click', _searchTables);
+            searchBtn.addEventListener('click', _openPicker);
             searchBtn._bound = true;
         }
         const prev = document.getElementById('dswPrevBtn');
