@@ -165,7 +165,21 @@ const DSEnrichmentModule = (() => {
             const res = await _authFetch(
                 `/api/data-sources/${_currentSourceId}/check-running-job`
             );
+            // v3.32.0 ARES Y1-recur fix: 403 -> ACL reddi (yanlış kaynak), poll'u durdur.
+            // 404 -> kaynak silinmiş, poll'u durdur.
+            if (res.status === 403 || res.status === 404) {
+                _stopRunningJobPoll();
+                _runningJob = null;
+                return;
+            }
             const data = await res.json();
+            // Backend hata bildirdiyse (success:false) — _runningJob state'ini DEĞİŞTİRME
+            // (gate'i kazara açmamak için). Backoff ile devam.
+            if (data && data.success === false) {
+                _runningJobPollInterval = Math.min(_runningJobPollInterval * 2, 30000);
+                _runningJobPollTimer = setTimeout(_pollRunningJob, _runningJobPollInterval);
+                return;
+            }
             const wasRunning = _runningJob !== null;
             if (data.has_running) {
                 _runningJob = {
@@ -188,7 +202,7 @@ const DSEnrichmentModule = (() => {
                 applyFilterAndRender();
             }
         } catch (e) {
-            // Exponential backoff up to 30s
+            // Network/parse hata — exponential backoff up to 30s, _runningJob state'i bozma.
             _runningJobPollInterval = Math.min(_runningJobPollInterval * 2, 30000);
         }
         _runningJobPollTimer = setTimeout(_pollRunningJob, _runningJobPollInterval);

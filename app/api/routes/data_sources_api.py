@@ -1099,14 +1099,47 @@ def check_running_job(
     source_id: int,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
-    """Bu kaynak için çalışan bir iş var mı kontrol eder (frontend guard için)."""
+    """Bu kaynak için çalışan bir iş var mı kontrol eder (frontend guard için).
+
+    v3.32.0 ARES Y1-recur fix: Cross-tenant ACL guard + source-scoped RLS.
+    Frontend bu endpoint'i 3s'de bir poll'ladığı için company-level ACL kontrolü
+    yapılmadan kullanılması cross-tenant job state enumeration'a yol açıyordu.
+    Ayrıca `check_running_job` service'i stuck job'ları UPDATE ediyor — bu cross-
+    tenant write riski demek. Bulk approve'daki Y1 fix pattern'i ile aynı.
+    """
+    from app.core.db import get_db_context_scoped
+
+    is_admin = current_user.get("is_admin", False) or current_user.get("role") == "admin"
     try:
-        with get_db_context() as conn:
+        # ACL: source.company_id == caller.company_id ?
+        with get_db_context() as _acl_conn:
+            _acl_cur = _acl_conn.cursor()
+            _acl_cur.execute(
+                "SELECT company_id FROM data_sources WHERE id = %s",
+                (source_id,)
+            )
+            _row = _acl_cur.fetchone()
+            if not _row:
+                raise HTTPException(status_code=404, detail="Veri kaynagi bulunamadi.")
+            source_company_id = _row["company_id"] if hasattr(_row, "keys") else _row[0]
+        if not is_admin and current_user.get("company_id") != source_company_id:
+            logger.warning(
+                "[DataSources] check-running-job ACL reddi: user_company=%s source_company=%s source_id=%s user=%s",
+                current_user.get("company_id"), source_company_id, source_id, current_user.get("id")
+            )
+            raise HTTPException(status_code=403, detail="Bu kaynaga erisim yetkiniz yok.")
+
+        with get_db_context_scoped(source_id) as conn:
             result = ds_learning_service.check_running_job(conn, source_id)
             return {"success": True, **result}
+    except HTTPException:
+        # ACL guard (403/404) FastAPI'ye olduğu gibi geçsin — frontend gate'i için kritik
+        raise
     except Exception as e:
         logger.error("[DataSources] Running job kontrolü sırasında hata: %s", type(e).__name__)
-        return {"success": True, "has_running": False, "job": None}
+        # D1 fix: swallow yerine açık hata bildir; frontend poll loop exponential backoff yapar.
+        # has_running=False döndürmek "double-bulk" riskine yol açar.
+        return {"success": False, "has_running": False, "job": None, "error": "check_failed"}
 
 
 @router.get("/{source_id}/discovery-status")
