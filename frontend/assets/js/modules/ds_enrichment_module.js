@@ -677,16 +677,10 @@ const DSEnrichmentModule = (() => {
         }
         const enrichmentId = item.enrichment_id;
 
-        // Çalışan iş kontrolü — keşif devam ediyorsa onay engelle
-        try {
-            const _jobCheckRes = await _authFetch(`/api/data-sources/${_currentSourceId}/check-running-job`);
-            const _jobCheck = await _jobCheckRes.json();
-            if (_jobCheck.has_running) {
-                _showToast('Keşif işlemi devam ediyor. Tamamlanmasını bekleyin.', 'warning');
-                return;
-            }
-        } catch (e) { /* kontrol başarısız, devam et */ }
-
+        // v3.31.0 (R002): Frontend preflight kaldirildi. Backend tek-tek approve
+        // endpoint'inde zaten check_running_job yapip {success:false, message:...}
+        // donuyor; aynisi bulk endpoint'inde de mevcut. UX: data.message toast'a
+        // backend'den geliyor.
         try {
             const res = await _authFetch(
                 `/api/data-sources/${_currentSourceId}/enrichment-approve/${enrichmentId}`,
@@ -1135,16 +1129,8 @@ const DSEnrichmentModule = (() => {
             btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Onaylanıyor...';
         }
 
-        // Çalışan iş kontrolü — keşif devam ediyorsa onay engelle
-        try {
-            const _jcRes = await _authFetch(`/api/data-sources/${_currentSourceId}/check-running-job`);
-            const _jc = await _jcRes.json();
-            if (_jc.has_running) {
-                _showToast('Keşif işlemi devam ediyor. Tamamlanmasını bekleyin.', 'warning');
-                if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-check-double mr-2"></i> Seçilenleri Onayla'; }
-                return;
-            }
-        } catch (e) { /* kontrol başarısız, devam et */ }
+        // v3.31.0 (R002): Frontend preflight kaldirildi. Backend bulk endpoint
+        // check_running_job'i kendisi yapip code:"running_job" donuyor.
 
         // object_id -> enrichment_id map: _selectedIds stores object_ids
         const objectToEnrichMap = {};
@@ -1242,16 +1228,8 @@ const DSEnrichmentModule = (() => {
             btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Onaylanıyor...';
         }
 
-        // Çalışan iş kontrolü — keşif devam ediyorsa onay engelle
-        try {
-            const _jcRes = await _authFetch(`/api/data-sources/${_currentSourceId}/check-running-job`);
-            const _jc = await _jcRes.json();
-            if (_jc.has_running) {
-                _showToast('Keşif işlemi devam ediyor. Tamamlanmasını bekleyin.', 'warning');
-                if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-check-circle mr-2"></i> Tümünü Onayla'; }
-                return;
-            }
-        } catch (e) { /* kontrol başarısız, devam et */ }
+        // v3.31.0 (R002): Frontend preflight kaldirildi. Backend bulk endpoint
+        // check_running_job'i kendisi yapip code:"running_job" donuyor.
 
         try {
             // v3.31.0: Tek POST -> backend bulk endpoint (transactional + paralel)

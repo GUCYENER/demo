@@ -1,13 +1,13 @@
 # VYRA Refactor Backlog
 
-Last updated: 2026-05-23 by refactor-tracker
+Last updated: 2026-05-23 (R001/R002/R003/R004 hepsi resolved — v3.31.0 sprint)
 
-| ID   | Priority | Scope       | Risk | Effort | Title                                              | File(s)                                         | Status | Notes                                          |
-|------|----------|-------------|------|--------|----------------------------------------------------|-------------------------------------------------|--------|------------------------------------------------|
-| R001 | P2       | single-file | low  | S      | Extract `_authFetch` helper — auth header DRY      | frontend/assets/js/modules/ds_enrichment_module.js | open   | 13 `localStorage.getItem` call sites; 5+ full fetch boilerplate copies |
-| R002 | P2       | single-file | low  | XS     | Extract `_guardNoRunningJob` — preflight DRY       | frontend/assets/js/modules/ds_enrichment_module.js | open   | May become obsolete after v3.31.0 bulk endpoint; see .agents/plans/bulk_enrichment_endpoints.md |
-| R003 | P2       | single-file | low  | S      | Move pill inline-styles to CSS class `.ds-status-pill` | frontend/assets/js/modules/ds_enrichment_module.js | open   | A11y bonus: `role="group"` already present (line 566); HEBE noted |
-| R004 | P3       | single-file | low  | XS     | `_runConcurrent` worker return-type inconsistency  | frontend/assets/js/modules/ds_enrichment_module.js | open   | TYCHE micro-note — `bulkApprove` worker returns object, `bulkApproveAll` worker returns undefined |
+| ID   | Priority | Scope       | Risk | Effort | Title                                              | File(s)                                         | Status     | Notes                                          |
+|------|----------|-------------|------|--------|----------------------------------------------------|-------------------------------------------------|------------|------------------------------------------------|
+| R001 | P2       | single-file | low  | S      | Extract `_authFetch` helper — auth header DRY      | frontend/assets/js/modules/ds_enrichment_module.js | done       | Commit e14f0ca — 13 call site DRY |
+| R002 | P2       | single-file | low  | XS     | Extract `_guardNoRunningJob` — preflight DRY       | frontend/assets/js/modules/ds_enrichment_module.js | done       | v3.31.0 bulk endpoint preflight'i absorbe etti; 3 frontend preflight kaldirildi (extraction yerine eliminate). Commit: bu sprint |
+| R003 | P2       | single-file | low  | S      | Move pill inline-styles to CSS class `.ds-status-pill` | frontend/assets/js/modules/ds_enrichment_module.js | done       | Commit b5afc17 — CSS class + a11y bonus |
+| R004 | P3       | single-file | low  | XS     | `_runConcurrent` worker return-type inconsistency  | frontend/assets/js/modules/ds_enrichment_module.js | wontfix    | bulkApprove + bulkApproveAll v3.31.0'da bulk endpoint'e gecti -> _runConcurrent callsite kalmadi. Helper utility olarak korundu (plan kararı), inconsistency moot |
 
 ---
 

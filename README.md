@@ -3789,7 +3789,7 @@ netstat -an | findstr "5005"
 
 **Geliştirici:** Yasın Fazlıoğlu  
 **E-posta:** yasin.fazlioglu@consultant.turkcell.com.tr  
-**Versiyon:** 3.30.1 (Session timer JWT iat fix + DS Enrichment paneli UX paketi: 3-yönlü status filtre + filter-aware Tümü + paralel onay pool)
+**Versiyon:** 3.31.0 (Backend bulk approve endpoint + transactional SAVEPOINT + ThreadPool paralel schema_record + refactor sweep R001/R002/R003)
 
 ---
 
