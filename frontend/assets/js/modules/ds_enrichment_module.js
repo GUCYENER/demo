@@ -589,10 +589,10 @@ const DSEnrichmentModule = (() => {
                         <td style="text-align: center;">
                             <input type="checkbox" class="ds-bulk-chk ${item.is_approved ? '' : 'cursor-pointer'}" value="${item.id}" ${isChecked} ${approvedAttr} onchange="DSEnrichmentModule.toggleCheckbox(this)">
                         </td>
-                        <td class="ds-schema-cell" data-tt="${_escapeHtml(schemaName)}" style="font-size:0.82rem;color:#9ca3af;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                        <td class="ds-schema-cell" data-tt-portal data-tt="${_escapeHtml(schemaName)}" style="font-size:0.82rem;color:#9ca3af;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
                             ${_escapeHtml(schemaName)}
                         </td>
-                        <td class="ds-table-name-cell" data-tt="${_escapeHtml(tableName)}">
+                        <td class="ds-table-name-cell" data-tt-portal data-tt="${_escapeHtml(tableName)}">
                             <strong>${_escapeHtml(tableName)}</strong>
                         </td>
                         <td>
@@ -607,7 +607,7 @@ const DSEnrichmentModule = (() => {
                                 ${(item.enrichment_score || 0).toFixed(2)}
                             </span>
                         </td>
-                        <td class="ds-desc-cell" data-tt-multiline data-tt="${_escapeHtml(item.description_tr || '(Açıklama yok)')}">
+                        <td class="ds-desc-cell" data-tt-portal data-tt-multiline data-tt="${_escapeHtml(item.description_tr || '(Açıklama yok)')}">
                             ${_escapeHtml((item.description_tr || '').substring(0, 60))}${(item.description_tr || '').length > 60 ? '...' : ''}
                         </td>
                         <td class="ds-action-cell">

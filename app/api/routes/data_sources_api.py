@@ -1854,11 +1854,15 @@ def _generate_schema_records_background(source_id: int,
             type(e).__name__, str(e)[:200]
         )
 
-    # Persist failures to ds_schema_record_warnings (mig 043)
+    # Persist failures to ds_schema_record_warnings (mig 043 + mig 044 strict WITH CHECK)
+    # R006 (v3.33.0): apply_company_scope ZORUNLU — mig 044 sonrası WITH CHECK
+    # `current_setting('app.current_company_id', true) = ''` branch'ini KALDIRDI;
+    # scope set edilmezse INSERT reject olur.
     if failures and company_id is not None:
         try:
             with get_db_context() as conn:
                 cur = conn.cursor()
+                apply_company_scope(cur, company_id=company_id)
                 for f in failures:
                     cur.execute(
                         """INSERT INTO ds_schema_record_warnings

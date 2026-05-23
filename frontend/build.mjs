@@ -75,6 +75,7 @@ const JS_FILES = [
     'assets/js/notification.js',
     'assets/js/api_client.js',
     'assets/js/websocket_client.js',
+    'assets/js/modules/ui_tooltip.js',          // v3.33.0 R011/R012 — portal tooltip helper (data-tt-portal)
 
     // 3. Modular Components
     'assets/js/modules/llm_module.js',
