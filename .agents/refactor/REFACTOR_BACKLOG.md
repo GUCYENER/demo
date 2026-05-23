@@ -1,6 +1,6 @@
 # VYRA Refactor Backlog
 
-Last updated: 2026-05-23 (R005–R010 eklendi — HEPHAESTUS DB audit v3.32.0 Council Gate)
+Last updated: 2026-05-23 (R011–R015 eklendi — ATHENA UX audit v3.32.0 Council Gate; v3.33.0 hedefi)
 
 | ID   | Priority | Scope       | Risk | Effort | Title                                              | File(s)                                         | Status     | Notes                                          |
 |------|----------|-------------|------|--------|----------------------------------------------------|-------------------------------------------------|------------|------------------------------------------------|
@@ -14,6 +14,11 @@ Last updated: 2026-05-23 (R005–R010 eklendi — HEPHAESTUS DB audit v3.32.0 Co
 | R008 | P3       | cross-file  | low  | XS     | Index naming inconsistency: `idx_ds_table_enrich_*` vs convention `idx_table_enrich_*` | migrations/versions/043_v3320_bulk_phase2.py, migrations/versions/004_ds_enrichment_tables.py | open | M2 — HEPHAESTUS audit; ALTER INDEX non-breaking rename |
 | R009 | P3       | cross-file  | low  | XS     | `detail TEXT` uncapped at DB layer — only app-layer cap enforced | migrations/versions/043_v3320_bulk_phase2.py, app/api/routes/data_sources_api.py | open | L1 — HEPHAESTUS audit; VARCHAR(1000) or CHECK constraint |
 | R010 | P3       | single-file | low  | XS     | BackgroundTasks SIGTERM loss — operational runbook note missing | app/api/routes/data_sources_api.py | open | L2 — HEPHAESTUS audit; approve UPDATE already committed, only embedding gap; DOC-only fix |
+| R011 | P1       | cross-file  | medium | M    | Tooltip clipping in table cells — portal or fixed-position variant needed | frontend/assets/css/modules/ui_tooltip.css, frontend/assets/css/modules/ds_enrichment.css, frontend/assets/js/modules/ds_enrichment_module.js | open | Y1 — ATHENA audit; `::after` clipped by ancestor overflow:hidden; JS portal helper needed; v3.33.0 |
+| R012 | P2       | single-file | low  | S      | Tooltip vertical auto-flip missing — hard-pinned `bottom` clips near viewport top | frontend/assets/css/modules/ui_tooltip.css | open | O2 — ATHENA audit; `bottom: calc(100% + 6px)` only; can share R011 JS helper; v3.33.0 |
+| R013 | P3       | cross-file  | low  | XS     | `[disabled]` checkbox missing `cursor: not-allowed` — UX consistency gap | frontend/assets/css/modules/ui_tooltip.css, frontend/assets/js/modules/ds_enrichment_module.js | open | O3 — ATHENA audit; bulk buttons OK (inline cursor), `.ds-bulk-chk[disabled]` uncovered; global CSS fix |
+| R014 | P3       | single-file | low  | M      | `_runningJobPoll` unconditional re-render — state-unchanged renders on every 3s tick | frontend/assets/js/modules/ds_enrichment_module.js | open | D3 — ATHENA audit; `applyFilterAndRender()` line 244 called regardless of state change; state-hash guard needed |
+| R015 | P3       | single-file | low  | XS     | Dark surface token drift — tooltip bg hard-coded, not using `--tt-bg` CSS variable | frontend/assets/css/modules/ui_tooltip.css | open | D3 — ATHENA audit; `rgba(17,24,39,0.96)` at line 19 should be `var(--tt-bg)`; align with `--bg-card` token pattern |
 
 ---
 
@@ -220,3 +225,108 @@ CREATE INDEX IF NOT EXISTS idx_schema_warn_enrich
 **Tests:** No code tests needed.
 
 **Dependencies:** none
+
+---
+
+## v3.33.0 UX sprint — ATHENA UX audit findings (Council Gate v3.32.0)
+
+### R011 — Tooltip clipping in table cells — JS portal variant needed
+
+**Files:**
+- `frontend/assets/css/modules/ui_tooltip.css:13` (`[data-tt] { position: relative }`)
+- `frontend/assets/css/modules/ds_enrichment.css:131-135` (`.ds-enrich-table-wrap { overflow-x: auto }`)
+- `frontend/assets/css/modules/ds_enrichment.css:151-156` (`.ds-table-name-cell { overflow: hidden; max-width: 0 }`)
+- `frontend/assets/css/modules/ds_enrichment.css:284-291` (`.ds-desc-cell { overflow: hidden; max-width: 0 }`)
+
+**Why now:** `[data-tt]` renders its tooltip via `::after` with `position: absolute`. The tooltip is therefore contained within the nearest `position: relative` ancestor. Both `.ds-table-name-cell` and `.ds-desc-cell` have `overflow: hidden` (for text ellipsis) and their ancestor `.ds-enrich-table-wrap` has `overflow-x: auto`. The `::after` content is clipped exactly where tooltips provide the most value — hovering truncated table names and descriptions shows nothing or a partial strip. This is a net regression vs. the `title=""` baseline that was replaced by the v3.32.0 tooltip utility.
+
+**ATHENA verdict context:** K1 and Y2 were hotfixed in this sprint. R011 (Y1) is deferred to v3.33.0 because it requires a JS helper; it is not a net regression (table cells had no tooltip before v3.32.0 — `data-tt` was just not applied there).
+
+**Suggested approach (preferred: option #1 — JS portal):**
+Add a small `ui_tooltip.js` helper. On `mouseenter` of any `[data-tt-portal]` element, create a `<div class="tt-portal">` appended to `<body>`, position it via `getBoundingClientRect()` + `window.scrollY`, populate with `dataset.tt` text. Remove on `mouseleave`. Existing `[data-tt]` (CSS-only) utility is preserved unchanged for all non-clipped contexts.
+
+Alternative option #2: `[data-tt-fixed]` variant — JS hover handler writes `--tt-x` / `--tt-y` CSS variables on the element; `::after` uses `position: fixed; left: var(--tt-x); top: var(--tt-y)`. Simpler but requires reflow on scroll.
+
+Option #3 (`title=` fallback) is rejected — breaks dark-theme consistency, is a UX regression.
+
+**Tests:** Manual visual test on long table names (`>22%` column width). Unit test for portal helper: mock `getBoundingClientRect`, assert portal `<div>` appended to body on hover and removed on leave.
+
+**Dependencies:** none — new `ui_tooltip.js` file; does not touch existing `ui_tooltip.css`.
+
+---
+
+### R012 — Tooltip vertical auto-flip missing
+
+**Files:** `frontend/assets/css/modules/ui_tooltip.css:14` (`bottom: calc(100% + 6px)`)
+
+**Why:** The tooltip is always rendered above the trigger element. Elements near the top of the viewport (`.ds-enrich-filter-bar` buttons) or immediately below the sticky `<thead>` will render the tooltip partially or fully outside the visible area. The CSS `anchor-position` API (Chrome 125+) is not yet cross-browser viable.
+
+**Suggested approach:** Implement flip logic inside the R011 JS portal helper. When placing a portal tooltip, check if the computed `top` coordinate would be < 8px (viewport bleed); if so, render below the trigger instead. This collapses R011 and R012 into a single JS helper with two responsibilities.
+
+Alternatively, if R011 is deferred past v3.33.0, a standalone IntersectionObserver-based flip on the CSS `::after` approach can be explored, but is significantly more complex for marginal gain.
+
+**Tests:** Unit test: mock trigger with `top: 5px` in viewport, assert portal renders below rather than above.
+
+**Dependencies:** R011 (strongly recommended to land together — same helper file).
+
+---
+
+### R013 — `[disabled]` checkbox missing `cursor: not-allowed`
+
+**Files:**
+- `frontend/assets/js/modules/ds_enrichment_module.js:577` (`<input type="checkbox" class="ds-bulk-chk ...">` — no cursor style on disabled state)
+- `frontend/assets/js/modules/ds_enrichment_module.js:739,745,751,757` (4 bulk action buttons — inline `cursor: not-allowed` when disabled, correct)
+
+**Why:** The 4 bulk action buttons apply inline `cursor: ${gate ? 'not-allowed' : 'pointer'}` correctly. However, approved-row checkboxes rendered with the `disabled` attribute (line 577) receive no cursor override. Browsers default to `default` cursor on `[disabled]` inputs, not `not-allowed`. The inconsistency is cosmetic but contradicts the existing convention in the same component.
+
+**Suggested approach:** Add to a global or component CSS sheet:
+```css
+*[disabled],
+*[disabled]:hover {
+    cursor: not-allowed !important;
+}
+```
+Or more scoped: `.ds-bulk-chk[disabled] { cursor: not-allowed; }`.
+
+**Tests:** No automated tests needed. Visual check in dark theme.
+
+**Dependencies:** none.
+
+---
+
+### R014 — `_runningJobPoll` unconditional re-render on every tick
+
+**Files:** `frontend/assets/js/modules/ds_enrichment_module.js:201-251`
+
+**Evidence:** `_pollRunningJob` at line 244 calls `applyFilterAndRender()` on every successful poll response where `activeElement` is not an INPUT — regardless of whether `_runningJob` state actually changed. With the default 3-second interval and 100+ rows, this rebuilds the full panel innerHTML every 3 seconds silently.
+
+**Why now:** At ≤50 rows this is imperceptible. At 100+ rows (large source catalogues) `applyFilterAndRender` triggers full DOM reconstruction including `innerHTML` assignment on `#dsEnrichBody`, which:
+1. Causes visible layout jank on slower hardware / integrated GPU.
+2. Resets any inline edit focus not guarded by the `activeElement !== INPUT` check (e.g. a focused `<select>` or `<textarea>`).
+
+**Suggested approach:** Introduce a lightweight state fingerprint:
+```js
+const _stateHash = () => `${_runningJob ? _runningJob.type : 'null'}|${_runningJob ? _runningJob.started_at : ''}`;
+```
+Store `_lastPollHash` on module scope. In `_pollRunningJob`, after updating `_runningJob`, compare `_stateHash()` to `_lastPollHash`; skip `applyFilterAndRender()` if unchanged. Update hash on state-changing transitions only.
+
+**Tests:** Unit test: call `_pollRunningJob` twice with identical mock response; assert `applyFilterAndRender` called once (or spy call count = 1, not 2).
+
+**Dependencies:** none — self-contained within `_pollRunningJob`.
+
+---
+
+### R015 — Dark surface token drift in `ui_tooltip.css`
+
+**Files:** `frontend/assets/css/modules/ui_tooltip.css:19`
+
+**Evidence:** Tooltip background is `rgba(17, 24, 39, 0.96)` — hard-coded literal. App canonical card surface is `--bg-card: #1f2937` (verified in `frontend/assets/css/global.css:41`). The tooltip uses `#111827` (one shade darker, intentional overlay convention), but it is not expressed as a CSS variable, so it cannot participate in theming or be found by a design-token audit grep.
+
+**Suggested approach:**
+1. Define `--tt-bg: rgba(17, 24, 39, 0.96)` in the `:root` block of `global.css` (or in `ui_tooltip.css`'s own `:root` block).
+2. Replace the literal in `ui_tooltip.css:19` with `background: var(--tt-bg)`.
+3. Optionally define `--tt-color: #e5e7eb` and `--tt-border: rgba(255,255,255,0.08)` for full token coverage of the `::after` rule.
+
+**Tests:** No automated tests. Visual check that tooltip background is unchanged after the substitution.
+
+**Dependencies:** none.

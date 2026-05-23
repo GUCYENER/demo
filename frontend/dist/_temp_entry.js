@@ -29561,6 +29561,43 @@ const DSEnrichmentModule = (() => {
     let _runningJobPollTimer = null;
     let _runningJobPollInterval = 3000;  // 3s, exponential backoff on error
 
+    // v3.32.0 ATHENA Y2 fix: aria-label fallback for [data-tt] tooltips.
+    // CSS ::after content is NOT announced reliably by screen readers (NVDA partial,
+    // JAWS none). MutationObserver mirrors data-tt -> aria-label on every render.
+    let _a11yObserver = null;
+    function _mirrorTooltipsToAria(root) {
+        if (!root) return;
+        root.querySelectorAll('[data-tt]').forEach(el => {
+            const tt = el.getAttribute('data-tt');
+            if (!tt) return;
+            // Override sadece aria-label yoksa — author explicit aria-label set ettiyse koru.
+            if (!el.hasAttribute('aria-label') || el.getAttribute('aria-label') === el.dataset.ttMirrored) {
+                el.setAttribute('aria-label', tt);
+                el.dataset.ttMirrored = tt;
+            }
+        });
+    }
+    function _startA11yObserver(root) {
+        if (_a11yObserver || !root) return;
+        _mirrorTooltipsToAria(root);  // initial pass
+        _a11yObserver = new MutationObserver((muts) => {
+            // Debounce: tek bir microtask'ta tüm değişiklikleri işle
+            let needsPass = false;
+            for (const m of muts) {
+                if (m.type === 'childList' && m.addedNodes.length) { needsPass = true; break; }
+                if (m.type === 'attributes' && m.attributeName === 'data-tt') { needsPass = true; break; }
+            }
+            if (needsPass) _mirrorTooltipsToAria(root);
+        });
+        _a11yObserver.observe(root, {
+            childList: true, subtree: true,
+            attributes: true, attributeFilter: ['data-tt']
+        });
+    }
+    function _stopA11yObserver() {
+        if (_a11yObserver) { _a11yObserver.disconnect(); _a11yObserver = null; }
+    }
+
     // ============================================
     // Panel Aç/Kapat
     // ============================================
@@ -29585,6 +29622,10 @@ const DSEnrichmentModule = (() => {
         // Overlay oluştur
         _createOverlay();
 
+        // v3.32.0 ATHENA Y2: data-tt -> aria-label mirror (a11y).
+        const _overlayRoot = document.getElementById('dsEnrichOverlay');
+        _startA11yObserver(_overlayRoot);
+
         // Verileri yükle
         _loadData();
         _pollingTimer = setInterval(_loadDataSilently, 10000);
@@ -29595,6 +29636,7 @@ const DSEnrichmentModule = (() => {
     function closePanel() {
         if (_pollingTimer) clearInterval(_pollingTimer);
         _stopRunningJobPoll();
+        _stopA11yObserver();
         const overlay = document.getElementById('dsEnrichOverlay');
         if (overlay) {
             overlay.classList.remove('active');
@@ -29746,12 +29788,21 @@ const DSEnrichmentModule = (() => {
             }
             return '';
         }
+        // v3.32.0 ATHENA K1 fix: Backend create_job() gerçek job_type değerleri:
+        //   technology / objects / samples / partial_enrichment / full_learning / qa_generation
+        // (data_sources_api.py:800,851,1061 + ds_learning_service.py:1815,1909,2054)
+        // Eski frontend switch'i 'discovery'/'approve' arıyordu — hiçbir backend
+        // değeriyle eşleşmiyordu, default'a düşüyordu.
         const t = _runningJob.type;
-        const jobTypeLabel = (t === 'discovery' || t === 'partial_discovery' || t === 'discover_all' || t === 'enrich_selected')
-            ? 'Keşif devam ediyor'
-            : (t === 'approve' || t === 'approve_all' || t === 'approve_bulk')
-                ? 'Onay devam ediyor'
-                : 'İş devam ediyor';
+        const DISCOVERY_TYPES = ['technology', 'objects', 'partial_enrichment', 'full_learning'];
+        const SAMPLE_TYPES = ['samples'];
+        const QA_TYPES = ['qa_generation'];
+        const APPROVE_TYPES = ['approve_bulk', 'approve_all'];  // ileride backend yazarsa hazır
+        let jobTypeLabel = 'İş devam ediyor';
+        if (DISCOVERY_TYPES.includes(t)) jobTypeLabel = 'Keşif devam ediyor';
+        else if (SAMPLE_TYPES.includes(t)) jobTypeLabel = 'Örnek veri toplama devam ediyor';
+        else if (QA_TYPES.includes(t)) jobTypeLabel = 'QA üretimi devam ediyor';
+        else if (APPROVE_TYPES.includes(t)) jobTypeLabel = 'Onay devam ediyor';
         return `${jobTypeLabel} — bu işlem için bekleyin`;
     }
 

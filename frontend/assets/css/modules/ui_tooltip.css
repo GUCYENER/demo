@@ -23,8 +23,12 @@
     border-radius: 6px;
     border: 1px solid rgba(255,255,255,0.08);
     box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    /* v3.32.0 ATHENA O1 fix: nowrap + max-width:320 çatışıyordu — 320px üstü
+       string'ler viewport'tan taşıyordu. overflow:hidden + ellipsis ile cap. */
     white-space: nowrap;
     max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
     pointer-events: none;
     opacity: 0;
     animation: tt-fade-in 120ms ease-out 250ms forwards;
