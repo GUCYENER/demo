@@ -22,6 +22,9 @@ share/
 .env.local
 .env.production
 
+# MCP server config (local machine paths)
+.mcp.json
+
 # IDE
 .vscode/
 .idea/

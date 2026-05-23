@@ -3789,7 +3789,7 @@ netstat -an | findstr "5005"
 
 **Geliştirici:** Yasın Fazlıoğlu  
 **E-posta:** yasin.fazlioglu@consultant.turkcell.com.tr  
-**Versiyon:** 3.29.11 (DB Learning live-fix: dedupe pgvector guard + inferred FK count)
+**Versiyon:** 3.30.0 (DB Smart Wizard v4 + Agentic SQL Copilot Master Plan Complete)
 
 ---
 

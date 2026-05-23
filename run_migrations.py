@@ -152,8 +152,18 @@ try:
         sys.exit(0)
 
     # If current matches any revision in the pending list, resume after it.
-    skip_until_applied = None
     revision_ids_in_order = [f.replace(".py", "") for f in pending_files]
+
+    # DB may be BEYOND this chain (034+ managed by Alembic) — skip entirely.
+    head_num = int(re.match(r"(\d+)", head_revision).group(1))
+    current_num_m = re.match(r"(\d+)", current)
+    if current_num_m and int(current_num_m.group(1)) > head_num:
+        w(f"DB at {current} (>{head_revision}) — already past this chain, nothing to do.")
+        cur.close()
+        conn.close()
+        w("=== done ===")
+        sys.exit(0)
+
     if current in revision_ids_in_order:
         idx = revision_ids_in_order.index(current)
         files_to_apply = pending_files[idx + 1:]
