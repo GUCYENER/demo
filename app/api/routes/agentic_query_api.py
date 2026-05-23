@@ -466,13 +466,16 @@ def stream_agentic_query(
                 # v3.28.2 G3 — Sample Data Preview (cache'ten okur; execute öncesi)
                 # Lookup intent + tek tablo + cache hit yoksa kullanıcıya aday tablo +
                 # ilk N satırı gösteririz. Hata olursa graceful: SSE event yayma.
+                # v3.32.0: pick_preview_table_validated — ranker pick'i (selected_tables[0])
+                # final SQL ile cross-check eder. Multi-table JOIN durumunda preview atlanır;
+                # single-table SQL'de ranker yanlışsa bile SQL'deki gerçek tablo kullanılır.
                 try:
                     if not final.get("_cache_hit"):
                         from app.services.pipeline.nodes.sample_data_preview import (
                             build_sample_preview,
-                            pick_top_table_for_preview,
+                            pick_preview_table_validated,
                         )
-                        pick = pick_top_table_for_preview(final)
+                        pick = pick_preview_table_validated(final)
                         if pick and body.source_id:
                             preview = build_sample_preview(
                                 cur,
@@ -951,12 +954,20 @@ def get_template_heatmap(
                 logger.warning("[observability/template-heatmap] query failed: %s", exc)
                 rows = []
 
+            # RealDictCursor → dict access; fallback to tuple indexing
+            def _rget(r, key, idx):
+                if isinstance(r, dict):
+                    return r.get(key)
+                try:
+                    return r[idx]
+                except Exception:
+                    return None
             cells = [
                 {
-                    "template_kind": r[0],
-                    "complexity_score": int(r[1] or 1),
-                    "run_count": int(r[2] or 0),
-                    "success_rate": float(r[3] or 0.0),
+                    "template_kind": _rget(r, "template_kind", 0),
+                    "complexity_score": int(_rget(r, "complexity_score", 1) or 1),
+                    "run_count": int(_rget(r, "run_count", 2) or 0),
+                    "success_rate": float(_rget(r, "success_rate", 3) or 0.0),
                 }
                 for r in rows
             ]

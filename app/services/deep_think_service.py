@@ -3428,8 +3428,22 @@ def _generate_followup_suggestions(query: str, db_data: list, schema_ctx: dict, 
         tables = schema_ctx.get("tables", [])
         rels = schema_ctx.get("relationships", [])
 
-        # Kullanılan tablo isimlerini tespit et (col_names'den)
+        # Kullanılan tablo isimlerini tespit et.
+        # v3.32.0: Aggregate sorgularda (COUNT/AVG/SUM) col_names = ['TOPLAM_MUSTERI']
+        # gibi alias'lar olur ve hiçbir tablonun gerçek kolonuyla eşleşmez → eskiden
+        # used_tables boş kalıyor, FK komşusu önerileri hiç üretilmiyordu. Önce
+        # FROM-tablosundan resolve edilmiş matched_table varsa onu doğrudan seed et;
+        # ardından col_names heuristic'i ek tabloları bulmaya devam etsin.
         used_tables = set()
+        if matched_table:
+            _mt_name = (matched_table.get("name") or "").lower()
+            if _mt_name:
+                # v3.32.0 M3 fix: matched_table.name şema ön-eki içerebilir
+                # (örn. "HR.EMPLOYEES"), ama FK rel'lerde sadece tablo adıyla
+                # compare edilir → schema'sız son segmenti de ekle.
+                used_tables.add(_mt_name)
+                if "." in _mt_name:
+                    used_tables.add(_mt_name.rsplit(".", 1)[-1])
         for t in tables:
             t_name = (t.get("name") or "").lower()
             for col in col_names:
