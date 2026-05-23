@@ -10,7 +10,7 @@ import threading
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
-from fastapi import APIRouter, HTTPException, Depends, Query, Body
+from fastapi import APIRouter, HTTPException, Depends, Query, Body, BackgroundTasks
 from pydantic import BaseModel, Field
 
 from app.api.routes.auth import get_current_user
@@ -1514,27 +1514,33 @@ def approve_enrichment(
 
 # ==========================================================================
 # v3.31.0 (Faz 1) — Bulk approve endpoint
+# v3.32.0 (Faz 2) — BackgroundTasks + async warnings (IMPLEMENTED)
 # ==========================================================================
-# Plan: .agents/plans/2026-05-23_1430_bulk_enrichment_endpoints_v1.md
+# Plan: .agents/plans/2026-05-23_1430_bulk_enrichment_endpoints_v1.md (Faz 1)
+#       .agents/plans/2026-05-23_1454_bulk_phase2_backgroundtasks_v1.md (Faz 2)
 #
 # Tasarim:
 #   1) ARES validation: enrichment_ids hepsi source_id'ye ait mi (cross-source)
+#      Faz 2 (mig 043): composite index (source_id, id) — index-only scan.
 #   2) check_running_job preflight
 #   3) Tek connection icinde per-item SAVEPOINT loop -> UPDATE ds_table_enrichments
 #      - stop_on_error=False (default): partial success; basarisizlar
 #        ROLLBACK TO SAVEPOINT ile temizlenir, basarililar outer COMMIT'te kalir
 #      - stop_on_error=True: ilk hatada outer ROLLBACK -> hicbir kayit degismez
 #   4) Outer COMMIT
-#   5) Post-commit: ThreadPoolExecutor(max_workers=max_parallel) ile
-#      schema_record + embedding paralel uretilir. Her thread kendi
-#      connection'unu acar. Hatalar 'schema_record_warnings'a duser
-#      (ana onay zaten commit edilmis durumda, geri alinmaz).
+#   5) Faz 2: schema_record + embedding üretimi fastapi.BackgroundTasks ile
+#      response gönderildikten SONRA çalışır (önceden blocking 13-60s idi).
+#      ThreadPoolExecutor(max_workers=max_parallel) — her thread kendi
+#      company-RLS scoped connection'unu acar. Hatalar artık response'a
+#      eklenmiyor; ds_schema_record_warnings tablosuna INSERT edilir
+#      (mig 043). Admin warning panel'inden poll edilir.
 #
 # Notlar:
 #   - approve_enrichment service func'i kendi commit'ini yapiyor -> bu
 #     endpoint'te kullanilamaz (SAVEPOINT'leri bozardi). UPDATE inline.
-#   - Faz 2'de schema_record uretimi fastapi.BackgroundTasks'a tasinacak
-#     (response sirasinda blocking olmasin).
+#   - Response shape: schema_record_warnings (sync) -> schema_record_pending
+#     (bool) bayrağı ile değiştirildi. Frontend bu bayrağa göre "embedding
+#     arka planda işleniyor" toast'u gösterir.
 # ==========================================================================
 
 class EnrichmentApproveBulkRequest(BaseModel):
@@ -1547,11 +1553,14 @@ class EnrichmentApproveBulkRequest(BaseModel):
 def approve_enrichment_bulk(
     source_id: int,
     body: EnrichmentApproveBulkRequest,
+    background_tasks: BackgroundTasks,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     v3.31.0: Toplu enrichment onay endpoint'i.
-    Per-item SAVEPOINT + post-commit paralel schema_record uretimi.
+    v3.32.0 Faz 2: schema_record üretimi BackgroundTasks ile post-response;
+    response süresi 13-60s'den <500ms'e düşer. Hatalar
+    ds_schema_record_warnings tablosuna INSERT edilir (mig 043).
     """
     if not body.enrichment_ids:
         return {"success": False, "message": "Onaylanacak enrichment_id yok.", "code": "empty"}
@@ -1566,7 +1575,7 @@ def approve_enrichment_bulk(
 
     approved_ids: List[int] = []
     failed: List[Dict[str, Any]] = []
-    schema_warnings: List[Dict[str, Any]] = []
+    schema_record_pending: bool = False
     source_company_id: Optional[int] = None
 
     try:
@@ -1602,7 +1611,7 @@ def approve_enrichment_bulk(
                     "code": "running_job",
                     "message": f"Bu kaynak icin calisan bir is var ({rj['job_type']}). Tamamlanmasini bekleyin.",
                     "total": len(enrichment_ids), "approved": 0, "failed": 0,
-                    "errors": [], "schema_record_warnings": []
+                    "errors": [], "schema_record_pending": False
                 }
 
             cur = conn.cursor()
@@ -1632,7 +1641,7 @@ def approve_enrichment_bulk(
                     ),
                     "invalid_ids": invalid_ids[:50],
                     "total": len(enrichment_ids), "approved": 0,
-                    "failed": len(invalid_ids), "errors": [], "schema_record_warnings": []
+                    "failed": len(invalid_ids), "errors": [], "schema_record_pending": False
                 }
 
             # 3) Per-item SAVEPOINT loop — UPDATE only.
@@ -1664,7 +1673,7 @@ def approve_enrichment_bulk(
                                 "total": len(enrichment_ids),
                                 "approved": 0, "failed": len(failed),
                                 "approved_ids": [],
-                                "errors": failed, "schema_record_warnings": [],
+                                "errors": failed, "schema_record_pending": False,
                                 "message": f"stop_on_error: enrichment #{eid} bulunamadi"
                             }
                         continue
@@ -1692,7 +1701,7 @@ def approve_enrichment_bulk(
                             "total": len(enrichment_ids),
                             "approved": 0, "failed": len(failed),
                             "approved_ids": [],
-                            "errors": failed, "schema_record_warnings": [],
+                            "errors": failed, "schema_record_pending": False,
                             "message": (
                                 f"stop_on_error: enrichment #{eid} "
                                 f"({type(item_err).__name__})"
@@ -1702,21 +1711,24 @@ def approve_enrichment_bulk(
             # 4) Outer COMMIT — basarili olanlar kalici
             conn.commit()
 
-        # 5) Post-commit paralel schema_record uretimi (her thread kendi conn'u).
-        # company_id worker'a gecirilir; _generate_schema_record_for_enrichment
+        # 5) Faz 2: schema_record + embedding üretimi BackgroundTasks ile.
+        # Response gönderildikten SONRA çalışır; hatalar ds_schema_record_warnings
+        # tablosuna INSERT edilir (mig 043). company_id worker'a geçirilir —
         # company-RLS'li tablolara (agentic_query_feedback, few_shot_examples,
-        # pipeline_events — mig 017) yazdiginda RLS reddi yememesi icin.
+        # pipeline_events — mig 017) yazdığında RLS reddi yememesi için.
         if approved_ids:
-            schema_warnings = _generate_schema_records_parallel(
+            background_tasks.add_task(
+                _generate_schema_records_background,
                 source_id, source_company_id, approved_ids, max_parallel
             )
+            schema_record_pending = True
 
         success_flag = len(approved_ids) > 0
         msg_parts = [f"{len(approved_ids)} tablo onaylandi"]
         if failed:
             msg_parts.append(f"{len(failed)} basarisiz")
-        if schema_warnings:
-            msg_parts.append(f"{len(schema_warnings)} embedding warning")
+        if schema_record_pending:
+            msg_parts.append("embedding arka planda isleniyor")
         return {
             "success": success_flag,
             "total": len(enrichment_ids),
@@ -1724,7 +1736,7 @@ def approve_enrichment_bulk(
             "failed": len(failed),
             "approved_ids": approved_ids,
             "errors": failed,
-            "schema_record_warnings": schema_warnings,
+            "schema_record_pending": schema_record_pending,
             "message": ", ".join(msg_parts)
         }
 
@@ -1742,35 +1754,38 @@ def approve_enrichment_bulk(
             "total": len(enrichment_ids),
             "approved": len(approved_ids), "failed": len(failed),
             "approved_ids": approved_ids,
-            "errors": failed, "schema_record_warnings": schema_warnings
+            "errors": failed, "schema_record_pending": schema_record_pending
         }
 
 
-def _generate_schema_records_parallel(source_id: int,
-                                       company_id: Optional[int],
-                                       enrichment_ids: List[int],
-                                       max_workers: int) -> List[Dict[str, Any]]:
+def _generate_schema_records_background(source_id: int,
+                                         company_id: Optional[int],
+                                         enrichment_ids: List[int],
+                                         max_workers: int) -> None:
     """
-    v3.31.0: Onaylanan enrichment'lar icin schema_record + embedding'i
-    paralel uretir. Her worker kendi DB connection'unu acar.
+    v3.32.0 Faz 2: BackgroundTask — bulk approve sonrası response gönderildikten
+    SONRA çalışır. Onaylanan enrichment'lar için schema_record + embedding
+    üretir. Her worker kendi DB connection'unu açar.
 
-    company_id: source.company_id — worker cursor'una SET LOCAL ile uygulanir
-    (mig 017 company-RLS'li tablolar icin gerekli).
+    company_id: source.company_id — worker cursor'una SET LOCAL ile uygulanır
+    (mig 017 company-RLS'li tablolar için gerekli).
 
-    Schema record/embedding hatalari critical degil; warning olarak
-    raporlanir, approve UPDATE'i etkilemez (zaten commit edilmis).
-    Warning.reason guvenlik gerekceleri ile sadece exception class adidir
-    (internal SQL/URL fragmanlari client'a sizmasin).
+    Hata semantiği:
+      - Schema record/embedding hataları critical değil; approve UPDATE
+        zaten commit edilmiş.
+      - Failure'lar ds_schema_record_warnings tablosuna INSERT edilir
+        (mig 043 — PERMISSIVE company-RLS).
+      - Bu fonksiyon ASLA raise etmez (response zaten gönderildi).
+      - reason = type(e).__name__ (sanitized, client-safe).
+      - detail = str(e)[:500] (server-side; admin endpoint'ten görünür).
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    from app.core.db import get_db_context_scoped, apply_company_scope
-
-    warnings: List[Dict[str, Any]] = []
+    from app.core.db import get_db_context_scoped, apply_company_scope, get_db_context
 
     def _worker(eid: int) -> Optional[Dict[str, Any]]:
         try:
             with get_db_context_scoped(source_id) as w_conn:
-                # Company-RLS scope (mig 017) — ayni transaction icinde set
+                # Company-RLS scope (mig 017)
                 w_cur = w_conn.cursor()
                 apply_company_scope(w_cur, company_id=company_id)
                 w_cur.close()
@@ -1778,20 +1793,52 @@ def _generate_schema_records_parallel(source_id: int,
             return None  # success
         except Exception as e:
             logger.warning(
-                "[DSEnrich] Bulk schema_record warn eid=%s: %s — %s",
+                "[DSEnrich] BG schema_record warn eid=%s: %s — %s",
                 eid, type(e).__name__, str(e)[:200]
             )
-            return {"enrichment_id": eid, "reason": type(e).__name__}
+            return {
+                "eid": eid,
+                "reason": type(e).__name__,
+                "detail": str(e)[:500]
+            }
 
-    # ThreadPool — embedding HTTP latency'sini paralel topla
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(_worker, eid): eid for eid in enrichment_ids}
-        for fut in as_completed(futures):
-            w = fut.result()
-            if w is not None:
-                warnings.append(w)
+    failures: List[Dict[str, Any]] = []
+    try:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_worker, eid): eid for eid in enrichment_ids}
+            for fut in as_completed(futures):
+                r = fut.result()
+                if r is not None:
+                    failures.append(r)
+    except Exception as e:
+        logger.error(
+            "[DSEnrich] BG ThreadPool fatal: %s — %s",
+            type(e).__name__, str(e)[:200]
+        )
 
-    return warnings
+    # Persist failures to ds_schema_record_warnings (mig 043)
+    if failures and company_id is not None:
+        try:
+            with get_db_context() as conn:
+                cur = conn.cursor()
+                for f in failures:
+                    cur.execute(
+                        """INSERT INTO ds_schema_record_warnings
+                           (enrichment_id, source_id, company_id, reason, detail)
+                           VALUES (%s, %s, %s, %s, %s)""",
+                        (f["eid"], source_id, company_id, f["reason"], f["detail"])
+                    )
+                conn.commit()
+                logger.warning(
+                    "[DSEnrich] BG: %d schema_record warning(s) persisted source=%s",
+                    len(failures), source_id
+                )
+        except Exception as persist_err:
+            # Yine raise etmiyoruz — sadece log
+            logger.error(
+                "[DSEnrich] BG warning persistence failed: %s — %s",
+                type(persist_err).__name__, str(persist_err)[:200]
+            )
 
 
 def _generate_schema_record_for_enrichment(conn, source_id: int, enrichment_id: int):
