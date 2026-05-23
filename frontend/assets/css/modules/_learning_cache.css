@@ -1,0 +1,380 @@
+/* -----------------------------------------------
+   VYRA — Learning Cache Hit Dashboard styles (Ajan-G)
+   v3.32.0
+
+   Token map (brief → actual VYRA design tokens):
+     --blue        → --accent
+     --green       → --green
+     --red         → --red
+     --bg-2        → --bg-surface
+     --bg-3        → --bg-chip
+     --border, --border-strong, --text-1/2/3 mevcut.
+   Hex sabit YOK — tüm renkler token üzerinden.
+------------------------------------------------ */
+
+.lcache-dashboard {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+    color: var(--text-1);
+    font-size: 0.95rem;
+}
+
+.lcache-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.lcache-header h2 {
+    margin: 0;
+    font-size: 1.1rem;
+    color: var(--text-1);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.lcache-header h2 i {
+    color: var(--accent);
+}
+
+.lcache-refresh {
+    background: var(--bg-chip);
+    color: var(--text-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    width: 32px;
+    height: 32px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.lcache-refresh:hover,
+.lcache-refresh:focus-visible {
+    background: var(--bg-surface);
+    border-color: var(--border-strong);
+    color: var(--accent);
+    outline: none;
+}
+
+/* ─── Metric cards ─── */
+
+.lcache-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.lcache-card {
+    background: var(--bg-chip);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-height: 76px;
+}
+
+.lcache-card-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: var(--bg-surface);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    font-size: 1rem;
+    flex-shrink: 0;
+}
+
+.lcache-card-body {
+    min-width: 0;
+}
+
+.lcache-card-label {
+    font-size: 0.78rem;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.lcache-card-value {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--text-1);
+    line-height: 1.15;
+}
+
+.lcache-card-sub {
+    font-size: 0.75rem;
+    color: var(--text-3);
+    margin-top: 0.15rem;
+}
+
+/* ─── Top-10 table ─── */
+
+.lcache-top-title {
+    font-size: 0.95rem;
+    color: var(--text-2);
+    margin: 0.75rem 0 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+}
+
+.lcache-top-title i {
+    color: var(--accent);
+}
+
+.lcache-top {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--bg-chip);
+}
+
+.lcache-row {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr) 90px 130px 140px;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.55rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.lcache-row:last-child {
+    border-bottom: none;
+}
+
+.lcache-head {
+    background: var(--bg-surface);
+    color: var(--text-3);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+}
+
+.lcache-cell {
+    min-width: 0;
+}
+
+.lcache-rank {
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    font-weight: 600;
+}
+
+.lcache-q {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.lcache-q-text {
+    color: var(--text-1);
+}
+
+.lcache-q em {
+    color: var(--text-3);
+    font-style: italic;
+}
+
+.lcache-hit {
+    color: var(--accent);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.lcache-hit i {
+    color: var(--accent);
+}
+
+.lcache-last {
+    color: var(--text-2);
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+
+.lcache-sql {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.lcache-sql-toggle {
+    background: var(--bg-surface);
+    color: var(--text-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.25rem 0.55rem;
+    cursor: pointer;
+    font-size: 0.8rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.lcache-sql-toggle:hover,
+.lcache-sql-toggle:focus-visible {
+    background: var(--bg-chip);
+    border-color: var(--border-strong);
+    color: var(--accent);
+    outline: none;
+}
+
+.lcache-sql-toggle[aria-expanded="true"] {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.lcache-trunc-badge {
+    font-size: 0.65rem;
+    padding: 0.05rem 0.35rem;
+    background: var(--bg-chip);
+    color: var(--text-3);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.lcache-sql-pre {
+    grid-column: 1 / -1;
+    background: var(--bg-surface);
+    color: var(--text-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.78rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 240px;
+    overflow: auto;
+    margin: 0;
+}
+
+/* ─── State: loading / error / empty ─── */
+
+.lcache-loading {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 1rem;
+    color: var(--text-2);
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+.lcache-loading i {
+    color: var(--accent);
+}
+
+.lcache-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.75rem 1rem;
+    color: var(--text-1);
+    background: var(--bg-surface);
+    border: 1px solid var(--red);
+    border-left-width: 4px;
+    border-radius: 8px;
+}
+
+.lcache-error i {
+    color: var(--red);
+    font-size: 1.15rem;
+    line-height: 1.3;
+}
+
+.lcache-error-msg {
+    font-size: 0.85rem;
+    color: var(--text-2);
+    margin-top: 0.15rem;
+    word-break: break-word;
+}
+
+.lcache-empty {
+    text-align: center;
+    padding: 2rem 1rem;
+    color: var(--text-2);
+    background: var(--bg-surface);
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+}
+
+.lcache-empty i {
+    font-size: 2rem;
+    color: var(--text-3);
+    margin-bottom: 0.5rem;
+}
+
+.lcache-empty h3 {
+    margin: 0.25rem 0;
+    color: var(--text-1);
+    font-size: 1rem;
+}
+
+.lcache-empty p {
+    margin: 0.25rem auto 0;
+    max-width: 480px;
+    font-size: 0.85rem;
+    color: var(--text-2);
+}
+
+.lcache-empty code {
+    background: var(--bg-chip);
+    color: var(--text-1);
+    padding: 0.05rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+}
+
+.lcache-top-empty {
+    padding: 1rem;
+    color: var(--text-2);
+    background: var(--bg-chip);
+    border-top: 1px dashed var(--border);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+}
+
+.lcache-top-empty i {
+    color: var(--text-3);
+}
+
+/* ─── Mobile compaction ─── */
+
+@media (max-width: 720px) {
+    .lcache-row {
+        grid-template-columns: 32px minmax(0, 1fr) 70px;
+    }
+    .lcache-last,
+    .lcache-sql {
+        display: none;
+    }
+    .lcache-head .lcache-last,
+    .lcache-head .lcache-sql {
+        display: none;
+    }
+}
