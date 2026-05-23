@@ -1,0 +1,346 @@
+/* VYRA — DB Smart Wizard AST Editor (Faz 3 / P20-C / v3.30.0)
+ * ===========================================================
+ * Styles for AST editor inside `#dswStep4`, the chip/list DnD handles,
+ * cost badge, undo/redo toolbar, and the filter modal (filter_modal.js).
+ *
+ * Conventions:
+ *   - All colors via --vyra-* CSS variables (with fallbacks).
+ *   - prefers-reduced-motion guard: transitions/animations only kick in
+ *     when user has NOT requested reduce.
+ *   - focus-visible 2px outline (HEBE §5c).
+ *   - AA contrast assumed in --vyra-fg-* tokens.
+ *   - Touch out-of-scope (desktop L1 console).
+ */
+
+/* ── AST editor region ─────────────────────────────────────── */
+.dsw-ast-region {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 8px 4px;
+    color: var(--vyra-fg-primary, #e6e8eb);
+}
+.dsw-ast-region[hidden] { display: none; }
+
+.dsw-ast-section {
+    border: 1px solid var(--vyra-border-subtle, #2c3138);
+    border-radius: var(--vyra-radius-md, 8px);
+    padding: 10px 12px;
+    background: var(--vyra-bg-elevated, #14161a);
+}
+.dsw-ast-section-title {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    margin: 0 0 8px 0;
+}
+
+/* ── List + draggable items ────────────────────────────────── */
+.dsw-ast-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.dsw-ast-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border: 1px solid var(--vyra-border-subtle, #2c3138);
+    border-radius: var(--vyra-radius-sm, 6px);
+    background: var(--vyra-bg-surface, #1c1f23);
+    cursor: grab;
+    user-select: none;
+}
+.dsw-ast-item:focus-visible {
+    outline: 2px solid var(--vyra-accent, #4f8cff);
+    outline-offset: 2px;
+}
+.dsw-ast-item:active,
+.dsw-ast-item.dsw-dragging {
+    cursor: grabbing;
+    opacity: 0.65;
+}
+.dsw-ast-item[aria-grabbed="true"] {
+    background: var(--vyra-bg-hover, #2a2e34);
+    box-shadow: 0 0 0 2px var(--vyra-accent, #4f8cff) inset;
+}
+.dsw-ast-item-handle {
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    font-size: 14px;
+    line-height: 1;
+}
+.dsw-ast-item-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+}
+.dsw-ast-item-remove {
+    background: transparent;
+    border: 0;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: var(--vyra-radius-sm, 6px);
+    font-size: 14px;
+    line-height: 1;
+}
+.dsw-ast-item-remove:hover { background: var(--vyra-bg-hover, #2a2e34); color: var(--vyra-fg-primary, #e6e8eb); }
+.dsw-ast-item-remove:focus-visible {
+    outline: 2px solid var(--vyra-accent, #4f8cff);
+    outline-offset: 1px;
+}
+
+/* ── Drop indicator (aria-hidden) ──────────────────────────── */
+.dsw-drop-indicator {
+    height: 2px;
+    margin: -1px 0;
+    background: var(--vyra-accent, #4f8cff);
+    border-radius: 1px;
+    pointer-events: none;
+}
+
+/* ── Filter chips ──────────────────────────────────────────── */
+.dsw-ast-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+.dsw-ast-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border: 1px solid var(--vyra-border-strong, #353a42);
+    border-radius: var(--vyra-radius-full, 999px);
+    background: var(--vyra-bg-elevated, #14161a);
+    color: var(--vyra-fg-primary, #e6e8eb);
+    font-size: 12px;
+    cursor: pointer;
+}
+.dsw-ast-chip:hover { background: var(--vyra-bg-hover, #2a2e34); }
+.dsw-ast-chip:focus-visible {
+    outline: 2px solid var(--vyra-accent, #4f8cff);
+    outline-offset: 1px;
+}
+.dsw-ast-chip-x {
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    font-size: 14px;
+    line-height: 1;
+}
+.dsw-ast-chip-add {
+    background: transparent;
+    border: 1px dashed var(--vyra-border-strong, #353a42);
+    color: var(--vyra-fg-secondary, #9aa1ab);
+}
+.dsw-ast-chip-add:hover { color: var(--vyra-fg-primary, #e6e8eb); }
+
+/* ── Toolbar (undo/redo) ───────────────────────────────────── */
+.dsw-toolbar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+.dsw-toolbar button {
+    background: var(--vyra-bg-surface, #1c1f23);
+    border: 1px solid var(--vyra-border-subtle, #2c3138);
+    color: var(--vyra-fg-primary, #e6e8eb);
+    padding: 4px 10px;
+    border-radius: var(--vyra-radius-sm, 6px);
+    font-size: 12px;
+    cursor: pointer;
+}
+.dsw-toolbar button:hover:not([disabled]) { background: var(--vyra-bg-hover, #2a2e34); }
+.dsw-toolbar button:focus-visible {
+    outline: 2px solid var(--vyra-accent, #4f8cff);
+    outline-offset: 1px;
+}
+.dsw-toolbar button[disabled],
+.dsw-toolbar button[aria-disabled="true"] {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* ── Cost badge ────────────────────────────────────────────── */
+.dsw-cost-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: var(--vyra-radius-full, 999px);
+    font-size: 12px;
+    border: 1px solid var(--vyra-border-subtle, #2c3138);
+    background: var(--vyra-bg-elevated, #14161a);
+    color: var(--vyra-fg-primary, #e6e8eb);
+}
+.dsw-cost-badge.cost-green { color: #4ade80; border-color: rgba(74, 222, 128, 0.35); }
+.dsw-cost-badge.cost-yellow { color: #facc15; border-color: rgba(250, 204, 21, 0.35); }
+.dsw-cost-badge.cost-red { color: #f87171; border-color: rgba(248, 113, 113, 0.35); }
+.dsw-cost-badge.cost-unknown { color: var(--vyra-fg-secondary, #9aa1ab); }
+.dsw-cost-badge.cached::before {
+    content: '⚡';
+    font-size: 11px;
+    line-height: 1;
+}
+
+/* ── Legacy preview fallback ───────────────────────────────── */
+.dsw-legacy {
+    background: var(--vyra-bg-input, #15171b);
+    color: var(--vyra-fg-primary, #e6e8eb);
+    padding: 12px;
+    border-radius: var(--vyra-radius-md, 8px);
+    border: 1px solid var(--vyra-border-subtle, #2c3138);
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 12px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow-x: auto;
+    max-height: 320px;
+}
+.dsw-legacy[hidden] { display: none; }
+
+/* ── Filter modal ──────────────────────────────────────────── */
+.dsw-fm-modal[hidden] { display: none; }
+.dsw-fm-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.dsw-fm-backdrop {
+    position: absolute;
+    inset: 0;
+    background: var(--vyra-overlay-bg, rgba(0, 0, 0, 0.55));
+    backdrop-filter: blur(2px);
+}
+.dsw-fm-dialog {
+    position: relative;
+    background: var(--vyra-bg-surface, #1c1f23);
+    color: var(--vyra-fg-primary, #e6e8eb);
+    border: 1px solid var(--vyra-border-subtle, #2c3138);
+    border-radius: var(--vyra-radius-lg, 12px);
+    box-shadow: var(--vyra-shadow-xl, 0 20px 60px rgba(0, 0, 0, 0.4));
+    width: min(480px, 92vw);
+    display: flex;
+    flex-direction: column;
+}
+.dsw-fm-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--vyra-border-subtle, #2c3138);
+}
+.dsw-fm-title { margin: 0; font-size: 15px; font-weight: 600; }
+.dsw-fm-close {
+    background: transparent;
+    border: 0;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    font-size: 20px;
+    line-height: 1;
+    padding: 2px 8px;
+    border-radius: var(--vyra-radius-sm, 6px);
+    cursor: pointer;
+}
+.dsw-fm-close:hover { background: var(--vyra-bg-hover, #2a2e34); }
+.dsw-fm-close:focus-visible {
+    outline: 2px solid var(--vyra-accent, #4f8cff);
+    outline-offset: 2px;
+}
+.dsw-fm-body {
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.dsw-fm-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.dsw-fm-field[hidden] { display: none; }
+.dsw-fm-label {
+    font-size: 12px;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+}
+.dsw-fm-body select,
+.dsw-fm-body input[type="text"] {
+    padding: 7px 10px;
+    background: var(--vyra-bg-input, #15171b);
+    color: var(--vyra-fg-primary, #e6e8eb);
+    border: 1px solid var(--vyra-border-strong, #353a42);
+    border-radius: var(--vyra-radius-sm, 6px);
+    font-size: 13px;
+}
+.dsw-fm-body select:focus-visible,
+.dsw-fm-body input[type="text"]:focus-visible {
+    outline: 2px solid var(--vyra-accent, #4f8cff);
+    outline-offset: 0;
+    border-color: var(--vyra-accent, #4f8cff);
+}
+.dsw-fm-error {
+    color: #f87171;
+    font-size: 12px;
+    min-height: 1em;
+}
+.dsw-fm-error-visible { padding-top: 2px; }
+.dsw-fm-foot {
+    padding: 10px 16px;
+    border-top: 1px solid var(--vyra-border-subtle, #2c3138);
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+.dsw-fm-btn,
+.dsw-fm-btn-ghost {
+    padding: 6px 14px;
+    border-radius: var(--vyra-radius-sm, 6px);
+    border: 1px solid var(--vyra-border-strong, #353a42);
+    background: var(--vyra-bg-elevated, #14161a);
+    color: var(--vyra-fg-primary, #e6e8eb);
+    font-size: 13px;
+    cursor: pointer;
+}
+.dsw-fm-btn { background: var(--vyra-accent, #4f8cff); border-color: var(--vyra-accent, #4f8cff); color: #fff; }
+.dsw-fm-btn:hover { filter: brightness(1.08); }
+.dsw-fm-btn-ghost:hover { background: var(--vyra-bg-hover, #2a2e34); }
+.dsw-fm-btn:focus-visible,
+.dsw-fm-btn-ghost:focus-visible {
+    outline: 2px solid var(--vyra-accent, #4f8cff);
+    outline-offset: 2px;
+}
+
+/* ── Reduced motion guard (animasyonlar burada) ────────────── */
+@media (prefers-reduced-motion: no-preference) {
+    .dsw-ast-item { transition: background 120ms ease, transform 120ms ease, opacity 120ms ease; }
+    .dsw-ast-chip { transition: background 120ms ease; }
+    .dsw-cost-badge { transition: color 120ms ease, border-color 120ms ease; }
+    .dsw-fm-dialog { animation: dsw-fm-pop 140ms ease-out; }
+    @keyframes dsw-fm-pop {
+        from { opacity: 0; transform: scale(0.97); }
+        to   { opacity: 1; transform: scale(1); }
+    }
+}
+
+/* ── sr-only utility (varsa proje genelinde tanımlı, fallback) */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}

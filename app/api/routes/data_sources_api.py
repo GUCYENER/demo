@@ -10,7 +10,7 @@ import threading
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
-from fastapi import APIRouter, HTTPException, Depends, Query, Body
+from fastapi import APIRouter, HTTPException, Depends, Query, Body, BackgroundTasks
 from pydantic import BaseModel, Field
 
 from app.api.routes.auth import get_current_user
@@ -1099,14 +1099,47 @@ def check_running_job(
     source_id: int,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
-    """Bu kaynak için çalışan bir iş var mı kontrol eder (frontend guard için)."""
+    """Bu kaynak için çalışan bir iş var mı kontrol eder (frontend guard için).
+
+    v3.32.0 ARES Y1-recur fix: Cross-tenant ACL guard + source-scoped RLS.
+    Frontend bu endpoint'i 3s'de bir poll'ladığı için company-level ACL kontrolü
+    yapılmadan kullanılması cross-tenant job state enumeration'a yol açıyordu.
+    Ayrıca `check_running_job` service'i stuck job'ları UPDATE ediyor — bu cross-
+    tenant write riski demek. Bulk approve'daki Y1 fix pattern'i ile aynı.
+    """
+    from app.core.db import get_db_context_scoped
+
+    is_admin = current_user.get("is_admin", False) or current_user.get("role") == "admin"
     try:
-        with get_db_context() as conn:
+        # ACL: source.company_id == caller.company_id ?
+        with get_db_context() as _acl_conn:
+            _acl_cur = _acl_conn.cursor()
+            _acl_cur.execute(
+                "SELECT company_id FROM data_sources WHERE id = %s",
+                (source_id,)
+            )
+            _row = _acl_cur.fetchone()
+            if not _row:
+                raise HTTPException(status_code=404, detail="Veri kaynagi bulunamadi.")
+            source_company_id = _row["company_id"] if hasattr(_row, "keys") else _row[0]
+        if not is_admin and current_user.get("company_id") != source_company_id:
+            logger.warning(
+                "[DataSources] check-running-job ACL reddi: user_company=%s source_company=%s source_id=%s user=%s",
+                current_user.get("company_id"), source_company_id, source_id, current_user.get("id")
+            )
+            raise HTTPException(status_code=403, detail="Bu kaynaga erisim yetkiniz yok.")
+
+        with get_db_context_scoped(source_id) as conn:
             result = ds_learning_service.check_running_job(conn, source_id)
             return {"success": True, **result}
+    except HTTPException:
+        # ACL guard (403/404) FastAPI'ye olduğu gibi geçsin — frontend gate'i için kritik
+        raise
     except Exception as e:
         logger.error("[DataSources] Running job kontrolü sırasında hata: %s", type(e).__name__)
-        return {"success": True, "has_running": False, "job": None}
+        # D1 fix: swallow yerine açık hata bildir; frontend poll loop exponential backoff yapar.
+        # has_running=False döndürmek "double-bulk" riskine yol açar.
+        return {"success": False, "has_running": False, "job": None, "error": "check_failed"}
 
 
 @router.get("/{source_id}/discovery-status")
@@ -1510,6 +1543,340 @@ def approve_enrichment(
     except Exception as e:
         logger.error("[DataSources] Enrichment onay hatası: %s — %s", type(e).__name__, str(e)[:200])
         return {"success": False, "message": "Onay işlemi sırasında beklenmeyen bir hata oluştu."}
+
+
+# ==========================================================================
+# v3.31.0 (Faz 1) — Bulk approve endpoint
+# v3.32.0 (Faz 2) — BackgroundTasks + async warnings (IMPLEMENTED)
+# ==========================================================================
+# Plan: .agents/plans/2026-05-23_1430_bulk_enrichment_endpoints_v1.md (Faz 1)
+#       .agents/plans/2026-05-23_1454_bulk_phase2_backgroundtasks_v1.md (Faz 2)
+#
+# Tasarim:
+#   1) ARES validation: enrichment_ids hepsi source_id'ye ait mi (cross-source)
+#      Faz 2 (mig 043): composite index (source_id, id) — index-only scan.
+#   2) check_running_job preflight
+#   3) Tek connection icinde per-item SAVEPOINT loop -> UPDATE ds_table_enrichments
+#      - stop_on_error=False (default): partial success; basarisizlar
+#        ROLLBACK TO SAVEPOINT ile temizlenir, basarililar outer COMMIT'te kalir
+#      - stop_on_error=True: ilk hatada outer ROLLBACK -> hicbir kayit degismez
+#   4) Outer COMMIT
+#   5) Faz 2: schema_record + embedding üretimi fastapi.BackgroundTasks ile
+#      response gönderildikten SONRA çalışır (önceden blocking 13-60s idi).
+#      ThreadPoolExecutor(max_workers=max_parallel) — her thread kendi
+#      company-RLS scoped connection'unu acar. Hatalar artık response'a
+#      eklenmiyor; ds_schema_record_warnings tablosuna INSERT edilir
+#      (mig 043). Admin warning panel'inden poll edilir.
+#
+# Notlar:
+#   - approve_enrichment service func'i kendi commit'ini yapiyor -> bu
+#     endpoint'te kullanilamaz (SAVEPOINT'leri bozardi). UPDATE inline.
+#   - Response shape: schema_record_warnings (sync) -> schema_record_pending
+#     (bool) bayrağı ile değiştirildi. Frontend bu bayrağa göre "embedding
+#     arka planda işleniyor" toast'u gösterir.
+# ==========================================================================
+
+class EnrichmentApproveBulkRequest(BaseModel):
+    enrichment_ids: List[int]
+    stop_on_error: bool = False
+    max_parallel: int = 5  # 1..10 clamp; embedding ThreadPool worker sayisi
+
+
+@router.post("/{source_id}/enrichment-approve-bulk")
+def approve_enrichment_bulk(
+    source_id: int,
+    body: EnrichmentApproveBulkRequest,
+    background_tasks: BackgroundTasks,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    v3.31.0: Toplu enrichment onay endpoint'i.
+    v3.32.0 Faz 2: schema_record üretimi BackgroundTasks ile post-response;
+    response süresi 13-60s'den <500ms'e düşer. Hatalar
+    ds_schema_record_warnings tablosuna INSERT edilir (mig 043).
+    """
+    if not body.enrichment_ids:
+        # v3.32.0 TYCHE Y1 fix: response contract — diğer 6 branch'a uyumlu hale getirdi
+        return {
+            "success": False, "message": "Onaylanacak enrichment_id yok.", "code": "empty",
+            "total": 0, "approved": 0, "failed": 0, "approved_ids": [],
+            "errors": [], "schema_record_pending": False
+        }
+
+    # max_parallel server-side clamp.
+    # Pool guard: maxconn=15. Outer conn release sonrasi N worker conn acilir; 3 user x 5 = 15.
+    # Tavan 3 -> 3 user x 3 = 9 conn parallel phase'de; outer dahil dahi limit altinda.
+    max_parallel = max(1, min(3, body.max_parallel or 3))
+    enrichment_ids = list(dict.fromkeys(body.enrichment_ids))  # dedupe, order korunur
+    user_id = current_user.get("id")
+    is_admin = current_user.get("is_admin", False) or current_user.get("role") == "admin"
+
+    approved_ids: List[int] = []
+    failed: List[Dict[str, Any]] = []
+    schema_record_pending: bool = False
+    source_company_id: Optional[int] = None
+
+    try:
+        from app.services import ds_learning_service
+        from app.core.db import get_db_context_scoped
+
+        # ARES: Company-level ACL guard — caller'in tenant'i source.company_id ile esit mi?
+        # Source-only RLS scope cross-tenant'i tek basina engellemez; bulk POST = N satir blast.
+        with get_db_context() as _acl_conn:
+            _acl_cur = _acl_conn.cursor()
+            _acl_cur.execute(
+                "SELECT company_id FROM data_sources WHERE id = %s",
+                (source_id,)
+            )
+            _row = _acl_cur.fetchone()
+            if not _row:
+                raise HTTPException(status_code=404, detail="Veri kaynagi bulunamadi.")
+            source_company_id = _row["company_id"] if hasattr(_row, "keys") else _row[0]
+        if not is_admin and current_user.get("company_id") != source_company_id:
+            logger.warning(
+                "[DataSources] Bulk approve ACL reddi: user_company=%s source_company=%s source_id=%s user=%s",
+                current_user.get("company_id"), source_company_id, source_id, user_id
+            )
+            raise HTTPException(status_code=403, detail="Bu kaynaga erisim yetkiniz yok.")
+
+        with get_db_context_scoped(source_id) as conn:
+            # 1) Calisan is kontrolu
+            running_check = ds_learning_service.check_running_job(conn, source_id)
+            if running_check["has_running"]:
+                rj = running_check["job"]
+                return {
+                    "success": False,
+                    "code": "running_job",
+                    "message": f"Bu kaynak icin calisan bir is var ({rj['job_type']}). Tamamlanmasini bekleyin.",
+                    "total": len(enrichment_ids), "approved": 0, "failed": 0,
+                    "errors": [], "schema_record_pending": False
+                }
+
+            cur = conn.cursor()
+
+            # 2) ARES: enrichment_ids hepsi bu source_id'ye ait mi?
+            cur.execute("""
+                SELECT id FROM ds_table_enrichments
+                WHERE source_id = %s AND id = ANY(%s)
+            """, (source_id, enrichment_ids))
+            rows = cur.fetchall()
+            valid_set = set()
+            for r in rows:
+                rid = r["id"] if hasattr(r, "keys") else r[0]
+                valid_set.add(rid)
+            invalid_ids = [i for i in enrichment_ids if i not in valid_set]
+            if invalid_ids:
+                logger.warning(
+                    "[DataSources] Bulk approve: cross-source/unknown eid'ler reddedildi "
+                    "user=%s source=%s ids=%s", user_id, source_id, invalid_ids[:10]
+                )
+                return {
+                    "success": False,
+                    "code": "cross_source_or_unknown",
+                    "message": (
+                        f"Bu kaynakta bulunmayan {len(invalid_ids)} enrichment_id var. "
+                        "Onay reddedildi."
+                    ),
+                    "invalid_ids": invalid_ids[:50],
+                    "total": len(enrichment_ids), "approved": 0,
+                    "failed": len(invalid_ids), "errors": [], "schema_record_pending": False
+                }
+
+            # 3) Per-item SAVEPOINT loop — UPDATE only.
+            # SAVEPOINT name: int(eid) defensive cast (Pydantic List[int] zaten dogrular,
+            # f-string ile yine de baglam-bagimsiz guvende olsun).
+            for eid in enrichment_ids:
+                sp_name = f"sp_appr_{int(eid)}"
+                try:
+                    cur.execute(f"SAVEPOINT {sp_name}")
+                    cur.execute("""
+                        UPDATE ds_table_enrichments
+                        SET admin_approved = TRUE,
+                            approved_by = %s,
+                            approved_at = NOW(),
+                            updated_at = NOW()
+                        WHERE id = %s AND source_id = %s
+                    """, (user_id, eid, source_id))
+                    if cur.rowcount == 0:
+                        # Row vanished or filtered out (race) — savepoint geri al + release
+                        # PG semantics: ROLLBACK TO sonrasi savepoint aktif kalir; 100 fail
+                        # senaryosunda sub-tx state birikmesin diye RELEASE zorunlu.
+                        cur.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+                        cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+                        failed.append({"enrichment_id": eid, "reason": "row_not_found"})
+                        if body.stop_on_error:
+                            conn.rollback()
+                            return {
+                                "success": False, "code": "stopped",
+                                "total": len(enrichment_ids),
+                                "approved": 0, "failed": len(failed),
+                                "approved_ids": [],
+                                "errors": failed, "schema_record_pending": False,
+                                "message": f"stop_on_error: enrichment #{eid} bulunamadi"
+                            }
+                        continue
+                    cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+                    approved_ids.append(eid)
+                except Exception as item_err:
+                    # Item-level rollback + release (state birikmesini onle)
+                    try:
+                        cur.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+                        cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+                    except Exception:
+                        pass
+                    logger.error(
+                        "[DataSources] Bulk approve item hata eid=%s: %s",
+                        eid, type(item_err).__name__
+                    )
+                    failed.append({
+                        "enrichment_id": eid,
+                        "reason": type(item_err).__name__
+                    })
+                    if body.stop_on_error:
+                        conn.rollback()
+                        return {
+                            "success": False, "code": "stopped",
+                            "total": len(enrichment_ids),
+                            "approved": 0, "failed": len(failed),
+                            "approved_ids": [],
+                            "errors": failed, "schema_record_pending": False,
+                            "message": (
+                                f"stop_on_error: enrichment #{eid} "
+                                f"({type(item_err).__name__})"
+                            )
+                        }
+
+            # 4) Outer COMMIT — basarili olanlar kalici
+            conn.commit()
+
+        # 5) Faz 2: schema_record + embedding üretimi BackgroundTasks ile.
+        # Response gönderildikten SONRA çalışır; hatalar ds_schema_record_warnings
+        # tablosuna INSERT edilir (mig 043). company_id worker'a geçirilir —
+        # company-RLS'li tablolara (agentic_query_feedback, few_shot_examples,
+        # pipeline_events — mig 017) yazdığında RLS reddi yememesi için.
+        if approved_ids:
+            background_tasks.add_task(
+                _generate_schema_records_background,
+                source_id, source_company_id, approved_ids, max_parallel
+            )
+            schema_record_pending = True
+
+        success_flag = len(approved_ids) > 0
+        msg_parts = [f"{len(approved_ids)} tablo onaylandi"]
+        if failed:
+            msg_parts.append(f"{len(failed)} basarisiz")
+        if schema_record_pending:
+            msg_parts.append("embedding arka planda isleniyor")
+        return {
+            "success": success_flag,
+            "total": len(enrichment_ids),
+            "approved": len(approved_ids),
+            "failed": len(failed),
+            "approved_ids": approved_ids,
+            "errors": failed,
+            "schema_record_pending": schema_record_pending,
+            "message": ", ".join(msg_parts)
+        }
+
+    except HTTPException:
+        # ACL guard (403/404) FastAPI'ye olduğu gibi geçsin
+        raise
+    except Exception as e:
+        logger.error(
+            "[DataSources] Bulk approve beklenmeyen hata: %s — %s",
+            type(e).__name__, str(e)[:200]
+        )
+        return {
+            "success": False, "code": "unexpected",
+            "message": "Toplu onay sirasinda beklenmeyen hata olustu.",
+            "total": len(enrichment_ids),
+            "approved": len(approved_ids), "failed": len(failed),
+            "approved_ids": approved_ids,
+            "errors": failed, "schema_record_pending": schema_record_pending
+        }
+
+
+def _generate_schema_records_background(source_id: int,
+                                         company_id: Optional[int],
+                                         enrichment_ids: List[int],
+                                         max_workers: int) -> None:
+    """
+    v3.32.0 Faz 2: BackgroundTask — bulk approve sonrası response gönderildikten
+    SONRA çalışır. Onaylanan enrichment'lar için schema_record + embedding
+    üretir. Her worker kendi DB connection'unu açar.
+
+    company_id: source.company_id — worker cursor'una SET LOCAL ile uygulanır
+    (mig 017 company-RLS'li tablolar için gerekli).
+
+    Hata semantiği:
+      - Schema record/embedding hataları critical değil; approve UPDATE
+        zaten commit edilmiş.
+      - Failure'lar ds_schema_record_warnings tablosuna INSERT edilir
+        (mig 043 — PERMISSIVE company-RLS).
+      - Bu fonksiyon ASLA raise etmez (response zaten gönderildi).
+      - reason = type(e).__name__ (sanitized, client-safe).
+      - detail = str(e)[:500] (server-side; admin endpoint'ten görünür).
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from app.core.db import get_db_context_scoped, apply_company_scope, get_db_context
+
+    def _worker(eid: int) -> Optional[Dict[str, Any]]:
+        try:
+            with get_db_context_scoped(source_id) as w_conn:
+                # Company-RLS scope (mig 017)
+                w_cur = w_conn.cursor()
+                apply_company_scope(w_cur, company_id=company_id)
+                w_cur.close()
+                _generate_schema_record_for_enrichment(w_conn, source_id, eid)
+            return None  # success
+        except Exception as e:
+            logger.warning(
+                "[DSEnrich] BG schema_record warn eid=%s: %s — %s",
+                eid, type(e).__name__, str(e)[:200]
+            )
+            return {
+                "eid": eid,
+                "reason": type(e).__name__,
+                "detail": str(e)[:500]
+            }
+
+    failures: List[Dict[str, Any]] = []
+    try:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_worker, eid): eid for eid in enrichment_ids}
+            for fut in as_completed(futures):
+                r = fut.result()
+                if r is not None:
+                    failures.append(r)
+    except Exception as e:
+        logger.error(
+            "[DSEnrich] BG ThreadPool fatal: %s — %s",
+            type(e).__name__, str(e)[:200]
+        )
+
+    # Persist failures to ds_schema_record_warnings (mig 043)
+    if failures and company_id is not None:
+        try:
+            with get_db_context() as conn:
+                cur = conn.cursor()
+                for f in failures:
+                    cur.execute(
+                        """INSERT INTO ds_schema_record_warnings
+                           (enrichment_id, source_id, company_id, reason, detail)
+                           VALUES (%s, %s, %s, %s, %s)""",
+                        (f["eid"], source_id, company_id, f["reason"], f["detail"])
+                    )
+                conn.commit()
+                logger.warning(
+                    "[DSEnrich] BG: %d schema_record warning(s) persisted source=%s",
+                    len(failures), source_id
+                )
+        except Exception as persist_err:
+            # Yine raise etmiyoruz — sadece log
+            logger.error(
+                "[DSEnrich] BG warning persistence failed: %s — %s",
+                type(persist_err).__name__, str(persist_err)[:200]
+            )
 
 
 def _generate_schema_record_for_enrichment(conn, source_id: int, enrichment_id: int):

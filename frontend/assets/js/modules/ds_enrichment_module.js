@@ -32,8 +32,61 @@ const DSEnrichmentModule = (() => {
     let _selectedIds = new Set();
     let _pollingTimer = null;
     let _isPolling = false;
-    let _filterPendingApproval = false;
+    // v3.30.1: _filterPendingApproval bool yerine 3-yönlü enum
+    //   ''             → filtre yok
+    //   'pending_disc' → Keşif Bekliyor    (!enrichment_id)
+    //   'discovering'  → Devam Ediyor       (_discoveringIds içinde)
+    //   'pending_appr' → Onay Bekliyor      (enrichment_id && !is_approved)
+    let _statusFilter = '';
+    let _discoveringIds = new Set();   // v3.30.1: keşif istek atılan, henüz enrichment_id gelmeyen object_id'ler
     let _filterSchema = '';
+
+    // v3.32.0: Concurrent operation state — backend check_running_job ile sync
+    let _runningJob = null;  // { type: 'discover_all'|'approve_all'|'enrich_selected'|..., started_at }
+    let _runningJobPollTimer = null;
+    let _runningJobPollInterval = 3000;  // 3s, exponential backoff on error
+    // v3.32.0 TYCHE O3 fix: bulkApprove/bulkApproveAll backend'de ds_discovery_jobs satırı
+    // OLUŞTURMUYOR (sync endpoint); _runningJob null kalıyor; 4 buton ayrı disabled state
+    // tutuyor — user dsBulkApproveBtn'ye basıp dsApproveAllBtn'ye de basarak 2 paralel
+    // POST atebiliyordu. Bu flag tüm bulk approve butonlarını single-flight'a zorlar.
+    let _bulkApproveInFlight = false;
+
+    // v3.32.0 ATHENA Y2 fix: aria-label fallback for [data-tt] tooltips.
+    // CSS ::after content is NOT announced reliably by screen readers (NVDA partial,
+    // JAWS none). MutationObserver mirrors data-tt -> aria-label on every render.
+    let _a11yObserver = null;
+    function _mirrorTooltipsToAria(root) {
+        if (!root) return;
+        root.querySelectorAll('[data-tt]').forEach(el => {
+            const tt = el.getAttribute('data-tt');
+            if (!tt) return;
+            // Override sadece aria-label yoksa — author explicit aria-label set ettiyse koru.
+            if (!el.hasAttribute('aria-label') || el.getAttribute('aria-label') === el.dataset.ttMirrored) {
+                el.setAttribute('aria-label', tt);
+                el.dataset.ttMirrored = tt;
+            }
+        });
+    }
+    function _startA11yObserver(root) {
+        if (_a11yObserver || !root) return;
+        _mirrorTooltipsToAria(root);  // initial pass
+        _a11yObserver = new MutationObserver((muts) => {
+            // Debounce: tek bir microtask'ta tüm değişiklikleri işle
+            let needsPass = false;
+            for (const m of muts) {
+                if (m.type === 'childList' && m.addedNodes.length) { needsPass = true; break; }
+                if (m.type === 'attributes' && m.attributeName === 'data-tt') { needsPass = true; break; }
+            }
+            if (needsPass) _mirrorTooltipsToAria(root);
+        });
+        _a11yObserver.observe(root, {
+            childList: true, subtree: true,
+            attributes: true, attributeFilter: ['data-tt']
+        });
+    }
+    function _stopA11yObserver() {
+        if (_a11yObserver) { _a11yObserver.disconnect(); _a11yObserver = null; }
+    }
 
     // ============================================
     // Panel Aç/Kapat
@@ -50,7 +103,8 @@ const DSEnrichmentModule = (() => {
         _searchQuery = '';
         _filterLowScore = false;
         _showApproved = false;
-        _filterPendingApproval = false;
+        _statusFilter = '';
+        _discoveringIds.clear();
         _filterSchema = '';
         _selectedIds.clear();
         _onCloseCallback = onCloseCallback || null;
@@ -58,13 +112,21 @@ const DSEnrichmentModule = (() => {
         // Overlay oluştur
         _createOverlay();
 
+        // v3.32.0 ATHENA Y2: data-tt -> aria-label mirror (a11y).
+        const _overlayRoot = document.getElementById('dsEnrichOverlay');
+        _startA11yObserver(_overlayRoot);
+
         // Verileri yükle
         _loadData();
         _pollingTimer = setInterval(_loadDataSilently, 10000);
+        // v3.32.0: Concurrent operation gate — paralel poll
+        _startRunningJobPoll();
     }
 
     function closePanel() {
         if (_pollingTimer) clearInterval(_pollingTimer);
+        _stopRunningJobPoll();
+        _stopA11yObserver();
         const overlay = document.getElementById('dsEnrichOverlay');
         if (overlay) {
             overlay.classList.remove('active');
@@ -100,7 +162,7 @@ const DSEnrichmentModule = (() => {
                         <i class="fa-solid fa-tags"></i>
                         <span>Tablo Etiketleme & Onay Paneli</span>
                     </div>
-                    <button class="ds-enrich-close" id="dsEnrichCloseBtn" title="Kapat (ESC)">
+                    <button class="ds-enrich-close" id="dsEnrichCloseBtn" data-tt="Kapat (ESC)">
                         <i class="fa-solid fa-xmark"></i>
                     </button>
                 </div>
@@ -138,17 +200,119 @@ const DSEnrichmentModule = (() => {
     }
 
     // ============================================
+    // v3.32.0: Running Job State Machine — backend check_running_job ile sync
+    // ============================================
+
+    async function _pollRunningJob() {
+        if (!_currentSourceId) {
+            _stopRunningJobPoll();
+            return;
+        }
+        try {
+            const res = await _authFetch(
+                `/api/data-sources/${_currentSourceId}/check-running-job`
+            );
+            // v3.32.0 ARES Y1-recur fix: 403 -> ACL reddi (yanlış kaynak), poll'u durdur.
+            // 404 -> kaynak silinmiş, poll'u durdur.
+            if (res.status === 403 || res.status === 404) {
+                _stopRunningJobPoll();
+                _runningJob = null;
+                return;
+            }
+            // v3.32.0 TYCHE O1 fix: !res.ok (401/500 vb.) data.has_running'i okumadan
+            // hata olarak handle et — eski kod 500'de silently _runningJob=null yapıyor,
+            // spurious refreshData() + stop-poll tetikliyordu.
+            if (!res.ok) throw new Error('http_' + res.status);
+            const data = await res.json();
+            // Backend hata bildirdiyse (success:false) — _runningJob state'ini DEĞİŞTİRME
+            // (gate'i kazara açmamak için). Backoff ile devam.
+            if (data && data.success === false) {
+                _runningJobPollInterval = Math.min(_runningJobPollInterval * 2, 30000);
+                _runningJobPollTimer = setTimeout(_pollRunningJob, _runningJobPollInterval);
+                return;
+            }
+            const wasRunning = _runningJob !== null;
+            const nowRunning = !!data.has_running;
+            if (nowRunning) {
+                _runningJob = {
+                    type: (data.job && data.job.job_type) || 'unknown',
+                    started_at: data.job && data.job.started_at
+                };
+                _runningJobPollInterval = 3000;  // reset on success
+            } else {
+                _runningJob = null;
+                if (wasRunning) {
+                    // Job bitti — UI refresh
+                    refreshData();
+                    _stopRunningJobPoll();
+                    return;
+                }
+            }
+            // v3.32.0 TYCHE Y2 fix: re-render SADECE state transition'da
+            // (idle iken 3s'de bir tüm panel re-render scroll/focus'u bozuyordu).
+            if (wasRunning !== nowRunning) {
+                const activeEl = document.activeElement;
+                if (!activeEl || activeEl.tagName !== 'INPUT') {
+                    applyFilterAndRender();
+                }
+            }
+        } catch (e) {
+            // Network/parse/HTTP hata — exponential backoff up to 30s, _runningJob bozma.
+            _runningJobPollInterval = Math.min(_runningJobPollInterval * 2, 30000);
+        }
+        _runningJobPollTimer = setTimeout(_pollRunningJob, _runningJobPollInterval);
+    }
+
+    function _startRunningJobPoll() {
+        if (_runningJobPollTimer) return;
+        _runningJobPollInterval = 3000;
+        _pollRunningJob();
+    }
+
+    function _stopRunningJobPoll() {
+        if (_runningJobPollTimer) {
+            clearTimeout(_runningJobPollTimer);
+            _runningJobPollTimer = null;
+        }
+    }
+
+    function _runningJobTooltip(buttonType) {
+        if (!_runningJob) {
+            switch (buttonType) {
+                case 'discover_all': return 'Henüz keşfedilmemiş tüm tabloları sırayla keşfet';
+                case 'discover_sel': return 'Seçili tabloları keşfet';
+                case 'approve_sel': return 'Seçili tabloları toplu onayla';
+                case 'approve_all': return 'Tüm sayfa-dışı onay bekleyenleri toplu onayla';
+            }
+            return '';
+        }
+        // v3.32.0 ATHENA K1 fix: Backend create_job() gerçek job_type değerleri:
+        //   technology / objects / samples / partial_enrichment / full_learning / qa_generation
+        // (data_sources_api.py:800,851,1061 + ds_learning_service.py:1815,1909,2054)
+        // Eski frontend switch'i 'discovery'/'approve' arıyordu — hiçbir backend
+        // değeriyle eşleşmiyordu, default'a düşüyordu.
+        const t = _runningJob.type;
+        const DISCOVERY_TYPES = ['technology', 'objects', 'partial_enrichment', 'full_learning'];
+        const SAMPLE_TYPES = ['samples'];
+        const QA_TYPES = ['qa_generation'];
+        const APPROVE_TYPES = ['approve_bulk', 'approve_all'];  // ileride backend yazarsa hazır
+        let jobTypeLabel = 'İş devam ediyor';
+        if (DISCOVERY_TYPES.includes(t)) jobTypeLabel = 'Keşif devam ediyor';
+        else if (SAMPLE_TYPES.includes(t)) jobTypeLabel = 'Örnek veri toplama devam ediyor';
+        else if (QA_TYPES.includes(t)) jobTypeLabel = 'QA üretimi devam ediyor';
+        else if (APPROVE_TYPES.includes(t)) jobTypeLabel = 'Onay devam ediyor';
+        return `${jobTypeLabel} — bu işlem için bekleyin`;
+    }
+
+    // ============================================
     // Veri Yükleme
     // ============================================
 
     async function _loadData() {
         try {
-            const token = localStorage.getItem('access_token');
-            const headers = { 'Authorization': `Bearer ${token}` };
-
             const [statsRes, allRes] = await Promise.all([
-                fetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`, { headers }),
-                fetch(`/api/data-sources/${_currentSourceId}/enrichment-all`, { headers })
+                _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`),
+                _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-all`)
             ]);
 
             if (!statsRes.ok || !allRes.ok) throw new Error(`Sunucu hatası (HTTP ${statsRes.ok ? allRes.status : statsRes.status})`);
@@ -185,11 +349,9 @@ const DSEnrichmentModule = (() => {
         if (!_currentSourceId || _isPolling) return;
         _isPolling = true;
         try {
-            const token = localStorage.getItem('access_token');
-            const headers = { 'Authorization': `Bearer ${token}` };
             const [statsRes, allRes] = await Promise.all([
-                fetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`, { headers }),
-                fetch(`/api/data-sources/${_currentSourceId}/enrichment-all`, { headers })
+                _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`),
+                _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-all`)
             ]);
             const stats = await statsRes.json();
             const allData = await allRes.json();
@@ -222,6 +384,14 @@ const DSEnrichmentModule = (() => {
                 const newlyDiscovered = newPending.filter(x => x.enrichment_id && !prevDiscoveredIds.has(x.id));
 
                 _pendingData = newPending;
+
+                // v3.30.1: enrichment_id geleli → discovering set'inden temizle
+                for (const item of newPending) {
+                    if (item.enrichment_id) {
+                        _discoveringIds.delete(String(item.id));
+                    }
+                }
+
                 _renderStats(stats);
 
                 // Yeni keşfedilen tablo varsa sayfa 1'e dön + toast göster
@@ -251,7 +421,7 @@ const DSEnrichmentModule = (() => {
         const unprocessed = stats.unprocessed || 0;
 
         bar.innerHTML = `
-            <div class="ds-enrich-stat" title="Henüz LLM tarafından incelenmeyen tablo sayısı">
+            <div class="ds-enrich-stat" data-tt="Henüz LLM tarafından incelenmeyen tablo sayısı">
                 <span class="ds-enrich-stat-num" style="color: #a78bfa;">${unprocessed}</span>
                 <span class="ds-enrich-stat-label">LLM Bekleyen</span>
             </div>
@@ -319,8 +489,12 @@ const DSEnrichmentModule = (() => {
             return textMatch && scoreMatch && approvalMatch && schemaMatch;
         });
 
-        // Onay bekleyen filtresi (sadece kesfedilmis ama onayla beklenenler)
-        if (_filterPendingApproval) {
+        // v3.30.1: Status filter (3-yönlü: Keşif Bekliyor / Devam Ediyor / Onay Bekliyor)
+        if (_statusFilter === 'pending_disc') {
+            _filteredData = _filteredData.filter(item => !item.enrichment_id && !_discoveringIds.has(String(item.id)));
+        } else if (_statusFilter === 'discovering') {
+            _filteredData = _filteredData.filter(item => _discoveringIds.has(String(item.id)) && !item.enrichment_id);
+        } else if (_statusFilter === 'pending_appr') {
             _filteredData = _filteredData.filter(item => item.enrichment_id && !item.is_approved);
         }
 
@@ -406,7 +580,7 @@ const DSEnrichmentModule = (() => {
                 const schemaName = item.schema_name || '';
                 const tableName = item.table_name || '';
                 const isChecked = _selectedIds.has(item.id.toString()) ? 'checked' : '';
-                const approvedAttr = item.is_approved ? 'disabled title="Zaten onaylandı"' : '';
+                const approvedAttr = item.is_approved ? 'disabled data-tt="Zaten onaylandı"' : '';
                 const rowOpacity = item.is_approved ? 'opacity: 0.7;' : '';
                 const rowHighlight = (item.enrichment_id && !item.is_approved) ? 'background:rgba(245,158,11,0.05);border-left:3px solid rgba(245,158,11,0.4);' : '';
 
@@ -415,10 +589,10 @@ const DSEnrichmentModule = (() => {
                         <td style="text-align: center;">
                             <input type="checkbox" class="ds-bulk-chk ${item.is_approved ? '' : 'cursor-pointer'}" value="${item.id}" ${isChecked} ${approvedAttr} onchange="DSEnrichmentModule.toggleCheckbox(this)">
                         </td>
-                        <td class="ds-schema-cell" title="${_escapeHtml(schemaName)}" style="font-size:0.82rem;color:#9ca3af;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                        <td class="ds-schema-cell" data-tt="${_escapeHtml(schemaName)}" style="font-size:0.82rem;color:#9ca3af;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
                             ${_escapeHtml(schemaName)}
                         </td>
-                        <td class="ds-table-name-cell" title="${_escapeHtml(tableName)}">
+                        <td class="ds-table-name-cell" data-tt="${_escapeHtml(tableName)}">
                             <strong>${_escapeHtml(tableName)}</strong>
                         </td>
                         <td>
@@ -433,24 +607,26 @@ const DSEnrichmentModule = (() => {
                                 ${(item.enrichment_score || 0).toFixed(2)}
                             </span>
                         </td>
-                        <td class="ds-desc-cell" title="${_escapeHtml(item.description_tr || '(Açıklama yok)')}">
+                        <td class="ds-desc-cell" data-tt-multiline data-tt="${_escapeHtml(item.description_tr || '(Açıklama yok)')}">
                             ${_escapeHtml((item.description_tr || '').substring(0, 60))}${(item.description_tr || '').length > 60 ? '...' : ''}
                         </td>
                         <td class="ds-action-cell">
                             <div class="ds-enrich-actions ds-action-nowrap">
-                                ${!item.enrichment_id ? `
-                                <span class="ds-status-badge ds-status-pending-disc"><i class="fa-solid fa-hourglass-half"></i> Keşif Bekliyor</span>
-                                ` : (!item.is_approved ? `
+                                ${!item.enrichment_id ? (
+                                  _discoveringIds.has(String(item.id))
+                                    ? `<span class="ds-status-badge ds-status-discovering"><i class="fa-solid fa-spinner fa-spin"></i> Devam Ediyor</span>`
+                                    : `<span class="ds-status-badge ds-status-pending-disc"><i class="fa-solid fa-hourglass-half"></i> Keşif Bekliyor</span>`
+                                ) : (!item.is_approved ? `
                                 <span class="ds-status-badge ds-status-pending-appr"><i class="fa-solid fa-clock"></i> Onay Bekliyor</span>
-                                <button class="ds-enrich-btn approve" onclick="DSEnrichmentModule.quickApprove(${item.id})" title="Direkt onayla" style="background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);">
+                                <button class="ds-enrich-btn approve" onclick="DSEnrichmentModule.quickApprove(${item.id})" data-tt="Direkt onayla" style="background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);">
                                     <i class="fa-solid fa-check"></i>
                                 </button>
                                 ` : '<span class="ds-status-badge ds-status-approved"><i class="fa-solid fa-check-double"></i> Onaylı</span>')}
                                 ${item.enrichment_id ? `
-                                <button class="ds-enrich-btn edit" onclick="DSEnrichmentModule.toggleEdit(${item.id})" title="Düzenle">
+                                <button class="ds-enrich-btn edit" onclick="DSEnrichmentModule.toggleEdit(${item.id})" data-tt="Düzenle">
                                     <i class="fa-solid fa-pen"></i>
                                 </button>
-                                <button class="ds-enrich-btn columns" onclick="DSEnrichmentModule.showColumns(${item.enrichment_id})" title="Sütunları göster">
+                                <button class="ds-enrich-btn columns" onclick="DSEnrichmentModule.showColumns(${item.enrichment_id})" data-tt="Sütunları göster">
                                     <i class="fa-solid fa-table-columns"></i>
                                 </button>
                                 ` : ''}
@@ -461,7 +637,9 @@ const DSEnrichmentModule = (() => {
             }
         }
 
-        const isAllSelected = items.length > 0 && items.every(i => _selectedIds.has(i.id.toString()));
+        // v3.30.1: cross-page select-all → header checkbox tüm filtrelenmiş, henüz onaylanmamış kayıtlara bakar
+        const _selectable = _filteredData.filter(i => !i.is_approved);
+        const isAllSelected = _selectable.length > 0 && _selectable.every(i => _selectedIds.has(i.id.toString()));
 
         // Build pagination wrapper
         let pageBtns = '';
@@ -478,21 +656,37 @@ const DSEnrichmentModule = (() => {
         }
 
         // ---- Buton disabled state hesaplamaları ----
-        const _btnUndiscoveredCount = _pendingData.filter(x => !x.enrichment_id).length;
+        // v3.30.1: "Tümü" butonları artık _filteredData scope'unda — aktif filtreyi onurlandırır.
+        // Filtre yoksa _filteredData ≡ _pendingData (görünür kayıtlar) → davranış değişmez.
+        const _isFiltered = !!(_searchQuery || _filterLowScore || _filterSchema || _statusFilter || _showApproved);
+        const _btnUndiscoveredCount = _filteredData.filter(x => !x.enrichment_id).length;
         const _btnSelUndiscovered   = Array.from(_selectedIds).filter(id => { const r = _pendingData.find(x => x.id == id); return r && !r.enrichment_id; }).length;
         const _btnSelApprovable     = Array.from(_selectedIds).filter(id => { const r = _pendingData.find(x => x.id == id); return r && r.enrichment_id && !r.is_approved; }).length;
-        const _btnAllApprovable     = _pendingData.filter(x => x.enrichment_id && !x.is_approved).length;
+        const _btnAllApprovable     = _filteredData.filter(x => x.enrichment_id && !x.is_approved).length;
         const _btnDiscoverAllDis    = _btnUndiscoveredCount === 0;
         const _btnDiscoverSelDis    = _btnSelUndiscovered === 0;
         const _btnApproveSelDis     = _btnSelApprovable === 0;
         const _btnApproveAllDis     = _btnAllApprovable === 0;
         // Tooltip metinleri
-        const _ttDiscoverAll  = _pendingData.length === 0
+        const _scopeLabel = _isFiltered ? 'filtrelenmiş' : 'tüm';
+        // v3.32.0: Running job aktifse tüm bulk butonlar disable + tooltip override
+        const _jobBusy = _runningJob !== null;
+        const _jobBusyTip = _runningJobTooltip('discover_all');  // tüm 4 buton aynı job-busy mesajını gösterir
+        // v3.32.0 TYCHE O3 fix: bulkApprove tek POST in-flight kilidi — tüm bulk butonlar
+        const _inFlightTip = _bulkApproveInFlight ? 'Önceki onay isteği işleniyor — bekleyin' : null;
+        const _busyTip = _inFlightTip || _jobBusyTip;
+        const _busy = _jobBusy || _bulkApproveInFlight;
+        const _ttDiscoverAll  = _busy ? _busyTip : (_pendingData.length === 0
             ? 'Tablolar yükleniyor...'
-            : (_btnDiscoverAllDis ? 'Tüm tablolar zaten keşfedilmiş' : 'Keşfedilmemiş tüm tabloları keşfet');
-        const _ttDiscoverSel  = (_btnSelUndiscovered === 0 && _selectedIds.size > 0) ? 'Seçili tablolar zaten keşfedilmiş' : 'Seçili keşfedilmemiş tabloları keşfet';
-        const _ttApproveSel   = _btnApproveSelDis ? (_btnSelUndiscovered > 0 ? 'Seçili tablolar henüz keşfedilmemiş, önce keşfedin' : 'Onaylanacak seçili tablo yok') : 'Seçili keşfedilmiş tabloları onayla';
-        const _ttApproveAll   = _btnApproveAllDis ? (_btnUndiscoveredCount > 0 ? 'Önce tüm tabloları keşfedin' : 'Onaylanacak tablo yok') : `${_btnAllApprovable} keşfedilmiş tabloyu onayla`;
+            : (_btnDiscoverAllDis ? `${_scopeLabel.charAt(0).toUpperCase()+_scopeLabel.slice(1)} tablolarda keşfedilmemiş kayıt yok` : `${_btnUndiscoveredCount} ${_scopeLabel} tabloyu keşfet`));
+        const _ttDiscoverSel  = _busy ? _busyTip : ((_btnSelUndiscovered === 0 && _selectedIds.size > 0) ? 'Seçili tablolar zaten keşfedilmiş' : 'Seçili keşfedilmemiş tabloları keşfet');
+        const _ttApproveSel   = _busy ? _busyTip : (_btnApproveSelDis ? (_btnSelUndiscovered > 0 ? 'Seçili tablolar henüz keşfedilmemiş, önce keşfedin' : 'Onaylanacak seçili tablo yok') : 'Seçili keşfedilmiş tabloları onayla');
+        const _ttApproveAll   = _busy ? _busyTip : (_btnApproveAllDis ? (_btnUndiscoveredCount > 0 ? `Önce ${_scopeLabel} tabloları keşfedin` : 'Onaylanacak tablo yok') : `${_btnAllApprovable} ${_scopeLabel} keşfedilmiş tabloyu onayla`);
+        // v3.32.0: Job-busy + in-flight bulk approve kilit — gating
+        const _gateDiscoverAll = _btnDiscoverAllDis || _busy;
+        const _gateDiscoverSel = _btnDiscoverSelDis || _busy;
+        const _gateApproveSel  = _btnApproveSelDis  || _busy;
+        const _gateApproveAll  = _btnApproveAllDis  || _busy;
 
         // Schema dropdown için unique listesi oluştur
         const uniqueSchemas = [...new Set(_pendingData.map(x => x.schema_name).filter(Boolean))].sort();
@@ -501,58 +695,84 @@ const DSEnrichmentModule = (() => {
             schemaOptions += `<option value="${s}" ${_filterSchema === s ? 'selected' : ''}>${s}</option>`;
         }
 
+        // v3.30.1: Status filter counts (tüm sayfalar üzerinden _pendingData'dan)
+        const _cntPendingDisc  = _pendingData.filter(x => !x.enrichment_id && !_discoveringIds.has(String(x.id))).length;
+        const _cntDiscovering  = _pendingData.filter(x => _discoveringIds.has(String(x.id)) && !x.enrichment_id).length;
+        const _cntPendingAppr  = _pendingData.filter(x => x.enrichment_id && !x.is_approved).length;
+
         body.innerHTML = `
             <div class="ds-enrich-filter-bar" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; flex-wrap:wrap; gap:10px; flex-shrink:0;">
-                <div style="flex:1; max-width:800px; display:flex; gap:0.5rem; align-items:center;">
-                    <button onclick="DSEnrichmentModule.refreshData()" style="padding:8px 14px; border-radius:6px; border:none; background:rgba(255,255,255,0.1); color:#fff; cursor:pointer;" title="Verileri Yenile">
+                <div style="flex:1; max-width:1200px; display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+                    <button onclick="DSEnrichmentModule.refreshData()" style="padding:8px 14px; border-radius:6px; border:none; background:rgba(255,255,255,0.1); color:#fff; cursor:pointer;" data-tt="Verileri Yenile">
                         <i class="fa-solid fa-sync"></i>
                     </button>
                     <select id="dsSchemaFilter" onchange="DSEnrichmentModule.filterBySchema(this.value)"
                         style="padding:8px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.3); color:#fff; outline:none; font-size:0.85rem; min-width:130px; max-width:200px; cursor:pointer;">
                         ${schemaOptions}
                     </select>
-                    <div style="position:relative; flex:1;">
-                        <i class="fa-solid fa-search" style="position:absolute; left:12px; top:10px; color:#888;"></i>
-                        <input type="text" id="dsSearchInput" value="${_searchQuery}" placeholder="Tablo veya iş adı ara..."
-                            style="width:100%; padding:8px 32px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.2); color:#fff; outline:none;"
+                    <div style="position:relative; flex:1; min-width:300px;">
+                        <i class="fa-solid fa-search" style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:#888; pointer-events:none;"></i>
+                        <input type="text" id="dsSearchInput" value="${_escapeHtml(_searchQuery)}" placeholder="Tablo veya iş adı ara..."
+                            style="width:100%; padding:8px 36px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.2); color:#fff; outline:none;"
                             oninput="DSEnrichmentModule.filterTables(this.value)" autocomplete="off">
+                        <button type="button" id="dsSearchClearBtn" onclick="DSEnrichmentModule.clearSearch()"
+                            data-tt="Aramayı temizle"
+                            style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:transparent; border:none; color:#888; cursor:pointer; padding:4px 6px; border-radius:4px; display:${_searchQuery ? 'inline-flex' : 'none'}; align-items:center; justify-content:center;">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
                     </div>
                     <label style="display:flex; align-items:center; gap:6px; color:#ddd; font-size:0.85rem; cursor:pointer; white-space:nowrap;">
-                        <input type="checkbox" ${_filterLowScore ? 'checked' : ''} onchange="DSEnrichmentModule.toggleLowScoreFilter(this.checked)" style="width: 16px; height: 16px; accent-color: var(--primary-color, #4f46e5);"> 
+                        <input type="checkbox" ${_filterLowScore ? 'checked' : ''} onchange="DSEnrichmentModule.toggleLowScoreFilter(this.checked)" style="width: 16px; height: 16px; accent-color: var(--primary-color, #4f46e5);">
                         Düşük Skor / İsimsizleri Göster
                     </label>
                     <label style="display:flex; align-items:center; gap:6px; color:#ddd; font-size:0.85rem; cursor:pointer; white-space:nowrap;">
-                        <input id="dsShowApprovedChk" type="checkbox" ${_showApproved ? 'checked' : ''} onchange="DSEnrichmentModule.toggleShowApprovedFilter(this.checked)" style="width: 16px; height: 16px; accent-color: #34d399;"> 
+                        <input id="dsShowApprovedChk" type="checkbox" ${_showApproved ? 'checked' : ''} onchange="DSEnrichmentModule.toggleShowApprovedFilter(this.checked)" style="width: 16px; height: 16px; accent-color: #34d399;">
                         Onaylıları Göster
                     </label>
-                    <button onclick="DSEnrichmentModule.togglePendingApprovalFilter()" 
-                            style="padding:5px 10px; border-radius:6px; border:1px solid ${_filterPendingApproval ? 'rgba(245,158,11,0.6)' : 'rgba(255,255,255,0.15)'}; background:${_filterPendingApproval ? 'rgba(245,158,11,0.2)' : 'transparent'}; color:${_filterPendingApproval ? '#f59e0b' : '#aaa'}; cursor:pointer; font-size:0.82rem; font-weight:600; white-space:nowrap; transition:all 0.2s;" title="Keşfedilmiş ama onaylanmamış tablolar">
-                        <i class="fa-solid fa-clock" style="margin-right:4px;"></i>Onay Bekleyenler (${_pendingData.filter(x => x.enrichment_id && !x.is_approved).length})
-                    </button>
+                    <div role="group" aria-label="Durum filtresi" style="display:inline-flex; gap:6px;">
+                        <button type="button" class="ds-status-pill" data-active="${_statusFilter==='pending_disc'}"
+                                style="--pill-accent:#a78bfa; --pill-base:rgba(167,139,250,0.2);"
+                                onclick="DSEnrichmentModule.setStatusFilter('pending_disc')"
+                                data-tt="Henüz keşfedilmemiş tablolar (tüm sayfalar)">
+                            <i class="fa-solid fa-hourglass-half"></i>Keşif Bekleyenler (${_cntPendingDisc})
+                        </button>
+                        <button type="button" class="ds-status-pill" data-active="${_statusFilter==='discovering'}"
+                                style="--pill-accent:#60a5fa; --pill-base:rgba(96,165,250,0.2);"
+                                onclick="DSEnrichmentModule.setStatusFilter('discovering')"
+                                data-tt="Keşif isteği atılmış, sonuç bekleyen tablolar (tüm sayfalar)">
+                            <i class="fa-solid fa-spinner"></i>Devam Edenler (${_cntDiscovering})
+                        </button>
+                        <button type="button" class="ds-status-pill" data-active="${_statusFilter==='pending_appr'}"
+                                style="--pill-accent:#f59e0b; --pill-base:rgba(245,158,11,0.2);"
+                                onclick="DSEnrichmentModule.setStatusFilter('pending_appr')"
+                                data-tt="Keşfedilmiş ama onaylanmamış tablolar (tüm sayfalar)">
+                            <i class="fa-solid fa-clock"></i>Onay Bekleyenler (${_cntPendingAppr})
+                        </button>
+                    </div>
                 </div>
                 <div style="display:flex; align-items:center; gap:10px;">
                     <button id="dsBulkDiscoverAllBtn" onclick="DSEnrichmentModule.discoverAll()"
-                            ${_btnDiscoverAllDis ? 'disabled' : ''}
-                            style="padding:8px 16px; border-radius:6px; border:none; background:#7c3aed; color:#fff; cursor:${_btnDiscoverAllDis ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_btnDiscoverAllDis ? '0.45' : '1'}; transition: all 0.2s;"
-                            title="${_ttDiscoverAll}">
+                            ${_gateDiscoverAll ? 'disabled' : ''}
+                            style="padding:8px 16px; border-radius:6px; border:none; background:#7c3aed; color:#fff; cursor:${_gateDiscoverAll ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_gateDiscoverAll ? '0.45' : '1'}; transition: all 0.2s;"
+                            data-tt="${_ttDiscoverAll}">
                         <i class="fa-solid fa-magnifying-glass mr-2"></i> Tümünü Keşfet
                     </button>
                     <button id="dsBulkDiscoverBtn" onclick="DSEnrichmentModule.bulkDiscover()"
-                            ${_btnDiscoverSelDis ? 'disabled' : ''}
-                            style="padding:8px 16px; border-radius:6px; border:none; background:#a78bfa; color:#fff; cursor:${_btnDiscoverSelDis ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_btnDiscoverSelDis ? '0.45' : '1'}; transition: all 0.2s;"
-                            title="${_ttDiscoverSel}">
+                            ${_gateDiscoverSel ? 'disabled' : ''}
+                            style="padding:8px 16px; border-radius:6px; border:none; background:#a78bfa; color:#fff; cursor:${_gateDiscoverSel ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_gateDiscoverSel ? '0.45' : '1'}; transition: all 0.2s;"
+                            data-tt="${_ttDiscoverSel}">
                         <i class="fa-solid fa-robot mr-2"></i> Seçilenleri Keşfet (<span id="dsBulkDiscoverCount">${_btnSelUndiscovered}</span>)
                     </button>
                     <button id="dsBulkApproveBtn" onclick="DSEnrichmentModule.bulkApprove()"
-                            ${_btnApproveSelDis ? 'disabled' : ''}
-                            style="padding:8px 16px; border-radius:6px; border:none; background:var(--primary-color, #4f46e5); color:#fff; cursor:${_btnApproveSelDis ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_btnApproveSelDis ? '0.45' : '1'}; transition: all 0.2s;"
-                            title="${_ttApproveSel}">
+                            ${_gateApproveSel ? 'disabled' : ''}
+                            style="padding:8px 16px; border-radius:6px; border:none; background:var(--primary-color, #4f46e5); color:#fff; cursor:${_gateApproveSel ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_gateApproveSel ? '0.45' : '1'}; transition: all 0.2s;"
+                            data-tt="${_ttApproveSel}">
                         <i class="fa-solid fa-check-double mr-2"></i> Seçilenleri Onayla (<span id="dsBulkApproveCount">${_btnSelApprovable}</span>)
                     </button>
                     <button id="dsApproveAllBtn" onclick="DSEnrichmentModule.bulkApproveAll()"
-                            ${_btnApproveAllDis ? 'disabled' : ''}
-                            style="padding:8px 16px; border-radius:6px; border:none; background:#059669; color:#fff; cursor:${_btnApproveAllDis ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_btnApproveAllDis ? '0.45' : '1'}; transition: all 0.2s;"
-                            title="${_ttApproveAll}">
+                            ${_gateApproveAll ? 'disabled' : ''}
+                            style="padding:8px 16px; border-radius:6px; border:none; background:#059669; color:#fff; cursor:${_gateApproveAll ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_gateApproveAll ? '0.45' : '1'}; transition: all 0.2s;"
+                            data-tt="${_ttApproveAll}">
                         <i class="fa-solid fa-check-circle mr-2"></i> Tümünü Onayla
                     </button>
                 </div>
@@ -573,7 +793,7 @@ const DSEnrichmentModule = (() => {
                     <thead style="position:sticky; top:0; z-index:10; background:var(--bg-card, #1a1e29); box-shadow:0 2px 5px rgba(0,0,0,0.2);">
                         <tr>
                             <th style="width:40px; text-align:center;">
-                                <input type="checkbox" id="dsSelectAllChk" ${isAllSelected ? "checked" : ""} onchange="DSEnrichmentModule.toggleAllBulk(this.checked)" class="cursor-pointer" title="Bu sayfadaki tümünü seç" style="width:16px; height:16px; cursor:pointer; accent-color:var(--primary-color, #4f46e5); display:inline-block; visibility:visible; opacity:1;">
+                                <input type="checkbox" id="dsSelectAllChk" ${isAllSelected ? "checked" : ""} onchange="DSEnrichmentModule.toggleAllBulk(this.checked)" class="cursor-pointer" data-tt="Tüm filtrelenmiş kayıtları seç (sayfa dışı dahil)" style="width:16px; height:16px; cursor:pointer; accent-color:var(--primary-color, #4f46e5); display:inline-block; visibility:visible; opacity:1;">
                             </th>
                             <th>Schema</th>
                             <th>Tablo</th>
@@ -629,29 +849,16 @@ const DSEnrichmentModule = (() => {
         }
         const enrichmentId = item.enrichment_id;
 
-        // Çalışan iş kontrolü — keşif devam ediyorsa onay engelle
+        // v3.31.0 (R002): Frontend preflight kaldirildi. Backend tek-tek approve
+        // endpoint'inde zaten check_running_job yapip {success:false, message:...}
+        // donuyor; aynisi bulk endpoint'inde de mevcut. UX: data.message toast'a
+        // backend'den geliyor.
         try {
-            const _jobCheckToken = localStorage.getItem('access_token');
-            const _jobCheckRes = await fetch(`/api/data-sources/${_currentSourceId}/check-running-job`, {
-                headers: { 'Authorization': `Bearer ${_jobCheckToken}` }
-            });
-            const _jobCheck = await _jobCheckRes.json();
-            if (_jobCheck.has_running) {
-                _showToast('Keşif işlemi devam ediyor. Tamamlanmasını bekleyin.', 'warning');
-                return;
-            }
-        } catch (e) { /* kontrol başarısız, devam et */ }
-
-        try {
-            const token = localStorage.getItem('access_token');
-            const res = await fetch(
+            const res = await _authFetch(
                 `/api/data-sources/${_currentSourceId}/enrichment-approve/${enrichmentId}`,
                 {
                     method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({})
                 }
             );
@@ -757,15 +964,11 @@ const DSEnrichmentModule = (() => {
         const notes = document.getElementById('dsEditNotes')?.value?.trim() || null;
 
         try {
-            const token = localStorage.getItem('access_token');
-            const res = await fetch(
+            const res = await _authFetch(
                 `/api/data-sources/${_currentSourceId}/enrichment-approve/${realEnrichmentId}`,
                 {
                     method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         admin_label_tr: label,
                         admin_notes: notes
@@ -816,11 +1019,7 @@ const DSEnrichmentModule = (() => {
                 _showToast('Bu tablo henüz keşfedilmedi', 'warning');
                 return;
             }
-            const token = localStorage.getItem('access_token');
-            const res = await fetch(
-                `/api/data-sources/enrichment/${enrichmentId}/columns`,
-                { headers: { 'Authorization': `Bearer ${token}` } }
-            );
+            const res = await _authFetch(`/api/data-sources/enrichment/${enrichmentId}/columns`);
 
             if (!res.ok) {
                 console.error('[DSEnrich] Sütun API hatası:', res.status, res.statusText);
@@ -917,6 +1116,10 @@ const DSEnrichmentModule = (() => {
         const body = document.getElementById('dsEnrichBody');
         if(body) body.innerHTML = `<div class="ds-enrich-loading"><i class="fa-solid fa-spinner fa-spin"></i><p>Yükleniyor...</p></div>`;
         _loadData();
+        // v3.32.0 TYCHE K1 fix: Timer leak — refreshData() _pollRunningJob job-completion
+        // transition'da çağrılıyor; eski _pollingTimer clear edilmezse her job sonrası
+        // bir 10s polling timer stack'leniyor (N job sonrası N paralel _loadDataSilently).
+        if (_pollingTimer) clearInterval(_pollingTimer);
         _pollingTimer = setInterval(_loadDataSilently, 10000);
     }
 
@@ -953,9 +1156,28 @@ const DSEnrichmentModule = (() => {
     }
 
     function togglePendingApprovalFilter() {
-        _filterPendingApproval = !_filterPendingApproval;
+        // v3.30.1: geriye-uyumluluk shim — eski adla çağrılırsa pending_appr toggle eder
+        setStatusFilter('pending_appr');
+    }
+
+    // v3.30.1: 3-yönlü status filtresi. Aynı değere ikinci tıklama filtreyi kapatır.
+    function setStatusFilter(value) {
+        const allowed = ['', 'pending_disc', 'discovering', 'pending_appr'];
+        const v = allowed.includes(value) ? value : '';
+        _statusFilter = (_statusFilter === v) ? '' : v;
         _currentPage = 1;
         applyFilterAndRender();
+    }
+
+    // v3.30.1: arama temizle butonu
+    function clearSearch() {
+        _searchQuery = '';
+        const inp = document.getElementById('dsSearchInput');
+        if (inp) inp.value = '';
+        _currentPage = 1;
+        applyFilterAndRender();
+        const newInp = document.getElementById('dsSearchInput');
+        if (newInp) newInp.focus();
     }
 
     function toggleCheckbox(chk) {
@@ -968,11 +1190,10 @@ const DSEnrichmentModule = (() => {
     }
 
     function toggleAllBulk(checked) {
-        const startIndex = (_currentPage - 1) * _pageSize;
-        const endIndex = startIndex + _pageSize;
-        const pageData = _filteredData.slice(startIndex, endIndex);
-
-        pageData.forEach(item => {
+        // v3.30.1: Tüm filtrelenmiş kayıtları (sayfa dışındakileri dahil) seç/seçim kaldır.
+        // Önceden yalnızca aktif sayfa slice'ı işleniyordu → kullanıcı diğer sayfalardaki
+        // kayıtların seçimini fark etmiyor, "Seçilenleri Onayla/Keşfet" eksik çalışıyordu.
+        _filteredData.forEach(item => {
             if (item.is_approved) return;
             if (checked) _selectedIds.add(item.id.toString());
             else _selectedIds.delete(item.id.toString());
@@ -1004,10 +1225,9 @@ const DSEnrichmentModule = (() => {
         }
 
         try {
-            const token = localStorage.getItem('access_token');
-            const res = await fetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
+            const res = await _authFetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ object_ids: toDiscover })
             });
             const data = await res.json();
@@ -1015,6 +1235,9 @@ const DSEnrichmentModule = (() => {
                 _showToast(data.message || `${toDiscover.length} tablo için arkada keşif başlatıldı. Birazdan liste yeşillenecek.`, 'success');
                 // v3.14.0: Seçili satırların İŞLEM kolonunu "Devam Ediyor" olarak güncelle
                 _updateActionStatus(toDiscover, 'discovering');
+                // v3.30.1: filter count'ları için discovering set'ine ekle, render'ı tetikle
+                toDiscover.forEach(id => _discoveringIds.add(String(id)));
+                applyFilterAndRender();
             } else {
                 _showToast(data.message || 'Keşif başlatılamadı.', 'error');
             }
@@ -1028,10 +1251,12 @@ const DSEnrichmentModule = (() => {
     }
 
     async function discoverAll() {
-        // Keşfedilmemiş tüm tabloları keşfet (enrich-selected)
-        const unprocessed = _pendingData.filter(x => !x.enrichment_id).map(x => Number(x.id));
+        // v3.30.1: Filter-aware — _filteredData kullanılır.
+        //   Aktif filtre yok  → tüm pending data
+        //   Filtre var (schema/arama/status/...) → yalnızca o kapsamdaki keşfedilmemişler
+        const unprocessed = _filteredData.filter(x => !x.enrichment_id).map(x => Number(x.id));
         if (unprocessed.length === 0) {
-            _showToast('Keşfedilmemiş tablo bulunamadı. Tüm tablolar zaten keşfedilmiş.', 'info');
+            _showToast('Görüntülenen kapsamda keşfedilmemiş tablo yok.', 'info');
             return;
         }
 
@@ -1043,10 +1268,9 @@ const DSEnrichmentModule = (() => {
         }
 
         try {
-            const token = localStorage.getItem('access_token');
-            const res = await fetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
+            const res = await _authFetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ object_ids: unprocessed })
             });
             const data = await res.json();
@@ -1054,6 +1278,9 @@ const DSEnrichmentModule = (() => {
                 _showToast(data.message || `${unprocessed.length} tablo için keşif başlatıldı. Liste otomatik güncellenecek.`, 'success');
                 // v3.14.0: Tüm satırların İŞLEM kolonunu "Devam Ediyor" olarak güncelle
                 _updateActionStatus(unprocessed, 'discovering');
+                // v3.30.1: filter count'ları için discovering set'ine ekle, render'ı tetikle
+                unprocessed.forEach(id => _discoveringIds.add(String(id)));
+                applyFilterAndRender();
             } else {
                 _showToast(data.message || 'Keşif başlatılamadı.', 'warning');
             }
@@ -1068,6 +1295,8 @@ const DSEnrichmentModule = (() => {
     }
 
     async function bulkApprove() {
+        // v3.32.0 TYCHE O3 fix: single-flight gate (4 bulk butonu için ortak)
+        if (_bulkApproveInFlight) return;
         const checkedBoxes = Array.from(_selectedIds);
         if (checkedBoxes.length === 0) return;
 
@@ -1077,20 +1306,11 @@ const DSEnrichmentModule = (() => {
             btn.disabled = true;
             btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Onaylanıyor...';
         }
+        _bulkApproveInFlight = true;
+        applyFilterAndRender();  // diğer 3 bulk buton'a gate uygulanır
 
-        // Çalışan iş kontrolü — keşif devam ediyorsa onay engelle
-        try {
-            const _jcToken = localStorage.getItem('access_token');
-            const _jcRes = await fetch(`/api/data-sources/${_currentSourceId}/check-running-job`, {
-                headers: { 'Authorization': `Bearer ${_jcToken}` }
-            });
-            const _jc = await _jcRes.json();
-            if (_jc.has_running) {
-                _showToast('Keşif işlemi devam ediyor. Tamamlanmasını bekleyin.', 'warning');
-                if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-check-double mr-2"></i> Seçilenleri Onayla'; }
-                return;
-            }
-        } catch (e) { /* kontrol başarısız, devam et */ }
+        // v3.31.0 (R002): Frontend preflight kaldirildi. Backend bulk endpoint
+        // check_running_job'i kendisi yapip code:"running_job" donuyor.
 
         // object_id -> enrichment_id map: _selectedIds stores object_ids
         const objectToEnrichMap = {};
@@ -1108,34 +1328,30 @@ const DSEnrichmentModule = (() => {
         }
 
         try {
-            const token = localStorage.getItem('access_token');
-            const results = [];
-            
-            // Send requests sequentially using enrichment_id (not object_id)
-            for (const objectId of approvableIds) {
-                const enrichmentId = objectToEnrichMap[objectId];
-                try {
-                    const res = await fetch(
-                        `/api/data-sources/${_currentSourceId}/enrichment-approve/${enrichmentId}`,
-                        {
-                            method: 'POST',
-                            headers: {
-                                'Authorization': `Bearer ${token}`,
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({})
-                        }
-                    );
-                    const data = await res.json();
-                    results.push({objectId, enrichmentId, success: data.success});
-                } catch(err) {
-                    console.error("[DSEnrich] Onay hatası id:", objectId, err);
-                    results.push({objectId, enrichmentId, success: false});
+            // v3.31.0: Tek POST -> backend bulk endpoint.
+            // Per-item SAVEPOINT, partial success (stop_on_error=false), 5 worker
+            // post-commit paralel schema_record. ~5x daha hizli + transactional.
+            const enrichmentIds = approvableIds.map(oid => objectToEnrichMap[oid]);
+            const res = await _authFetch(
+                `/api/data-sources/${_currentSourceId}/enrichment-approve-bulk`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        enrichment_ids: enrichmentIds,
+                        stop_on_error: false,
+                        max_parallel: 5
+                    })
                 }
-            }
+            );
+            const data = await res.json();
 
-            const successObjectIds = results.filter(r => r.success).map(r => String(r.objectId));
-            
+            // approved_ids -> objectId map'i tersle
+            const approvedEnrichSet = new Set((data.approved_ids || []).map(String));
+            const successObjectIds = approvableIds.filter(
+                oid => approvedEnrichSet.has(String(objectToEnrichMap[oid]))
+            ).map(String);
+
             if (successObjectIds.length > 0) {
                 // Başarılı olanları is_approved = true yap
                 _pendingData.forEach(p => {
@@ -1143,23 +1359,34 @@ const DSEnrichmentModule = (() => {
                         p.is_approved = true;
                     }
                 });
-                
+
                 // Seçilenler listesinden kaldır
                 successObjectIds.forEach(id => _selectedIds.delete(id));
-                
+
                 // UI Güncelle
                 applyFilterAndRender();
                 setTimeout(() => _updateStatsAfterApprove(), 350);
-                
-                _showToast(`${successObjectIds.length} tablo onaylandı`, 'success');
+
+                // Toast — bulk endpoint mesajini kullan veya kendimiz uret
+                let msg = data.message || `${successObjectIds.length} tablo onaylandi`;
+                // v3.32.0 TYCHE O2 fix: schema_record_warnings (sync) -> schema_record_pending (bool).
+                // Backend message zaten "embedding arka planda isleniyor" suffix'i ekliyor.
+                if (data.schema_record_pending) {
+                    console.info('[DSEnrich] Embedding/schema_record üretimi arka planda işleniyor');
+                }
+                _showToast(msg, data.failed > 0 ? 'warning' : 'success');
             } else {
-                _showToast('Toplu onay başarısız', 'error');
+                _showToast(data.message || 'Toplu onay basarisiz', 'error');
+                if (data.errors && data.errors.length > 0) {
+                    console.error('[DSEnrich] Bulk approve errors:', data.errors);
+                }
             }
         } catch (err) {
             console.error('[DSEnrich] Toplu onay hatası:', err);
             _showToast('Onay sırasında hata oluştu', 'error');
         } finally {
-            if(btn) btn.disabled=false; 
+            if(btn) btn.disabled=false;
+            _bulkApproveInFlight = false;  // v3.32.0 TYCHE O3 fix: clear single-flight
             applyFilterAndRender(); // update button state via render
         }
     }
@@ -1169,10 +1396,13 @@ const DSEnrichmentModule = (() => {
     // ============================================
 
     async function bulkApproveAll() {
-        // Keşfedilmiş ama onaylanmamış tüm tabloları toplu onayla
-        const toApprove = _pendingData.filter(x => x.enrichment_id && !x.is_approved);
+        // v3.32.0 TYCHE O3 fix: single-flight gate (bulkApprove ile ortak)
+        if (_bulkApproveInFlight) return;
+        // v3.30.1: Filter-aware — _filteredData üzerinden çalışır.
+        // Kullanıcı schema/arama/status ile sınırladıysa yalnızca o kapsamı onaylar.
+        const toApprove = _filteredData.filter(x => x.enrichment_id && !x.is_approved);
         if (toApprove.length === 0) {
-            _showToast('Onaylanacak tablo bulunamadı. Önce keşif yapın.', 'warning');
+            _showToast('Görüntülenen kapsamda onaylanacak tablo yok.', 'warning');
             return;
         }
 
@@ -1182,60 +1412,51 @@ const DSEnrichmentModule = (() => {
             btn.disabled = true;
             btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Onaylanıyor...';
         }
+        _bulkApproveInFlight = true;
+        applyFilterAndRender();  // v3.32.0 TYCHE O3: diğer bulk butonlarına gate
 
-        // Çalışan iş kontrolü — keşif devam ediyorsa onay engelle
-        try {
-            const _jcToken = localStorage.getItem('access_token');
-            const _jcRes = await fetch(`/api/data-sources/${_currentSourceId}/check-running-job`, {
-                headers: { 'Authorization': `Bearer ${_jcToken}` }
-            });
-            const _jc = await _jcRes.json();
-            if (_jc.has_running) {
-                _showToast('Keşif işlemi devam ediyor. Tamamlanmasını bekleyin.', 'warning');
-                if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-check-circle mr-2"></i> Tümünü Onayla'; }
-                return;
-            }
-        } catch (e) { /* kontrol başarısız, devam et */ }
+        // v3.31.0 (R002): Frontend preflight kaldirildi. Backend bulk endpoint
+        // check_running_job'i kendisi yapip code:"running_job" donuyor.
 
         try {
-            const token = localStorage.getItem('access_token');
-            let successCount = 0;
-            let failCount = 0;
-
-            for (const item of toApprove) {
-                try {
-                    const res = await fetch(
-                        `/api/data-sources/${_currentSourceId}/enrichment-approve/${item.enrichment_id}`,
-                        {
-                            method: 'POST',
-                            headers: {
-                                'Authorization': `Bearer ${token}`,
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({})
-                        }
-                    );
-                    const data = await res.json();
-                    if (data.success) {
-                        item.is_approved = true;
-                        successCount++;
-                    } else {
-                        failCount++;
-                    }
-                } catch (e) {
-                    failCount++;
+            // v3.31.0: Tek POST -> backend bulk endpoint (transactional + paralel)
+            const enrichmentIds = toApprove.map(x => x.enrichment_id);
+            const res = await _authFetch(
+                `/api/data-sources/${_currentSourceId}/enrichment-approve-bulk`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        enrichment_ids: enrichmentIds,
+                        stop_on_error: false,
+                        max_parallel: 5
+                    })
                 }
-            }
+            );
+            const data = await res.json();
 
-            if (successCount > 0) {
-                const msg = failCount > 0
-                    ? `${successCount} tablo onaylandı, ${failCount} başarısız`
-                    : `${successCount} tablo onaylandı`;
-                _showToast(msg, 'success');
+            const approvedSet = new Set((data.approved_ids || []).map(String));
+            // Frontend state'i guncelle
+            toApprove.forEach(item => {
+                if (approvedSet.has(String(item.enrichment_id))) {
+                    item.is_approved = true;
+                }
+            });
+
+            if (data.approved > 0) {
+                _showToast(data.message || `${data.approved} tablo onaylandi`,
+                           data.failed > 0 ? 'warning' : 'success');
                 _updateStatsAfterApprove();
                 applyFilterAndRender();
+                // v3.32.0 TYCHE O2 fix: schema_record_warnings -> schema_record_pending
+                if (data.schema_record_pending) {
+                    console.info('[DSEnrich] Embedding/schema_record üretimi arka planda işleniyor');
+                }
             } else {
-                _showToast('Toplu onay başarısız', 'error');
+                _showToast(data.message || 'Toplu onay basarisiz', 'error');
+                if (data.errors && data.errors.length > 0) {
+                    console.error('[DSEnrich] Bulk approve errors:', data.errors);
+                }
             }
         } catch (err) {
             console.error('[DSEnrich] Tümünü onayla hatası:', err);
@@ -1245,6 +1466,8 @@ const DSEnrichmentModule = (() => {
                 btn.disabled = false;
                 btn.innerHTML = '<i class="fa-solid fa-check-circle mr-2"></i> Tümünü Onayla';
             }
+            _bulkApproveInFlight = false;  // v3.32.0 TYCHE O3 fix: clear single-flight
+            applyFilterAndRender();
         }
     }
 
@@ -1253,13 +1476,10 @@ const DSEnrichmentModule = (() => {
     // ============================================
 
     function _updateStatsAfterApprove() {
-        const token = localStorage.getItem('access_token');
-        fetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        })
-        .then(r => r.json())
-        .then(stats => _renderStats(stats))
-        .catch(() => {});
+        _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`)
+            .then(r => r.json())
+            .then(stats => _renderStats(stats))
+            .catch(() => {});
 
         if (_pendingData.length === 0) {
             const body = document.getElementById('dsEnrichBody');
@@ -1300,6 +1520,19 @@ const DSEnrichmentModule = (() => {
         });
     }
 
+    // v3.31.0 (R001): Auth header injection helper.
+    // Tüm modül-içi fetch çağrıları bunu kullanır — token okuma + Bearer header
+    // tek noktada. Caller method/body/content-type sorumluluğunda; biz sadece
+    // Authorization header'ı enjekte ederiz.
+    async function _authFetch(url, opts = {}) {
+        const token = localStorage.getItem('access_token');
+        const headers = {
+            ...(opts.headers || {}),
+            'Authorization': `Bearer ${token}`
+        };
+        return fetch(url, { ...opts, headers });
+    }
+
     function _showToast(message, type) {
         if (typeof showToast === 'function') {
             showToast(message, type);
@@ -1324,6 +1557,8 @@ const DSEnrichmentModule = (() => {
         toggleLowScoreFilter,
         toggleShowApprovedFilter,
         togglePendingApprovalFilter,
+        setStatusFilter,
+        clearSearch,
         changePage,
         toggleCheckbox,
         toggleAllBulk,

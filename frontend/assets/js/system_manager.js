@@ -28,12 +28,12 @@ window.SystemManagerModule = (function () {
     // v2.53.1: Sayaç son login zamanından itibaren sayar.
     // login.js başarılı girişte session_start_time'ı set eder.
     // PC kapansa/tarayıcı kapansa bile sonraki login'de sıfırlanır.
-    // v3.28.1: 30 dk threshold -> 15 sn countdown popup -> refresh veya auto-logout.
+    // v3.28.1: 60 dk threshold -> 15 sn countdown popup -> refresh veya auto-logout.
     let sessionStartTime = null;
     let sessionTimerInterval = null;
 
     // v3.28.1 — Session timeout config
-    const SESSION_WARN_AT_SECONDS = 30 * 60;       // 30 dakika
+    const SESSION_WARN_AT_SECONDS = 60 * 60;       // 60 dakika
     const SESSION_LOGOUT_COUNTDOWN_SECONDS = 15;   // popup içi countdown
 
     let _sessionWarningShown = false;
@@ -42,36 +42,50 @@ window.SystemManagerModule = (function () {
     let _previousFocusEl = null;
 
     function startSessionTimer() {
-        const storedStartTime = localStorage.getItem('session_start_time');
+        // Login olmadan timer başlatma — access_token yoksa kullanıcı giriş yapmamış
+        const token = localStorage.getItem('access_token');
+        if (!token) return;
 
-        if (storedStartTime) {
-            const storedDate = new Date(storedStartTime);
+        const now = new Date();
 
-            // Geçerlilik kontrolü: JWT token expire ile karşılaştır
-            // Eğer saklanan süre > token expire süresi ise eski oturumdur, sıfırla
-            try {
-                const token = localStorage.getItem('access_token');
-                if (token) {
-                    const payload = JSON.parse(atob(token.split('.')[1]));
-                    const tokenIssuedAt = new Date(payload.iat * 1000);
-                    // Saklanan zaman, token'ın oluşturulma zamanından eskiyse → eski oturum
-                    if (storedDate < tokenIssuedAt) {
-                        sessionStartTime = tokenIssuedAt;
-                        localStorage.setItem('session_start_time', tokenIssuedAt.toISOString());
-                    } else {
-                        sessionStartTime = storedDate;
-                    }
-                } else {
-                    sessionStartTime = storedDate;
-                }
-            } catch (e) {
-                sessionStartTime = storedDate;
+        // v3.30.1: Gerçek login zamanı = JWT iat (issued-at).
+        // session_start_time localStorage cache amaçlıdır; canonical kaynak JWT'dir.
+        // Bu sayede checkExistingAuth auto-redirect veya başka bir yol session_start_time'ı
+        // güncellemese bile sayaç yanlış başlamaz.
+        //
+        // Senaryo matrisi:
+        //   1) Fresh login → iat = şimdi          → sayaç 0:00'dan başlar
+        //   2) Sayfa yenileme (30 dk sonra)       → iat = 30 dk önce → sayaç 30:00'dan devam
+        //   3) Eski token resume (>60 dk eski)    → iat çok eski   → sayaç sıfırla (yeni window)
+        //   4) Sunucu clock skew (iat future)     → negatif age    → güvenli reset
+        let baseTime;
+        try {
+            const payload = JSON.parse(atob(token.split('.')[1]));
+            if (!payload || typeof payload.iat !== 'number') {
+                throw new Error('JWT iat missing');
             }
-        } else {
-            // Fallback: session_start_time yoksa (eski sürümden gelen kullanıcılar)
-            sessionStartTime = new Date();
-            localStorage.setItem('session_start_time', sessionStartTime.toISOString());
+            const tokenIssuedAt = new Date(payload.iat * 1000);
+            const tokenAgeSec = Math.floor((now - tokenIssuedAt) / 1000);
+
+            if (tokenAgeSec < 0 || tokenAgeSec >= SESSION_WARN_AT_SECONDS) {
+                // Resume w/ stale token veya clock skew → fresh window
+                baseTime = now;
+            } else {
+                // Yakın zamanda issue edilmiş token → gerçek login zamanını kullan
+                baseTime = tokenIssuedAt;
+            }
+        } catch (e) {
+            // Malformed JWT — defansif fallback
+            const stored = localStorage.getItem('session_start_time');
+            baseTime = stored ? new Date(stored) : now;
+            // Stored da bayatsa reset
+            if (Math.floor((now - baseTime) / 1000) >= SESSION_WARN_AT_SECONDS) {
+                baseTime = now;
+            }
         }
+
+        sessionStartTime = baseTime;
+        localStorage.setItem('session_start_time', baseTime.toISOString());
 
         updateSessionTimer();
         sessionTimerInterval = setInterval(updateSessionTimer, 1000);
@@ -102,7 +116,7 @@ window.SystemManagerModule = (function () {
             }
         }
 
-        // v3.28.1 — 30 dk dolunca tek-seferlik uyarı popup'ı
+        // v3.28.1 — 60 dk dolunca tek-seferlik uyarı popup'ı
         if (diff >= SESSION_WARN_AT_SECONDS && !_sessionWarningShown) {
             _showSessionWarning();
         }
@@ -123,7 +137,7 @@ window.SystemManagerModule = (function () {
             +       '</h3>'
             +     '</div>'
             +     '<div class="modal-body">'
-            +       '<p>30 dakikadır oturumdasınız. Oturumu sürdürmek istiyor musunuz?</p>'
+            +       '<p>60 dakikadır oturumdasınız. Oturumu sürdürmek istiyor musunuz?</p>'
             +       '<p class="session-countdown-line">'
             +         '<strong id="sessionLogoutCountdown">15</strong> saniye içinde otomatik çıkış yapılacak.'
             +       '</p>'
@@ -208,7 +222,8 @@ window.SystemManagerModule = (function () {
         _previousFocusEl = null;
     }
 
-    async function _onSessionContinue() {
+    async function _onSessionContinue(e) {
+        if (e) { e.preventDefault(); e.stopPropagation(); }
         const btn = document.getElementById('sessionContinueBtn');
         if (btn) {
             btn.classList.add('is-loading');
@@ -219,7 +234,7 @@ window.SystemManagerModule = (function () {
             if (window.VYRA_API && typeof window.VYRA_API.refreshToken === 'function') {
                 await window.VYRA_API.refreshToken();
             }
-            // Sayacı sıfırla — yeni 30 dk window
+            // Sayacı sıfırla — yeni 60 dk window
             sessionStartTime = new Date();
             localStorage.setItem('session_start_time', sessionStartTime.toISOString());
             _sessionWarningShown = false;
@@ -228,8 +243,15 @@ window.SystemManagerModule = (function () {
                 window.showToast('Oturumunuz yenilendi.', 'success');
             }
         } catch (err) {
-            console.warn('[SessionTimeout] refresh hata, otomatik çıkış:', err);
-            _forceLogout();
+            console.warn('[SessionTimeout] refresh hata, oturum uzatıldı (offline):', err);
+            // Token refresh başarısız olsa bile oturumu uzat (offline/network hatası)
+            sessionStartTime = new Date();
+            localStorage.setItem('session_start_time', sessionStartTime.toISOString());
+            _sessionWarningShown = false;
+            _hideSessionWarning();
+            if (window.showToast) {
+                window.showToast('Oturum uzatıldı (bağlantı kontrol edin).', 'warning');
+            }
         } finally {
             if (btn) {
                 btn.classList.remove('is-loading');

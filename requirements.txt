@@ -23,6 +23,16 @@ oracledb>=2.0.0
 # her hâlükârda yazılır.
 langfuse>=2.0.0; python_version >= "3.10"
 
+# --- OpenTelemetry + Prometheus (opsiyonel — v3.30.0 FAZ 5 P36) ---
+# OTEL_EXPORTER_OTLP_ENDPOINT veya PROMETHEUS_ENABLED set edilmediği sürece
+# tüm sink'ler no-op'tur; eksik paket startup'ı kırmaz (try/except guard).
+opentelemetry-api>=1.25
+opentelemetry-sdk>=1.25
+opentelemetry-instrumentation-fastapi>=0.46b0
+opentelemetry-instrumentation-psycopg2>=0.46b0
+opentelemetry-exporter-otlp-proto-http>=1.25
+prometheus-client>=0.20
+
 # --- Password & Auth ---
 bcrypt>=4.0.0
 passlib[bcrypt]
@@ -68,6 +78,10 @@ rapidfuzz>=3.0.0
 
 # --- Utils ---
 tqdm
+
+# --- Cron scheduling (v3.30.0 FAZ 3 P17 — db_smart schedule hook) ---
+# Pure-python cron expression parser; next_run hesaplama (in-process scheduler).
+croniter>=2.0.0
 
 # --- Security / Rate Limiting ---
 slowapi>=0.1.9

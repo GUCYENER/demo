@@ -12,7 +12,8 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import auth, chat, health, rag as rag_routes, tickets, llm_config, prompts, users, system, websocket as ws_routes, organizations, feedback, dialog, permissions, assets, ldap_settings, domain_org_api, widget as widget_routes, companies, address, data_sources_api, sql_audit_api, themes, db_export, feature_permissions, agentic_query_api, metrics_api, db_learning_api, query_state_api, query_builder_api, signal_weight_api
+from app.api.routes import auth, chat, health, rag as rag_routes, tickets, llm_config, prompts, users, system, websocket as ws_routes, organizations, feedback, dialog, permissions, assets, ldap_settings, domain_org_api, widget as widget_routes, companies, address, data_sources_api, sql_audit_api, themes, db_export, feature_permissions, agentic_query_api, metrics_api, db_learning_api, query_state_api, query_builder_api, signal_weight_api, db_smart_api
+from app.api.routes import _metrics as prom_metrics_route  # v3.30.0 FAZ 5 P36
 from app.core.config import settings
 from app.core.db import init_db
 from app.core.rate_limiter import limiter, get_rate_limit_handler, get_rate_limit_exception
@@ -83,6 +84,8 @@ def _run_schedule_checker():
     _cv_tick = 0
     # v3.29.8 L2 — signal_weight_analyzer tick counter
     _swa_tick = 0
+    # v3.30.0 FAZ 3 P17 — db_smart scheduled reports tick counter
+    _dbsmart_sched_tick = 0
 
     while _scheduler_running:
         try:
@@ -180,6 +183,31 @@ def _run_schedule_checker():
                             )
             except Exception as e:
                 log_error(f"[Scheduler] signal_weight analyzer hatasi: {e}", "scheduler")
+
+            # 6) v3.30.0 FAZ 3 P17 — DB Smart scheduled reports
+            try:
+                dbs_mult = int(getattr(settings, "DBSMART_SCHEDULE_INTERVAL_MULT", 0) or 0)
+                if dbs_mult > 0:
+                    _dbsmart_sched_tick += 1
+                    if _dbsmart_sched_tick >= dbs_mult:
+                        _dbsmart_sched_tick = 0
+                        from app.core.db import get_db_context
+                        from app.services.db_smart.schedule_runner import (
+                            check_dbsmart_scheduled_reports,
+                        )
+                        with get_db_context() as _conn:
+                            with _conn.cursor() as _cur:
+                                stats = check_dbsmart_scheduled_reports(_cur)
+                            _conn.commit()
+                        if stats.get("due", 0) > 0:
+                            log_system_event(
+                                "INFO",
+                                f"[Scheduler] db_smart scheduled: due={stats['due']} "
+                                f"ok={stats['ok']} err={stats['err']}",
+                                "scheduler",
+                            )
+            except Exception as e:
+                log_error(f"[Scheduler] db_smart scheduled report hatasi: {e}", "scheduler")
 
         except Exception as e:
             log_error(f"[Scheduler] Kontrol hatasi: {e}", "scheduler")
@@ -285,6 +313,28 @@ def create_app() -> FastAPI:
             response.headers["Access-Control-Allow-Origin"] = "*"
         return response
     
+    # 🔒 v3.30.0 P40 — CSP + X-Frame-Options middleware
+    @app.middleware("http")
+    async def csp_middleware(request: Request, call_next):
+        """Embed path'ler hariç tüm sayfalar için X-Frame-Options: DENY.
+        /embed/* path'leri CSP frame-ancestors ile kısıtlanır (config'den)."""
+        response = await call_next(request)
+        path = request.url.path
+        if path.startswith("/embed/"):
+            allowed_origins = getattr(settings, "EMBED_FRAME_ANCESTORS", "'self'")
+            response.headers["Content-Security-Policy"] = (
+                f"frame-ancestors {allowed_origins}; "
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data:; "
+                "connect-src 'self'"
+            )
+        else:
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
+
     # 📊 Request Logging Middleware (v2.27.2)
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
@@ -346,6 +396,37 @@ def create_app() -> FastAPI:
     app.include_router(query_state_api.router)  # v3.28.3 - Faz 5 G4 - Pre-execute Drag-Drop Query Builder
     app.include_router(query_builder_api.router)  # v3.29.7 G3 - Multi-table Query Builder (suggest-path + preview)
     app.include_router(signal_weight_api.router)  # v3.29.8 L3 - multi_signal_rank weight tuner admin API
+    app.include_router(db_smart_api.router)  # v3.30.0 - Akıllı Veri Keşfi (DB Smart Wizard)
+    app.include_router(prom_metrics_route.router, tags=["observability"])  # v3.30.0 FAZ 5 P36 - /metrics
+
+    # v3.30.0 FAZ 5 P36 — Observability init (OTel + Prometheus).
+    # Both helpers no-op silently if deps missing or settings disabled,
+    # so this never blocks startup.
+    try:
+        from app.services.observability.otel_setup import init_otel
+        from app.services.observability.prometheus_metrics import init_prometheus
+
+        otel_active = init_otel(app, settings)
+        prom_active = init_prometheus(settings)
+        import logging as _obs_logging
+        _obs_logging.getLogger("vyra").info(
+            "[observability] otel=%s prom=%s", otel_active, prom_active
+        )
+    except Exception as _obs_err:
+        import logging as _obs_logging
+        _obs_logging.getLogger("vyra").warning(
+            "[observability] init skipped: %s", _obs_err
+        )
+
+    # v3.30.0 P40 — Embed route alias (/embed/report/{token} → CSP-gated path)
+    from fastapi.responses import HTMLResponse as _EmbedHTML
+
+    @app.get("/embed/report/{token}")
+    async def embed_report_csp(token: str):
+        """CSP frame-ancestors ile kısıtlanan embed shell.
+        Gerçek data /api/db-smart/saved-reports/by-token/{token} üzerinden alınır."""
+        from app.api.routes.db_smart_api import _EMBED_HTML_TEMPLATE
+        return _EmbedHTML(content=_EMBED_HTML_TEMPLATE, status_code=200)
 
     from pathlib import Path
     from fastapi.responses import FileResponse

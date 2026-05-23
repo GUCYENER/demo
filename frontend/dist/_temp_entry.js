@@ -6334,6 +6334,262 @@ if (document.readyState === 'loading') {
 }
 
 
+/* === assets/js/modules/virtual_scroll_table.js === */
+/**
+ * VYRA — Virtual Scroll Table (Faz 6, v3.30.0)
+ * ==============================================
+ * Büyük DB sorgu sonuçları (>200 satır) için virtual scroll.
+ * Sadece görünen satırları + tampon DOM'a yazar; scroll'da günceller.
+ *
+ * Entegrasyon: renderSQLResultTable büyük sonuçlarda bu modüle delege eder.
+ * DBTableUI drag-drop + kolon visibility ile uyumlu.
+ *
+ * Kullanım:
+ *   const el = VirtualScrollTable.create(columns, rows, meta);
+ *   container.appendChild(el);
+ */
+window.VirtualScrollTable = (function () {
+    'use strict';
+
+    var ROW_HEIGHT  = 32;   // px — her satır sabit yükseklik
+    var BUFFER      = 20;   // viewport üstü/altı ekstra satır
+    var THRESHOLD   = 200;  // bu satır sayısının altında normal render
+
+    var escapeHtml = window.DialogChatUtils
+        ? window.DialogChatUtils.escapeHtml
+        : function (s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
+
+    // ── helpers ──────────────────────────────────────────────────────────
+
+    function _colAttr(col) {
+        return escapeHtml(col).replace(/"/g, '&quot;');
+    }
+
+    function _cellHtml(val) {
+        if (val === null || val === undefined) return '<span class="null-val">\u2014</span>';
+        return escapeHtml(String(val));
+    }
+
+    // ── public: create ──────────────────────────────────────────────────
+
+    /**
+     * Virtual scroll tablolu bir DOM element döner.
+     * @param {string[]} columns
+     * @param {Object[]} rows
+     * @param {Object}   meta  - {row_count, rows_shown, source_db}
+     * @returns {HTMLElement}
+     */
+    function create(columns, rows, meta) {
+        var rowCount  = (meta && meta.row_count)  || rows.length;
+        var rowsShown = (meta && meta.rows_shown)  || rows.length;
+        var sourceDb  = (meta && meta.source_db)   || '';
+        var truncated = rowCount > rowsShown;
+
+        var tableId = 'dbtbl_' + Date.now().toString(36) + '_' + Math.floor(Math.random() * 1e6).toString(36);
+
+        // Outer wrapper
+        var wrap = document.createElement('div');
+        wrap.className = 'db-result-table-wrap';
+        wrap.setAttribute('data-table-id', tableId);
+        wrap.setAttribute('data-virtual', 'true');
+
+        // Meta bar
+        var metaBar = document.createElement('div');
+        metaBar.className = 'db-result-meta';
+        var metaHtml = '';
+        if (sourceDb) metaHtml += '<span class="db-result-db">\uD83D\uDDC4\uFE0F ' + escapeHtml(sourceDb) + '</span>';
+        metaHtml += '<span class="db-result-count">\uD83D\uDCCA ' + rowsShown + ' kay\u0131t';
+        if (truncated) metaHtml += ' <span class="db-truncated-badge">(toplam ' + rowCount + ')</span>';
+        metaHtml += '</span>';
+        metaHtml += '<span class="db-vs-badge" title="Virtual scroll aktif">\u26A1 VS</span>';
+        metaHtml += '<button type="button" class="db-cols-btn" onclick="window.DBTableUI.toggleColMenu(\'' + tableId + '\', event)" title="Kolonlar\u0131 g\u00f6ster/gizle ve s\u00fcr\u00fckleyerek yeniden s\u0131rala">\u2699\uFE0F Kolonlar</button>';
+        metaBar.innerHTML = metaHtml;
+        wrap.appendChild(metaBar);
+
+        // Column menu (hidden)
+        var colMenu = document.createElement('div');
+        colMenu.className = 'db-cols-menu';
+        colMenu.id = tableId + '_menu';
+        colMenu.hidden = true;
+        var menuHtml = '<div class="db-cols-menu-head"><span>G\u00f6r\u00fcn\u00fcr kolonlar</span>'
+            + '<button type="button" class="db-cols-menu-close" onclick="window.DBTableUI.toggleColMenu(\'' + tableId + '\')" aria-label="Kapat">\u00d7</button></div>'
+            + '<div class="db-cols-menu-actions">'
+            + '<button type="button" class="db-cols-mini" onclick="window.DBTableUI.allCols(\'' + tableId + '\', true)">T\u00fcm\u00fcn\u00fc g\u00f6ster</button>'
+            + '<button type="button" class="db-cols-mini" onclick="window.DBTableUI.allCols(\'' + tableId + '\', false)">T\u00fcm\u00fcn\u00fc gizle</button>'
+            + '</div><div class="db-cols-menu-list">';
+        columns.forEach(function (col) {
+            var safeCol = escapeHtml(col);
+            var ca = _colAttr(col);
+            menuHtml += '<label class="db-col-item"><input type="checkbox" checked data-col="' + ca
+                + '" onchange="window.DBTableUI.toggleCol(\'' + tableId + '\', this.dataset.col, this.checked)"><span>' + safeCol + '</span></label>';
+        });
+        menuHtml += '</div>';
+        colMenu.innerHTML = menuHtml;
+        wrap.appendChild(colMenu);
+
+        // Scroll viewport
+        var viewport = document.createElement('div');
+        viewport.className = 'db-vs-viewport';
+        viewport.style.maxHeight = '480px';
+        viewport.style.overflowY = 'auto';
+        viewport.style.position  = 'relative';
+        viewport.setAttribute('role', 'grid');
+        viewport.setAttribute('aria-label', 'Sorgu sonu\u00e7lar\u0131 — virtual scroll');
+
+        // Spacer (total height)
+        var totalHeight = rows.length * ROW_HEIGHT;
+        var spacer = document.createElement('div');
+        spacer.className = 'db-vs-spacer';
+        spacer.style.height = totalHeight + 'px';
+        spacer.style.position = 'relative';
+
+        // Table (fixed header outside scroll)
+        var headerTable = document.createElement('table');
+        headerTable.className = 'db-result-table db-vs-header';
+        headerTable.setAttribute('data-table-id', tableId);
+        var thead = document.createElement('thead');
+        var headerRow = document.createElement('tr');
+        columns.forEach(function (col) {
+            var th = document.createElement('th');
+            th.setAttribute('draggable', 'true');
+            th.setAttribute('data-col', _colAttr(col));
+            th.setAttribute('ondragstart', 'window.DBTableUI.onDragStart(event)');
+            th.setAttribute('ondragover', 'window.DBTableUI.onDragOver(event)');
+            th.setAttribute('ondragenter', 'window.DBTableUI.onDragEnter(event)');
+            th.setAttribute('ondragleave', 'window.DBTableUI.onDragLeave(event)');
+            th.setAttribute('ondrop', 'window.DBTableUI.onDrop(event)');
+            th.setAttribute('ondragend', 'window.DBTableUI.onDragEnd(event)');
+            th.innerHTML = '<span class="th-grip" aria-hidden="true">\u22EE\u22EE</span><span class="th-label">' + escapeHtml(col) + '</span>';
+            headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        headerTable.appendChild(thead);
+
+        // Body container (inside spacer)
+        var bodyContainer = document.createElement('div');
+        bodyContainer.className = 'db-vs-body';
+        bodyContainer.style.position = 'absolute';
+        bodyContainer.style.left = '0';
+        bodyContainer.style.right = '0';
+
+        spacer.appendChild(bodyContainer);
+
+        // Scroll wrapper for header + viewport
+        var scrollWrap = document.createElement('div');
+        scrollWrap.className = 'db-table-scroll';
+        scrollWrap.appendChild(headerTable);
+        viewport.appendChild(spacer);
+        scrollWrap.appendChild(viewport);
+        wrap.appendChild(scrollWrap);
+
+        // State object
+        var state = {
+            tableId:   tableId,
+            columns:   columns,
+            rows:      rows,
+            viewport:  viewport,
+            body:      bodyContainer,
+            spacer:    spacer,
+            lastStart: -1,
+            lastEnd:   -1,
+            rafId:     0
+        };
+
+        // Initial render
+        _renderSlice(state);
+
+        // Scroll handler (throttled via rAF) — named for cleanup
+        var scrollHandler = function () {
+            if (state.rafId) return;
+            state.rafId = requestAnimationFrame(function () {
+                state.rafId = 0;
+                _renderSlice(state);
+            });
+        };
+        viewport.addEventListener('scroll', scrollHandler);
+
+        // Cleanup: MutationObserver detects DOM removal → detach listener + cancel rAF
+        if (typeof MutationObserver !== 'undefined') {
+            var obs = new MutationObserver(function (mutations) {
+                for (var m = 0; m < mutations.length; m++) {
+                    for (var r = 0; r < mutations[m].removedNodes.length; r++) {
+                        var removed = mutations[m].removedNodes[r];
+                        if (removed === wrap || (removed.contains && removed.contains(wrap))) {
+                            viewport.removeEventListener('scroll', scrollHandler);
+                            if (state.rafId) cancelAnimationFrame(state.rafId);
+                            state.rows = null; // release data reference
+                            obs.disconnect();
+                            return;
+                        }
+                    }
+                }
+            });
+            // Observe closest scrollable ancestor or body
+            var observeTarget = wrap.parentNode || document.body;
+            requestAnimationFrame(function () {
+                observeTarget = wrap.parentNode || document.body;
+                obs.observe(observeTarget, { childList: true, subtree: true });
+            });
+        }
+
+        // Truncated note
+        if (truncated) {
+            var note = document.createElement('div');
+            note.className = 'db-truncated-note';
+            note.textContent = '\u26A0\uFE0F Toplam ' + rowCount + ' kay\u0131ttan ilk ' + rowsShown + ' tanesi g\u00f6steriliyor. T\u00fcm\u00fcn\u00fc g\u00f6rmek i\u00e7in Excel\'e aktar\u0131n.';
+            wrap.appendChild(note);
+        }
+
+        return wrap;
+    }
+
+    // ── internal: render visible slice ──────────────────────────────────
+
+    function _renderSlice(state) {
+        var scrollTop    = state.viewport.scrollTop;
+        var viewHeight   = state.viewport.clientHeight;
+        var totalRows    = state.rows.length;
+        var cols         = state.columns;
+
+        var startIdx = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - BUFFER);
+        var endIdx   = Math.min(totalRows, Math.ceil((scrollTop + viewHeight) / ROW_HEIGHT) + BUFFER);
+
+        // Skip re-render if range unchanged
+        if (startIdx === state.lastStart && endIdx === state.lastEnd) return;
+        state.lastStart = startIdx;
+        state.lastEnd   = endIdx;
+
+        // Position body container
+        state.body.style.top = (startIdx * ROW_HEIGHT) + 'px';
+
+        // Build rows HTML
+        var html = '<table class="db-result-table db-vs-rows" data-table-id="' + state.tableId + '">';
+        html += '<tbody>';
+        for (var i = startIdx; i < endIdx; i++) {
+            var row = state.rows[i];
+            var cls = i % 2 === 0 ? '' : ' class="alt-row"';
+            html += '<tr' + cls + ' data-row-idx="' + i + '">';
+            for (var c = 0; c < cols.length; c++) {
+                var col = cols[c];
+                var ca  = _colAttr(col);
+                html += '<td data-col="' + ca + '">' + _cellHtml(row[col]) + '</td>';
+            }
+            html += '</tr>';
+        }
+        html += '</tbody></table>';
+
+        state.body.innerHTML = html;
+    }
+
+    // ── public API ──────────────────────────────────────────────────────
+
+    return {
+        create:    create,
+        THRESHOLD: THRESHOLD
+    };
+})();
+
+
 /* === assets/js/modules/dialog_chat_utils.js === */
 /**
  * VYRA Dialog Chat - Utility Functions
@@ -6978,6 +7234,14 @@ window.DialogChatUtils = (function () {
     function renderSQLResultTable(columns, rows, meta) {
         if (!columns || columns.length === 0 || !rows || rows.length === 0) {
             return '';
+        }
+
+        // v3.30.0: büyük sonuçlarda virtual scroll kullan
+        if (rows.length > (window.VirtualScrollTable?.THRESHOLD || 200) && window.VirtualScrollTable) {
+            var vsEl = window.VirtualScrollTable.create(columns, rows, meta);
+            var tmp = document.createElement('div');
+            tmp.appendChild(vsEl);
+            return tmp.innerHTML;
         }
 
         const rowCount = meta?.row_count || rows.length;
@@ -16680,12 +16944,12 @@ window.SystemManagerModule = (function () {
     // v2.53.1: Sayaç son login zamanından itibaren sayar.
     // login.js başarılı girişte session_start_time'ı set eder.
     // PC kapansa/tarayıcı kapansa bile sonraki login'de sıfırlanır.
-    // v3.28.1: 30 dk threshold -> 15 sn countdown popup -> refresh veya auto-logout.
+    // v3.28.1: 60 dk threshold -> 15 sn countdown popup -> refresh veya auto-logout.
     let sessionStartTime = null;
     let sessionTimerInterval = null;
 
     // v3.28.1 — Session timeout config
-    const SESSION_WARN_AT_SECONDS = 30 * 60;       // 30 dakika
+    const SESSION_WARN_AT_SECONDS = 60 * 60;       // 60 dakika
     const SESSION_LOGOUT_COUNTDOWN_SECONDS = 15;   // popup içi countdown
 
     let _sessionWarningShown = false;
@@ -16694,36 +16958,50 @@ window.SystemManagerModule = (function () {
     let _previousFocusEl = null;
 
     function startSessionTimer() {
-        const storedStartTime = localStorage.getItem('session_start_time');
+        // Login olmadan timer başlatma — access_token yoksa kullanıcı giriş yapmamış
+        const token = localStorage.getItem('access_token');
+        if (!token) return;
 
-        if (storedStartTime) {
-            const storedDate = new Date(storedStartTime);
+        const now = new Date();
 
-            // Geçerlilik kontrolü: JWT token expire ile karşılaştır
-            // Eğer saklanan süre > token expire süresi ise eski oturumdur, sıfırla
-            try {
-                const token = localStorage.getItem('access_token');
-                if (token) {
-                    const payload = JSON.parse(atob(token.split('.')[1]));
-                    const tokenIssuedAt = new Date(payload.iat * 1000);
-                    // Saklanan zaman, token'ın oluşturulma zamanından eskiyse → eski oturum
-                    if (storedDate < tokenIssuedAt) {
-                        sessionStartTime = tokenIssuedAt;
-                        localStorage.setItem('session_start_time', tokenIssuedAt.toISOString());
-                    } else {
-                        sessionStartTime = storedDate;
-                    }
-                } else {
-                    sessionStartTime = storedDate;
-                }
-            } catch (e) {
-                sessionStartTime = storedDate;
+        // v3.30.1: Gerçek login zamanı = JWT iat (issued-at).
+        // session_start_time localStorage cache amaçlıdır; canonical kaynak JWT'dir.
+        // Bu sayede checkExistingAuth auto-redirect veya başka bir yol session_start_time'ı
+        // güncellemese bile sayaç yanlış başlamaz.
+        //
+        // Senaryo matrisi:
+        //   1) Fresh login → iat = şimdi          → sayaç 0:00'dan başlar
+        //   2) Sayfa yenileme (30 dk sonra)       → iat = 30 dk önce → sayaç 30:00'dan devam
+        //   3) Eski token resume (>60 dk eski)    → iat çok eski   → sayaç sıfırla (yeni window)
+        //   4) Sunucu clock skew (iat future)     → negatif age    → güvenli reset
+        let baseTime;
+        try {
+            const payload = JSON.parse(atob(token.split('.')[1]));
+            if (!payload || typeof payload.iat !== 'number') {
+                throw new Error('JWT iat missing');
             }
-        } else {
-            // Fallback: session_start_time yoksa (eski sürümden gelen kullanıcılar)
-            sessionStartTime = new Date();
-            localStorage.setItem('session_start_time', sessionStartTime.toISOString());
+            const tokenIssuedAt = new Date(payload.iat * 1000);
+            const tokenAgeSec = Math.floor((now - tokenIssuedAt) / 1000);
+
+            if (tokenAgeSec < 0 || tokenAgeSec >= SESSION_WARN_AT_SECONDS) {
+                // Resume w/ stale token veya clock skew → fresh window
+                baseTime = now;
+            } else {
+                // Yakın zamanda issue edilmiş token → gerçek login zamanını kullan
+                baseTime = tokenIssuedAt;
+            }
+        } catch (e) {
+            // Malformed JWT — defansif fallback
+            const stored = localStorage.getItem('session_start_time');
+            baseTime = stored ? new Date(stored) : now;
+            // Stored da bayatsa reset
+            if (Math.floor((now - baseTime) / 1000) >= SESSION_WARN_AT_SECONDS) {
+                baseTime = now;
+            }
         }
+
+        sessionStartTime = baseTime;
+        localStorage.setItem('session_start_time', baseTime.toISOString());
 
         updateSessionTimer();
         sessionTimerInterval = setInterval(updateSessionTimer, 1000);
@@ -16754,7 +17032,7 @@ window.SystemManagerModule = (function () {
             }
         }
 
-        // v3.28.1 — 30 dk dolunca tek-seferlik uyarı popup'ı
+        // v3.28.1 — 60 dk dolunca tek-seferlik uyarı popup'ı
         if (diff >= SESSION_WARN_AT_SECONDS && !_sessionWarningShown) {
             _showSessionWarning();
         }
@@ -16775,7 +17053,7 @@ window.SystemManagerModule = (function () {
             +       '</h3>'
             +     '</div>'
             +     '<div class="modal-body">'
-            +       '<p>30 dakikadır oturumdasınız. Oturumu sürdürmek istiyor musunuz?</p>'
+            +       '<p>60 dakikadır oturumdasınız. Oturumu sürdürmek istiyor musunuz?</p>'
             +       '<p class="session-countdown-line">'
             +         '<strong id="sessionLogoutCountdown">15</strong> saniye içinde otomatik çıkış yapılacak.'
             +       '</p>'
@@ -16860,7 +17138,8 @@ window.SystemManagerModule = (function () {
         _previousFocusEl = null;
     }
 
-    async function _onSessionContinue() {
+    async function _onSessionContinue(e) {
+        if (e) { e.preventDefault(); e.stopPropagation(); }
         const btn = document.getElementById('sessionContinueBtn');
         if (btn) {
             btn.classList.add('is-loading');
@@ -16871,7 +17150,7 @@ window.SystemManagerModule = (function () {
             if (window.VYRA_API && typeof window.VYRA_API.refreshToken === 'function') {
                 await window.VYRA_API.refreshToken();
             }
-            // Sayacı sıfırla — yeni 30 dk window
+            // Sayacı sıfırla — yeni 60 dk window
             sessionStartTime = new Date();
             localStorage.setItem('session_start_time', sessionStartTime.toISOString());
             _sessionWarningShown = false;
@@ -16880,8 +17159,15 @@ window.SystemManagerModule = (function () {
                 window.showToast('Oturumunuz yenilendi.', 'success');
             }
         } catch (err) {
-            console.warn('[SessionTimeout] refresh hata, otomatik çıkış:', err);
-            _forceLogout();
+            console.warn('[SessionTimeout] refresh hata, oturum uzatıldı (offline):', err);
+            // Token refresh başarısız olsa bile oturumu uzat (offline/network hatası)
+            sessionStartTime = new Date();
+            localStorage.setItem('session_start_time', sessionStartTime.toISOString());
+            _sessionWarningShown = false;
+            _hideSessionWarning();
+            if (window.showToast) {
+                window.showToast('Oturum uzatıldı (bağlantı kontrol edin).', 'warning');
+            }
         } finally {
             if (btn) {
                 btn.classList.remove('is-loading');
@@ -27580,7 +27866,12 @@ window.DSLearningModule = (function () {
                         </div>
                         <div class="ds-result-card">
                             <div class="ds-result-card-label">FK İlişkileri</div>
-                            <div class="ds-result-card-value">${result.relationship_count || 0}</div>
+                            <div class="ds-result-card-value">${(result.total_relationships !== undefined) ? result.total_relationships : (result.relationship_count || 0)}</div>
+                            ${(result.inferred_count !== undefined && result.inferred_count > 0) ? `
+                            <div class="ds-result-card-sub" style="font-size:11px;color:#666;margin-top:4px;">
+                                <span title="Veritabanında FK constraint olarak tanımlı">Declared: ${result.declared_count || result.relationship_count || 0}</span>
+                                · <span title="Naming/type pattern ile çıkarsanan (is_inferred=TRUE)">Inferred: ${result.inferred_count}</span>
+                            </div>` : ''}
                         </div>
                         <div class="ds-result-card">
                             <div class="ds-result-card-label">Toplam Sütun</div>
@@ -28193,7 +28484,12 @@ window.DSLearningModule = (function () {
                     </div>
                     <div class="ds-result-card">
                         <div class="ds-result-card-label">FK İlişkileri</div>
-                        <div class="ds-result-card-value">${resultData.relationship_count || 0}</div>
+                        <div class="ds-result-card-value">${(resultData.total_relationships !== undefined) ? resultData.total_relationships : (resultData.relationship_count || 0)}</div>
+                        ${(resultData.inferred_count !== undefined && resultData.inferred_count > 0) ? `
+                        <div class="ds-result-card-sub" style="font-size:11px;color:#666;margin-top:4px;">
+                            <span title="Veritabanında FK constraint olarak tanımlı">Declared: ${resultData.declared_count || resultData.relationship_count || 0}</span>
+                            · <span title="Naming/type pattern ile çıkarsanan (is_inferred=TRUE)">Inferred: ${resultData.inferred_count}</span>
+                        </div>` : ''}
                     </div>
                     <div class="ds-result-card">
                         <div class="ds-result-card-label">Toplam Sütun</div>
@@ -29251,8 +29547,61 @@ const DSEnrichmentModule = (() => {
     let _selectedIds = new Set();
     let _pollingTimer = null;
     let _isPolling = false;
-    let _filterPendingApproval = false;
+    // v3.30.1: _filterPendingApproval bool yerine 3-yönlü enum
+    //   ''             → filtre yok
+    //   'pending_disc' → Keşif Bekliyor    (!enrichment_id)
+    //   'discovering'  → Devam Ediyor       (_discoveringIds içinde)
+    //   'pending_appr' → Onay Bekliyor      (enrichment_id && !is_approved)
+    let _statusFilter = '';
+    let _discoveringIds = new Set();   // v3.30.1: keşif istek atılan, henüz enrichment_id gelmeyen object_id'ler
     let _filterSchema = '';
+
+    // v3.32.0: Concurrent operation state — backend check_running_job ile sync
+    let _runningJob = null;  // { type: 'discover_all'|'approve_all'|'enrich_selected'|..., started_at }
+    let _runningJobPollTimer = null;
+    let _runningJobPollInterval = 3000;  // 3s, exponential backoff on error
+    // v3.32.0 TYCHE O3 fix: bulkApprove/bulkApproveAll backend'de ds_discovery_jobs satırı
+    // OLUŞTURMUYOR (sync endpoint); _runningJob null kalıyor; 4 buton ayrı disabled state
+    // tutuyor — user dsBulkApproveBtn'ye basıp dsApproveAllBtn'ye de basarak 2 paralel
+    // POST atebiliyordu. Bu flag tüm bulk approve butonlarını single-flight'a zorlar.
+    let _bulkApproveInFlight = false;
+
+    // v3.32.0 ATHENA Y2 fix: aria-label fallback for [data-tt] tooltips.
+    // CSS ::after content is NOT announced reliably by screen readers (NVDA partial,
+    // JAWS none). MutationObserver mirrors data-tt -> aria-label on every render.
+    let _a11yObserver = null;
+    function _mirrorTooltipsToAria(root) {
+        if (!root) return;
+        root.querySelectorAll('[data-tt]').forEach(el => {
+            const tt = el.getAttribute('data-tt');
+            if (!tt) return;
+            // Override sadece aria-label yoksa — author explicit aria-label set ettiyse koru.
+            if (!el.hasAttribute('aria-label') || el.getAttribute('aria-label') === el.dataset.ttMirrored) {
+                el.setAttribute('aria-label', tt);
+                el.dataset.ttMirrored = tt;
+            }
+        });
+    }
+    function _startA11yObserver(root) {
+        if (_a11yObserver || !root) return;
+        _mirrorTooltipsToAria(root);  // initial pass
+        _a11yObserver = new MutationObserver((muts) => {
+            // Debounce: tek bir microtask'ta tüm değişiklikleri işle
+            let needsPass = false;
+            for (const m of muts) {
+                if (m.type === 'childList' && m.addedNodes.length) { needsPass = true; break; }
+                if (m.type === 'attributes' && m.attributeName === 'data-tt') { needsPass = true; break; }
+            }
+            if (needsPass) _mirrorTooltipsToAria(root);
+        });
+        _a11yObserver.observe(root, {
+            childList: true, subtree: true,
+            attributes: true, attributeFilter: ['data-tt']
+        });
+    }
+    function _stopA11yObserver() {
+        if (_a11yObserver) { _a11yObserver.disconnect(); _a11yObserver = null; }
+    }
 
     // ============================================
     // Panel Aç/Kapat
@@ -29269,7 +29618,8 @@ const DSEnrichmentModule = (() => {
         _searchQuery = '';
         _filterLowScore = false;
         _showApproved = false;
-        _filterPendingApproval = false;
+        _statusFilter = '';
+        _discoveringIds.clear();
         _filterSchema = '';
         _selectedIds.clear();
         _onCloseCallback = onCloseCallback || null;
@@ -29277,13 +29627,21 @@ const DSEnrichmentModule = (() => {
         // Overlay oluştur
         _createOverlay();
 
+        // v3.32.0 ATHENA Y2: data-tt -> aria-label mirror (a11y).
+        const _overlayRoot = document.getElementById('dsEnrichOverlay');
+        _startA11yObserver(_overlayRoot);
+
         // Verileri yükle
         _loadData();
         _pollingTimer = setInterval(_loadDataSilently, 10000);
+        // v3.32.0: Concurrent operation gate — paralel poll
+        _startRunningJobPoll();
     }
 
     function closePanel() {
         if (_pollingTimer) clearInterval(_pollingTimer);
+        _stopRunningJobPoll();
+        _stopA11yObserver();
         const overlay = document.getElementById('dsEnrichOverlay');
         if (overlay) {
             overlay.classList.remove('active');
@@ -29319,7 +29677,7 @@ const DSEnrichmentModule = (() => {
                         <i class="fa-solid fa-tags"></i>
                         <span>Tablo Etiketleme & Onay Paneli</span>
                     </div>
-                    <button class="ds-enrich-close" id="dsEnrichCloseBtn" title="Kapat (ESC)">
+                    <button class="ds-enrich-close" id="dsEnrichCloseBtn" data-tt="Kapat (ESC)">
                         <i class="fa-solid fa-xmark"></i>
                     </button>
                 </div>
@@ -29357,17 +29715,119 @@ const DSEnrichmentModule = (() => {
     }
 
     // ============================================
+    // v3.32.0: Running Job State Machine — backend check_running_job ile sync
+    // ============================================
+
+    async function _pollRunningJob() {
+        if (!_currentSourceId) {
+            _stopRunningJobPoll();
+            return;
+        }
+        try {
+            const res = await _authFetch(
+                `/api/data-sources/${_currentSourceId}/check-running-job`
+            );
+            // v3.32.0 ARES Y1-recur fix: 403 -> ACL reddi (yanlış kaynak), poll'u durdur.
+            // 404 -> kaynak silinmiş, poll'u durdur.
+            if (res.status === 403 || res.status === 404) {
+                _stopRunningJobPoll();
+                _runningJob = null;
+                return;
+            }
+            // v3.32.0 TYCHE O1 fix: !res.ok (401/500 vb.) data.has_running'i okumadan
+            // hata olarak handle et — eski kod 500'de silently _runningJob=null yapıyor,
+            // spurious refreshData() + stop-poll tetikliyordu.
+            if (!res.ok) throw new Error('http_' + res.status);
+            const data = await res.json();
+            // Backend hata bildirdiyse (success:false) — _runningJob state'ini DEĞİŞTİRME
+            // (gate'i kazara açmamak için). Backoff ile devam.
+            if (data && data.success === false) {
+                _runningJobPollInterval = Math.min(_runningJobPollInterval * 2, 30000);
+                _runningJobPollTimer = setTimeout(_pollRunningJob, _runningJobPollInterval);
+                return;
+            }
+            const wasRunning = _runningJob !== null;
+            const nowRunning = !!data.has_running;
+            if (nowRunning) {
+                _runningJob = {
+                    type: (data.job && data.job.job_type) || 'unknown',
+                    started_at: data.job && data.job.started_at
+                };
+                _runningJobPollInterval = 3000;  // reset on success
+            } else {
+                _runningJob = null;
+                if (wasRunning) {
+                    // Job bitti — UI refresh
+                    refreshData();
+                    _stopRunningJobPoll();
+                    return;
+                }
+            }
+            // v3.32.0 TYCHE Y2 fix: re-render SADECE state transition'da
+            // (idle iken 3s'de bir tüm panel re-render scroll/focus'u bozuyordu).
+            if (wasRunning !== nowRunning) {
+                const activeEl = document.activeElement;
+                if (!activeEl || activeEl.tagName !== 'INPUT') {
+                    applyFilterAndRender();
+                }
+            }
+        } catch (e) {
+            // Network/parse/HTTP hata — exponential backoff up to 30s, _runningJob bozma.
+            _runningJobPollInterval = Math.min(_runningJobPollInterval * 2, 30000);
+        }
+        _runningJobPollTimer = setTimeout(_pollRunningJob, _runningJobPollInterval);
+    }
+
+    function _startRunningJobPoll() {
+        if (_runningJobPollTimer) return;
+        _runningJobPollInterval = 3000;
+        _pollRunningJob();
+    }
+
+    function _stopRunningJobPoll() {
+        if (_runningJobPollTimer) {
+            clearTimeout(_runningJobPollTimer);
+            _runningJobPollTimer = null;
+        }
+    }
+
+    function _runningJobTooltip(buttonType) {
+        if (!_runningJob) {
+            switch (buttonType) {
+                case 'discover_all': return 'Henüz keşfedilmemiş tüm tabloları sırayla keşfet';
+                case 'discover_sel': return 'Seçili tabloları keşfet';
+                case 'approve_sel': return 'Seçili tabloları toplu onayla';
+                case 'approve_all': return 'Tüm sayfa-dışı onay bekleyenleri toplu onayla';
+            }
+            return '';
+        }
+        // v3.32.0 ATHENA K1 fix: Backend create_job() gerçek job_type değerleri:
+        //   technology / objects / samples / partial_enrichment / full_learning / qa_generation
+        // (data_sources_api.py:800,851,1061 + ds_learning_service.py:1815,1909,2054)
+        // Eski frontend switch'i 'discovery'/'approve' arıyordu — hiçbir backend
+        // değeriyle eşleşmiyordu, default'a düşüyordu.
+        const t = _runningJob.type;
+        const DISCOVERY_TYPES = ['technology', 'objects', 'partial_enrichment', 'full_learning'];
+        const SAMPLE_TYPES = ['samples'];
+        const QA_TYPES = ['qa_generation'];
+        const APPROVE_TYPES = ['approve_bulk', 'approve_all'];  // ileride backend yazarsa hazır
+        let jobTypeLabel = 'İş devam ediyor';
+        if (DISCOVERY_TYPES.includes(t)) jobTypeLabel = 'Keşif devam ediyor';
+        else if (SAMPLE_TYPES.includes(t)) jobTypeLabel = 'Örnek veri toplama devam ediyor';
+        else if (QA_TYPES.includes(t)) jobTypeLabel = 'QA üretimi devam ediyor';
+        else if (APPROVE_TYPES.includes(t)) jobTypeLabel = 'Onay devam ediyor';
+        return `${jobTypeLabel} — bu işlem için bekleyin`;
+    }
+
+    // ============================================
     // Veri Yükleme
     // ============================================
 
     async function _loadData() {
         try {
-            const token = localStorage.getItem('access_token');
-            const headers = { 'Authorization': `Bearer ${token}` };
-
             const [statsRes, allRes] = await Promise.all([
-                fetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`, { headers }),
-                fetch(`/api/data-sources/${_currentSourceId}/enrichment-all`, { headers })
+                _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`),
+                _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-all`)
             ]);
 
             if (!statsRes.ok || !allRes.ok) throw new Error(`Sunucu hatası (HTTP ${statsRes.ok ? allRes.status : statsRes.status})`);
@@ -29404,11 +29864,9 @@ const DSEnrichmentModule = (() => {
         if (!_currentSourceId || _isPolling) return;
         _isPolling = true;
         try {
-            const token = localStorage.getItem('access_token');
-            const headers = { 'Authorization': `Bearer ${token}` };
             const [statsRes, allRes] = await Promise.all([
-                fetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`, { headers }),
-                fetch(`/api/data-sources/${_currentSourceId}/enrichment-all`, { headers })
+                _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`),
+                _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-all`)
             ]);
             const stats = await statsRes.json();
             const allData = await allRes.json();
@@ -29441,6 +29899,14 @@ const DSEnrichmentModule = (() => {
                 const newlyDiscovered = newPending.filter(x => x.enrichment_id && !prevDiscoveredIds.has(x.id));
 
                 _pendingData = newPending;
+
+                // v3.30.1: enrichment_id geleli → discovering set'inden temizle
+                for (const item of newPending) {
+                    if (item.enrichment_id) {
+                        _discoveringIds.delete(String(item.id));
+                    }
+                }
+
                 _renderStats(stats);
 
                 // Yeni keşfedilen tablo varsa sayfa 1'e dön + toast göster
@@ -29470,7 +29936,7 @@ const DSEnrichmentModule = (() => {
         const unprocessed = stats.unprocessed || 0;
 
         bar.innerHTML = `
-            <div class="ds-enrich-stat" title="Henüz LLM tarafından incelenmeyen tablo sayısı">
+            <div class="ds-enrich-stat" data-tt="Henüz LLM tarafından incelenmeyen tablo sayısı">
                 <span class="ds-enrich-stat-num" style="color: #a78bfa;">${unprocessed}</span>
                 <span class="ds-enrich-stat-label">LLM Bekleyen</span>
             </div>
@@ -29538,8 +30004,12 @@ const DSEnrichmentModule = (() => {
             return textMatch && scoreMatch && approvalMatch && schemaMatch;
         });
 
-        // Onay bekleyen filtresi (sadece kesfedilmis ama onayla beklenenler)
-        if (_filterPendingApproval) {
+        // v3.30.1: Status filter (3-yönlü: Keşif Bekliyor / Devam Ediyor / Onay Bekliyor)
+        if (_statusFilter === 'pending_disc') {
+            _filteredData = _filteredData.filter(item => !item.enrichment_id && !_discoveringIds.has(String(item.id)));
+        } else if (_statusFilter === 'discovering') {
+            _filteredData = _filteredData.filter(item => _discoveringIds.has(String(item.id)) && !item.enrichment_id);
+        } else if (_statusFilter === 'pending_appr') {
             _filteredData = _filteredData.filter(item => item.enrichment_id && !item.is_approved);
         }
 
@@ -29625,7 +30095,7 @@ const DSEnrichmentModule = (() => {
                 const schemaName = item.schema_name || '';
                 const tableName = item.table_name || '';
                 const isChecked = _selectedIds.has(item.id.toString()) ? 'checked' : '';
-                const approvedAttr = item.is_approved ? 'disabled title="Zaten onaylandı"' : '';
+                const approvedAttr = item.is_approved ? 'disabled data-tt="Zaten onaylandı"' : '';
                 const rowOpacity = item.is_approved ? 'opacity: 0.7;' : '';
                 const rowHighlight = (item.enrichment_id && !item.is_approved) ? 'background:rgba(245,158,11,0.05);border-left:3px solid rgba(245,158,11,0.4);' : '';
 
@@ -29634,10 +30104,10 @@ const DSEnrichmentModule = (() => {
                         <td style="text-align: center;">
                             <input type="checkbox" class="ds-bulk-chk ${item.is_approved ? '' : 'cursor-pointer'}" value="${item.id}" ${isChecked} ${approvedAttr} onchange="DSEnrichmentModule.toggleCheckbox(this)">
                         </td>
-                        <td class="ds-schema-cell" title="${_escapeHtml(schemaName)}" style="font-size:0.82rem;color:#9ca3af;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                        <td class="ds-schema-cell" data-tt="${_escapeHtml(schemaName)}" style="font-size:0.82rem;color:#9ca3af;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
                             ${_escapeHtml(schemaName)}
                         </td>
-                        <td class="ds-table-name-cell" title="${_escapeHtml(tableName)}">
+                        <td class="ds-table-name-cell" data-tt="${_escapeHtml(tableName)}">
                             <strong>${_escapeHtml(tableName)}</strong>
                         </td>
                         <td>
@@ -29652,24 +30122,26 @@ const DSEnrichmentModule = (() => {
                                 ${(item.enrichment_score || 0).toFixed(2)}
                             </span>
                         </td>
-                        <td class="ds-desc-cell" title="${_escapeHtml(item.description_tr || '(Açıklama yok)')}">
+                        <td class="ds-desc-cell" data-tt-multiline data-tt="${_escapeHtml(item.description_tr || '(Açıklama yok)')}">
                             ${_escapeHtml((item.description_tr || '').substring(0, 60))}${(item.description_tr || '').length > 60 ? '...' : ''}
                         </td>
                         <td class="ds-action-cell">
                             <div class="ds-enrich-actions ds-action-nowrap">
-                                ${!item.enrichment_id ? `
-                                <span class="ds-status-badge ds-status-pending-disc"><i class="fa-solid fa-hourglass-half"></i> Keşif Bekliyor</span>
-                                ` : (!item.is_approved ? `
+                                ${!item.enrichment_id ? (
+                                  _discoveringIds.has(String(item.id))
+                                    ? `<span class="ds-status-badge ds-status-discovering"><i class="fa-solid fa-spinner fa-spin"></i> Devam Ediyor</span>`
+                                    : `<span class="ds-status-badge ds-status-pending-disc"><i class="fa-solid fa-hourglass-half"></i> Keşif Bekliyor</span>`
+                                ) : (!item.is_approved ? `
                                 <span class="ds-status-badge ds-status-pending-appr"><i class="fa-solid fa-clock"></i> Onay Bekliyor</span>
-                                <button class="ds-enrich-btn approve" onclick="DSEnrichmentModule.quickApprove(${item.id})" title="Direkt onayla" style="background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);">
+                                <button class="ds-enrich-btn approve" onclick="DSEnrichmentModule.quickApprove(${item.id})" data-tt="Direkt onayla" style="background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);">
                                     <i class="fa-solid fa-check"></i>
                                 </button>
                                 ` : '<span class="ds-status-badge ds-status-approved"><i class="fa-solid fa-check-double"></i> Onaylı</span>')}
                                 ${item.enrichment_id ? `
-                                <button class="ds-enrich-btn edit" onclick="DSEnrichmentModule.toggleEdit(${item.id})" title="Düzenle">
+                                <button class="ds-enrich-btn edit" onclick="DSEnrichmentModule.toggleEdit(${item.id})" data-tt="Düzenle">
                                     <i class="fa-solid fa-pen"></i>
                                 </button>
-                                <button class="ds-enrich-btn columns" onclick="DSEnrichmentModule.showColumns(${item.enrichment_id})" title="Sütunları göster">
+                                <button class="ds-enrich-btn columns" onclick="DSEnrichmentModule.showColumns(${item.enrichment_id})" data-tt="Sütunları göster">
                                     <i class="fa-solid fa-table-columns"></i>
                                 </button>
                                 ` : ''}
@@ -29680,7 +30152,9 @@ const DSEnrichmentModule = (() => {
             }
         }
 
-        const isAllSelected = items.length > 0 && items.every(i => _selectedIds.has(i.id.toString()));
+        // v3.30.1: cross-page select-all → header checkbox tüm filtrelenmiş, henüz onaylanmamış kayıtlara bakar
+        const _selectable = _filteredData.filter(i => !i.is_approved);
+        const isAllSelected = _selectable.length > 0 && _selectable.every(i => _selectedIds.has(i.id.toString()));
 
         // Build pagination wrapper
         let pageBtns = '';
@@ -29697,21 +30171,37 @@ const DSEnrichmentModule = (() => {
         }
 
         // ---- Buton disabled state hesaplamaları ----
-        const _btnUndiscoveredCount = _pendingData.filter(x => !x.enrichment_id).length;
+        // v3.30.1: "Tümü" butonları artık _filteredData scope'unda — aktif filtreyi onurlandırır.
+        // Filtre yoksa _filteredData ≡ _pendingData (görünür kayıtlar) → davranış değişmez.
+        const _isFiltered = !!(_searchQuery || _filterLowScore || _filterSchema || _statusFilter || _showApproved);
+        const _btnUndiscoveredCount = _filteredData.filter(x => !x.enrichment_id).length;
         const _btnSelUndiscovered   = Array.from(_selectedIds).filter(id => { const r = _pendingData.find(x => x.id == id); return r && !r.enrichment_id; }).length;
         const _btnSelApprovable     = Array.from(_selectedIds).filter(id => { const r = _pendingData.find(x => x.id == id); return r && r.enrichment_id && !r.is_approved; }).length;
-        const _btnAllApprovable     = _pendingData.filter(x => x.enrichment_id && !x.is_approved).length;
+        const _btnAllApprovable     = _filteredData.filter(x => x.enrichment_id && !x.is_approved).length;
         const _btnDiscoverAllDis    = _btnUndiscoveredCount === 0;
         const _btnDiscoverSelDis    = _btnSelUndiscovered === 0;
         const _btnApproveSelDis     = _btnSelApprovable === 0;
         const _btnApproveAllDis     = _btnAllApprovable === 0;
         // Tooltip metinleri
-        const _ttDiscoverAll  = _pendingData.length === 0
+        const _scopeLabel = _isFiltered ? 'filtrelenmiş' : 'tüm';
+        // v3.32.0: Running job aktifse tüm bulk butonlar disable + tooltip override
+        const _jobBusy = _runningJob !== null;
+        const _jobBusyTip = _runningJobTooltip('discover_all');  // tüm 4 buton aynı job-busy mesajını gösterir
+        // v3.32.0 TYCHE O3 fix: bulkApprove tek POST in-flight kilidi — tüm bulk butonlar
+        const _inFlightTip = _bulkApproveInFlight ? 'Önceki onay isteği işleniyor — bekleyin' : null;
+        const _busyTip = _inFlightTip || _jobBusyTip;
+        const _busy = _jobBusy || _bulkApproveInFlight;
+        const _ttDiscoverAll  = _busy ? _busyTip : (_pendingData.length === 0
             ? 'Tablolar yükleniyor...'
-            : (_btnDiscoverAllDis ? 'Tüm tablolar zaten keşfedilmiş' : 'Keşfedilmemiş tüm tabloları keşfet');
-        const _ttDiscoverSel  = (_btnSelUndiscovered === 0 && _selectedIds.size > 0) ? 'Seçili tablolar zaten keşfedilmiş' : 'Seçili keşfedilmemiş tabloları keşfet';
-        const _ttApproveSel   = _btnApproveSelDis ? (_btnSelUndiscovered > 0 ? 'Seçili tablolar henüz keşfedilmemiş, önce keşfedin' : 'Onaylanacak seçili tablo yok') : 'Seçili keşfedilmiş tabloları onayla';
-        const _ttApproveAll   = _btnApproveAllDis ? (_btnUndiscoveredCount > 0 ? 'Önce tüm tabloları keşfedin' : 'Onaylanacak tablo yok') : `${_btnAllApprovable} keşfedilmiş tabloyu onayla`;
+            : (_btnDiscoverAllDis ? `${_scopeLabel.charAt(0).toUpperCase()+_scopeLabel.slice(1)} tablolarda keşfedilmemiş kayıt yok` : `${_btnUndiscoveredCount} ${_scopeLabel} tabloyu keşfet`));
+        const _ttDiscoverSel  = _busy ? _busyTip : ((_btnSelUndiscovered === 0 && _selectedIds.size > 0) ? 'Seçili tablolar zaten keşfedilmiş' : 'Seçili keşfedilmemiş tabloları keşfet');
+        const _ttApproveSel   = _busy ? _busyTip : (_btnApproveSelDis ? (_btnSelUndiscovered > 0 ? 'Seçili tablolar henüz keşfedilmemiş, önce keşfedin' : 'Onaylanacak seçili tablo yok') : 'Seçili keşfedilmiş tabloları onayla');
+        const _ttApproveAll   = _busy ? _busyTip : (_btnApproveAllDis ? (_btnUndiscoveredCount > 0 ? `Önce ${_scopeLabel} tabloları keşfedin` : 'Onaylanacak tablo yok') : `${_btnAllApprovable} ${_scopeLabel} keşfedilmiş tabloyu onayla`);
+        // v3.32.0: Job-busy + in-flight bulk approve kilit — gating
+        const _gateDiscoverAll = _btnDiscoverAllDis || _busy;
+        const _gateDiscoverSel = _btnDiscoverSelDis || _busy;
+        const _gateApproveSel  = _btnApproveSelDis  || _busy;
+        const _gateApproveAll  = _btnApproveAllDis  || _busy;
 
         // Schema dropdown için unique listesi oluştur
         const uniqueSchemas = [...new Set(_pendingData.map(x => x.schema_name).filter(Boolean))].sort();
@@ -29720,58 +30210,84 @@ const DSEnrichmentModule = (() => {
             schemaOptions += `<option value="${s}" ${_filterSchema === s ? 'selected' : ''}>${s}</option>`;
         }
 
+        // v3.30.1: Status filter counts (tüm sayfalar üzerinden _pendingData'dan)
+        const _cntPendingDisc  = _pendingData.filter(x => !x.enrichment_id && !_discoveringIds.has(String(x.id))).length;
+        const _cntDiscovering  = _pendingData.filter(x => _discoveringIds.has(String(x.id)) && !x.enrichment_id).length;
+        const _cntPendingAppr  = _pendingData.filter(x => x.enrichment_id && !x.is_approved).length;
+
         body.innerHTML = `
             <div class="ds-enrich-filter-bar" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; flex-wrap:wrap; gap:10px; flex-shrink:0;">
-                <div style="flex:1; max-width:800px; display:flex; gap:0.5rem; align-items:center;">
-                    <button onclick="DSEnrichmentModule.refreshData()" style="padding:8px 14px; border-radius:6px; border:none; background:rgba(255,255,255,0.1); color:#fff; cursor:pointer;" title="Verileri Yenile">
+                <div style="flex:1; max-width:1200px; display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+                    <button onclick="DSEnrichmentModule.refreshData()" style="padding:8px 14px; border-radius:6px; border:none; background:rgba(255,255,255,0.1); color:#fff; cursor:pointer;" data-tt="Verileri Yenile">
                         <i class="fa-solid fa-sync"></i>
                     </button>
                     <select id="dsSchemaFilter" onchange="DSEnrichmentModule.filterBySchema(this.value)"
                         style="padding:8px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.3); color:#fff; outline:none; font-size:0.85rem; min-width:130px; max-width:200px; cursor:pointer;">
                         ${schemaOptions}
                     </select>
-                    <div style="position:relative; flex:1;">
-                        <i class="fa-solid fa-search" style="position:absolute; left:12px; top:10px; color:#888;"></i>
-                        <input type="text" id="dsSearchInput" value="${_searchQuery}" placeholder="Tablo veya iş adı ara..."
-                            style="width:100%; padding:8px 32px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.2); color:#fff; outline:none;"
+                    <div style="position:relative; flex:1; min-width:300px;">
+                        <i class="fa-solid fa-search" style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:#888; pointer-events:none;"></i>
+                        <input type="text" id="dsSearchInput" value="${_escapeHtml(_searchQuery)}" placeholder="Tablo veya iş adı ara..."
+                            style="width:100%; padding:8px 36px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.2); color:#fff; outline:none;"
                             oninput="DSEnrichmentModule.filterTables(this.value)" autocomplete="off">
+                        <button type="button" id="dsSearchClearBtn" onclick="DSEnrichmentModule.clearSearch()"
+                            data-tt="Aramayı temizle"
+                            style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:transparent; border:none; color:#888; cursor:pointer; padding:4px 6px; border-radius:4px; display:${_searchQuery ? 'inline-flex' : 'none'}; align-items:center; justify-content:center;">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
                     </div>
                     <label style="display:flex; align-items:center; gap:6px; color:#ddd; font-size:0.85rem; cursor:pointer; white-space:nowrap;">
-                        <input type="checkbox" ${_filterLowScore ? 'checked' : ''} onchange="DSEnrichmentModule.toggleLowScoreFilter(this.checked)" style="width: 16px; height: 16px; accent-color: var(--primary-color, #4f46e5);"> 
+                        <input type="checkbox" ${_filterLowScore ? 'checked' : ''} onchange="DSEnrichmentModule.toggleLowScoreFilter(this.checked)" style="width: 16px; height: 16px; accent-color: var(--primary-color, #4f46e5);">
                         Düşük Skor / İsimsizleri Göster
                     </label>
                     <label style="display:flex; align-items:center; gap:6px; color:#ddd; font-size:0.85rem; cursor:pointer; white-space:nowrap;">
-                        <input id="dsShowApprovedChk" type="checkbox" ${_showApproved ? 'checked' : ''} onchange="DSEnrichmentModule.toggleShowApprovedFilter(this.checked)" style="width: 16px; height: 16px; accent-color: #34d399;"> 
+                        <input id="dsShowApprovedChk" type="checkbox" ${_showApproved ? 'checked' : ''} onchange="DSEnrichmentModule.toggleShowApprovedFilter(this.checked)" style="width: 16px; height: 16px; accent-color: #34d399;">
                         Onaylıları Göster
                     </label>
-                    <button onclick="DSEnrichmentModule.togglePendingApprovalFilter()" 
-                            style="padding:5px 10px; border-radius:6px; border:1px solid ${_filterPendingApproval ? 'rgba(245,158,11,0.6)' : 'rgba(255,255,255,0.15)'}; background:${_filterPendingApproval ? 'rgba(245,158,11,0.2)' : 'transparent'}; color:${_filterPendingApproval ? '#f59e0b' : '#aaa'}; cursor:pointer; font-size:0.82rem; font-weight:600; white-space:nowrap; transition:all 0.2s;" title="Keşfedilmiş ama onaylanmamış tablolar">
-                        <i class="fa-solid fa-clock" style="margin-right:4px;"></i>Onay Bekleyenler (${_pendingData.filter(x => x.enrichment_id && !x.is_approved).length})
-                    </button>
+                    <div role="group" aria-label="Durum filtresi" style="display:inline-flex; gap:6px;">
+                        <button type="button" class="ds-status-pill" data-active="${_statusFilter==='pending_disc'}"
+                                style="--pill-accent:#a78bfa; --pill-base:rgba(167,139,250,0.2);"
+                                onclick="DSEnrichmentModule.setStatusFilter('pending_disc')"
+                                data-tt="Henüz keşfedilmemiş tablolar (tüm sayfalar)">
+                            <i class="fa-solid fa-hourglass-half"></i>Keşif Bekleyenler (${_cntPendingDisc})
+                        </button>
+                        <button type="button" class="ds-status-pill" data-active="${_statusFilter==='discovering'}"
+                                style="--pill-accent:#60a5fa; --pill-base:rgba(96,165,250,0.2);"
+                                onclick="DSEnrichmentModule.setStatusFilter('discovering')"
+                                data-tt="Keşif isteği atılmış, sonuç bekleyen tablolar (tüm sayfalar)">
+                            <i class="fa-solid fa-spinner"></i>Devam Edenler (${_cntDiscovering})
+                        </button>
+                        <button type="button" class="ds-status-pill" data-active="${_statusFilter==='pending_appr'}"
+                                style="--pill-accent:#f59e0b; --pill-base:rgba(245,158,11,0.2);"
+                                onclick="DSEnrichmentModule.setStatusFilter('pending_appr')"
+                                data-tt="Keşfedilmiş ama onaylanmamış tablolar (tüm sayfalar)">
+                            <i class="fa-solid fa-clock"></i>Onay Bekleyenler (${_cntPendingAppr})
+                        </button>
+                    </div>
                 </div>
                 <div style="display:flex; align-items:center; gap:10px;">
                     <button id="dsBulkDiscoverAllBtn" onclick="DSEnrichmentModule.discoverAll()"
-                            ${_btnDiscoverAllDis ? 'disabled' : ''}
-                            style="padding:8px 16px; border-radius:6px; border:none; background:#7c3aed; color:#fff; cursor:${_btnDiscoverAllDis ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_btnDiscoverAllDis ? '0.45' : '1'}; transition: all 0.2s;"
-                            title="${_ttDiscoverAll}">
+                            ${_gateDiscoverAll ? 'disabled' : ''}
+                            style="padding:8px 16px; border-radius:6px; border:none; background:#7c3aed; color:#fff; cursor:${_gateDiscoverAll ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_gateDiscoverAll ? '0.45' : '1'}; transition: all 0.2s;"
+                            data-tt="${_ttDiscoverAll}">
                         <i class="fa-solid fa-magnifying-glass mr-2"></i> Tümünü Keşfet
                     </button>
                     <button id="dsBulkDiscoverBtn" onclick="DSEnrichmentModule.bulkDiscover()"
-                            ${_btnDiscoverSelDis ? 'disabled' : ''}
-                            style="padding:8px 16px; border-radius:6px; border:none; background:#a78bfa; color:#fff; cursor:${_btnDiscoverSelDis ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_btnDiscoverSelDis ? '0.45' : '1'}; transition: all 0.2s;"
-                            title="${_ttDiscoverSel}">
+                            ${_gateDiscoverSel ? 'disabled' : ''}
+                            style="padding:8px 16px; border-radius:6px; border:none; background:#a78bfa; color:#fff; cursor:${_gateDiscoverSel ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_gateDiscoverSel ? '0.45' : '1'}; transition: all 0.2s;"
+                            data-tt="${_ttDiscoverSel}">
                         <i class="fa-solid fa-robot mr-2"></i> Seçilenleri Keşfet (<span id="dsBulkDiscoverCount">${_btnSelUndiscovered}</span>)
                     </button>
                     <button id="dsBulkApproveBtn" onclick="DSEnrichmentModule.bulkApprove()"
-                            ${_btnApproveSelDis ? 'disabled' : ''}
-                            style="padding:8px 16px; border-radius:6px; border:none; background:var(--primary-color, #4f46e5); color:#fff; cursor:${_btnApproveSelDis ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_btnApproveSelDis ? '0.45' : '1'}; transition: all 0.2s;"
-                            title="${_ttApproveSel}">
+                            ${_gateApproveSel ? 'disabled' : ''}
+                            style="padding:8px 16px; border-radius:6px; border:none; background:var(--primary-color, #4f46e5); color:#fff; cursor:${_gateApproveSel ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_gateApproveSel ? '0.45' : '1'}; transition: all 0.2s;"
+                            data-tt="${_ttApproveSel}">
                         <i class="fa-solid fa-check-double mr-2"></i> Seçilenleri Onayla (<span id="dsBulkApproveCount">${_btnSelApprovable}</span>)
                     </button>
                     <button id="dsApproveAllBtn" onclick="DSEnrichmentModule.bulkApproveAll()"
-                            ${_btnApproveAllDis ? 'disabled' : ''}
-                            style="padding:8px 16px; border-radius:6px; border:none; background:#059669; color:#fff; cursor:${_btnApproveAllDis ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_btnApproveAllDis ? '0.45' : '1'}; transition: all 0.2s;"
-                            title="${_ttApproveAll}">
+                            ${_gateApproveAll ? 'disabled' : ''}
+                            style="padding:8px 16px; border-radius:6px; border:none; background:#059669; color:#fff; cursor:${_gateApproveAll ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_gateApproveAll ? '0.45' : '1'}; transition: all 0.2s;"
+                            data-tt="${_ttApproveAll}">
                         <i class="fa-solid fa-check-circle mr-2"></i> Tümünü Onayla
                     </button>
                 </div>
@@ -29792,7 +30308,7 @@ const DSEnrichmentModule = (() => {
                     <thead style="position:sticky; top:0; z-index:10; background:var(--bg-card, #1a1e29); box-shadow:0 2px 5px rgba(0,0,0,0.2);">
                         <tr>
                             <th style="width:40px; text-align:center;">
-                                <input type="checkbox" id="dsSelectAllChk" ${isAllSelected ? "checked" : ""} onchange="DSEnrichmentModule.toggleAllBulk(this.checked)" class="cursor-pointer" title="Bu sayfadaki tümünü seç" style="width:16px; height:16px; cursor:pointer; accent-color:var(--primary-color, #4f46e5); display:inline-block; visibility:visible; opacity:1;">
+                                <input type="checkbox" id="dsSelectAllChk" ${isAllSelected ? "checked" : ""} onchange="DSEnrichmentModule.toggleAllBulk(this.checked)" class="cursor-pointer" data-tt="Tüm filtrelenmiş kayıtları seç (sayfa dışı dahil)" style="width:16px; height:16px; cursor:pointer; accent-color:var(--primary-color, #4f46e5); display:inline-block; visibility:visible; opacity:1;">
                             </th>
                             <th>Schema</th>
                             <th>Tablo</th>
@@ -29848,29 +30364,16 @@ const DSEnrichmentModule = (() => {
         }
         const enrichmentId = item.enrichment_id;
 
-        // Çalışan iş kontrolü — keşif devam ediyorsa onay engelle
+        // v3.31.0 (R002): Frontend preflight kaldirildi. Backend tek-tek approve
+        // endpoint'inde zaten check_running_job yapip {success:false, message:...}
+        // donuyor; aynisi bulk endpoint'inde de mevcut. UX: data.message toast'a
+        // backend'den geliyor.
         try {
-            const _jobCheckToken = localStorage.getItem('access_token');
-            const _jobCheckRes = await fetch(`/api/data-sources/${_currentSourceId}/check-running-job`, {
-                headers: { 'Authorization': `Bearer ${_jobCheckToken}` }
-            });
-            const _jobCheck = await _jobCheckRes.json();
-            if (_jobCheck.has_running) {
-                _showToast('Keşif işlemi devam ediyor. Tamamlanmasını bekleyin.', 'warning');
-                return;
-            }
-        } catch (e) { /* kontrol başarısız, devam et */ }
-
-        try {
-            const token = localStorage.getItem('access_token');
-            const res = await fetch(
+            const res = await _authFetch(
                 `/api/data-sources/${_currentSourceId}/enrichment-approve/${enrichmentId}`,
                 {
                     method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({})
                 }
             );
@@ -29976,15 +30479,11 @@ const DSEnrichmentModule = (() => {
         const notes = document.getElementById('dsEditNotes')?.value?.trim() || null;
 
         try {
-            const token = localStorage.getItem('access_token');
-            const res = await fetch(
+            const res = await _authFetch(
                 `/api/data-sources/${_currentSourceId}/enrichment-approve/${realEnrichmentId}`,
                 {
                     method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         admin_label_tr: label,
                         admin_notes: notes
@@ -30035,11 +30534,7 @@ const DSEnrichmentModule = (() => {
                 _showToast('Bu tablo henüz keşfedilmedi', 'warning');
                 return;
             }
-            const token = localStorage.getItem('access_token');
-            const res = await fetch(
-                `/api/data-sources/enrichment/${enrichmentId}/columns`,
-                { headers: { 'Authorization': `Bearer ${token}` } }
-            );
+            const res = await _authFetch(`/api/data-sources/enrichment/${enrichmentId}/columns`);
 
             if (!res.ok) {
                 console.error('[DSEnrich] Sütun API hatası:', res.status, res.statusText);
@@ -30136,6 +30631,10 @@ const DSEnrichmentModule = (() => {
         const body = document.getElementById('dsEnrichBody');
         if(body) body.innerHTML = `<div class="ds-enrich-loading"><i class="fa-solid fa-spinner fa-spin"></i><p>Yükleniyor...</p></div>`;
         _loadData();
+        // v3.32.0 TYCHE K1 fix: Timer leak — refreshData() _pollRunningJob job-completion
+        // transition'da çağrılıyor; eski _pollingTimer clear edilmezse her job sonrası
+        // bir 10s polling timer stack'leniyor (N job sonrası N paralel _loadDataSilently).
+        if (_pollingTimer) clearInterval(_pollingTimer);
         _pollingTimer = setInterval(_loadDataSilently, 10000);
     }
 
@@ -30172,9 +30671,28 @@ const DSEnrichmentModule = (() => {
     }
 
     function togglePendingApprovalFilter() {
-        _filterPendingApproval = !_filterPendingApproval;
+        // v3.30.1: geriye-uyumluluk shim — eski adla çağrılırsa pending_appr toggle eder
+        setStatusFilter('pending_appr');
+    }
+
+    // v3.30.1: 3-yönlü status filtresi. Aynı değere ikinci tıklama filtreyi kapatır.
+    function setStatusFilter(value) {
+        const allowed = ['', 'pending_disc', 'discovering', 'pending_appr'];
+        const v = allowed.includes(value) ? value : '';
+        _statusFilter = (_statusFilter === v) ? '' : v;
         _currentPage = 1;
         applyFilterAndRender();
+    }
+
+    // v3.30.1: arama temizle butonu
+    function clearSearch() {
+        _searchQuery = '';
+        const inp = document.getElementById('dsSearchInput');
+        if (inp) inp.value = '';
+        _currentPage = 1;
+        applyFilterAndRender();
+        const newInp = document.getElementById('dsSearchInput');
+        if (newInp) newInp.focus();
     }
 
     function toggleCheckbox(chk) {
@@ -30187,11 +30705,10 @@ const DSEnrichmentModule = (() => {
     }
 
     function toggleAllBulk(checked) {
-        const startIndex = (_currentPage - 1) * _pageSize;
-        const endIndex = startIndex + _pageSize;
-        const pageData = _filteredData.slice(startIndex, endIndex);
-
-        pageData.forEach(item => {
+        // v3.30.1: Tüm filtrelenmiş kayıtları (sayfa dışındakileri dahil) seç/seçim kaldır.
+        // Önceden yalnızca aktif sayfa slice'ı işleniyordu → kullanıcı diğer sayfalardaki
+        // kayıtların seçimini fark etmiyor, "Seçilenleri Onayla/Keşfet" eksik çalışıyordu.
+        _filteredData.forEach(item => {
             if (item.is_approved) return;
             if (checked) _selectedIds.add(item.id.toString());
             else _selectedIds.delete(item.id.toString());
@@ -30223,10 +30740,9 @@ const DSEnrichmentModule = (() => {
         }
 
         try {
-            const token = localStorage.getItem('access_token');
-            const res = await fetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
+            const res = await _authFetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ object_ids: toDiscover })
             });
             const data = await res.json();
@@ -30234,6 +30750,9 @@ const DSEnrichmentModule = (() => {
                 _showToast(data.message || `${toDiscover.length} tablo için arkada keşif başlatıldı. Birazdan liste yeşillenecek.`, 'success');
                 // v3.14.0: Seçili satırların İŞLEM kolonunu "Devam Ediyor" olarak güncelle
                 _updateActionStatus(toDiscover, 'discovering');
+                // v3.30.1: filter count'ları için discovering set'ine ekle, render'ı tetikle
+                toDiscover.forEach(id => _discoveringIds.add(String(id)));
+                applyFilterAndRender();
             } else {
                 _showToast(data.message || 'Keşif başlatılamadı.', 'error');
             }
@@ -30247,10 +30766,12 @@ const DSEnrichmentModule = (() => {
     }
 
     async function discoverAll() {
-        // Keşfedilmemiş tüm tabloları keşfet (enrich-selected)
-        const unprocessed = _pendingData.filter(x => !x.enrichment_id).map(x => Number(x.id));
+        // v3.30.1: Filter-aware — _filteredData kullanılır.
+        //   Aktif filtre yok  → tüm pending data
+        //   Filtre var (schema/arama/status/...) → yalnızca o kapsamdaki keşfedilmemişler
+        const unprocessed = _filteredData.filter(x => !x.enrichment_id).map(x => Number(x.id));
         if (unprocessed.length === 0) {
-            _showToast('Keşfedilmemiş tablo bulunamadı. Tüm tablolar zaten keşfedilmiş.', 'info');
+            _showToast('Görüntülenen kapsamda keşfedilmemiş tablo yok.', 'info');
             return;
         }
 
@@ -30262,10 +30783,9 @@ const DSEnrichmentModule = (() => {
         }
 
         try {
-            const token = localStorage.getItem('access_token');
-            const res = await fetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
+            const res = await _authFetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ object_ids: unprocessed })
             });
             const data = await res.json();
@@ -30273,6 +30793,9 @@ const DSEnrichmentModule = (() => {
                 _showToast(data.message || `${unprocessed.length} tablo için keşif başlatıldı. Liste otomatik güncellenecek.`, 'success');
                 // v3.14.0: Tüm satırların İŞLEM kolonunu "Devam Ediyor" olarak güncelle
                 _updateActionStatus(unprocessed, 'discovering');
+                // v3.30.1: filter count'ları için discovering set'ine ekle, render'ı tetikle
+                unprocessed.forEach(id => _discoveringIds.add(String(id)));
+                applyFilterAndRender();
             } else {
                 _showToast(data.message || 'Keşif başlatılamadı.', 'warning');
             }
@@ -30287,6 +30810,8 @@ const DSEnrichmentModule = (() => {
     }
 
     async function bulkApprove() {
+        // v3.32.0 TYCHE O3 fix: single-flight gate (4 bulk butonu için ortak)
+        if (_bulkApproveInFlight) return;
         const checkedBoxes = Array.from(_selectedIds);
         if (checkedBoxes.length === 0) return;
 
@@ -30296,20 +30821,11 @@ const DSEnrichmentModule = (() => {
             btn.disabled = true;
             btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Onaylanıyor...';
         }
+        _bulkApproveInFlight = true;
+        applyFilterAndRender();  // diğer 3 bulk buton'a gate uygulanır
 
-        // Çalışan iş kontrolü — keşif devam ediyorsa onay engelle
-        try {
-            const _jcToken = localStorage.getItem('access_token');
-            const _jcRes = await fetch(`/api/data-sources/${_currentSourceId}/check-running-job`, {
-                headers: { 'Authorization': `Bearer ${_jcToken}` }
-            });
-            const _jc = await _jcRes.json();
-            if (_jc.has_running) {
-                _showToast('Keşif işlemi devam ediyor. Tamamlanmasını bekleyin.', 'warning');
-                if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-check-double mr-2"></i> Seçilenleri Onayla'; }
-                return;
-            }
-        } catch (e) { /* kontrol başarısız, devam et */ }
+        // v3.31.0 (R002): Frontend preflight kaldirildi. Backend bulk endpoint
+        // check_running_job'i kendisi yapip code:"running_job" donuyor.
 
         // object_id -> enrichment_id map: _selectedIds stores object_ids
         const objectToEnrichMap = {};
@@ -30327,34 +30843,30 @@ const DSEnrichmentModule = (() => {
         }
 
         try {
-            const token = localStorage.getItem('access_token');
-            const results = [];
-            
-            // Send requests sequentially using enrichment_id (not object_id)
-            for (const objectId of approvableIds) {
-                const enrichmentId = objectToEnrichMap[objectId];
-                try {
-                    const res = await fetch(
-                        `/api/data-sources/${_currentSourceId}/enrichment-approve/${enrichmentId}`,
-                        {
-                            method: 'POST',
-                            headers: {
-                                'Authorization': `Bearer ${token}`,
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({})
-                        }
-                    );
-                    const data = await res.json();
-                    results.push({objectId, enrichmentId, success: data.success});
-                } catch(err) {
-                    console.error("[DSEnrich] Onay hatası id:", objectId, err);
-                    results.push({objectId, enrichmentId, success: false});
+            // v3.31.0: Tek POST -> backend bulk endpoint.
+            // Per-item SAVEPOINT, partial success (stop_on_error=false), 5 worker
+            // post-commit paralel schema_record. ~5x daha hizli + transactional.
+            const enrichmentIds = approvableIds.map(oid => objectToEnrichMap[oid]);
+            const res = await _authFetch(
+                `/api/data-sources/${_currentSourceId}/enrichment-approve-bulk`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        enrichment_ids: enrichmentIds,
+                        stop_on_error: false,
+                        max_parallel: 5
+                    })
                 }
-            }
+            );
+            const data = await res.json();
 
-            const successObjectIds = results.filter(r => r.success).map(r => String(r.objectId));
-            
+            // approved_ids -> objectId map'i tersle
+            const approvedEnrichSet = new Set((data.approved_ids || []).map(String));
+            const successObjectIds = approvableIds.filter(
+                oid => approvedEnrichSet.has(String(objectToEnrichMap[oid]))
+            ).map(String);
+
             if (successObjectIds.length > 0) {
                 // Başarılı olanları is_approved = true yap
                 _pendingData.forEach(p => {
@@ -30362,23 +30874,34 @@ const DSEnrichmentModule = (() => {
                         p.is_approved = true;
                     }
                 });
-                
+
                 // Seçilenler listesinden kaldır
                 successObjectIds.forEach(id => _selectedIds.delete(id));
-                
+
                 // UI Güncelle
                 applyFilterAndRender();
                 setTimeout(() => _updateStatsAfterApprove(), 350);
-                
-                _showToast(`${successObjectIds.length} tablo onaylandı`, 'success');
+
+                // Toast — bulk endpoint mesajini kullan veya kendimiz uret
+                let msg = data.message || `${successObjectIds.length} tablo onaylandi`;
+                // v3.32.0 TYCHE O2 fix: schema_record_warnings (sync) -> schema_record_pending (bool).
+                // Backend message zaten "embedding arka planda isleniyor" suffix'i ekliyor.
+                if (data.schema_record_pending) {
+                    console.info('[DSEnrich] Embedding/schema_record üretimi arka planda işleniyor');
+                }
+                _showToast(msg, data.failed > 0 ? 'warning' : 'success');
             } else {
-                _showToast('Toplu onay başarısız', 'error');
+                _showToast(data.message || 'Toplu onay basarisiz', 'error');
+                if (data.errors && data.errors.length > 0) {
+                    console.error('[DSEnrich] Bulk approve errors:', data.errors);
+                }
             }
         } catch (err) {
             console.error('[DSEnrich] Toplu onay hatası:', err);
             _showToast('Onay sırasında hata oluştu', 'error');
         } finally {
-            if(btn) btn.disabled=false; 
+            if(btn) btn.disabled=false;
+            _bulkApproveInFlight = false;  // v3.32.0 TYCHE O3 fix: clear single-flight
             applyFilterAndRender(); // update button state via render
         }
     }
@@ -30388,10 +30911,13 @@ const DSEnrichmentModule = (() => {
     // ============================================
 
     async function bulkApproveAll() {
-        // Keşfedilmiş ama onaylanmamış tüm tabloları toplu onayla
-        const toApprove = _pendingData.filter(x => x.enrichment_id && !x.is_approved);
+        // v3.32.0 TYCHE O3 fix: single-flight gate (bulkApprove ile ortak)
+        if (_bulkApproveInFlight) return;
+        // v3.30.1: Filter-aware — _filteredData üzerinden çalışır.
+        // Kullanıcı schema/arama/status ile sınırladıysa yalnızca o kapsamı onaylar.
+        const toApprove = _filteredData.filter(x => x.enrichment_id && !x.is_approved);
         if (toApprove.length === 0) {
-            _showToast('Onaylanacak tablo bulunamadı. Önce keşif yapın.', 'warning');
+            _showToast('Görüntülenen kapsamda onaylanacak tablo yok.', 'warning');
             return;
         }
 
@@ -30401,60 +30927,51 @@ const DSEnrichmentModule = (() => {
             btn.disabled = true;
             btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Onaylanıyor...';
         }
+        _bulkApproveInFlight = true;
+        applyFilterAndRender();  // v3.32.0 TYCHE O3: diğer bulk butonlarına gate
 
-        // Çalışan iş kontrolü — keşif devam ediyorsa onay engelle
-        try {
-            const _jcToken = localStorage.getItem('access_token');
-            const _jcRes = await fetch(`/api/data-sources/${_currentSourceId}/check-running-job`, {
-                headers: { 'Authorization': `Bearer ${_jcToken}` }
-            });
-            const _jc = await _jcRes.json();
-            if (_jc.has_running) {
-                _showToast('Keşif işlemi devam ediyor. Tamamlanmasını bekleyin.', 'warning');
-                if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-check-circle mr-2"></i> Tümünü Onayla'; }
-                return;
-            }
-        } catch (e) { /* kontrol başarısız, devam et */ }
+        // v3.31.0 (R002): Frontend preflight kaldirildi. Backend bulk endpoint
+        // check_running_job'i kendisi yapip code:"running_job" donuyor.
 
         try {
-            const token = localStorage.getItem('access_token');
-            let successCount = 0;
-            let failCount = 0;
-
-            for (const item of toApprove) {
-                try {
-                    const res = await fetch(
-                        `/api/data-sources/${_currentSourceId}/enrichment-approve/${item.enrichment_id}`,
-                        {
-                            method: 'POST',
-                            headers: {
-                                'Authorization': `Bearer ${token}`,
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({})
-                        }
-                    );
-                    const data = await res.json();
-                    if (data.success) {
-                        item.is_approved = true;
-                        successCount++;
-                    } else {
-                        failCount++;
-                    }
-                } catch (e) {
-                    failCount++;
+            // v3.31.0: Tek POST -> backend bulk endpoint (transactional + paralel)
+            const enrichmentIds = toApprove.map(x => x.enrichment_id);
+            const res = await _authFetch(
+                `/api/data-sources/${_currentSourceId}/enrichment-approve-bulk`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        enrichment_ids: enrichmentIds,
+                        stop_on_error: false,
+                        max_parallel: 5
+                    })
                 }
-            }
+            );
+            const data = await res.json();
 
-            if (successCount > 0) {
-                const msg = failCount > 0
-                    ? `${successCount} tablo onaylandı, ${failCount} başarısız`
-                    : `${successCount} tablo onaylandı`;
-                _showToast(msg, 'success');
+            const approvedSet = new Set((data.approved_ids || []).map(String));
+            // Frontend state'i guncelle
+            toApprove.forEach(item => {
+                if (approvedSet.has(String(item.enrichment_id))) {
+                    item.is_approved = true;
+                }
+            });
+
+            if (data.approved > 0) {
+                _showToast(data.message || `${data.approved} tablo onaylandi`,
+                           data.failed > 0 ? 'warning' : 'success');
                 _updateStatsAfterApprove();
                 applyFilterAndRender();
+                // v3.32.0 TYCHE O2 fix: schema_record_warnings -> schema_record_pending
+                if (data.schema_record_pending) {
+                    console.info('[DSEnrich] Embedding/schema_record üretimi arka planda işleniyor');
+                }
             } else {
-                _showToast('Toplu onay başarısız', 'error');
+                _showToast(data.message || 'Toplu onay basarisiz', 'error');
+                if (data.errors && data.errors.length > 0) {
+                    console.error('[DSEnrich] Bulk approve errors:', data.errors);
+                }
             }
         } catch (err) {
             console.error('[DSEnrich] Tümünü onayla hatası:', err);
@@ -30464,6 +30981,8 @@ const DSEnrichmentModule = (() => {
                 btn.disabled = false;
                 btn.innerHTML = '<i class="fa-solid fa-check-circle mr-2"></i> Tümünü Onayla';
             }
+            _bulkApproveInFlight = false;  // v3.32.0 TYCHE O3 fix: clear single-flight
+            applyFilterAndRender();
         }
     }
 
@@ -30472,13 +30991,10 @@ const DSEnrichmentModule = (() => {
     // ============================================
 
     function _updateStatsAfterApprove() {
-        const token = localStorage.getItem('access_token');
-        fetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        })
-        .then(r => r.json())
-        .then(stats => _renderStats(stats))
-        .catch(() => {});
+        _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`)
+            .then(r => r.json())
+            .then(stats => _renderStats(stats))
+            .catch(() => {});
 
         if (_pendingData.length === 0) {
             const body = document.getElementById('dsEnrichBody');
@@ -30519,6 +31035,19 @@ const DSEnrichmentModule = (() => {
         });
     }
 
+    // v3.31.0 (R001): Auth header injection helper.
+    // Tüm modül-içi fetch çağrıları bunu kullanır — token okuma + Bearer header
+    // tek noktada. Caller method/body/content-type sorumluluğunda; biz sadece
+    // Authorization header'ı enjekte ederiz.
+    async function _authFetch(url, opts = {}) {
+        const token = localStorage.getItem('access_token');
+        const headers = {
+            ...(opts.headers || {}),
+            'Authorization': `Bearer ${token}`
+        };
+        return fetch(url, { ...opts, headers });
+    }
+
     function _showToast(message, type) {
         if (typeof showToast === 'function') {
             showToast(message, type);
@@ -30543,6 +31072,8 @@ const DSEnrichmentModule = (() => {
         toggleLowScoreFilter,
         toggleShowApprovedFilter,
         togglePendingApprovalFilter,
+        setStatusFilter,
+        clearSearch,
         changePage,
         toggleCheckbox,
         toggleAllBulk,
@@ -31456,15 +31987,17 @@ window.ThemePickerPopup = (function () {
 
     const API_BASE = '/api/feature-permissions';
     const SUBJECTS_API = '/api/data-sources/permissions/subjects';
-    const FEATURE_KEYS = ['kb', 'db', 'llm'];
+    // v3.30.0: aki_kesif (Akıllı Veri Keşfi / DB Smart Wizard) eklendi
+    const FEATURE_KEYS = ['kb', 'db', 'llm', 'aki_kesif'];
     const FEATURE_LABELS = {
-        kb:  { title: 'Bilgi Tabanında Ara',  icon: 'fa-book-open' },
-        db:  { title: 'Veritabanında Ara',    icon: 'fa-database' },
-        llm: { title: 'VYRA ile Sohbet Et',  icon: 'fa-comments' },
+        kb:        { title: 'Bilgi Tabanında Ara',  icon: 'fa-book-open' },
+        db:        { title: 'Veritabanında Ara',    icon: 'fa-database' },
+        llm:       { title: 'VYRA ile Sohbet Et',   icon: 'fa-comments' },
+        aki_kesif: { title: 'Akıllı Veri Keşfi',    icon: 'fa-magic' },
     };
 
     // Mode-card → chatMode mapping (UI 'kb' → backend chatMode 'rag')
-    const MODE_TO_CHAT = { kb: 'rag', db: 'db', llm: 'llm' };
+    const MODE_TO_CHAT = { kb: 'rag', db: 'db', llm: 'llm', aki_kesif: 'aki_kesif' };
 
     let _myFeatures = null;          // { kb:true, db:false, llm:true }
     let _isAdmin = false;
@@ -33247,6 +33780,1900 @@ window.ThemePickerPopup = (function () {
 
     global.FkInferenceObservability = { init, reload: _loadStats };
 })(window);
+
+
+/* === assets/js/modules/db_smart_ast_history.js === */
+/**
+ * VYRA — DB Smart AST History (Faz 3 / P20-B / v3.30.0)
+ * =====================================================
+ * Undo/redo stack for the DB Smart wizard's AST editor. Pure JS, no DOM,
+ * no network, no globals beyond `window.DbSmartAstHistory`.
+ *
+ * Semantik (spec'ten):
+ *   - `push(astAfter, label)` — patch UYGULANDIKTAN SONRA snapshot al.
+ *   - İlk seed: editor mount'ta `push(initialAst, "başlangıç")`.
+ *   - `undo()` → cursor--, return entries[cursor]  (canUndo: cursor > 0)
+ *   - `redo()` → cursor++, return entries[cursor]  (canRedo: cursor < length-1)
+ *   - Partial undo'dan sonra push edilirse forward branch kesilir.
+ *   - HISTORY_MAX=20; taşınca en eski entry shift edilir, cursor decrement.
+ *   - Deep clone: JSON.stringify + JSON.parse (backend AST'i plain JSON).
+ *
+ * Public API:
+ *   window.DbSmartAstHistory = {
+ *     push(ast, label), undo(), redo(),
+ *     canUndo(), canRedo(),
+ *     clear(), length(), cursor()
+ *   }
+ *
+ * Idempotent global: rerun'da overwrite + console.info uyarısı.
+ */
+(function () {
+    'use strict';
+
+    if (window.DbSmartAstHistory) {
+        console.info('[DbSmartAstHistory] overwriting previous definition (rerun/hot-reload)');
+    }
+
+    const HISTORY_MAX = 20;
+
+    // ---- State ----
+    /** @type {Array<{ast: any, label: string, ts: number}>} */
+    let entries = [];
+    /** @type {number} */
+    let cursor = -1;
+
+    // ---- Helpers ----
+    function deepClone(value) {
+        // Backend AST plain JSON — Date/Map/Set/Function yok varsayımı.
+        // Round-trip stringify/parse en hızlı ve test edilebilir yol.
+        try {
+            return JSON.parse(JSON.stringify(value));
+        } catch (e) {
+            console.warn('[DbSmartAstHistory] deepClone failed:', e);
+            return null;
+        }
+    }
+
+    function snapshot(index) {
+        if (index < 0 || index >= entries.length) return null;
+        const entry = entries[index];
+        return {
+            ast: deepClone(entry.ast),
+            label: entry.label,
+        };
+    }
+
+    // ---- Public methods ----
+    function push(ast, label) {
+        if (ast === null || ast === undefined) {
+            console.warn('[DbSmartAstHistory] push: ast null/undefined, no-op');
+            return;
+        }
+        const cloned = deepClone(ast);
+        if (cloned === null && ast !== null) {
+            // deepClone başarısız (circular vs); no-op.
+            console.warn('[DbSmartAstHistory] push: clone failed, no-op');
+            return;
+        }
+        const entry = {
+            ast: cloned,
+            label: typeof label === 'string' && label ? label : '(unlabeled)',
+            ts: Date.now(),
+        };
+
+        // Partial undo sonrası push → forward branch kesilir.
+        if (cursor < entries.length - 1) {
+            entries = entries.slice(0, cursor + 1);
+        }
+
+        entries.push(entry);
+        cursor = entries.length - 1;
+
+        // Overflow: en eski entry shift, cursor decrement.
+        while (entries.length > HISTORY_MAX) {
+            entries.shift();
+            cursor -= 1;
+            if (cursor < 0) cursor = 0;
+        }
+    }
+
+    function canUndo() {
+        return cursor > 0;
+    }
+
+    function canRedo() {
+        return cursor >= 0 && cursor < entries.length - 1;
+    }
+
+    function undo() {
+        if (!canUndo()) return null;
+        cursor -= 1;
+        return snapshot(cursor);
+    }
+
+    function redo() {
+        if (!canRedo()) return null;
+        cursor += 1;
+        return snapshot(cursor);
+    }
+
+    function clear() {
+        entries = [];
+        cursor = -1;
+    }
+
+    function length() {
+        return entries.length;
+    }
+
+    function cursorPos() {
+        return cursor;
+    }
+
+    // ---- Expose ----
+    window.DbSmartAstHistory = {
+        push: push,
+        undo: undo,
+        redo: redo,
+        canUndo: canUndo,
+        canRedo: canRedo,
+        clear: clear,
+        length: length,
+        cursor: cursorPos,
+    };
+})();
+
+
+/* === assets/js/modules/db_smart_filter_modal.js === */
+/**
+ * VYRA — DB Smart Filter Modal (Faz 3 / P20-C / v3.30.0)
+ * ======================================================
+ * Small modal to compose a filter spec {expr, op, value} for the AST editor
+ * (`window.DbSmartAstEditor`). Lazy-mounted via ensureModal() on first open.
+ *
+ * Public API:
+ *   window.DbSmartFilterModal = {
+ *     open({columns, dialect}) → Promise<spec|null>
+ *   }
+ *
+ *   spec = {expr: "alias.col", op: "=", value: "v"}     // value-bearing ops
+ *   spec = {expr: "alias.col", op: "IS NULL"}            // unary ops (no value)
+ *   spec = {expr: "alias.col", op: "IN", value: [...]}   // IN list (csv split)
+ *   open(...) resolves null on Esc / backdrop / cancel.
+ *
+ * HEBE Gate (HEBE §5c):
+ *   - role="dialog" + aria-modal="true" + aria-labelledby
+ *   - Focus trap (Tab cycle first↔last) + ilk açılışta first field focus
+ *   - Esc → cancel (resolve null) + return focus to opener
+ *   - Backdrop click → cancel; content click not propagated
+ *   - Invalid value → role="alert" inline error; submit blocked
+ *   - prefers-reduced-motion: CSS guard'lı (CSS tarafında)
+ *
+ * Idempotent global: rerun overwrite uyarısı.
+ */
+(function () {
+    'use strict';
+
+    if (window.DbSmartFilterModal) {
+        console.info('[DbSmartFilterModal] overwriting previous definition (rerun/hot-reload)');
+    }
+
+    var MODAL_ID = 'dswFilterModal';
+    var TITLE_ID = 'dswFilterTitle';
+    var FORM_ID = 'dswFilterForm';
+    var COL_ID = 'dswFmColumn';
+    var OP_ID = 'dswFmOp';
+    var VAL_ID = 'dswFmValue';
+    var ERR_ID = 'dswFmError';
+
+    var UNARY_OPS = ['IS NULL', 'IS NOT NULL'];
+    var ALL_OPS = ['=', '!=', '<', '<=', '>', '>=', 'LIKE', 'ILIKE', 'IS NULL', 'IS NOT NULL', 'IN'];
+
+    // Resolver kapsamı — open() çağrısı boyunca tek modal/promise.
+    var currentResolve = null;
+    var openerEl = null;
+
+    function $(id) { return document.getElementById(id); }
+
+    function ensureModal() {
+        if ($(MODAL_ID)) return;
+        var root = document.createElement('div');
+        root.id = MODAL_ID;
+        root.className = 'dsw-fm-modal';
+        root.setAttribute('role', 'dialog');
+        root.setAttribute('aria-modal', 'true');
+        root.setAttribute('aria-labelledby', TITLE_ID);
+        root.hidden = true;
+
+        root.innerHTML = ''
+            + '<div class="dsw-fm-backdrop" data-action="close" tabindex="-1"></div>'
+            + '<div class="dsw-fm-dialog" role="document">'
+            + '  <div class="dsw-fm-header">'
+            + '    <h2 id="' + TITLE_ID + '" class="dsw-fm-title">Filtre Ekle</h2>'
+            + '    <button type="button" class="dsw-fm-close" data-action="close" aria-label="Kapat">×</button>'
+            + '  </div>'
+            + '  <form id="' + FORM_ID + '" class="dsw-fm-body" novalidate>'
+            + '    <label class="dsw-fm-field">'
+            + '      <span class="dsw-fm-label">Kolon</span>'
+            + '      <select id="' + COL_ID + '" required></select>'
+            + '    </label>'
+            + '    <label class="dsw-fm-field">'
+            + '      <span class="dsw-fm-label">İşleç</span>'
+            + '      <select id="' + OP_ID + '" required></select>'
+            + '    </label>'
+            + '    <label class="dsw-fm-field" id="dswFmValueWrap">'
+            + '      <span class="dsw-fm-label">Değer</span>'
+            + '      <input id="' + VAL_ID + '" type="text" autocomplete="off"'
+            + '             aria-describedby="' + ERR_ID + '" />'
+            + '    </label>'
+            + '    <div id="' + ERR_ID + '" class="dsw-fm-error" role="alert" aria-live="assertive"></div>'
+            + '  </form>'
+            + '  <div class="dsw-fm-foot">'
+            + '    <button type="button" class="dsw-fm-btn-ghost" data-action="close">İptal</button>'
+            + '    <button type="button" class="dsw-fm-btn" data-action="submit">Ekle</button>'
+            + '  </div>'
+            + '</div>';
+        document.body.appendChild(root);
+
+        // Op select doldur (ilk ensureModal'da; her open'da güncellenmez — sabit liste).
+        var opSel = $(OP_ID);
+        for (var i = 0; i < ALL_OPS.length; i += 1) {
+            var o = document.createElement('option');
+            o.value = ALL_OPS[i];
+            o.textContent = ALL_OPS[i];
+            opSel.appendChild(o);
+        }
+
+        // Event wiring.
+        root.addEventListener('click', _onRootClick);
+        root.addEventListener('keydown', _onKeyDown);
+        opSel.addEventListener('change', _onOpChange);
+    }
+
+    function _onRootClick(e) {
+        var t = e.target;
+        if (!t || !t.dataset) return;
+        if (t.dataset.action === 'close') {
+            e.preventDefault();
+            _close(null);
+        } else if (t.dataset.action === 'submit') {
+            e.preventDefault();
+            _submit();
+        }
+    }
+
+    function _onKeyDown(e) {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            _close(null);
+            return;
+        }
+        if (e.key === 'Enter' && e.target && e.target.tagName !== 'BUTTON') {
+            // Enter on a field → submit.
+            e.preventDefault();
+            _submit();
+            return;
+        }
+        if (e.key === 'Tab') {
+            _trapTab(e);
+        }
+    }
+
+    function _trapTab(e) {
+        var root = $(MODAL_ID);
+        if (!root) return;
+        var focusables = root.querySelectorAll(
+            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusables.length === 0) return;
+        var first = focusables[0];
+        var last = focusables[focusables.length - 1];
+        var active = document.activeElement;
+        if (e.shiftKey && active === first) {
+            e.preventDefault();
+            last.focus();
+        } else if (!e.shiftKey && active === last) {
+            e.preventDefault();
+            first.focus();
+        }
+    }
+
+    function _onOpChange() {
+        var op = $(OP_ID).value;
+        var wrap = $('dswFmValueWrap');
+        var input = $(VAL_ID);
+        var isUnary = UNARY_OPS.indexOf(op) !== -1;
+        if (wrap) wrap.hidden = isUnary;
+        if (input) {
+            input.required = !isUnary;
+            if (isUnary) input.value = '';
+        }
+        _setError('');
+    }
+
+    function _setError(msg) {
+        var el = $(ERR_ID);
+        if (!el) return;
+        el.textContent = msg || '';
+        el.classList.toggle('dsw-fm-error-visible', !!msg);
+    }
+
+    function _validate() {
+        var expr = $(COL_ID).value;
+        var op = $(OP_ID).value;
+        var raw = $(VAL_ID).value;
+        if (!expr) {
+            _setError('Kolon seçin.');
+            $(COL_ID).focus();
+            return null;
+        }
+        if (ALL_OPS.indexOf(op) === -1) {
+            _setError('Geçersiz işleç.');
+            $(OP_ID).focus();
+            return null;
+        }
+        var isUnary = UNARY_OPS.indexOf(op) !== -1;
+        if (isUnary) {
+            return { expr: expr, op: op };
+        }
+        if (raw === '' || raw == null) {
+            _setError('Değer boş olamaz.');
+            $(VAL_ID).focus();
+            return null;
+        }
+        if (op === 'IN') {
+            // CSV split + trim; boş öğeleri at.
+            var parts = raw.split(',').map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+            if (parts.length === 0) {
+                _setError('IN listesi boş.');
+                $(VAL_ID).focus();
+                return null;
+            }
+            return { expr: expr, op: op, value: parts };
+        }
+        return { expr: expr, op: op, value: raw };
+    }
+
+    function _submit() {
+        var spec = _validate();
+        if (spec) _close(spec);
+    }
+
+    function _close(result) {
+        var root = $(MODAL_ID);
+        if (root) root.hidden = true;
+        document.body.classList.remove('dsw-fm-open');
+        var resolver = currentResolve;
+        var prevOpener = openerEl;
+        currentResolve = null;
+        openerEl = null;
+        if (prevOpener && typeof prevOpener.focus === 'function') {
+            try { prevOpener.focus(); } catch (e) { /* ignore */ }
+        }
+        if (resolver) resolver(result);
+    }
+
+    function _populateColumns(columns) {
+        var sel = $(COL_ID);
+        sel.innerHTML = '';
+        var arr = Array.isArray(columns) ? columns : [];
+        for (var i = 0; i < arr.length; i += 1) {
+            var c = arr[i];
+            var opt = document.createElement('option');
+            if (typeof c === 'string') {
+                opt.value = c;
+                opt.textContent = c;
+            } else if (c && typeof c === 'object') {
+                opt.value = c.expr || c.value || c.name || '';
+                opt.textContent = c.label || c.name || opt.value;
+            } else {
+                continue;
+            }
+            sel.appendChild(opt);
+        }
+    }
+
+    // ---- Public ----
+    function open(opts) {
+        opts = opts || {};
+        ensureModal();
+        if (currentResolve) {
+            // Önceki açılış henüz kapanmadı — onu cancel'la.
+            _close(null);
+        }
+        openerEl = document.activeElement;
+        _populateColumns(opts.columns || []);
+        // Op select default = "=" (ilk seçenek)
+        var opSel = $(OP_ID);
+        if (opSel.options.length > 0) opSel.selectedIndex = 0;
+        _onOpChange();
+        $(VAL_ID).value = '';
+        _setError('');
+
+        var root = $(MODAL_ID);
+        root.hidden = false;
+        document.body.classList.add('dsw-fm-open');
+
+        // Initial focus = column select.
+        setTimeout(function () {
+            try { $(COL_ID).focus(); } catch (e) { /* ignore */ }
+        }, 0);
+
+        return new Promise(function (resolve) { currentResolve = resolve; });
+    }
+
+    window.DbSmartFilterModal = { open: open };
+})();
+
+
+/* === assets/js/modules/db_smart_ast_editor.js === */
+/**
+ * VYRA — DB Smart AST Editor (Faz 3 / P20-A / v3.30.0)
+ * =====================================================
+ * Interaktif SQL AST editörü. Step 4'te mount edilir; kolon/order/filter
+ * listelerini DnD + klavye ile yeniden düzenler, server ile patch + explain
+ * round-trip yapar, undo/redo + diff toast desteği sunar.
+ *
+ * Public API:
+ *   window.DbSmartAstEditor = {
+ *     mount(rootEl, {sessionUid, dialect, ast, fetchJson?, onChange?}),
+ *     unmount(),
+ *     getAst(),
+ *     getHistory(),
+ *   }
+ *
+ * Bağımlılıklar (sibling modüller — bu modül yazmaz, çağırır):
+ *   - window.DbSmartAstHistory : push/undo/redo/canUndo/canRedo/clear  (P20-B)
+ *   - window.DbSmartFilterModal: open({columns,dialect}) → Promise<spec|null> (P20-C)
+ *   - window.showToast(msg, type)
+ *
+ * HEBE Gate (§5c):
+ *   - role="region" aria-label="AST düzenleyici"
+ *   - role="list" + role="listitem" tabindex=0 aria-grabbed
+ *   - Space=grab/drop, Arrow=move, Enter=drop, Esc=cancel-grab, Delete=remove
+ *   - aria-live polite via #dswAstLive (P20-C tarafından home.html'de yer alır)
+ *   - prefers-reduced-motion (CSS, P20-C tarafında)
+ *
+ * Idempotent global: rerun overwrite warning.
+ */
+(function () {
+    'use strict';
+
+    if (window.DbSmartAstEditor) {
+        console.info('[DbSmartAstEditor] overwriting previous definition (rerun/hot-reload)');
+    }
+
+    var API_BASE = (window.API_BASE_URL || 'http://localhost:8002') + '/api/db-smart';
+    var DEBOUNCE_MS = 250;
+    var COST_GREEN = 1e4;
+    var COST_YELLOW = 1e6;
+
+    // ---- State (closure-scoped, single editor instance at a time) ----
+    var state = null;
+
+    function _initState(rootEl, opts) {
+        return {
+            rootEl: rootEl,
+            sessionUid: opts.sessionUid || null,
+            dialect: opts.dialect || 'postgresql',
+            ast: opts.ast || null,
+            fetchJson: typeof opts.fetchJson === 'function' ? opts.fetchJson : _defaultFetchJson,
+            onChange: typeof opts.onChange === 'function' ? opts.onChange : null,
+            debounceTimer: null,
+            pendingOps: [],          // coalesce: [{op, args, prevAst}]
+            patchAbort: null,
+            explainAbort: null,
+            grabbed: null,           // {listKey, index} | null
+            filterModalOpen: false,
+            globalKeyHandler: null,
+            lastExplain: null,       // {cost, cached}
+        };
+    }
+
+    // ---- Default fetchJson (Bearer auth — wizard pattern mirrored) ----
+    function _defaultFetchJson(url, opts) {
+        opts = opts || {};
+        var token = (window.localStorage && localStorage.getItem('access_token')) || '';
+        var headers = Object.assign({
+            'Authorization': 'Bearer ' + token,
+            'Content-Type': 'application/json',
+        }, opts.headers || {});
+        var fetchOpts = Object.assign({}, opts, { headers: headers });
+        return fetch(url, fetchOpts).then(function (res) {
+            if (!res.ok) {
+                return res.text().catch(function () { return ''; }).then(function (txt) {
+                    var err = new Error(res.status + ': ' + (txt || res.statusText));
+                    err.status = res.status;
+                    err.body = txt;
+                    throw err;
+                });
+            }
+            return res.json();
+        });
+    }
+
+    // ---- Utilities ----
+    function _escape(s) {
+        if (s == null) return '';
+        return String(s).replace(/[&<>"']/g, function (ch) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+        });
+    }
+
+    function _announce(msg) {
+        var live = document.getElementById('dswAstLive');
+        if (live) live.textContent = msg || '';
+    }
+
+    function _toast(msg, type) {
+        if (typeof window.showToast === 'function') {
+            try { window.showToast(msg, type || 'info'); } catch (e) { /* ignore */ }
+        }
+    }
+
+    function _deepClone(obj) {
+        try { return JSON.parse(JSON.stringify(obj)); }
+        catch (e) { return null; }
+    }
+
+    function _columnsFromAst(ast) {
+        // Returns [{expr, label}] for filter modal selector.
+        var out = [];
+        if (!ast || !ast.select) return out;
+        var sel = ast.select;
+        for (var i = 0; i < sel.length; i += 1) {
+            var c = sel[i];
+            if (typeof c === 'string') {
+                out.push({ expr: c, label: c });
+            } else if (c && typeof c === 'object') {
+                var expr = c.expr || c.column || c.name || '';
+                if (expr) out.push({ expr: expr, label: c.alias || c.label || expr });
+            }
+        }
+        return out;
+    }
+
+    // ---- Render ----
+    function _render() {
+        if (!state || !state.rootEl) return;
+        var root = state.rootEl;
+        if (!state.ast) {
+            root.innerHTML = '<p class="dsw-ast-empty">AST henüz hazır değil.</p>';
+            return;
+        }
+        root.innerHTML = ''
+            + _renderToolbar()
+            + '<div class="dsw-ast-sections">'
+            + '  <section class="dsw-ast-section" data-key="select">'
+            + '    <h4 class="dsw-ast-section-title">SELECT</h4>'
+            + _renderSelectList()
+            + '  </section>'
+            + '  <section class="dsw-ast-section" data-key="order">'
+            + '    <h4 class="dsw-ast-section-title">ORDER BY</h4>'
+            + _renderOrderList()
+            + '  </section>'
+            + '  <section class="dsw-ast-section" data-key="filters">'
+            + '    <h4 class="dsw-ast-section-title">WHERE</h4>'
+            + _renderFilterChips()
+            + '  </section>'
+            + '</div>'
+            + _renderCostBadge();
+
+        _wire();
+    }
+
+    function _renderToolbar() {
+        var hist = window.DbSmartAstHistory;
+        var canUndo = hist && typeof hist.canUndo === 'function' && hist.canUndo();
+        var canRedo = hist && typeof hist.canRedo === 'function' && hist.canRedo();
+        return ''
+            + '<div class="dsw-toolbar" role="toolbar" aria-label="AST araçları">'
+            + '  <button type="button" class="dsw-toolbar-btn" data-action="undo"'
+            + '          aria-keyshortcuts="Control+Z"'
+            + (canUndo ? '' : ' disabled aria-disabled="true"')
+            + '>↶ Geri Al</button>'
+            + '  <button type="button" class="dsw-toolbar-btn" data-action="redo"'
+            + '          aria-keyshortcuts="Control+Y Control+Shift+Z"'
+            + (canRedo ? '' : ' disabled aria-disabled="true"')
+            + '>↷ Yinele</button>'
+            + '</div>';
+    }
+
+    function _renderSelectList() {
+        var sel = (state.ast && state.ast.select) || [];
+        var html = '<ul class="dsw-ast-list" role="list" data-list="select">';
+        for (var i = 0; i < sel.length; i += 1) {
+            var c = sel[i];
+            var expr = (typeof c === 'string') ? c : (c && (c.expr || c.column || c.name)) || '';
+            var label = (c && typeof c === 'object' && (c.alias || c.label)) || expr;
+            html += ''
+                + '<li class="dsw-ast-item" role="listitem" draggable="true"'
+                + '    tabindex="0" aria-grabbed="false"'
+                + '    data-list="select" data-index="' + i + '"'
+                + '    aria-label="Kolon ' + _escape(label) + ', sürükle veya boşluk tuşu ile taşı">'
+                + '  <span class="dsw-ast-item-label">' + _escape(label) + '</span>'
+                + '  <button type="button" class="dsw-ast-item-remove" aria-label="Kaldır"'
+                + '          data-action="remove_column" data-index="' + i + '">×</button>'
+                + '</li>';
+        }
+        html += '</ul>';
+        if (sel.length === 0) html += '<p class="dsw-ast-empty-line">Kolon seçilmedi.</p>';
+        return html;
+    }
+
+    function _renderOrderList() {
+        var ord = (state.ast && state.ast.order_by) || [];
+        var html = '<ul class="dsw-ast-list" role="list" data-list="order">';
+        for (var i = 0; i < ord.length; i += 1) {
+            var o = ord[i];
+            var expr = (typeof o === 'string') ? o : (o && (o.expr || o.column)) || '';
+            var dir = (o && typeof o === 'object' && o.direction) ? String(o.direction).toUpperCase() : 'ASC';
+            if (dir !== 'ASC' && dir !== 'DESC') dir = 'ASC';
+            html += ''
+                + '<li class="dsw-ast-item" role="listitem" draggable="true"'
+                + '    tabindex="0" aria-grabbed="false"'
+                + '    data-list="order" data-index="' + i + '"'
+                + '    aria-label="Sıralama ' + _escape(expr) + ' ' + dir + '">'
+                + '  <span class="dsw-ast-item-label">' + _escape(expr) + '</span>'
+                + '  <button type="button" class="dsw-ast-order-toggle"'
+                + '          data-action="toggle_order_dir" data-index="' + i + '"'
+                + '          aria-label="Yönü değiştir, şu an ' + dir + '">' + dir + '</button>'
+                + '  <button type="button" class="dsw-ast-item-remove" aria-label="Sıralamayı kaldır"'
+                + '          data-action="remove_order" data-index="' + i + '">×</button>'
+                + '</li>';
+        }
+        html += '</ul>';
+        if (ord.length === 0) html += '<p class="dsw-ast-empty-line">Sıralama yok.</p>';
+        return html;
+    }
+
+    function _renderFilterChips() {
+        var fs = (state.ast && state.ast.filters) || [];
+        var html = '<div class="dsw-ast-chips" role="list">';
+        for (var i = 0; i < fs.length; i += 1) {
+            var f = fs[i] || {};
+            var text = (f.expr || '') + ' ' + (f.op || '');
+            if (f.op !== 'IS NULL' && f.op !== 'IS NOT NULL') {
+                var v = f.value;
+                if (Array.isArray(v)) v = v.join(', ');
+                text += ' ' + (v == null ? '' : String(v));
+            }
+            html += ''
+                + '<button type="button" class="dsw-ast-chip" role="listitem"'
+                + '        data-action="remove_filter" data-index="' + i + '"'
+                + '        aria-label="Filtreyi kaldır: ' + _escape(text) + '">'
+                + '  <span class="dsw-ast-chip-text">' + _escape(text) + '</span>'
+                + '  <span class="dsw-ast-chip-x" aria-hidden="true">×</span>'
+                + '</button>';
+        }
+        html += ''
+            + '  <button type="button" class="dsw-ast-chip dsw-ast-chip-add"'
+            + '          data-action="add_filter" aria-label="Filtre ekle">+ Ekle</button>'
+            + '</div>';
+        return html;
+    }
+
+    function _renderCostBadge() {
+        var c = state.lastExplain;
+        var cls = 'cost-unknown', text = '?', cached = false;
+        if (c && typeof c.cost === 'number') {
+            if (c.cost < COST_GREEN) cls = 'cost-green';
+            else if (c.cost < COST_YELLOW) cls = 'cost-yellow';
+            else cls = 'cost-red';
+            text = _formatCost(c.cost);
+            cached = !!c.cached;
+        }
+        var aria = c && typeof c.cost === 'number'
+            ? ('Tahmini maliyet ' + text + (cached ? ', önbellekten' : ''))
+            : 'Tahmini maliyet bilinmiyor';
+        return ''
+            + '<div class="dsw-cost-badge ' + cls + (cached ? ' cached' : '') + '"'
+            + '     aria-label="' + _escape(aria) + '">'
+            + '  <span class="dsw-cost-badge-label">Maliyet:</span>'
+            + '  <span class="dsw-cost-badge-value">' + _escape(text) + '</span>'
+            + '</div>';
+    }
+
+    function _formatCost(n) {
+        if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+        if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+        if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+        return String(Math.round(n));
+    }
+
+    // ---- Event wiring (called after _render) ----
+    function _wire() {
+        var root = state.rootEl;
+        root.addEventListener('click', _onRootClick);
+        var lists = root.querySelectorAll('.dsw-ast-list');
+        for (var i = 0; i < lists.length; i += 1) {
+            _attachDnd(lists[i]);
+            _attachKeyboardReorder(lists[i]);
+        }
+    }
+
+    function _onRootClick(e) {
+        var btn = e.target.closest && e.target.closest('[data-action]');
+        if (!btn) return;
+        var action = btn.dataset.action;
+        var idx = parseInt(btn.dataset.index, 10);
+        if (action === 'undo') { e.preventDefault(); undo(); return; }
+        if (action === 'redo') { e.preventDefault(); redo(); return; }
+        if (action === 'remove_column' && !isNaN(idx)) {
+            _applyPatch('remove_column', { index: idx });
+        } else if (action === 'remove_order' && !isNaN(idx)) {
+            _applyPatch('remove_order', { index: idx });
+        } else if (action === 'remove_filter' && !isNaN(idx)) {
+            _applyPatch('remove_filter', { index: idx });
+        } else if (action === 'toggle_order_dir' && !isNaN(idx)) {
+            var ord = (state.ast && state.ast.order_by) || [];
+            var cur = ord[idx] || {};
+            var dir = (cur && cur.direction || 'ASC').toUpperCase();
+            var next = dir === 'ASC' ? 'DESC' : 'ASC';
+            _applyPatch('modify_order_dir', { index: idx, direction: next });
+        } else if (action === 'add_filter') {
+            _openAddFilterModal();
+        }
+    }
+
+    function _openAddFilterModal() {
+        if (state.filterModalOpen) return;
+        var modal = window.DbSmartFilterModal;
+        if (!modal || typeof modal.open !== 'function') {
+            _toast('Filtre modülü yüklenmedi.', 'error');
+            return;
+        }
+        state.filterModalOpen = true;
+        modal.open({ columns: _columnsFromAst(state.ast), dialect: state.dialect })
+            .then(function (spec) {
+                state.filterModalOpen = false;
+                if (spec) _applyPatch('add_filter', spec);
+            })
+            .catch(function (err) {
+                state.filterModalOpen = false;
+                console.warn('[DbSmartAstEditor] filter modal error', err);
+            });
+    }
+
+    // ---- DnD ----
+    function _attachDnd(listEl) {
+        var listKey = listEl.dataset.list;
+        listEl.addEventListener('dragstart', function (e) {
+            var li = e.target.closest && e.target.closest('.dsw-ast-item');
+            if (!li || li.parentElement !== listEl) return;
+            li.setAttribute('aria-grabbed', 'true');
+            li.classList.add('dragging');
+            if (e.dataTransfer) {
+                e.dataTransfer.effectAllowed = 'move';
+                try { e.dataTransfer.setData('text/plain', li.dataset.index); } catch (_) { /* ignore */ }
+            }
+        });
+        listEl.addEventListener('dragend', function (e) {
+            var li = e.target.closest && e.target.closest('.dsw-ast-item');
+            if (li) {
+                li.setAttribute('aria-grabbed', 'false');
+                li.classList.remove('dragging');
+            }
+            _removeDropIndicator(listEl);
+        });
+        listEl.addEventListener('dragover', function (e) {
+            e.preventDefault();
+            if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+            _showDropIndicator(listEl, e.clientY);
+        });
+        listEl.addEventListener('dragleave', function () {
+            _removeDropIndicator(listEl);
+        });
+        listEl.addEventListener('drop', function (e) {
+            e.preventDefault();
+            var fromIdx = parseInt(e.dataTransfer && e.dataTransfer.getData('text/plain'), 10);
+            var toIdx = _dropIndexAt(listEl, e.clientY);
+            _removeDropIndicator(listEl);
+            if (isNaN(fromIdx) || isNaN(toIdx) || fromIdx === toIdx) return;
+            var op = listKey === 'select' ? 'reorder_columns' : 'reorder_order';
+            _applyPatch(op, { from: fromIdx, to: toIdx });
+        });
+    }
+
+    function _dropIndexAt(listEl, clientY) {
+        var items = listEl.querySelectorAll('.dsw-ast-item');
+        for (var i = 0; i < items.length; i += 1) {
+            var rect = items[i].getBoundingClientRect();
+            if (clientY < rect.top + rect.height / 2) return i;
+        }
+        return items.length;
+    }
+
+    function _showDropIndicator(listEl, clientY) {
+        _removeDropIndicator(listEl);
+        var idx = _dropIndexAt(listEl, clientY);
+        var ind = document.createElement('div');
+        ind.className = 'dsw-drop-indicator';
+        ind.setAttribute('aria-hidden', 'true');
+        var items = listEl.querySelectorAll('.dsw-ast-item');
+        if (idx >= items.length) {
+            listEl.appendChild(ind);
+        } else {
+            listEl.insertBefore(ind, items[idx]);
+        }
+    }
+
+    function _removeDropIndicator(listEl) {
+        var ind = listEl.querySelector('.dsw-drop-indicator');
+        if (ind && ind.parentNode) ind.parentNode.removeChild(ind);
+    }
+
+    // ---- Keyboard reorder (Space=grab, Arrow=move, Enter=drop, Esc=cancel, Delete=remove) ----
+    function _attachKeyboardReorder(listEl) {
+        var listKey = listEl.dataset.list;
+        listEl.addEventListener('keydown', function (e) {
+            var li = e.target.closest && e.target.closest('.dsw-ast-item');
+            if (!li || li.parentElement !== listEl) return;
+            var idx = parseInt(li.dataset.index, 10);
+            if (isNaN(idx)) return;
+
+            if (e.key === ' ' || e.key === 'Spacebar') {
+                e.preventDefault();
+                if (state.grabbed && state.grabbed.listKey === listKey && state.grabbed.index === idx) {
+                    // Drop in place — clear grabbed.
+                    li.setAttribute('aria-grabbed', 'false');
+                    state.grabbed = null;
+                    _announce('Bırakıldı.');
+                } else {
+                    if (state.grabbed) {
+                        var prev = _findItem(state.grabbed.listKey, state.grabbed.index);
+                        if (prev) prev.setAttribute('aria-grabbed', 'false');
+                    }
+                    li.setAttribute('aria-grabbed', 'true');
+                    state.grabbed = { listKey: listKey, index: idx };
+                    _announce('Tutuldu. Ok tuşlarıyla taşıyın, Enter ile bırakın, Esc ile iptal.');
+                }
+                return;
+            }
+            if (e.key === 'Escape') {
+                if (state.grabbed) {
+                    e.preventDefault();
+                    li.setAttribute('aria-grabbed', 'false');
+                    state.grabbed = null;
+                    _announce('İptal edildi.');
+                }
+                return;
+            }
+            if (e.key === 'Enter') {
+                if (state.grabbed && state.grabbed.listKey === listKey) {
+                    e.preventDefault();
+                    var from = state.grabbed.index;
+                    if (from !== idx) {
+                        var op = listKey === 'select' ? 'reorder_columns' : 'reorder_order';
+                        _applyPatch(op, { from: from, to: idx });
+                    }
+                    state.grabbed = null;
+                    _announce('Bırakıldı.');
+                }
+                return;
+            }
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                e.preventDefault();
+                var rmOp = listKey === 'select' ? 'remove_column'
+                         : listKey === 'order' ? 'remove_order'
+                         : 'remove_filter';
+                _applyPatch(rmOp, { index: idx });
+                return;
+            }
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault();
+                var dir = e.key === 'ArrowDown' ? 1 : -1;
+                if (state.grabbed && state.grabbed.listKey === listKey && state.grabbed.index === idx) {
+                    var target = idx + dir;
+                    var items = listEl.querySelectorAll('.dsw-ast-item');
+                    if (target < 0 || target >= items.length) return;
+                    var op2 = listKey === 'select' ? 'reorder_columns' : 'reorder_order';
+                    _applyPatch(op2, { from: idx, to: target });
+                    state.grabbed = { listKey: listKey, index: target };
+                    // Re-focus after re-render
+                    setTimeout(function () {
+                        var moved = _findItem(listKey, target);
+                        if (moved) { moved.focus(); moved.setAttribute('aria-grabbed', 'true'); }
+                    }, 0);
+                } else {
+                    var nextIdx = idx + dir;
+                    var sib = _findItem(listKey, nextIdx);
+                    if (sib) sib.focus();
+                }
+            }
+        });
+    }
+
+    function _findItem(listKey, idx) {
+        if (!state || !state.rootEl) return null;
+        return state.rootEl.querySelector(
+            '.dsw-ast-item[data-list="' + listKey + '"][data-index="' + idx + '"]'
+        );
+    }
+
+    // ---- Patch + Explain ----
+    function _applyPatch(op, args) {
+        if (!state || !state.ast) return;
+        var prevAst = _deepClone(state.ast);
+        // Optimistic mutate (best-effort; server is authoritative)
+        _optimisticApply(state.ast, op, args);
+        _pushHistory(prevAst, op);
+        _render();
+        _debouncedPatch(op, args, prevAst);
+    }
+
+    function _optimisticApply(ast, op, args) {
+        if (!ast) return;
+        try {
+            if (op === 'remove_column' && ast.select) {
+                ast.select.splice(args.index, 1);
+            } else if (op === 'remove_order' && ast.order_by) {
+                ast.order_by.splice(args.index, 1);
+            } else if (op === 'remove_filter' && ast.filters) {
+                ast.filters.splice(args.index, 1);
+            } else if (op === 'reorder_columns' && ast.select) {
+                var s = ast.select.splice(args.from, 1)[0];
+                ast.select.splice(args.to, 0, s);
+            } else if (op === 'reorder_order' && ast.order_by) {
+                var o = ast.order_by.splice(args.from, 1)[0];
+                ast.order_by.splice(args.to, 0, o);
+            } else if (op === 'modify_order_dir' && ast.order_by) {
+                var item = ast.order_by[args.index];
+                if (typeof item === 'string') {
+                    ast.order_by[args.index] = { expr: item, direction: args.direction };
+                } else if (item && typeof item === 'object') {
+                    item.direction = args.direction;
+                }
+            } else if (op === 'add_filter') {
+                ast.filters = ast.filters || [];
+                ast.filters.push(args);
+            }
+        } catch (e) { /* ignore — server will return canonical */ }
+    }
+
+    function _pushHistory(prevAst, label) {
+        var hist = window.DbSmartAstHistory;
+        if (hist && typeof hist.push === 'function') {
+            try { hist.push(prevAst, label); } catch (e) { /* ignore */ }
+        }
+    }
+
+    function _debouncedPatch(op, args, prevAst) {
+        if (state.debounceTimer) clearTimeout(state.debounceTimer);
+        state.pendingOps.push({ op: op, args: args, prevAst: prevAst });
+        state.debounceTimer = setTimeout(_flushPatch, DEBOUNCE_MS);
+    }
+
+    function _flushPatch() {
+        if (!state || state.pendingOps.length === 0) return;
+        var pending = state.pendingOps.slice();
+        var rollbackAst = pending[0].prevAst;
+        state.pendingOps = [];
+        state.debounceTimer = null;
+        if (!state.sessionUid) {
+            _toast('Oturum hazır değil.', 'error');
+            return;
+        }
+        // For simplicity send the LAST op; server is authoritative and will return the AST.
+        var last = pending[pending.length - 1];
+        if (state.patchAbort) {
+            try { state.patchAbort.abort(); } catch (e) { /* ignore */ }
+        }
+        state.patchAbort = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        var url = API_BASE + '/sessions/' + encodeURIComponent(state.sessionUid) + '/ast/patch';
+        var body = {
+            op: last.op,
+            args: last.args,
+            render_preview: true,
+            dialect: state.dialect,
+        };
+        var fetchOpts = {
+            method: 'POST',
+            body: JSON.stringify(body),
+        };
+        if (state.patchAbort) fetchOpts.signal = state.patchAbort.signal;
+        state.fetchJson(url, fetchOpts).then(function (data) {
+            state.patchAbort = null;
+            if (data && data.ast) {
+                state.ast = data.ast;
+                _render();
+                if (state.onChange) {
+                    try { state.onChange(data.ast, data.sql || null); } catch (e) { /* ignore */ }
+                }
+            }
+            _refreshExplain();
+        }).catch(function (err) {
+            state.patchAbort = null;
+            if (err && err.name === 'AbortError') return;
+            // Rollback
+            state.ast = rollbackAst;
+            _render();
+            var status = err && err.status;
+            var msg = 'AST yaması başarısız';
+            if (status === 400) msg = 'Geçersiz işlem.';
+            else if (status === 404) msg = 'Oturum bulunamadı.';
+            else if (status === 409) msg = 'AST çakışması — sayfayı yenileyin.';
+            _toast(msg, 'error');
+            console.warn('[DbSmartAstEditor] patch failed', err);
+        });
+    }
+
+    function _refreshExplain() {
+        if (!state || !state.ast) return;
+        if (state.explainAbort) {
+            try { state.explainAbort.abort(); } catch (e) { /* ignore */ }
+        }
+        state.explainAbort = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        var url = API_BASE + '/sessions/' + encodeURIComponent(state.sessionUid) + '/explain';
+        var fetchOpts = {
+            method: 'POST',
+            body: JSON.stringify({ ast: state.ast, dialect: state.dialect }),
+        };
+        if (state.explainAbort) fetchOpts.signal = state.explainAbort.signal;
+        state.fetchJson(url, fetchOpts).then(function (data) {
+            state.explainAbort = null;
+            if (data && typeof data.cost !== 'undefined') {
+                state.lastExplain = { cost: Number(data.cost), cached: !!data.cached };
+            } else {
+                state.lastExplain = null;
+            }
+            _updateCostBadge();
+        }).catch(function (err) {
+            state.explainAbort = null;
+            if (err && err.name === 'AbortError') return;
+            state.lastExplain = null;
+            _updateCostBadge();
+        });
+    }
+
+    function _updateCostBadge() {
+        var root = state && state.rootEl;
+        if (!root) return;
+        var old = root.querySelector('.dsw-cost-badge');
+        if (!old) return;
+        var wrapper = document.createElement('div');
+        wrapper.innerHTML = _renderCostBadge();
+        var fresh = wrapper.firstElementChild;
+        if (fresh) old.parentNode.replaceChild(fresh, old);
+    }
+
+    // ---- Undo / Redo ----
+    function undo() {
+        var hist = window.DbSmartAstHistory;
+        if (!hist || !hist.canUndo || !hist.canUndo()) return;
+        var prev = hist.undo();
+        var prevAst = prev && (prev.ast || prev);  // accept either {ast,label} or ast
+        if (!prevAst) return;
+        var fromAst = _deepClone(state.ast);
+        state.ast = _deepClone(prevAst);
+        _render();
+        _diffToast(fromAst, state.ast);
+        _syncServerAst();
+        _refreshExplain();
+    }
+
+    function redo() {
+        var hist = window.DbSmartAstHistory;
+        if (!hist || !hist.canRedo || !hist.canRedo()) return;
+        var nxt = hist.redo();
+        var nextAst = nxt && (nxt.ast || nxt);
+        if (!nextAst) return;
+        var fromAst = _deepClone(state.ast);
+        state.ast = _deepClone(nextAst);
+        _render();
+        _diffToast(fromAst, state.ast);
+        _syncServerAst();
+        _refreshExplain();
+    }
+
+    function _syncServerAst() {
+        // Tell server we replaced the AST wholesale (undo/redo).
+        if (!state.sessionUid) return;
+        var url = API_BASE + '/sessions/' + encodeURIComponent(state.sessionUid) + '/ast/patch';
+        var body = {
+            op: 'replace_ast',
+            args: { ast: state.ast },
+            render_preview: true,
+            dialect: state.dialect,
+        };
+        state.fetchJson(url, { method: 'POST', body: JSON.stringify(body) })
+            .then(function (data) {
+                if (data && data.ast) state.ast = data.ast;
+                if (state.onChange) {
+                    try { state.onChange(state.ast, (data && data.sql) || null); } catch (e) { /* ignore */ }
+                }
+                _render();
+            })
+            .catch(function (err) {
+                console.warn('[DbSmartAstEditor] replace_ast sync failed', err);
+            });
+    }
+
+    function _diffToast(fromAst, toAst) {
+        if (!state.sessionUid) return;
+        var url = API_BASE + '/ast/diff';
+        state.fetchJson(url, {
+            method: 'POST',
+            body: JSON.stringify({ from_ast: fromAst, to_ast: toAst }),
+        }).then(function (data) {
+            var summary = data && data.summary;
+            if (!summary) return;
+            var changed = summary.changed_sections || [];
+            if (changed.length === 0) return;
+            var trMap = {
+                select: 'kolonlar', filters: 'filtreler', order_by: 'sıralama',
+                group_by: 'gruplama', limit: 'limit', joins: 'birleştirmeler',
+            };
+            var parts = [];
+            for (var i = 0; i < changed.length; i += 1) parts.push(trMap[changed[i]] || changed[i]);
+            _toast('Değişti: ' + parts.join(', '), 'info');
+        }).catch(function () { /* ignore */ });
+    }
+
+    // ---- Global key handler (Ctrl/Meta+Z = undo, Ctrl/Meta+Y / Shift+Z = redo) ----
+    function _onGlobalKey(e) {
+        if (!state) return;
+        var tag = e.target && e.target.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable)) return;
+        var panel = document.getElementById('dbSmartWizardPanel');
+        if (panel && !panel.contains(state.rootEl)) return;
+        var mod = e.ctrlKey || e.metaKey;
+        if (!mod) return;
+        var k = e.key && e.key.toLowerCase();
+        if (k === 'z' && !e.shiftKey) {
+            e.preventDefault();
+            undo();
+        } else if ((k === 'y') || (k === 'z' && e.shiftKey)) {
+            e.preventDefault();
+            redo();
+        }
+    }
+
+    // ---- Public ----
+    function mount(rootEl, opts) {
+        opts = opts || {};
+        if (!rootEl) {
+            console.warn('[DbSmartAstEditor] mount called without rootEl');
+            return;
+        }
+        if (state) unmount();
+        state = _initState(rootEl, opts);
+        rootEl.setAttribute('role', 'region');
+        rootEl.setAttribute('aria-label', 'AST düzenleyici');
+        if (rootEl.hasAttribute('hidden')) rootEl.removeAttribute('hidden');
+        state.globalKeyHandler = function (e) { _onGlobalKey(e); };
+        document.addEventListener('keydown', state.globalKeyHandler);
+        _render();
+        _refreshExplain();
+    }
+
+    function unmount() {
+        if (!state) return;
+        if (state.debounceTimer) clearTimeout(state.debounceTimer);
+        if (state.patchAbort) { try { state.patchAbort.abort(); } catch (e) { /* ignore */ } }
+        if (state.explainAbort) { try { state.explainAbort.abort(); } catch (e) { /* ignore */ } }
+        if (state.globalKeyHandler) {
+            document.removeEventListener('keydown', state.globalKeyHandler);
+        }
+        if (state.rootEl) {
+            state.rootEl.removeEventListener('click', _onRootClick);
+            state.rootEl.innerHTML = '';
+        }
+        state = null;
+    }
+
+    function getAst() {
+        return state ? _deepClone(state.ast) : null;
+    }
+
+    function getHistory() {
+        return window.DbSmartAstHistory || null;
+    }
+
+    window.DbSmartAstEditor = {
+        mount: mount,
+        unmount: unmount,
+        getAst: getAst,
+        getHistory: getHistory,
+    };
+})();
+
+
+/* === assets/js/modules/db_smart_wizard.js === */
+/**
+ * VYRA Akıllı Veri Keşfi — DB Smart Wizard (v3.30.0 FAZ 1 G1.6)
+ * =============================================================
+ * 5-adım sihirbaz iskelet:
+ *   1) Tablo Seç (eligibility hybrid search)
+ *   2) İlişkiler (fk_graph subgraph)
+ *   3) Metrik (library + custom)
+ *   4) Filtre (column-aware)
+ *   5) Önizleme (SQL + cost)
+ *
+ * Backend: /api/db-smart/* (12 endpoint)
+ * HEBE 5c gate: feature_key 'aki_kesif' guard'ı feature_permissions_module.js'te.
+ *
+ * NOT: FAZ 1'de wizard sequential FSM ile yönetilir; LangGraph kullanımı FAZ 2.
+ */
+(function () {
+    'use strict';
+
+    const API_BASE = '/api/db-smart';
+    const TOTAL_STEPS = 5;
+
+    // v3.30.0 FAZ 5 P34 — i18n helper (VyraI18n yüklü değilse key passthrough)
+    function _t(key, params) {
+        if (window.VyraI18n && typeof window.VyraI18n.t === 'function') {
+            return window.VyraI18n.t(key, params);
+        }
+        return key;
+    }
+
+    let _state = {
+        sessionUid: null,
+        currentStep: 0,
+        sourceId: null,
+        selectedTableId: null,
+        selectedTableObjectName: null,   // P4 fix: actual SQL identifier
+        selectedTableSchema: null,        // P4 fix: schema for base_table
+        selectedTableLabel: null,         // display only — not used in SQL
+        selectedTables: [],
+        metric: null,
+        filters: [],
+        currentAst: null,                 // P20-D: server-canonical AST snapshot
+        _lastFocusEl: null,               // HEBE Gate: return-focus target
+    };
+
+    // P20-D — Step 4 AST editor mount lifecycle
+    const AST_EDITOR_STEP_IDX = 4;        // 0-based: 5. adım (Önizleme + AST)
+    const PREVIEW_REFRESH_DEBOUNCE_MS = 300;
+    let _astEditorMounted = false;
+    let _previewRefreshTimer = null;
+
+    // HEBE Gate helper: announce + toast fallback
+    function _notify(msg, kind) {
+        if (window.showToast) {
+            try { window.showToast(msg, kind || 'info'); return; } catch (e) { /* fallthrough */ }
+        }
+        // aria-live fallback: write into progress text (polite region)
+        const progress = document.getElementById('dswProgress');
+        if (progress) progress.textContent = msg;
+    }
+
+    function _setBusy(el, busy) {
+        if (!el) return;
+        el.setAttribute('aria-busy', busy ? 'true' : 'false');
+    }
+
+    function _authHeaders() {
+        const token = localStorage.getItem('access_token') || '';
+        return {
+            'Authorization': 'Bearer ' + token,
+            'Content-Type': 'application/json',
+        };
+    }
+
+    async function _fetchJson(url, opts) {
+        opts = opts || {};
+        const headers = Object.assign({}, _authHeaders(), opts.headers || {});
+        const res = await fetch(url, Object.assign({}, opts, { headers }));
+        if (!res.ok) {
+            const text = await res.text().catch(() => '');
+            throw new Error(res.status + ': ' + (text || res.statusText));
+        }
+        return res.json();
+    }
+
+    // ============================================
+    // Step navigation
+    // ============================================
+
+    function _setStep(n) {
+        if (n < 0 || n > TOTAL_STEPS - 1) return;
+        // P20-D: leaving Step 4 (AST editor host) → unmount + abort in-flight fetches.
+        if (_state.currentStep === AST_EDITOR_STEP_IDX && n !== AST_EDITOR_STEP_IDX) {
+            _unmountAstEditor();
+        }
+        _state.currentStep = n;
+        // Tablist aria sync: selected step gets aria-selected=true + tabindex=0,
+        // others get aria-selected=false + tabindex=-1 (roving tabindex pattern).
+        document.querySelectorAll('.dsw-step').forEach(el => {
+            const s = parseInt(el.dataset.step, 10);
+            const active = (s === n);
+            el.classList.toggle('active', active);
+            el.setAttribute('aria-selected', active ? 'true' : 'false');
+            el.setAttribute('tabindex', active ? '0' : '-1');
+        });
+        document.querySelectorAll('.dsw-step-panel').forEach(el => {
+            const s = parseInt(el.dataset.step, 10);
+            const hidden = (s !== n);
+            el.classList.toggle('hidden', hidden);
+            if (hidden) {
+                el.setAttribute('hidden', '');
+            } else {
+                el.removeAttribute('hidden');
+            }
+        });
+        const progress = document.getElementById('dswProgress');
+        if (progress) progress.textContent = _t('wizard.step.indicator', { current: n + 1, total: TOTAL_STEPS });
+        const prev = document.getElementById('dswPrevBtn');
+        const next = document.getElementById('dswNextBtn');
+        if (prev) prev.disabled = (n === 0);
+        if (next) next.disabled = (n === TOTAL_STEPS - 1);
+        // v3.30.0 P2: adım data fetch (lazy)
+        if (typeof _onStepEnter === 'function') _onStepEnter(n);
+    }
+
+    async function _ensureSession() {
+        if (_state.sessionUid) return _state.sessionUid;
+        try {
+            const data = await _fetchJson(API_BASE + '/sessions', {
+                method: 'POST',
+                body: JSON.stringify({ source_id: _state.sourceId || null }),
+            });
+            _state.sessionUid = data.session_uid;
+            return _state.sessionUid;
+        } catch (e) {
+            console.warn('[db_smart_wizard] create session failed:', e);
+            return null;
+        }
+    }
+
+    // ============================================
+    // Step 0 — Eligibility search
+    // ============================================
+
+    async function _loadSources() {
+        const sel = document.getElementById('dswSourceSelect');
+        if (!sel) return;
+        try {
+            const data = await _fetchJson(API_BASE + '/sources');
+            sel.innerHTML = '';
+            (data.items || []).forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s.id;
+                opt.textContent = (s.name || s.host || ('source-' + s.id)) +
+                                  (s.dialect ? ' (' + s.dialect + ')' : '');
+                sel.appendChild(opt);
+            });
+            if (sel.options.length === 0) {
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = _t('wizard.empty.sources');
+                sel.appendChild(opt);
+            }
+        } catch (e) {
+            console.warn('[db_smart_wizard] _loadSources failed:', e);
+        }
+    }
+
+    async function _searchTables() {
+        const q = (document.getElementById('dswSearchQ') || {}).value || '';
+        const sourceId = (document.getElementById('dswSourceSelect') || {}).value || '';
+        const results = document.getElementById('dswResults');
+        if (!results) return;
+        if (!sourceId) {
+            results.innerHTML = '<div class="dsw-hint" role="status">' + _escape(_t('wizard.hint.select_source_first')) + '</div>';
+            _notify(_t('wizard.toast.select_source'), 'warning');
+            return;
+        }
+        _state.sourceId = parseInt(sourceId, 10);
+        _setBusy(results, true);
+        results.innerHTML = '<div class="dsw-hint" role="status">' + _escape(_t('wizard.hint.searching')) + '</div>';
+        try {
+            const url = API_BASE + '/sources/' + sourceId + '/tables?q=' +
+                        encodeURIComponent(q) + '&limit=10';
+            const data = await _fetchJson(url);
+            const items = data.tables || data.items || [];
+            if (!items.length) {
+                results.innerHTML = '<div class="dsw-hint" role="status">' + _escape(_t('wizard.empty.tables')) + '</div>';
+                return;
+            }
+            results.innerHTML = '';
+            items.forEach(t => {
+                const div = document.createElement('div');
+                div.className = 'dsw-result-item';
+                div.setAttribute('role', 'option');
+                div.setAttribute('tabindex', '0');
+                div.setAttribute('aria-selected', 'false');
+                const tid = t.table_id || t.id || '';
+                const objectName = t.object_name || t.table_name || '';
+                const schemaName = t.schema_name || null;
+                div.setAttribute('data-table-id', tid);
+                div.setAttribute('data-object-name', objectName);
+                if (schemaName) div.setAttribute('data-schema-name', schemaName);
+                const title = (t.business_name_tr || objectName || '?');
+                const meta = (schemaName ? schemaName + '.' : '') + objectName +
+                             (t.row_count_estimate ? ' · ~' + t.row_count_estimate + ' satır' : '') +
+                             (t.score != null ? ' · skor ' + t.score : '');
+                div.setAttribute('aria-label', title + ' — ' + meta);
+                div.innerHTML =
+                    '<div class="dsw-r-title">' + _escape(title) + '</div>' +
+                    '<div class="dsw-r-meta">' + _escape(meta) + '</div>';
+                const onPick = () => _selectTable(tid, title, objectName, schemaName);
+                div.addEventListener('click', onPick);
+                div.addEventListener('keydown', ev => {
+                    if (ev.key === 'Enter' || ev.key === ' ') {
+                        ev.preventDefault();
+                        onPick();
+                    }
+                });
+                results.appendChild(div);
+            });
+        } catch (e) {
+            results.innerHTML = '<div class="dsw-hint" role="status">' + _escape(_t('wizard.error.generic', { message: e.message })) + '</div>';
+            _notify(_t('wizard.error.search_failed', { message: e.message }), 'error');
+        } finally {
+            _setBusy(results, false);
+        }
+    }
+
+    function _selectTable(tableId, label, objectName, schemaName) {
+        _state.selectedTableId = parseInt(tableId, 10);
+        _state.selectedTables = [_state.selectedTableId];
+        _state.selectedTableLabel = label;
+        _state.selectedTableObjectName = objectName || null;
+        _state.selectedTableSchema = schemaName || null;
+        document.querySelectorAll('.dsw-result-item').forEach(el => {
+            const tid = parseInt(el.getAttribute('data-table-id'), 10);
+            const sel = (tid === _state.selectedTableId);
+            el.style.borderColor = sel ? '#F59E0B' : '';
+            el.setAttribute('aria-selected', sel ? 'true' : 'false');
+        });
+        // İleri butonu aktive et
+        const next = document.getElementById('dswNextBtn');
+        if (next) next.disabled = false;
+        _notify(_t('wizard.toast.table_selected', { label: label }), 'success');
+    }
+
+    // ============================================
+    // Step 1 — Related tables (FK graph)
+    // ============================================
+
+    async function _loadRelated() {
+        const panel = document.getElementById('dswStep1');
+        if (!panel) return;
+        if (!_state.selectedTableId || !_state.sourceId) {
+            panel.innerHTML = '<p class="dsw-hint" role="status">' + _escape(_t('wizard.hint.select_table_first')) + '</p>';
+            return;
+        }
+        _setBusy(panel, true);
+        panel.innerHTML = '<p class="dsw-hint" role="status">' + _escape(_t('wizard.hint.loading_related')) + '</p>';
+        try {
+            const url = API_BASE + '/sources/' + _state.sourceId +
+                        '/tables/' + _state.selectedTableId + '/related?depth=1';
+            const data = await _fetchJson(url);
+            const neighbors = data.neighbors || [];
+            const junctions = data.junctions || [];
+            let html = '<p class="dsw-hint">' + _escape(_t('wizard.hint.related_summary', { neighbors: neighbors.length, junctions: junctions.length })) + '</p>';
+            if (neighbors.length) {
+                html += '<div class="dsw-results">';
+                neighbors.slice(0, 12).forEach(n => {
+                    const label = (n.schema ? n.schema + '.' : '') + n.table;
+                    const junc = n.is_junction ? ' · ' + _t('wizard.hint.junction_table') : '';
+                    html += '<div class="dsw-result-item">' +
+                            '<div class="dsw-r-title">' + _escape(label) + '</div>' +
+                            '<div class="dsw-r-meta">' + _escape(_t('wizard.hint.relationship_count', { count: n.via_relationship_count })) +
+                            _escape(junc) + '</div></div>';
+                });
+                html += '</div>';
+            }
+            panel.innerHTML = html;
+        } catch (e) {
+            panel.innerHTML = '<p class="dsw-hint" role="status">' + _escape(_t('wizard.error.generic', { message: e.message })) + '</p>';
+            _notify(_t('wizard.error.related_failed', { message: e.message }), 'error');
+        } finally {
+            _setBusy(panel, false);
+        }
+    }
+
+    // ============================================
+    // Step 2 — Metric library
+    // ============================================
+
+    async function _loadMetrics() {
+        const panel = document.getElementById('dswStep2');
+        if (!panel) return;
+        if (!_state.sourceId) {
+            panel.innerHTML = '<p class="dsw-hint" role="status">' + _escape(_t('wizard.hint.select_source_first')) + '</p>';
+            return;
+        }
+        _setBusy(panel, true);
+        panel.innerHTML = '<p class="dsw-hint" role="status">' + _escape(_t('wizard.hint.loading_metrics')) + '</p>';
+        try {
+            // P4 fix: tablo seçildiyse table_id ekle → backend list_eligible() ile
+            // applicable_when filter uygular ve user-pref/usage skor sıralaması döner.
+            let url = API_BASE + '/metrics?source_id=' + _state.sourceId;
+            if (_state.selectedTableId) {
+                url += '&table_id=' + _state.selectedTableId;
+            }
+            const data = await _fetchJson(url);
+            const items = data.items || [];
+            if (!items.length) {
+                panel.innerHTML = '<p class="dsw-hint">' + _escape(_t('wizard.empty.metrics')) + '</p>';
+                return;
+            }
+            // Kategoriye göre grupla
+            const byCategory = {};
+            items.forEach(m => {
+                const cat = m.category || 'other';
+                (byCategory[cat] = byCategory[cat] || []).push(m);
+            });
+            let html = '<p class="dsw-hint">' + _escape(_t('wizard.hint.metric_intro', { count: items.length })) + '</p>';
+            Object.keys(byCategory).sort().forEach(cat => {
+                html += '<h4 style="margin:8px 0 4px;font-size:13px;color:var(--text-secondary);text-transform:uppercase">' +
+                        _escape(cat) + '</h4><div class="dsw-results">';
+                byCategory[cat].forEach(m => {
+                    html += '<div class="dsw-result-item" data-metric-key="' +
+                            _escape(m.metric_key) + '">' +
+                            '<div class="dsw-r-title">' + _escape(m.name_tr || m.metric_key) + '</div>' +
+                            '<div class="dsw-r-meta">' + _escape(m.description_tr || '') +
+                            ' · ' + _escape(m.default_viz || 'table') + '</div></div>';
+                });
+                html += '</div>';
+            });
+            panel.innerHTML = html;
+            // Click/keyboard binding + a11y attributes
+            panel.querySelectorAll('[data-metric-key]').forEach(el => {
+                el.setAttribute('role', 'option');
+                el.setAttribute('tabindex', '0');
+                el.setAttribute('aria-selected', 'false');
+                const pick = () => {
+                    const mk = el.getAttribute('data-metric-key');
+                    _state.metric = items.find(x => x.metric_key === mk) || null;
+                    panel.querySelectorAll('[data-metric-key]').forEach(e2 => {
+                        const sel = (e2 === el);
+                        e2.style.borderColor = sel ? '#F59E0B' : '';
+                        e2.setAttribute('aria-selected', sel ? 'true' : 'false');
+                    });
+                    if (_state.metric) _notify(_t('wizard.toast.metric_selected', { label: _state.metric.name_tr || _state.metric.metric_key }), 'success');
+                };
+                el.addEventListener('click', pick);
+                el.addEventListener('keydown', ev => {
+                    if (ev.key === 'Enter' || ev.key === ' ') {
+                        ev.preventDefault();
+                        pick();
+                    }
+                });
+            });
+        } catch (e) {
+            panel.innerHTML = '<p class="dsw-hint" role="status">' + _escape(_t('wizard.error.generic', { message: e.message })) + '</p>';
+            _notify(_t('wizard.error.metrics_failed', { message: e.message }), 'error');
+        } finally {
+            _setBusy(panel, false);
+        }
+    }
+
+    // ============================================
+    // Step 3 — Filter (columns)
+    // ============================================
+
+    async function _loadColumns() {
+        const panel = document.getElementById('dswStep3');
+        if (!panel) return;
+        if (!_state.selectedTableId || !_state.sourceId) {
+            panel.innerHTML = '<p class="dsw-hint" role="status">' + _t('wizard.step3.selectTableFirst') + '</p>';
+            return;
+        }
+        _setBusy(panel, true);
+        panel.innerHTML = '<p class="dsw-hint" role="status">' + _t('wizard.step3.loading') + '</p>';
+        try {
+            const url = API_BASE + '/sources/' + _state.sourceId +
+                        '/tables/' + _state.selectedTableId + '/columns';
+            const data = await _fetchJson(url);
+            const cols = data.columns || [];
+            if (!cols.length) {
+                panel.innerHTML = '<p class="dsw-hint">' + _t('wizard.step3.noColumns') + '</p>';
+                return;
+            }
+            let html = '<p class="dsw-hint">' + cols.length +
+                       ' kolon. Filtre uygulamak için kolon seçin (FAZ 1 P3\'te tam UI).</p>';
+            html += '<div class="dsw-results">';
+            cols.slice(0, 20).forEach(c => {
+                const label = c.business_name_tr || c.name;
+                const meta = c.name + ' · ' + (c.data_type || '?') +
+                             (c.semantic_type ? ' · ' + c.semantic_type : '');
+                html += '<div class="dsw-result-item">' +
+                        '<div class="dsw-r-title">' + _escape(label) + '</div>' +
+                        '<div class="dsw-r-meta">' + _escape(meta) + '</div></div>';
+            });
+            html += '</div>';
+            panel.innerHTML = html;
+        } catch (e) {
+            panel.innerHTML = '<p class="dsw-hint" role="status">' + _t('wizard.error.generic') + ': ' + _escape(e.message) + '</p>';
+            _notify(_t('wizard.step3.loadError') + ': ' + e.message, 'error');
+        } finally {
+            _setBusy(panel, false);
+        }
+    }
+
+    // ============================================
+    // Step 4 — Preview (SQL + cost)
+    // ============================================
+
+    // P20-D: wizard_state üretimi tek bir yere alındı (preview + AST mount paylaşır).
+    function _buildWizardState() {
+        const tableName = _state.selectedTableObjectName ||
+            (_state.selectedTableLabel || 'unknown').split('.').pop();
+        const ws = {
+            source_id: _state.sourceId,
+            dialect: 'postgresql',
+            base_table: {
+                schema: _state.selectedTableSchema || undefined,
+                table: tableName,
+                alias: 't',
+            },
+            selected_columns: [{ expr: '*' }],
+            company_scoped_aliases: ['t'],  // RLS hint — assembler injects company_id filter
+            limit: 100,
+        };
+        if (_state.metric) {
+            ws.metric = {
+                metric_key: _state.metric.metric_key,
+                sql_template: (_state.metric.sql_templates || {}).postgresql,
+                placeholders: { table: tableName, limit: '100' },
+            };
+        }
+        return ws;
+    }
+
+    async function _loadPreview() {
+        const panel = document.getElementById('dswStep4');
+        const hint = document.getElementById('dswStep4Hint');
+        const legacy = document.getElementById('dswLegacyPreview');
+        if (!panel) return;
+        if (!_state.sessionUid || !_state.selectedTableId) {
+            if (hint) hint.textContent = 'Önceki adımları tamamlayın.';
+            if (legacy) { legacy.textContent = ''; legacy.setAttribute('hidden', ''); }
+            return;
+        }
+        _setBusy(panel, true);
+        if (hint) hint.textContent = 'SQL üretiliyor...';
+        // P4 fix: actual object_name + schema from _selectTable, not display label.
+        const wizardState = _buildWizardState();
+        try {
+            const url = API_BASE + '/sessions/' + _state.sessionUid + '/preview';
+            const data = await _fetchJson(url, {
+                method: 'POST',
+                body: JSON.stringify({ wizard_state: wizardState }),
+            });
+            const sql = data.sql || '';
+            const cost = (data.explain && data.explain.total_cost) || null;
+            const strategy = data.streaming_strategy || 'direct';
+            const strategyLabel = ({
+                'direct': 'tek istek',
+                'cursor': 'cursor akışı',
+                'sse_chunk': 'SSE chunk',
+            })[strategy] || strategy;
+            if (hint) {
+                hint.textContent = 'Önizleme · dialect: ' + (data.dialect || 'postgresql') +
+                    (cost != null ? ' · maliyet: ' + cost.toFixed(2) : '') +
+                    ' · akış: ' + strategyLabel;
+            }
+            // P20-D: SQL legacy <pre> slot'una yazılır — AST editor mount edildiyse gizli.
+            if (legacy) {
+                legacy.textContent = sql;
+                legacy.setAttribute('aria-label', 'Üretilen SQL');
+                if (!_astEditorMounted) legacy.removeAttribute('hidden');
+            }
+        } catch (e) {
+            if (hint) hint.textContent = 'Hata: ' + e.message;
+            _notify('Önizleme oluşturulamadı: ' + e.message, 'error');
+        } finally {
+            _setBusy(panel, false);
+        }
+    }
+
+    // P20-D: debounced preview refresh after AST onChange.
+    function _refreshPreviewIfActive() {
+        if (_state.currentStep !== AST_EDITOR_STEP_IDX) return;
+        if (_previewRefreshTimer) clearTimeout(_previewRefreshTimer);
+        _previewRefreshTimer = setTimeout(() => {
+            _previewRefreshTimer = null;
+            _loadPreview();
+        }, PREVIEW_REFRESH_DEBOUNCE_MS);
+    }
+
+    // P20-D: build minimal starter AST from wizard_state when none exists yet.
+    function _buildStarterAst() {
+        const ws = _buildWizardState();
+        return {
+            dialect: ws.dialect,
+            from: { schema: ws.base_table.schema || null, table: ws.base_table.table, alias: 't' },
+            select: (ws.selected_columns || []).map(c => c.expr || '*'),
+            filters: [],
+            order_by: [],
+            joins: [],
+            limit: ws.limit || 100,
+        };
+    }
+
+    // P20-D: mount AST editor into #dswAstEditor slot.
+    function _mountAstEditor() {
+        if (_astEditorMounted) return;
+        const slot = document.getElementById('dswAstEditor');
+        if (!slot) return;
+        const Editor = window.DbSmartAstEditor;
+        if (!Editor || typeof Editor.mount !== 'function') {
+            console.warn('[db_smart_wizard] DbSmartAstEditor not loaded; legacy preview only');
+            // Defansif: legacy preview görünür kalsın.
+            const legacy = document.getElementById('dswLegacyPreview');
+            if (legacy) legacy.removeAttribute('hidden');
+            return;
+        }
+        const initialAst = _state.currentAst || _buildStarterAst();
+        _state.currentAst = initialAst;
+        // Legacy preview'ı gizle — AST editor canonical olur.
+        const legacy = document.getElementById('dswLegacyPreview');
+        if (legacy) legacy.setAttribute('hidden', '');
+        try {
+            Editor.mount(slot, {
+                sessionUid: _state.sessionUid,
+                dialect: 'postgresql',
+                ast: initialAst,
+                fetchJson: _fetchJson,
+                onChange: function (newAst /*, newSql */) {
+                    _state.currentAst = newAst;
+                    _refreshPreviewIfActive();
+                },
+            });
+            _astEditorMounted = true;
+        } catch (e) {
+            console.warn('[db_smart_wizard] AST editor mount failed:', e);
+            if (legacy) legacy.removeAttribute('hidden');
+        }
+    }
+
+    function _unmountAstEditor() {
+        if (!_astEditorMounted) return;
+        const Editor = window.DbSmartAstEditor;
+        if (Editor && typeof Editor.unmount === 'function') {
+            try { Editor.unmount(); } catch (e) { /* ignore */ }
+        }
+        _astEditorMounted = false;
+        if (_previewRefreshTimer) {
+            clearTimeout(_previewRefreshTimer);
+            _previewRefreshTimer = null;
+        }
+        // Legacy preview tekrar görünür — kullanıcı 4. adıma dönerse _loadPreview yine yazar.
+        const legacy = document.getElementById('dswLegacyPreview');
+        if (legacy && legacy.textContent) legacy.removeAttribute('hidden');
+    }
+
+    // Step değişiminde data fetch tetikle
+    function _onStepEnter(n) {
+        if (n === 1) _loadRelated();
+        else if (n === 2) _loadMetrics();
+        else if (n === 3) _loadColumns();
+        else if (n === AST_EDITOR_STEP_IDX) {
+            // P20-D: preview önce — AST editor mount sırasında lastExplain için
+            // sunucudan cost rozetini çağırır; sonra AST editor mount edilir.
+            _loadPreview();
+            _mountAstEditor();
+        }
+    }
+
+    // ============================================
+    // Utility
+    // ============================================
+
+    function _escape(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // ============================================
+    // Init
+    // ============================================
+
+    // HEBE Gate: ARIA tablist keyboard navigation (Left/Right/Home/End)
+    function _onStepperKeydown(e) {
+        const tabs = Array.from(document.querySelectorAll('.dsw-stepper .dsw-step'));
+        if (!tabs.length) return;
+        const cur = _state.currentStep;
+        let target = -1;
+        switch (e.key) {
+            case 'ArrowRight':
+            case 'ArrowDown':
+                target = Math.min(tabs.length - 1, cur + 1); break;
+            case 'ArrowLeft':
+            case 'ArrowUp':
+                target = Math.max(0, cur - 1); break;
+            case 'Home':
+                target = 0; break;
+            case 'End':
+                target = tabs.length - 1; break;
+            default:
+                return;
+        }
+        e.preventDefault();
+        _setStep(target);
+        if (tabs[target]) tabs[target].focus();
+    }
+
+    // HEBE Gate: panel-level Esc → close wizard + return focus
+    function _onPanelKeydown(e) {
+        if (e.key !== 'Escape') return;
+        const panel = document.getElementById('dbSmartWizardPanel');
+        if (!panel || panel.classList.contains('hidden') || panel.hasAttribute('hidden')) return;
+        e.preventDefault();
+        _closeWizard();
+    }
+
+    function _closeWizard() {
+        const panel = document.getElementById('dbSmartWizardPanel');
+        if (!panel) return;
+        // P20-D: panel kapatılırken AST editor mount edilmişse temizle.
+        if (_astEditorMounted) _unmountAstEditor();
+        panel.classList.add('hidden');
+        panel.setAttribute('hidden', '');
+        // Return focus to opener if recorded
+        if (_state._lastFocusEl && typeof _state._lastFocusEl.focus === 'function') {
+            try { _state._lastFocusEl.focus(); } catch (e) { /* ignore */ }
+        }
+    }
+
+    function init() {
+        // Record opener for return-focus (HEBE Gate)
+        _state._lastFocusEl = document.activeElement;
+
+        // Buton binding'leri (idempotent)
+        const searchBtn = document.getElementById('dswSearchBtn');
+        if (searchBtn && !searchBtn._bound) {
+            searchBtn.addEventListener('click', _searchTables);
+            searchBtn._bound = true;
+        }
+        const prev = document.getElementById('dswPrevBtn');
+        if (prev && !prev._bound) {
+            prev.addEventListener('click', () => _setStep(_state.currentStep - 1));
+            prev._bound = true;
+        }
+        const next = document.getElementById('dswNextBtn');
+        if (next && !next._bound) {
+            next.addEventListener('click', () => _setStep(_state.currentStep + 1));
+            next._bound = true;
+        }
+        const searchInput = document.getElementById('dswSearchQ');
+        if (searchInput && !searchInput._bound) {
+            searchInput.addEventListener('keydown', e => {
+                if (e.key === 'Enter') _searchTables();
+            });
+            searchInput._bound = true;
+        }
+        // HEBE Gate: tablist keyboard nav + click activation on step buttons
+        const stepper = document.getElementById('dswStepper');
+        if (stepper && !stepper._bound) {
+            stepper.addEventListener('keydown', _onStepperKeydown);
+            stepper.querySelectorAll('.dsw-step').forEach(tab => {
+                tab.addEventListener('click', () => {
+                    const n = parseInt(tab.dataset.step, 10);
+                    if (!isNaN(n)) {
+                        _setStep(n);
+                        tab.focus();
+                    }
+                });
+            });
+            stepper._bound = true;
+        }
+        // HEBE Gate: Esc handler on the wizard panel
+        const panel = document.getElementById('dbSmartWizardPanel');
+        if (panel && !panel._bound) {
+            panel.addEventListener('keydown', _onPanelKeydown);
+            panel._bound = true;
+        }
+        _setStep(0);
+        _loadSources();
+        _ensureSession();
+    }
+
+    window.DbSmartWizardModule = {
+        init: init,
+        close: _closeWizard,
+        getState: function () { return Object.assign({}, _state); },
+    };
+})();
 
 
 /* === assets/js/branding_engine.js === */

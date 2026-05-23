@@ -57,14 +57,36 @@ DB = dict(
 MIG_DIR = os.path.join(_HERE, "migrations", "versions")
 
 # Fake alembic.op recorder
+class _FakeBoundConn:
+    """SQLAlchemy benzeri Connection — text() + named params alır, psycopg2 cursor'a çevirir.
+
+    Kullanım: migration `conn = op.get_bind(); conn.execute(text("...:p..."), {"p": ...})`
+    Bu wrapper :name placeholder'larını %(name)s formatına çevirir ve cursor'a iletir.
+    """
+    def __init__(self, cursor):
+        self._cursor = cursor
+    def execute(self, stmt, params=None):
+        sql = stmt.text if hasattr(stmt, "text") else str(stmt)
+        # :name → %(name)s (parametrik psycopg2 formatı). '::' (PG cast) korunur.
+        sql_pg = re.sub(r'(?<!:):(\w+)', r'%(\1)s', sql)
+        if params is None:
+            self._cursor.execute(sql_pg)
+        else:
+            self._cursor.execute(sql_pg, params)
+
+
 class _FakeOp:
     def __init__(self):
         self.statements = []
+        self._bound_conn = None  # _FakeBoundConn — get_bind() döndürür
     def execute(self, sql):
         # Accept str or sqlalchemy text(); we only need .text or str
         if hasattr(sql, "text"):
             sql = sql.text
         self.statements.append(str(sql))
+    def get_bind(self):
+        """Migration data-DML için bound connection (sqlalchemy.text + named params destekler)."""
+        return self._bound_conn
 
 fake_op = _FakeOp()
 
@@ -89,11 +111,17 @@ try:
         "029_v3298_signal_weight_suggestions.py",
         "030_v3298_signal_weight_overrides.py",
         "031_v3299_fk_inference_metadata.py",
+        "032_v3300_db_smart_core_tables.py",
+        "033_v3300_metric_library_seed.py",
     ]
 
     conn = psycopg2.connect(**DB)
     conn.autocommit = False
     cur = conn.cursor()
+
+    # _FakeBoundConn'u live cursor'a sarıp _FakeOp.get_bind() için hazır tut.
+    # 033+ data-DML migration'ları sqlalchemy.text() + named params üzerinden bu wrapper'ı kullanır.
+    fake_op._bound_conn = _FakeBoundConn(cur)
 
     cur.execute("SELECT version_num FROM alembic_version")
     current = cur.fetchone()[0]
@@ -124,8 +152,18 @@ try:
         sys.exit(0)
 
     # If current matches any revision in the pending list, resume after it.
-    skip_until_applied = None
     revision_ids_in_order = [f.replace(".py", "") for f in pending_files]
+
+    # DB may be BEYOND this chain (034+ managed by Alembic) — skip entirely.
+    head_num = int(re.match(r"(\d+)", head_revision).group(1))
+    current_num_m = re.match(r"(\d+)", current)
+    if current_num_m and int(current_num_m.group(1)) > head_num:
+        w(f"DB at {current} (>{head_revision}) — already past this chain, nothing to do.")
+        cur.close()
+        conn.close()
+        w("=== done ===")
+        sys.exit(0)
+
     if current in revision_ids_in_order:
         idx = revision_ids_in_order.index(current)
         files_to_apply = pending_files[idx + 1:]

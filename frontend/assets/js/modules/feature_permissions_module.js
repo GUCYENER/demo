@@ -15,15 +15,17 @@
 
     const API_BASE = '/api/feature-permissions';
     const SUBJECTS_API = '/api/data-sources/permissions/subjects';
-    const FEATURE_KEYS = ['kb', 'db', 'llm'];
+    // v3.30.0: aki_kesif (Akıllı Veri Keşfi / DB Smart Wizard) eklendi
+    const FEATURE_KEYS = ['kb', 'db', 'llm', 'aki_kesif'];
     const FEATURE_LABELS = {
-        kb:  { title: 'Bilgi Tabanında Ara',  icon: 'fa-book-open' },
-        db:  { title: 'Veritabanında Ara',    icon: 'fa-database' },
-        llm: { title: 'VYRA ile Sohbet Et',  icon: 'fa-comments' },
+        kb:        { title: 'Bilgi Tabanında Ara',  icon: 'fa-book-open' },
+        db:        { title: 'Veritabanında Ara',    icon: 'fa-database' },
+        llm:       { title: 'VYRA ile Sohbet Et',   icon: 'fa-comments' },
+        aki_kesif: { title: 'Akıllı Veri Keşfi',    icon: 'fa-magic' },
     };
 
     // Mode-card → chatMode mapping (UI 'kb' → backend chatMode 'rag')
-    const MODE_TO_CHAT = { kb: 'rag', db: 'db', llm: 'llm' };
+    const MODE_TO_CHAT = { kb: 'rag', db: 'db', llm: 'llm', aki_kesif: 'aki_kesif' };
 
     let _myFeatures = null;          // { kb:true, db:false, llm:true }
     let _isAdmin = false;

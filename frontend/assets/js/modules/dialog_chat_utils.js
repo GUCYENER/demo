@@ -643,6 +643,14 @@ window.DialogChatUtils = (function () {
             return '';
         }
 
+        // v3.30.0: büyük sonuçlarda virtual scroll kullan
+        if (rows.length > (window.VirtualScrollTable?.THRESHOLD || 200) && window.VirtualScrollTable) {
+            var vsEl = window.VirtualScrollTable.create(columns, rows, meta);
+            var tmp = document.createElement('div');
+            tmp.appendChild(vsEl);
+            return tmp.innerHTML;
+        }
+
         const rowCount = meta?.row_count || rows.length;
         const rowsShown = meta?.rows_shown || rows.length;
         const sourceDb = meta?.source_db || '';

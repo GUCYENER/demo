@@ -75,6 +75,66 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.30.0 (2026-05-21) - DB Smart Wizard v4 + Agentic SQL Copilot Master Plan Complete
+> **Kapsamlı sürüm:** 49 P-number, 38+ dosya, 5 FAZ (2-5) tamamlandı. Master plan Faz 0-6 tüm maddeler implemente.
+
+**FAZ 2 — Schema, i18n, Migration Altyapısı:**
+- 🗃️ **Migration chain (HEPHAESTUS):** 10 yeni migration (033-042) — metric_library_seed, share_audience+audit, template_marketplace, feature_store_mvs, interactions partitioning, wizard_state, query_examples. Chain linearize: 033→034→035→037→042.
+- 🌐 **i18n loader (ATHENA):** `frontend/assets/js/i18n/loader.js` — 182 key TR/EN parity, lazy fetch, `_t()` helper. Wizard Step 3 hardcoded strings fix.
+- 📊 **DB Smart Wizard (P1-P12):** 12-step wizard (`db_smart_wizard.js`) — kaynak seçimi, tablo keşif, kolon seçim, filtre, SQL önizleme, çalıştır, sonuç.
+
+**FAZ 3 — Dialect, AST, Streaming, Security:**
+- 🏗️ **Dialect maturity (POSEIDON):** `dialect_dictionary.py` Oracle (NVL2, DECODE, CONNECT BY, PIVOT), MSSQL (CROSS/OUTER APPLY, TRY_CONVERT), MySQL (JSON_TABLE, WITH ROLLUP) + hint catalogs genişletildi.
+- 🌳 **AST renderer (ORACLE):** `ast_renderer.py` — APPLY join, Oracle CONNECT BY, GROUPING SETS/CUBE/ROLLUP, multi-hint accumulator, RLS `inject_rls` company_id coercion guard.
+- 📡 **SSE streaming (NIKE):** `sql_executor_stream.py` — backpressure (`_CancelToken` threading.Event), concurrency guard (`BoundedSemaphore(5)`), config crash guards.
+- 🖼️ **Embed iframe (P40):** CSP middleware (`frame-ancestors`), `/embed/report/{token}` route + HTML shell.
+- 🎨 **AST editor (P20):** `db_smart_ast_editor.js` — DnD + keyboard a11y (Space/Arrow/Enter) + undo/redo.
+
+**FAZ 4 — Few-shot, Self-healing, Query Examples:**
+- 🧠 **Few-shot store (P50):** `text_to_sql_store/few_shot_store.py` + migration 042 (`query_examples` table, pgvector ivfflat cosine, RLS). Per user+source top-K + company baseline fallback.
+- 🔄 **Self-healer (P51):** `text_to_sql_store/self_healer.py` — EXPLAIN dry-run + LLM repair loop (max 2 retry), dialect-aware EXPLAIN, `validate_sql` tuple fix.
+
+**FAZ 5 — Observability, Template, Feature Store:**
+- 📈 **OTel + Prometheus (P36/P37):** `agentic_observability_faz6.js` — OpenTelemetry tracing + custom Prometheus metrics.
+- 🏪 **Template marketplace (P30):** Share audience (public/tenant/users), JSONB audit log.
+- 📦 **Feature store (P32-P34):** Materialized views, `REFRESH CONCURRENTLY` with UNIQUE INDEX.
+- 🗂️ **Narrative writer:** Template-fill + optional LLM narrative with rationality guard. Missing `json` import fix.
+- 🔒 **Retention runner:** Partition rotate + archive (>90 days). SQL injection guard (regex whitelist).
+- 🧬 **Learning recorder:** Batch insert + PII masking. SQL injection guard + partition DDL regex.
+
+**Faz 6 — Virtual Scroll (yeni):**
+- ⚡ **Virtual scroll table:** `frontend/assets/js/modules/virtual_scroll_table.js` — >200 satır sonuçlarda sadece görünen satırları render (rAF throttle, 480px viewport, buffer=20). `renderSQLResultTable` otomatik delege. DBTableUI drag-drop uyumlu.
+
+**Code Review Fix'leri (9 bug):**
+- 🐛 `narrative_writer.py` missing `json` import
+- 🐛 `retention_runner.py` f-string SQL injection → regex guard
+- 🐛 `learning_recorder.py` f-string SQL injection → regex guard
+- 🐛 `sql_executor_stream.py` settings NameError → lazy import
+- 🐛 `sql_executor_stream.py` config `float()`/`int()` crash → try-except fallback
+- 🐛 `ast_renderer.py` `inject_rls` company_id crash → int coercion guard
+- 🐛 `self_healer.py` `validate_sql` tuple truthy → unpack `(bool, err)`
+- 🐛 `wizard.js` Step 3 i18n hardcoded strings → `_t()` calls
+- 🐛 Migration 042 `EXCEPTION WHEN OTHERS` → narrowed to `undefined_object` + `duplicate_table`
+
+**Migration Fix'leri (v3.30.0 stabilizasyon):**
+- 🔧 **Migration 034:** `dbsmart_interactions` partitioned table kolon isimleri SCHEMA_SQL ile hizalandı (`session_uid`→`session_id`, `payload`→`suggestion_shown/accepted/user_override`, `recorded_at`→`created_at`) + clean-install guard (`pg_class` check)
+- 🔧 **Migration 037:** Feature Store MV'leri düzeltildi — `ds_relationships`→`ds_db_relationships`, `from_table_id`→`from_table` (VARCHAR FK), `te.object_name`→`te.table_name`
+- 🔧 **Migration 042:** pgvector `CREATE EXTENSION` — `DO $$ BEGIN ... EXCEPTION WHEN OTHERS` guard (pgvector yüklü olmayan ortamlar için `float[]` fallback)
+
+**Session Timeout İyileştirmeleri:**
+- ⏰ **30dk → 60dk:** `SESSION_WARN_AT_SECONDS = 60 * 60` + modal mesajı güncellendi
+- 🔐 **Login guard:** `startSessionTimer()` içine `access_token` kontrolü — giriş yapmadan timer başlamaz
+- 🔄 **"Devam Et" butonu fix:** `refreshToken` hatasında `_forceLogout()` yerine oturumu uzatıp warning toast gösteriyor
+
+**Master Plan Status:** Faz 0-6 tüm maddeler ✅ (27/27). Tek kalan: final execution log.
+- 📋 **Plan:** `.agents/plans/v3.30.0_db_smart_wizard.md` + `.agents/plans/agentic_sql_copilot_master_plan.md`
+
+### 🆕 v3.29.11 (2026-05-19) - DB Learning live-fix: dedupe pgvector guard + inferred FK count
+- 🛡️ **L2 dedupe pgvector guard (HEPHAESTUS):** `app/services/db_learning/dedupe_service.py` Layer 2 başına lazy-import `_detect_embedding_column_type(cur)` koruması eklendi. Canlı OnedeskTest'te `learned_db_queries.question_embedding` kolonu `float8[]` (udt=`_float8`) olduğu için `<=> %s::vector` sorgusu transaction'ı poison'lıyor, ardışık INSERT'ler `InFailedSqlTransaction` ile patlıyordu (58/58 FK Loop attempt fail). Tip `vector` değilse L2 sessizce atlanır (debug log); L1 hash + L3 Jaccard yeterli fallback. `lookup_cached_sql` ve `few_shot_auto_populator` zaten guard'lıydı — regresyon kapatıldı.
+- 📊 **Inferred FK count expose (HERMES):** `app/services/ds_learning_service.py` FK Inference auto-trigger sonrası `ds_db_relationships WHERE is_inferred=TRUE` sayımı yapılıp response'a `inferred_count` / `declared_count` / `total_relationships` alanları eklendi. Hata güvenli (rollback + 0 fallback).
+- 🖥️ **UI rozet (ATHENA):** `frontend/assets/js/modules/ds_learning_module.js` "FK İlişkileri" kartı `total_relationships` (declared+inferred) gösteriyor; inferred>0 ise altında "Declared: X · Inferred: Y" rozet rivi (iki yer: Step 2 ve detail panel).
+- 📋 **Plan:** `.agents/plans/v3.29.11_dedupe_pgvector_guard.md` (status: completed, commit: 88aed91).
+
 ### 🆕 v3.29.10 (2026-05-19) - Housekeeping + Live Bug Fix
 - 🧹 **Working tree closure:** v3.29.0 → v3.29.9 boyunca biriken 36 dosya (modified + untracked) mantıksal commit gruplarına ayrılarak hira branch'a alındı: db_learning supporting modules (cardinality/code-value/error-pattern/fk-graph/incremental/sample-data), feature_permissions + permission_audit endpoints, disambiguation_card pipeline node, failure_queue + tooltip + feature_permissions frontend, migrations 023-028 (relationship_cardinality, business_glossary_v2, code_value_dictionary, template_versioning, pii_flag, query_failure_log).
 - 📋 **Plan dosyaları kapanışı:** `.agents/plans/v3.29.8_signal_weight_tuner.md` ve `.agents/plans/v3.29.9_fk_inference.md` frontmatter'larına `status: completed` + commit hash eklendi (HERA persistence).
@@ -3729,7 +3789,8 @@ netstat -an | findstr "5005"
 
 **Geliştirici:** Yasın Fazlıoğlu  
 **E-posta:** yasin.fazlioglu@consultant.turkcell.com.tr  
-**Versiyon:** 3.29.10 (Faz 6 closure + Signal Weight Tuner + Multi-dialect FK Inference + Housekeeping/Bug Fix)
+**Versiyon:** 3.32.0 (Faz 2 perf — /enrichment-approve-bulk artık fastapi.BackgroundTasks ile post-response schema_record + composite index `(source_id,id)` CONCURRENTLY + ds_schema_record_warnings PERMISSIVE RLS tablosu (mig 043); UX paketi — global `[data-tt]` modern dark tooltip utility (ui_tooltip.css) native `title=` yerine + `_runningJob` state machine: 3s poll + exponential backoff (30s tavan), 4 bulk action butonu state-aware concurrent gate)  
+**Önceki:** 3.31.0 (Backend bulk approve endpoint + transactional SAVEPOINT + ThreadPool paralel schema_record + Council Gate fix: ACL guard, worker RLS, pool clamp, SAVEPOINT release)
 
 ---
 
