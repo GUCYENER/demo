@@ -29665,12 +29665,9 @@ const DSEnrichmentModule = (() => {
 
     async function _loadData() {
         try {
-            const token = localStorage.getItem('access_token');
-            const headers = { 'Authorization': `Bearer ${token}` };
-
             const [statsRes, allRes] = await Promise.all([
-                fetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`, { headers }),
-                fetch(`/api/data-sources/${_currentSourceId}/enrichment-all`, { headers })
+                _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`),
+                _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-all`)
             ]);
 
             if (!statsRes.ok || !allRes.ok) throw new Error(`Sunucu hatası (HTTP ${statsRes.ok ? allRes.status : statsRes.status})`);
@@ -29707,11 +29704,9 @@ const DSEnrichmentModule = (() => {
         if (!_currentSourceId || _isPolling) return;
         _isPolling = true;
         try {
-            const token = localStorage.getItem('access_token');
-            const headers = { 'Authorization': `Bearer ${token}` };
             const [statsRes, allRes] = await Promise.all([
-                fetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`, { headers }),
-                fetch(`/api/data-sources/${_currentSourceId}/enrichment-all`, { headers })
+                _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`),
+                _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-all`)
             ]);
             const stats = await statsRes.json();
             const allData = await allRes.json();
@@ -30197,10 +30192,7 @@ const DSEnrichmentModule = (() => {
 
         // Çalışan iş kontrolü — keşif devam ediyorsa onay engelle
         try {
-            const _jobCheckToken = localStorage.getItem('access_token');
-            const _jobCheckRes = await fetch(`/api/data-sources/${_currentSourceId}/check-running-job`, {
-                headers: { 'Authorization': `Bearer ${_jobCheckToken}` }
-            });
+            const _jobCheckRes = await _authFetch(`/api/data-sources/${_currentSourceId}/check-running-job`);
             const _jobCheck = await _jobCheckRes.json();
             if (_jobCheck.has_running) {
                 _showToast('Keşif işlemi devam ediyor. Tamamlanmasını bekleyin.', 'warning');
@@ -30209,15 +30201,11 @@ const DSEnrichmentModule = (() => {
         } catch (e) { /* kontrol başarısız, devam et */ }
 
         try {
-            const token = localStorage.getItem('access_token');
-            const res = await fetch(
+            const res = await _authFetch(
                 `/api/data-sources/${_currentSourceId}/enrichment-approve/${enrichmentId}`,
                 {
                     method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({})
                 }
             );
@@ -30323,15 +30311,11 @@ const DSEnrichmentModule = (() => {
         const notes = document.getElementById('dsEditNotes')?.value?.trim() || null;
 
         try {
-            const token = localStorage.getItem('access_token');
-            const res = await fetch(
+            const res = await _authFetch(
                 `/api/data-sources/${_currentSourceId}/enrichment-approve/${realEnrichmentId}`,
                 {
                     method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         admin_label_tr: label,
                         admin_notes: notes
@@ -30382,11 +30366,7 @@ const DSEnrichmentModule = (() => {
                 _showToast('Bu tablo henüz keşfedilmedi', 'warning');
                 return;
             }
-            const token = localStorage.getItem('access_token');
-            const res = await fetch(
-                `/api/data-sources/enrichment/${enrichmentId}/columns`,
-                { headers: { 'Authorization': `Bearer ${token}` } }
-            );
+            const res = await _authFetch(`/api/data-sources/enrichment/${enrichmentId}/columns`);
 
             if (!res.ok) {
                 console.error('[DSEnrich] Sütun API hatası:', res.status, res.statusText);
@@ -30588,10 +30568,9 @@ const DSEnrichmentModule = (() => {
         }
 
         try {
-            const token = localStorage.getItem('access_token');
-            const res = await fetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
+            const res = await _authFetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ object_ids: toDiscover })
             });
             const data = await res.json();
@@ -30632,10 +30611,9 @@ const DSEnrichmentModule = (() => {
         }
 
         try {
-            const token = localStorage.getItem('access_token');
-            const res = await fetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
+            const res = await _authFetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ object_ids: unprocessed })
             });
             const data = await res.json();
@@ -30672,10 +30650,7 @@ const DSEnrichmentModule = (() => {
 
         // Çalışan iş kontrolü — keşif devam ediyorsa onay engelle
         try {
-            const _jcToken = localStorage.getItem('access_token');
-            const _jcRes = await fetch(`/api/data-sources/${_currentSourceId}/check-running-job`, {
-                headers: { 'Authorization': `Bearer ${_jcToken}` }
-            });
+            const _jcRes = await _authFetch(`/api/data-sources/${_currentSourceId}/check-running-job`);
             const _jc = await _jcRes.json();
             if (_jc.has_running) {
                 _showToast('Keşif işlemi devam ediyor. Tamamlanmasını bekleyin.', 'warning');
@@ -30700,22 +30675,17 @@ const DSEnrichmentModule = (() => {
         }
 
         try {
-            const token = localStorage.getItem('access_token');
-
             // v3.30.1: 5'li paralel pool (sıralı await yerine).
             // backend bulk endpoint olmadığı için tek-tek POST gerekiyor; concurrency
             // limiti server'ı korur, browser HTTP/1.1 host limiti zaten ~6.
             const results = await _runConcurrent(approvableIds, 5, async (objectId) => {
                 const enrichmentId = objectToEnrichMap[objectId];
                 try {
-                    const res = await fetch(
+                    const res = await _authFetch(
                         `/api/data-sources/${_currentSourceId}/enrichment-approve/${enrichmentId}`,
                         {
                             method: 'POST',
-                            headers: {
-                                'Authorization': `Bearer ${token}`,
-                                'Content-Type': 'application/json'
-                            },
+                            headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({})
                         }
                     );
@@ -30779,10 +30749,7 @@ const DSEnrichmentModule = (() => {
 
         // Çalışan iş kontrolü — keşif devam ediyorsa onay engelle
         try {
-            const _jcToken = localStorage.getItem('access_token');
-            const _jcRes = await fetch(`/api/data-sources/${_currentSourceId}/check-running-job`, {
-                headers: { 'Authorization': `Bearer ${_jcToken}` }
-            });
+            const _jcRes = await _authFetch(`/api/data-sources/${_currentSourceId}/check-running-job`);
             const _jc = await _jcRes.json();
             if (_jc.has_running) {
                 _showToast('Keşif işlemi devam ediyor. Tamamlanmasını bekleyin.', 'warning');
@@ -30792,21 +30759,17 @@ const DSEnrichmentModule = (() => {
         } catch (e) { /* kontrol başarısız, devam et */ }
 
         try {
-            const token = localStorage.getItem('access_token');
             let successCount = 0;
             let failCount = 0;
 
             // v3.30.1: 5'li paralel pool — sıralı await yerine ~5x hız
             await _runConcurrent(toApprove, 5, async (item) => {
                 try {
-                    const res = await fetch(
+                    const res = await _authFetch(
                         `/api/data-sources/${_currentSourceId}/enrichment-approve/${item.enrichment_id}`,
                         {
                             method: 'POST',
-                            headers: {
-                                'Authorization': `Bearer ${token}`,
-                                'Content-Type': 'application/json'
-                            },
+                            headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({})
                         }
                     );
@@ -30848,13 +30811,10 @@ const DSEnrichmentModule = (() => {
     // ============================================
 
     function _updateStatsAfterApprove() {
-        const token = localStorage.getItem('access_token');
-        fetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        })
-        .then(r => r.json())
-        .then(stats => _renderStats(stats))
-        .catch(() => {});
+        _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`)
+            .then(r => r.json())
+            .then(stats => _renderStats(stats))
+            .catch(() => {});
 
         if (_pendingData.length === 0) {
             const body = document.getElementById('dsEnrichBody');
@@ -30893,6 +30853,19 @@ const DSEnrichmentModule = (() => {
                 }
             }
         });
+    }
+
+    // v3.31.0 (R001): Auth header injection helper.
+    // Tüm modül-içi fetch çağrıları bunu kullanır — token okuma + Bearer header
+    // tek noktada. Caller method/body/content-type sorumluluğunda; biz sadece
+    // Authorization header'ı enjekte ederiz.
+    async function _authFetch(url, opts = {}) {
+        const token = localStorage.getItem('access_token');
+        const headers = {
+            ...(opts.headers || {}),
+            'Authorization': `Bearer ${token}`
+        };
+        return fetch(url, { ...opts, headers });
     }
 
     // v3.30.1: Sınırlı paralellik (concurrency pool).
