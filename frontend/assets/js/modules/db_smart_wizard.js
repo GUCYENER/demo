@@ -632,9 +632,33 @@
         }
     }
 
-    function init() {
+    // v3.33.0 — i18n bundle hazır olana kadar bekle (step.indicator vb. için)
+    async function _ensureI18n() {
+        if (!window.VyraI18n) return;
+        try {
+            if (typeof window.VyraI18n.ensureInit === 'function') {
+                await window.VyraI18n.ensureInit();
+            } else if (typeof window.VyraI18n.init === 'function') {
+                await window.VyraI18n.init();
+            }
+        } catch (e) { /* graceful: passthrough fallback */ }
+    }
+
+    function init(opts) {
+        opts = opts || {};
         // Record opener for return-focus (HEBE Gate)
         _state._lastFocusEl = document.activeElement;
+        // i18n bundle async load (fire-and-forget; UI metinleri sonra applyTranslations)
+        _ensureI18n().then(function () {
+            try {
+                if (window.VyraI18n && typeof window.VyraI18n.applyTranslations === 'function') {
+                    const root = document.getElementById('dbSmartWizardPanel');
+                    if (root) window.VyraI18n.applyTranslations(root);
+                }
+                // step indicator'ı yeniden bas
+                _setStep(_state.currentStep);
+            } catch (e) { /* ignore */ }
+        });
 
         // Buton binding'leri (idempotent)
         const searchBtn = document.getElementById('dswSearchBtn');
@@ -685,9 +709,218 @@
         _ensureSession();
     }
 
+    // ============================================================
+    // v3.33.0 — Modal wrapper (overlay + dialog)
+    // ============================================================
+    // Strateji: inline panel'i klonlamak yerine **taşı** (appendChild).
+    //   - DOM event listener'ları + _bound flag'leri korunur (Agent A note #3).
+    //   - Modal kapanınca panel orijinal parent'a iade edilir.
+
+    let _modalState = {
+        open: false,
+        overlay: null,
+        dialog: null,
+        panelOrigParent: null,
+        panelOrigNextSibling: null,
+        prevBodyOverflow: null,
+        resolve: null,
+        opener: null,
+    };
+
+    function isOpen() { return !!_modalState.open; }
+
+    function _trapFocus(e) {
+        if (e.key !== 'Tab') return;
+        const dialog = _modalState.dialog;
+        if (!dialog) return;
+        const focusables = dialog.querySelectorAll(
+            'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])'
+        );
+        if (!focusables.length) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+            e.preventDefault(); last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+            e.preventDefault(); first.focus();
+        }
+    }
+
+    function _onModalKeydown(e) {
+        if (e.key === 'Escape') { e.stopPropagation(); closeModal({ action: 'cancelled' }); return; }
+        _trapFocus(e);
+    }
+
+    function _onOverlayClick(e) {
+        if (e.target === _modalState.overlay) closeModal({ action: 'cancelled' });
+    }
+
+    async function openAsModal(opts) {
+        opts = opts || {};
+        if (_modalState.open) return Promise.resolve(null);
+
+        // Wizard panel DOM'unu modal'a taşı
+        const panel = document.getElementById('dbSmartWizardPanel');
+        if (!panel) {
+            console.warn('[DbSmartWizard] panel DOM bulunamadı');
+            return Promise.resolve(null);
+        }
+
+        _modalState.opener = document.activeElement;
+        _state._lastFocusEl = _modalState.opener;
+
+        // Overlay + dialog
+        const overlay = document.createElement('div');
+        overlay.className = 'dsw-modal-overlay';
+        overlay.setAttribute('role', 'presentation');
+        overlay.addEventListener('click', _onOverlayClick);
+
+        const dialog = document.createElement('div');
+        dialog.className = 'dsw-modal-dialog';
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.setAttribute('aria-labelledby', 'dswTitle');
+
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'dsw-modal-close';
+        closeBtn.setAttribute('aria-label', 'Kapat');
+        closeBtn.setAttribute('data-tooltip', 'Kapat (Esc)');
+        closeBtn.textContent = '×';
+        closeBtn.addEventListener('click', function () { closeModal({ action: 'cancelled' }); });
+
+        dialog.appendChild(closeBtn);
+
+        // Panel'i taşı (klonlama yok — event binding korunur)
+        _modalState.panelOrigParent = panel.parentNode;
+        _modalState.panelOrigNextSibling = panel.nextSibling;
+        panel.classList.remove('hidden');
+        panel.hidden = false;
+        panel.classList.add('dsw-in-modal');
+        dialog.appendChild(panel);
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        // Body scroll lock
+        _modalState.prevBodyOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+
+        _modalState.open = true;
+        _modalState.overlay = overlay;
+        _modalState.dialog = dialog;
+
+        // ESC + focus trap
+        document.addEventListener('keydown', _onModalKeydown, true);
+
+        // Wizard init/hydrate
+        init({ mode: 'modal' });
+
+        // reportId verilmişse hydrate dene (best-effort, hatayı yutar)
+        if (opts.reportId) {
+            _hydrateFromSavedReport(opts.reportId).catch(function (e) {
+                console.warn('[DbSmartWizard] reportId hydrate failed', e);
+            });
+        }
+
+        // İlk focusable'a focus
+        setTimeout(function () {
+            try {
+                const target = dialog.querySelector(
+                    'input,select,textarea,button:not([disabled]),[tabindex]:not([tabindex="-1"])'
+                );
+                if (target) target.focus();
+            } catch (e) { /* ignore */ }
+        }, 0);
+
+        return new Promise(function (resolve) {
+            _modalState.resolve = function (payload) {
+                resolve(payload);
+                if (opts && typeof opts.onClose === 'function') {
+                    try { opts.onClose(payload); } catch (e) { /* ignore */ }
+                }
+                if (payload && payload.action === 'saved' && opts && typeof opts.onSave === 'function') {
+                    try { opts.onSave(payload); } catch (e) { /* ignore */ }
+                }
+            };
+        });
+    }
+
+    async function _hydrateFromSavedReport(reportId) {
+        const url = API_BASE + '/saved-reports/' + encodeURIComponent(reportId);
+        const data = await _fetchJson(url);
+        if (data && data.wizard_state && typeof data.wizard_state === 'object') {
+            const ws = data.wizard_state;
+            if (ws.sourceId) _state.sourceId = ws.sourceId;
+            if (ws.selectedTableId) _state.selectedTableId = ws.selectedTableId;
+            if (ws.selectedTableObjectName) _state.selectedTableObjectName = ws.selectedTableObjectName;
+            if (ws.selectedTableSchema) _state.selectedTableSchema = ws.selectedTableSchema;
+            if (ws.selectedTableLabel) _state.selectedTableLabel = ws.selectedTableLabel;
+            if (Array.isArray(ws.selectedTables)) _state.selectedTables = ws.selectedTables;
+            if (ws.metric) _state.metric = ws.metric;
+            if (Array.isArray(ws.filters)) _state.filters = ws.filters;
+            _setStep(0);
+        }
+    }
+
+    function closeModal(payload) {
+        if (!_modalState.open) return;
+        const overlay = _modalState.overlay;
+        const panel = document.getElementById('dbSmartWizardPanel');
+
+        document.removeEventListener('keydown', _onModalKeydown, true);
+
+        // Panel'i orijinal parent'a iade et + gizle
+        if (panel) {
+            panel.classList.remove('dsw-in-modal');
+            try {
+                if (_modalState.panelOrigParent) {
+                    if (_modalState.panelOrigNextSibling && _modalState.panelOrigNextSibling.parentNode === _modalState.panelOrigParent) {
+                        _modalState.panelOrigParent.insertBefore(panel, _modalState.panelOrigNextSibling);
+                    } else {
+                        _modalState.panelOrigParent.appendChild(panel);
+                    }
+                }
+            } catch (e) { /* ignore */ }
+            panel.classList.add('hidden');
+            panel.setAttribute('hidden', '');
+        }
+
+        if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+
+        // Body scroll restore
+        document.body.style.overflow = _modalState.prevBodyOverflow || '';
+
+        // Return focus
+        if (_modalState.opener && typeof _modalState.opener.focus === 'function') {
+            try { _modalState.opener.focus(); } catch (e) { /* ignore */ }
+        }
+
+        const resolve = _modalState.resolve;
+        _modalState = {
+            open: false, overlay: null, dialog: null,
+            panelOrigParent: null, panelOrigNextSibling: null,
+            prevBodyOverflow: null, resolve: null, opener: null,
+        };
+        if (typeof resolve === 'function') {
+            resolve(payload || { action: 'cancelled' });
+        }
+    }
+
+    // Save sonrası dışarıdan tetiklenebilir hook (ileride wizard finish'i çağıracak)
+    function _notifySaved(reportId, name) {
+        if (_modalState.open) {
+            closeModal({ action: 'saved', reportId: reportId, name: name });
+        }
+    }
+
     window.DbSmartWizardModule = {
         init: init,
         close: _closeWizard,
+        openAsModal: openAsModal,
+        closeModal: closeModal,
+        isOpen: isOpen,
+        _notifySaved: _notifySaved,
         getState: function () { return Object.assign({}, _state); },
     };
 })();

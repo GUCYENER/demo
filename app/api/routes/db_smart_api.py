@@ -40,7 +40,7 @@ import threading
 import time as _time
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -1009,6 +1009,149 @@ def post_mark_run(
     return {"ok": True, "report_id": report_id}
 
 
+# ─────────────────────────────────────────────────────────────
+# Duplicate (Kopya Farklı Kaydet) + Delete
+# ─────────────────────────────────────────────────────────────
+
+class _DuplicateBody(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=200)
+
+
+@router.post("/saved-reports/{report_id}/duplicate", status_code=201)
+def duplicate_saved_report(
+    report_id: int = Path(..., ge=1),
+    body: Optional[_DuplicateBody] = Body(default=None),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Saved report'u kopyalar — yeni id döner.
+
+    RLS sahiplik kontrolü: kaynak rapor `current_user`'a ait değilse RLS
+    policy SELECT'i 0 satır döndürür → 404. INSERT'te user_id/company_id
+    explicit verilir (default'lar yok); wizard_state JSONB cast edilir.
+    """
+    _require_user_id(current_user)
+    uid = current_user.get("id") or current_user.get("user_id")
+    cid = current_user.get("company_id")
+    if uid is None or cid is None:
+        raise HTTPException(status_code=401, detail="Kullanıcı bağlamı eksik (user_id/company_id).")
+
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        apply_vyra_user_context(cur, current_user)
+
+        # 1) Kaynak raporu oku — RLS policy non-owner için 0 satır döner.
+        cur.execute(
+            """
+            SELECT name, description, wizard_state, source_id,
+                   last_sql, last_dialect, tags
+            FROM dbsmart_saved_reports
+            WHERE id = %s
+            """,
+            (int(report_id),),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Rapor bulunamadı veya yetkiniz yok.")
+
+        if isinstance(row, dict):
+            src_name = row.get("name")
+            src_desc = row.get("description")
+            src_ws = row.get("wizard_state")
+            src_source_id = row.get("source_id")
+            src_last_sql = row.get("last_sql")
+            src_last_dialect = row.get("last_dialect")
+            src_tags = row.get("tags")
+        else:
+            src_name = row[0]
+            src_desc = row[1]
+            src_ws = row[2]
+            src_source_id = row[3]
+            src_last_sql = row[4]
+            src_last_dialect = row[5]
+            src_tags = row[6]
+
+        req_name = body.name.strip() if (body and body.name and body.name.strip()) else None
+        new_name = (req_name or f"Kopya - {src_name or ''}")[:200]
+
+        # wizard_state JSONB — dict/list ise serialize, str ise olduğu gibi geç,
+        # None ise boş objeye düş (kolon NOT NULL).
+        if isinstance(src_ws, (dict, list)):
+            ws_json = json.dumps(src_ws, default=str)
+        elif src_ws is None:
+            ws_json = "{}"
+        else:
+            ws_json = str(src_ws)
+
+        # tags TEXT[] — None ise NULL bırak, list ise psycopg array adapter halleder.
+        tags_param = list(src_tags) if isinstance(src_tags, (list, tuple)) else src_tags
+
+        try:
+            cur.execute(
+                """
+                INSERT INTO dbsmart_saved_reports
+                    (user_id, company_id, source_id, name, description,
+                     wizard_state, last_sql, last_dialect, tags,
+                     created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, NOW(), NOW())
+                RETURNING id, name, created_at
+                """,
+                (
+                    int(uid), int(cid), src_source_id, new_name, src_desc,
+                    ws_json, src_last_sql, src_last_dialect, tags_param,
+                ),
+            )
+        except Exception as e:
+            logger.warning("[db_smart] duplicate_saved_report INSERT failed id=%s: %s",
+                           report_id, e)
+            raise HTTPException(status_code=500, detail="Rapor kopyalanamadı.")
+
+        new_row = cur.fetchone()
+        if not new_row:
+            raise HTTPException(status_code=500, detail="Rapor kopyalanamadı.")
+        conn.commit()
+
+        if isinstance(new_row, dict):
+            new_id = new_row.get("id")
+            ret_name = new_row.get("name")
+            created = new_row.get("created_at")
+        else:
+            new_id = new_row[0]
+            ret_name = new_row[1]
+            created = new_row[2]
+
+    return {
+        "id": int(new_id),
+        "name": ret_name,
+        "created_at": created.isoformat() if hasattr(created, "isoformat") else str(created or ""),
+    }
+
+
+@router.delete("/saved-reports/{report_id}", status_code=204)
+def delete_saved_report(
+    report_id: int = Path(..., ge=1),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Response:
+    """Saved report sil. RLS policy başka user'ın raporunu görmez → 404."""
+    _require_user_id(current_user)
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        apply_vyra_user_context(cur, current_user)
+        try:
+            cur.execute(
+                "DELETE FROM dbsmart_saved_reports WHERE id = %s",
+                (int(report_id),),
+            )
+        except Exception as e:
+            logger.warning("[db_smart] delete_saved_report failed id=%s: %s",
+                           report_id, e)
+            raise HTTPException(status_code=500, detail="Rapor silinemedi.")
+        affected = getattr(cur, "rowcount", 0) or 0
+        conn.commit()
+    if affected == 0:
+        raise HTTPException(status_code=404, detail="Rapor bulunamadı veya yetkiniz yok.")
+    return Response(status_code=204)
+
+
 # PUBLIC — auth YOK, token-bound erişim. RLS bypass'a güvenmez (saved_reports.get_by_share_token
 # içinde explicit is_shared=TRUE AND share_expires_at > NOW() filtresi var).
 @router.get("/saved-reports/by-token/{token}")
@@ -1127,13 +1270,49 @@ def embed_report(
 def list_sources(
     current_user: Dict[str, Any] = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """Kullanıcının erişebildiği data_sources'u döner (company-scoped)."""
+    """Kullanıcının erişebildiği data_sources'u döner (company-scoped).
+
+    RLS / company_id filtreleme `apply_vyra_user_context` ile uygulanır;
+    `data_sources` tablosunda `connection_status` kolonu YOKTUR (migration 002),
+    bu nedenle response kontratını korumak için sabit 'unknown' döner.
+    """
     _require_user_id(current_user)
+    items: List[Dict[str, Any]] = []
     with get_db_context() as conn:
         cur = conn.cursor()
         apply_vyra_user_context(cur, current_user)
-        # TODO (FAZ 1 G1.2): SELECT id, name, db_type FROM data_sources + permission filter
-    return {"items": [], "count": 0}
+        try:
+            cur.execute(
+                """
+                SELECT id, name, db_type, is_active
+                FROM data_sources
+                WHERE COALESCE(is_active, true) = true
+                ORDER BY name ASC
+                LIMIT 100
+                """
+            )
+            rows = cur.fetchall() or []
+        except Exception as e:
+            logger.warning("[db_smart] list_sources query failed: %s", e)
+            rows = []
+        for r in rows:
+            if isinstance(r, dict):
+                items.append({
+                    "id": r.get("id"),
+                    "name": r.get("name"),
+                    "db_type": r.get("db_type"),
+                    "connection_status": "unknown",
+                    "is_active": bool(r.get("is_active")) if r.get("is_active") is not None else True,
+                })
+            else:
+                items.append({
+                    "id": r[0],
+                    "name": r[1],
+                    "db_type": r[2],
+                    "connection_status": "unknown",
+                    "is_active": bool(r[3]) if r[3] is not None else True,
+                })
+    return {"items": items, "count": len(items)}
 
 
 @router.get("/sources/{source_id}/tables")

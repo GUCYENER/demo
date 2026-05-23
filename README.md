@@ -75,6 +75,34 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.33.0 (2026-05-23) - Akıllı Veri Keşfi: Saved Reports Grid + Modal Wizard + SaaS Polish
+> **Multi-agent ZEUS workflow:** Plan + 4 disjoint brief (A/B/C/D); Agent C (filter modal) cancelled — modal zaten mevcut. Ajan-A ZEUS takeover (3 ajan malware-refuse).
+
+**FAZ 1 — Frontend Modal Wrapper (ZEUS takeover, Ajan-A):**
+- 🎨 **`db_smart_wizard.js`:** `openAsModal({reportId?, onClose, onSave})` → Promise, `closeModal()`, `isOpen()`, `_notifySaved()`. `appendChild` relocation (clone yerine — event binding korunur), kapanışta orijinal parent+nextSibling konumuna iade. ESC + overlay click + focus trap + body scroll lock + return-focus.
+- 💎 **`_db_smart_wizard.css` (HEBE polish):** `.dsw-modal-overlay` (rgba(0,0,0,.55) + blur 4px), `.dsw-modal-dialog` (min(1100,95vw) × min(720,90vh)), mobile <768px full-screen, prefers-reduced-motion guard. **SaaS modern polish:** glass-morphism (radial-gradient blue/pink accents), gradient stepper pill chips, sticky footer + backdrop-blur, focus glow ring inputs, gradient primary buttons (translateY hover lift).
+- 🌐 **i18n loader bootstrap fix (KRİTİK):** `loader.js` `ensureInit()` + DOMContentLoaded auto-boot. Önce `VyraI18n.init()` hiçbir yer çağırmıyordu + `loader.js` build.mjs JS_FILES'a dahil değildi → bundle yüklenmiyordu → `wizard.step.indicator` ham key görünüyordu. Wizard `init()` içinde `_ensureI18n()` await + `applyTranslations(panel)` + `_setStep` re-render.
+
+**FAZ 2 — Saved Reports Grid (Ajan-B):**
+- 🌐 **`saved_reports_grid.js`:** Card grid (`GET /api/db-smart/saved-reports`) — name/desc/last_run/run_count, "Yeni Soru Sor" CTA + per-card "Aç/Çalıştır/Kopyala/Sil". Empty state.
+- 🎨 **`_saved_reports_grid.css`:** Card grid layout, hover lift, action buttons.
+- 🪟 **`report_detail_modal.js`:** Read-only report detail (SQL preview + last result).
+- 🏠 **`home.html`:** `selectChatMode('aki_kesif')` branch — chrome hide + grid mount + "+ Yeni Soru Sor" capture-phase wiring.
+
+**FAZ 3 — Backend (Ajan-D):**
+- 🔐 **`/sources` RLS-aware:** `apply_vyra_user_context(cur, current_user)` + literal `'unknown'` connection_status (kolon olmayan ortamlarda graceful).
+- 📋 **`POST /saved-reports/{id}/duplicate`:** 201 — RLS SELECT ile sahiplik kontrolü (non-owner 404), explicit user_id/company_id INSERT, `%s::jsonb` wizard_state cast.
+- 🗑️ **`DELETE /saved-reports/{id}`:** 204/404, rowcount check.
+- 🐛 **Data fix:** `UPDATE users SET company_id=1 WHERE company_id IS NULL` — admin'in NULL company_id'si `_coerce_tenant_int` fail-closed guard'ı tetikleyip tüm `/api/db-smart/*` çağrılarını 500 yapıyordu (RLSContextError).
+
+**Build & Pipeline:**
+- 🔨 **`build.mjs`:** `loader.js` (wizard'dan ÖNCE), `_saved_reports_grid.css`, `saved_reports_grid.js`, `report_detail_modal.js` bundle'a eklendi.
+- 📦 Bundle: CSS 403KB (+38KB), JS 860KB (+27KB).
+
+**Follow-ups:**
+- Wizard "Bitir" handler `DbSmartWizardModule._notifySaved` çağırmalı (POST /save-report sonrası modal'a saved sinyali).
+- `aki_kesif_tr.json`'a yeni key'ler: saved_reports.*, grid.empty, detail.*
+
 ### 🆕 v3.30.0 (2026-05-21) - DB Smart Wizard v4 + Agentic SQL Copilot Master Plan Complete
 > **Kapsamlı sürüm:** 49 P-number, 38+ dosya, 5 FAZ (2-5) tamamlandı. Master plan Faz 0-6 tüm maddeler implemente.
 
@@ -3789,8 +3817,8 @@ netstat -an | findstr "5005"
 
 **Geliştirici:** Yasın Fazlıoğlu  
 **E-posta:** yasin.fazlioglu@consultant.turkcell.com.tr  
-**Versiyon:** 3.32.0 (Faz 2 perf — /enrichment-approve-bulk artık fastapi.BackgroundTasks ile post-response schema_record + composite index `(source_id,id)` CONCURRENTLY + ds_schema_record_warnings PERMISSIVE RLS tablosu (mig 043); UX paketi — global `[data-tt]` modern dark tooltip utility (ui_tooltip.css) native `title=` yerine + `_runningJob` state machine: 3s poll + exponential backoff (30s tavan), 4 bulk action butonu state-aware concurrent gate)  
-**Önceki:** 3.31.0 (Backend bulk approve endpoint + transactional SAVEPOINT + ThreadPool paralel schema_record + Council Gate fix: ACL guard, worker RLS, pool clamp, SAVEPOINT release)
+**Versiyon:** 3.33.0 (Akıllı Veri Keşfi — saved-reports card grid + modal wizard wrapper + SaaS modern dialog (glass-morphism, gradient stepper) + i18n loader auto-bootstrap fix + RLS-aware /sources & duplicate/delete endpoints + admin company_id NULL data-fix)  
+**Önceki:** 3.32.0 (Faz 2 perf — /enrichment-approve-bulk artık fastapi.BackgroundTasks ile post-response schema_record + composite index `(source_id,id)` CONCURRENTLY + ds_schema_record_warnings PERMISSIVE RLS tablosu (mig 043); UX paketi — global `[data-tt]` modern dark tooltip utility (ui_tooltip.css) native `title=` yerine + `_runningJob` state machine: 3s poll + exponential backoff (30s tavan), 4 bulk action butonu state-aware concurrent gate)
 
 ---
 

@@ -34179,6 +34179,157 @@ window.ThemePickerPopup = (function () {
 })(window);
 
 
+/* === assets/js/i18n/loader.js === */
+/**
+ * VYRA i18n Loader (v3.30.0 FAZ 5 P34)
+ * =====================================
+ * Hafif, dependency-free i18n yardımcısı. DB Smart Wizard ("Akıllı Veri
+ * Keşfi") modülü için TR (default) + EN bundle yüklemeyi yönetir.
+ *
+ * API:
+ *   window.VyraI18n.init()                         → detect + load active bundle
+ *   window.VyraI18n.t(key, params?)                → string lookup + fallback
+ *   window.VyraI18n.applyTranslations(rootEl)      → [data-i18n] + [data-i18n-attr] sweep
+ *   window.VyraI18n.setLang(lang)                  → switch + persist
+ *   window.VyraI18n.getLang()                      → current ('tr' | 'en')
+ *
+ * Bundle path: /assets/js/i18n/aki_kesif_<lang>.json
+ *   (FastAPI StaticFiles mount '/assets' → frontend/assets)
+ *
+ * Detection priority:
+ *   1) URL ?lang=tr|en
+ *   2) localStorage 'vyra.lang'
+ *   3) navigator.language slice(0,2)
+ *   4) FALLBACK 'tr'
+ *
+ * ARES gate: t() çıktısı yalnız textContent (innerHTML değil). XSS yok.
+ */
+(function () {
+    'use strict';
+    const STORAGE_KEY = 'vyra.lang';
+    const FALLBACK = 'tr';
+    const SUPPORTED = ['tr', 'en'];
+    const _bundles = {};   // {lang: {key: str}}
+    let _currentLang = null;
+
+    function detectLang() {
+        // Priority: URL > localStorage > navigator.language > FALLBACK
+        try {
+            const u = new URLSearchParams(window.location.search).get('lang');
+            if (u && SUPPORTED.includes(u)) return u;
+        } catch (e) { /* ignore */ }
+        try {
+            const s = localStorage.getItem(STORAGE_KEY);
+            if (s && SUPPORTED.includes(s)) return s;
+        } catch (e) { /* ignore */ }
+        try {
+            const n = (navigator.language || 'tr').slice(0, 2).toLowerCase();
+            if (SUPPORTED.includes(n)) return n;
+        } catch (e) { /* ignore */ }
+        return FALLBACK;
+    }
+
+    async function loadBundle(lang) {
+        if (_bundles[lang]) return _bundles[lang];
+        try {
+            const res = await fetch('/assets/js/i18n/aki_kesif_' + lang + '.json',
+                                    { cache: 'no-cache' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            _bundles[lang] = await res.json();
+            return _bundles[lang];
+        } catch (e) {
+            console.warn('[i18n] bundle load failed', lang, e);
+            if (lang !== FALLBACK) return loadBundle(FALLBACK);
+            _bundles[lang] = {};
+            return {};
+        }
+    }
+
+    async function init() {
+        _currentLang = detectLang();
+        await loadBundle(_currentLang);
+        // <html lang="…"> — SR + Lighthouse i18n
+        try { document.documentElement.setAttribute('lang', _currentLang); } catch (e) { /* ignore */ }
+        return _currentLang;
+    }
+
+    function t(key, params) {
+        const bundle = _bundles[_currentLang] || {};
+        let raw = bundle[key];
+        if (raw === undefined && _currentLang !== FALLBACK) {
+            raw = (_bundles[FALLBACK] || {})[key];
+        }
+        if (raw === undefined) return key;   // debug passthrough
+        if (params && typeof params === 'object') {
+            return String(raw).replace(/\{(\w+)\}/g, function (m, k) {
+                return (k in params) ? String(params[k]) : m;
+            });
+        }
+        return raw;
+    }
+
+    function applyTranslations(rootEl) {
+        if (!rootEl || typeof rootEl.querySelectorAll !== 'function') return;
+        rootEl.querySelectorAll('[data-i18n]').forEach(function (el) {
+            const key = el.getAttribute('data-i18n');
+            const paramsAttr = el.getAttribute('data-i18n-params');
+            let p = null;
+            if (paramsAttr) { try { p = JSON.parse(paramsAttr); } catch (e) { /* ignore */ } }
+            // textContent — innerHTML değil (ARES XSS gate)
+            el.textContent = t(key, p);
+        });
+        rootEl.querySelectorAll('[data-i18n-attr]').forEach(function (el) {
+            // data-i18n-attr="title:tooltip.help;aria-label:button.save"
+            const spec = el.getAttribute('data-i18n-attr') || '';
+            spec.split(';').forEach(function (pair) {
+                const parts = pair.split(':').map(function (s) { return s.trim(); });
+                const attr = parts[0], key = parts[1];
+                if (attr && key) el.setAttribute(attr, t(key));
+            });
+        });
+    }
+
+    function setLang(lang) {
+        if (!SUPPORTED.includes(lang)) return Promise.resolve(_currentLang);
+        try { localStorage.setItem(STORAGE_KEY, lang); } catch (e) { /* ignore */ }
+        return loadBundle(lang).then(function () {
+            _currentLang = lang;
+            try { document.documentElement.setAttribute('lang', lang); } catch (e) { /* ignore */ }
+            return lang;
+        });
+    }
+
+    function getLang() { return _currentLang; }
+
+    // v3.33.0 — idempotent init + ready promise
+    // Bug fix: hiçbir yer init() çağırmadığı için aki_kesif bundle yüklenmiyor,
+    // wizard.step.indicator gibi key'ler ham görünüyordu.
+    let _initPromise = null;
+    function ensureInit() {
+        if (!_initPromise) _initPromise = init();
+        return _initPromise;
+    }
+
+    window.VyraI18n = {
+        init: init,
+        ensureInit: ensureInit,
+        t: t,
+        applyTranslations: applyTranslations,
+        setLang: setLang,
+        getLang: getLang,
+        SUPPORTED: SUPPORTED,
+    };
+
+    // Auto-bootstrap: DOMContentLoaded'da (veya hemen) ensureInit() tetikle.
+    function _autoBoot() { ensureInit().catch(function (e) { console.warn('[i18n] auto-init failed', e); }); }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _autoBoot, { once: true });
+    } else {
+        _autoBoot();
+    }
+})();
+
+
 /* === assets/js/modules/db_smart_ast_history.js === */
 /**
  * VYRA — DB Smart AST History (Faz 3 / P20-B / v3.30.0)
@@ -36012,9 +36163,33 @@ window.ThemePickerPopup = (function () {
         }
     }
 
-    function init() {
+    // v3.33.0 — i18n bundle hazır olana kadar bekle (step.indicator vb. için)
+    async function _ensureI18n() {
+        if (!window.VyraI18n) return;
+        try {
+            if (typeof window.VyraI18n.ensureInit === 'function') {
+                await window.VyraI18n.ensureInit();
+            } else if (typeof window.VyraI18n.init === 'function') {
+                await window.VyraI18n.init();
+            }
+        } catch (e) { /* graceful: passthrough fallback */ }
+    }
+
+    function init(opts) {
+        opts = opts || {};
         // Record opener for return-focus (HEBE Gate)
         _state._lastFocusEl = document.activeElement;
+        // i18n bundle async load (fire-and-forget; UI metinleri sonra applyTranslations)
+        _ensureI18n().then(function () {
+            try {
+                if (window.VyraI18n && typeof window.VyraI18n.applyTranslations === 'function') {
+                    const root = document.getElementById('dbSmartWizardPanel');
+                    if (root) window.VyraI18n.applyTranslations(root);
+                }
+                // step indicator'ı yeniden bas
+                _setStep(_state.currentStep);
+            } catch (e) { /* ignore */ }
+        });
 
         // Buton binding'leri (idempotent)
         const searchBtn = document.getElementById('dswSearchBtn');
@@ -36065,11 +36240,1476 @@ window.ThemePickerPopup = (function () {
         _ensureSession();
     }
 
+    // ============================================================
+    // v3.33.0 — Modal wrapper (overlay + dialog)
+    // ============================================================
+    // Strateji: inline panel'i klonlamak yerine **taşı** (appendChild).
+    //   - DOM event listener'ları + _bound flag'leri korunur (Agent A note #3).
+    //   - Modal kapanınca panel orijinal parent'a iade edilir.
+
+    let _modalState = {
+        open: false,
+        overlay: null,
+        dialog: null,
+        panelOrigParent: null,
+        panelOrigNextSibling: null,
+        prevBodyOverflow: null,
+        resolve: null,
+        opener: null,
+    };
+
+    function isOpen() { return !!_modalState.open; }
+
+    function _trapFocus(e) {
+        if (e.key !== 'Tab') return;
+        const dialog = _modalState.dialog;
+        if (!dialog) return;
+        const focusables = dialog.querySelectorAll(
+            'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])'
+        );
+        if (!focusables.length) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+            e.preventDefault(); last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+            e.preventDefault(); first.focus();
+        }
+    }
+
+    function _onModalKeydown(e) {
+        if (e.key === 'Escape') { e.stopPropagation(); closeModal({ action: 'cancelled' }); return; }
+        _trapFocus(e);
+    }
+
+    function _onOverlayClick(e) {
+        if (e.target === _modalState.overlay) closeModal({ action: 'cancelled' });
+    }
+
+    async function openAsModal(opts) {
+        opts = opts || {};
+        if (_modalState.open) return Promise.resolve(null);
+
+        // Wizard panel DOM'unu modal'a taşı
+        const panel = document.getElementById('dbSmartWizardPanel');
+        if (!panel) {
+            console.warn('[DbSmartWizard] panel DOM bulunamadı');
+            return Promise.resolve(null);
+        }
+
+        _modalState.opener = document.activeElement;
+        _state._lastFocusEl = _modalState.opener;
+
+        // Overlay + dialog
+        const overlay = document.createElement('div');
+        overlay.className = 'dsw-modal-overlay';
+        overlay.setAttribute('role', 'presentation');
+        overlay.addEventListener('click', _onOverlayClick);
+
+        const dialog = document.createElement('div');
+        dialog.className = 'dsw-modal-dialog';
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.setAttribute('aria-labelledby', 'dswTitle');
+
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'dsw-modal-close';
+        closeBtn.setAttribute('aria-label', 'Kapat');
+        closeBtn.setAttribute('data-tooltip', 'Kapat (Esc)');
+        closeBtn.textContent = '×';
+        closeBtn.addEventListener('click', function () { closeModal({ action: 'cancelled' }); });
+
+        dialog.appendChild(closeBtn);
+
+        // Panel'i taşı (klonlama yok — event binding korunur)
+        _modalState.panelOrigParent = panel.parentNode;
+        _modalState.panelOrigNextSibling = panel.nextSibling;
+        panel.classList.remove('hidden');
+        panel.hidden = false;
+        panel.classList.add('dsw-in-modal');
+        dialog.appendChild(panel);
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        // Body scroll lock
+        _modalState.prevBodyOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+
+        _modalState.open = true;
+        _modalState.overlay = overlay;
+        _modalState.dialog = dialog;
+
+        // ESC + focus trap
+        document.addEventListener('keydown', _onModalKeydown, true);
+
+        // Wizard init/hydrate
+        init({ mode: 'modal' });
+
+        // reportId verilmişse hydrate dene (best-effort, hatayı yutar)
+        if (opts.reportId) {
+            _hydrateFromSavedReport(opts.reportId).catch(function (e) {
+                console.warn('[DbSmartWizard] reportId hydrate failed', e);
+            });
+        }
+
+        // İlk focusable'a focus
+        setTimeout(function () {
+            try {
+                const target = dialog.querySelector(
+                    'input,select,textarea,button:not([disabled]),[tabindex]:not([tabindex="-1"])'
+                );
+                if (target) target.focus();
+            } catch (e) { /* ignore */ }
+        }, 0);
+
+        return new Promise(function (resolve) {
+            _modalState.resolve = function (payload) {
+                resolve(payload);
+                if (opts && typeof opts.onClose === 'function') {
+                    try { opts.onClose(payload); } catch (e) { /* ignore */ }
+                }
+                if (payload && payload.action === 'saved' && opts && typeof opts.onSave === 'function') {
+                    try { opts.onSave(payload); } catch (e) { /* ignore */ }
+                }
+            };
+        });
+    }
+
+    async function _hydrateFromSavedReport(reportId) {
+        const url = API_BASE + '/saved-reports/' + encodeURIComponent(reportId);
+        const data = await _fetchJson(url);
+        if (data && data.wizard_state && typeof data.wizard_state === 'object') {
+            const ws = data.wizard_state;
+            if (ws.sourceId) _state.sourceId = ws.sourceId;
+            if (ws.selectedTableId) _state.selectedTableId = ws.selectedTableId;
+            if (ws.selectedTableObjectName) _state.selectedTableObjectName = ws.selectedTableObjectName;
+            if (ws.selectedTableSchema) _state.selectedTableSchema = ws.selectedTableSchema;
+            if (ws.selectedTableLabel) _state.selectedTableLabel = ws.selectedTableLabel;
+            if (Array.isArray(ws.selectedTables)) _state.selectedTables = ws.selectedTables;
+            if (ws.metric) _state.metric = ws.metric;
+            if (Array.isArray(ws.filters)) _state.filters = ws.filters;
+            _setStep(0);
+        }
+    }
+
+    function closeModal(payload) {
+        if (!_modalState.open) return;
+        const overlay = _modalState.overlay;
+        const panel = document.getElementById('dbSmartWizardPanel');
+
+        document.removeEventListener('keydown', _onModalKeydown, true);
+
+        // Panel'i orijinal parent'a iade et + gizle
+        if (panel) {
+            panel.classList.remove('dsw-in-modal');
+            try {
+                if (_modalState.panelOrigParent) {
+                    if (_modalState.panelOrigNextSibling && _modalState.panelOrigNextSibling.parentNode === _modalState.panelOrigParent) {
+                        _modalState.panelOrigParent.insertBefore(panel, _modalState.panelOrigNextSibling);
+                    } else {
+                        _modalState.panelOrigParent.appendChild(panel);
+                    }
+                }
+            } catch (e) { /* ignore */ }
+            panel.classList.add('hidden');
+            panel.setAttribute('hidden', '');
+        }
+
+        if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+
+        // Body scroll restore
+        document.body.style.overflow = _modalState.prevBodyOverflow || '';
+
+        // Return focus
+        if (_modalState.opener && typeof _modalState.opener.focus === 'function') {
+            try { _modalState.opener.focus(); } catch (e) { /* ignore */ }
+        }
+
+        const resolve = _modalState.resolve;
+        _modalState = {
+            open: false, overlay: null, dialog: null,
+            panelOrigParent: null, panelOrigNextSibling: null,
+            prevBodyOverflow: null, resolve: null, opener: null,
+        };
+        if (typeof resolve === 'function') {
+            resolve(payload || { action: 'cancelled' });
+        }
+    }
+
+    // Save sonrası dışarıdan tetiklenebilir hook (ileride wizard finish'i çağıracak)
+    function _notifySaved(reportId, name) {
+        if (_modalState.open) {
+            closeModal({ action: 'saved', reportId: reportId, name: name });
+        }
+    }
+
     window.DbSmartWizardModule = {
         init: init,
         close: _closeWizard,
+        openAsModal: openAsModal,
+        closeModal: closeModal,
+        isOpen: isOpen,
+        _notifySaved: _notifySaved,
         getState: function () { return Object.assign({}, _state); },
     };
+})();
+
+
+/* === assets/js/modules/report_detail_modal.js === */
+/**
+ * VYRA — Report Detail Modal Module
+ * ==================================
+ * Kayıtlı bir raporun detayını gösterir; Çalıştır / Düzenle / Kopyala / Paylaş / Sil aksiyonları.
+ *
+ * Public API:
+ *   window.ReportDetailModal.open(reportId, {
+ *     onEdit(reportId),
+ *     onDuplicate(newReportId),
+ *     onDeleted(reportId),
+ *     onRan(result),
+ *   }) -> Promise
+ *   window.ReportDetailModal.close()
+ *
+ * HEBE: aria-modal, role=dialog, ESC, overlay click, focus trap, return-focus, body scroll lock.
+ *
+ * Brief: 2026-05-23_aki-kesfi-B_saved-reports-grid
+ * Version: 1.0.0
+ */
+
+(function () {
+    'use strict';
+
+    const API_BASE = '/api/db-smart';
+
+    // ─── State ───
+    let _overlay = null;
+    let _dialog = null;
+    let _opts = {};
+    let _reportId = null;
+    let _report = null;
+    let _returnFocusEl = null;
+    let _escHandler = null;
+    let _focusTrapHandler = null;
+    let _resolveOpen = null;
+    let _isRunning = false;
+
+    // ─── Utils ───
+    function _authHeaders() {
+        const token = localStorage.getItem('access_token');
+        const h = { 'Content-Type': 'application/json' };
+        if (token) h['Authorization'] = 'Bearer ' + token;
+        return h;
+    }
+
+    function _toast(msg, kind) {
+        if (window.showToast) {
+            try { window.showToast(msg, kind || 'info'); return; } catch (_) { /* noop */ }
+        }
+        try { console.log('[ReportDetailModal]', kind || 'info', msg); } catch (_) { /* noop */ }
+    }
+
+    function _clear(el) { while (el && el.firstChild) el.removeChild(el.firstChild); }
+
+    function _svg(d) {
+        const ns = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(ns, 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor');
+        svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round');
+        svg.setAttribute('stroke-linejoin', 'round');
+        svg.setAttribute('aria-hidden', 'true');
+        svg.classList.add('rdm-icon');
+        const path = document.createElementNS(ns, 'path');
+        path.setAttribute('d', d);
+        svg.appendChild(path);
+        return svg;
+    }
+
+    const ICONS = {
+        play: 'M8 5v14l11-7z',
+        edit: 'M11 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z',
+        copy: 'M9 9h10v10H9zM5 5h10v4M5 5v10h4',
+        share: 'M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7M16 6l-4-4-4 4M12 2v14',
+        trash: 'M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14',
+        close: 'M18 6L6 18M6 6l12 12',
+        spinner: 'M12 2a10 10 0 1 0 10 10',
+    };
+
+    // ─── Tarih ───
+    const MONTH_TR = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+    function _relativeTime(isoStr) {
+        if (!isoStr) return '';
+        const d = new Date(isoStr);
+        if (isNaN(d.getTime())) return '';
+        const now = new Date();
+        const diffSec = Math.floor((now.getTime() - d.getTime()) / 1000);
+        if (diffSec < 60) return '<1dk önce';
+        if (diffSec < 3600) return Math.floor(diffSec / 60) + 'dk önce';
+        if (diffSec < 86400) return Math.floor(diffSec / 3600) + 'sa önce';
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        const startOfThat = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+        const diffDays = Math.round((startOfToday - startOfThat) / 86400000);
+        if (diffDays === 1) return 'dün';
+        if (diffDays > 1 && diffDays < 7) return diffDays + 'gün önce';
+        return d.getDate() + ' ' + MONTH_TR[d.getMonth()];
+    }
+    function _absoluteISO(isoStr) {
+        if (!isoStr) return '';
+        const d = new Date(isoStr);
+        if (isNaN(d.getTime())) return String(isoStr);
+        try { return d.toISOString(); } catch (_) { return String(isoStr); }
+    }
+
+    // ─── Focus trap ───
+    function _focusableEls(container) {
+        const sel = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+        return Array.from(container.querySelectorAll(sel)).filter((el) => {
+            return el.offsetParent !== null || el === document.activeElement;
+        });
+    }
+
+    function _installFocusTrap(container) {
+        _focusTrapHandler = function (e) {
+            if (e.key !== 'Tab') return;
+            const els = _focusableEls(container);
+            if (els.length === 0) return;
+            const first = els[0];
+            const last = els[els.length - 1];
+            if (e.shiftKey && document.activeElement === first) {
+                e.preventDefault();
+                last.focus();
+            } else if (!e.shiftKey && document.activeElement === last) {
+                e.preventDefault();
+                first.focus();
+            }
+        };
+        container.addEventListener('keydown', _focusTrapHandler);
+    }
+
+    // ─── Modal shell ───
+    function _createOverlay() {
+        const overlay = document.createElement('div');
+        overlay.className = 'rdm-overlay';
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) close();
+        });
+
+        const dialog = document.createElement('div');
+        dialog.className = 'rdm-dialog';
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.setAttribute('aria-labelledby', 'rdm-title');
+        dialog.setAttribute('tabindex', '-1');
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        // body scroll lock
+        document.body.style.overflow = 'hidden';
+
+        // ESC
+        _escHandler = function (e) {
+            if (e.key === 'Escape') {
+                // confirm modal açıksa ona bırak
+                if (document.querySelector('.rdm-confirm-overlay')) return;
+                close();
+            }
+        };
+        document.addEventListener('keydown', _escHandler);
+
+        _installFocusTrap(dialog);
+
+        _overlay = overlay;
+        _dialog = dialog;
+
+        // mount sonrası dialog'a focus
+        requestAnimationFrame(() => {
+            try { dialog.focus(); } catch (_) { /* noop */ }
+            overlay.classList.add('is-visible');
+        });
+    }
+
+    function _renderLoading() {
+        if (!_dialog) return;
+        _clear(_dialog);
+        const loading = document.createElement('div');
+        loading.className = 'rdm-loading';
+        const sp = document.createElement('div');
+        sp.className = 'rdm-spinner';
+        loading.appendChild(sp);
+        const t = document.createElement('div');
+        t.className = 'rdm-loading-text';
+        t.textContent = 'Rapor yükleniyor...';
+        loading.appendChild(t);
+        _dialog.appendChild(loading);
+    }
+
+    function _renderError(msg) {
+        if (!_dialog) return;
+        _clear(_dialog);
+        const wrap = document.createElement('div');
+        wrap.className = 'rdm-error';
+        const t = document.createElement('div');
+        t.className = 'rdm-error-text';
+        t.textContent = msg || 'Bir hata oluştu.';
+        wrap.appendChild(t);
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'rdm-btn rdm-btn-secondary';
+        closeBtn.textContent = 'Kapat';
+        closeBtn.addEventListener('click', close);
+        wrap.appendChild(closeBtn);
+        _dialog.appendChild(wrap);
+    }
+
+    // ─── Detail render ───
+    function _renderDetail() {
+        if (!_dialog || !_report) return;
+        _clear(_dialog);
+
+        // header
+        const header = document.createElement('header');
+        header.className = 'rdm-header';
+
+        const headerLeft = document.createElement('div');
+        headerLeft.className = 'rdm-header-left';
+
+        const title = document.createElement('h2');
+        title.className = 'rdm-title';
+        title.id = 'rdm-title';
+        title.textContent = _report.name || 'Adsız Rapor';
+        headerLeft.appendChild(title);
+
+        const meta = document.createElement('div');
+        meta.className = 'rdm-meta';
+
+        const ts = _report.updated_at || _report.last_run_at || _report.created_at;
+        if (ts) {
+            const time = document.createElement('span');
+            time.className = 'rdm-meta-time';
+            time.textContent = _relativeTime(ts);
+            const abs = _absoluteISO(ts);
+            time.setAttribute('data-tooltip', abs);
+            time.setAttribute('title', abs);
+            meta.appendChild(time);
+        }
+
+        const metricKey = _report.metric_key || _report.metric;
+        if (metricKey) {
+            const metric = document.createElement('span');
+            metric.className = 'rdm-metric-badge';
+            metric.textContent = String(metricKey);
+            meta.appendChild(metric);
+        }
+
+        const tags = Array.isArray(_report.tags) ? _report.tags : [];
+        if (tags.length > 0) {
+            const tagWrap = document.createElement('span');
+            tagWrap.className = 'rdm-tags';
+            tags.forEach((t) => {
+                const c = document.createElement('span');
+                c.className = 'rdm-tag';
+                c.textContent = String(t);
+                tagWrap.appendChild(c);
+            });
+            meta.appendChild(tagWrap);
+        }
+
+        headerLeft.appendChild(meta);
+        header.appendChild(headerLeft);
+
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'rdm-icon-btn rdm-close-btn';
+        closeBtn.setAttribute('aria-label', 'Kapat');
+        closeBtn.setAttribute('data-tooltip', 'Kapat');
+        closeBtn.appendChild(_svg(ICONS.close));
+        closeBtn.addEventListener('click', close);
+        header.appendChild(closeBtn);
+
+        _dialog.appendChild(header);
+
+        // description
+        if (_report.description) {
+            const desc = document.createElement('p');
+            desc.className = 'rdm-description';
+            desc.textContent = _report.description;
+            _dialog.appendChild(desc);
+        }
+
+        // body
+        const body = document.createElement('div');
+        body.className = 'rdm-body';
+
+        // preview area
+        const preview = document.createElement('div');
+        preview.className = 'rdm-preview';
+        const hint = document.createElement('div');
+        hint.className = 'rdm-preview-hint';
+        if (_report.last_run_at) {
+            hint.textContent = 'Son çalıştırma: ' + _relativeTime(_report.last_run_at) + ' — sonucu güncellemek için Çalıştır\'a bas.';
+        } else {
+            hint.textContent = 'Henüz çalıştırılmadı. Çalıştır butonu ile sorguyu yürütebilirsin.';
+        }
+        preview.appendChild(hint);
+
+        const resultMount = document.createElement('div');
+        resultMount.className = 'rdm-result-mount';
+        preview.appendChild(resultMount);
+
+        body.appendChild(preview);
+
+        // SQL accordion
+        if (_report.last_sql) {
+            const details = document.createElement('details');
+            details.className = 'rdm-sql-accordion';
+            const summary = document.createElement('summary');
+            summary.className = 'rdm-sql-summary';
+            summary.textContent = 'SQL\'i göster';
+            details.appendChild(summary);
+            const pre = document.createElement('pre');
+            pre.className = 'rdm-sql-pre';
+            pre.textContent = String(_report.last_sql);
+            details.appendChild(pre);
+            body.appendChild(details);
+        }
+
+        _dialog.appendChild(body);
+
+        // footer actions
+        const footer = document.createElement('footer');
+        footer.className = 'rdm-footer';
+
+        const runBtn = _makeActionBtn('Çalıştır', ICONS.play, 'rdm-btn-primary');
+        runBtn.dataset.role = 'run';
+        runBtn.addEventListener('click', _onRun);
+        footer.appendChild(runBtn);
+
+        const editBtn = _makeActionBtn('Düzenle', ICONS.edit, 'rdm-btn-secondary');
+        editBtn.addEventListener('click', () => {
+            if (typeof _opts.onEdit === 'function') {
+                try { _opts.onEdit(_reportId); } catch (e) { console.error('[ReportDetailModal] onEdit error:', e); }
+            }
+            close();
+        });
+        footer.appendChild(editBtn);
+
+        const dupBtn = _makeActionBtn('Kopyala', ICONS.copy, 'rdm-btn-secondary');
+        dupBtn.addEventListener('click', _onDuplicate);
+        footer.appendChild(dupBtn);
+
+        const shareBtn = _makeActionBtn('Paylaş', ICONS.share, 'rdm-btn-secondary');
+        shareBtn.addEventListener('click', _onShare);
+        footer.appendChild(shareBtn);
+
+        const delBtn = _makeActionBtn('Sil', ICONS.trash, 'rdm-btn-danger');
+        delBtn.addEventListener('click', _onDelete);
+        footer.appendChild(delBtn);
+
+        _dialog.appendChild(footer);
+
+        // initial focus → run button
+        requestAnimationFrame(() => {
+            try { runBtn.focus(); } catch (_) { /* noop */ }
+        });
+    }
+
+    function _makeActionBtn(label, iconPath, variantClass) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'rdm-btn ' + (variantClass || '');
+        b.appendChild(_svg(iconPath));
+        const span = document.createElement('span');
+        span.textContent = label;
+        span.className = 'rdm-btn-label';
+        b.appendChild(span);
+        return b;
+    }
+
+    // ─── Aksiyonlar ───
+    async function _onRun(e) {
+        if (_isRunning) return;
+        const btn = e.currentTarget;
+        _isRunning = true;
+        const originalLabel = btn.querySelector('.rdm-btn-label');
+        const origText = originalLabel ? originalLabel.textContent : 'Çalıştır';
+        btn.disabled = true;
+        btn.classList.add('is-loading');
+        if (originalLabel) originalLabel.textContent = 'Çalıştırılıyor...';
+
+        const resultMount = _dialog.querySelector('.rdm-result-mount');
+        if (resultMount) {
+            _clear(resultMount);
+            const spin = document.createElement('div');
+            spin.className = 'rdm-result-loading';
+            spin.textContent = 'Sorgu çalıştırılıyor...';
+            resultMount.appendChild(spin);
+        }
+
+        try {
+            // 1) yeni session
+            const sessRes = await fetch(API_BASE + '/sessions', {
+                method: 'POST',
+                headers: _authHeaders(),
+                body: JSON.stringify({}),
+            });
+            if (!sessRes.ok) throw new Error('Session oluşturulamadı (HTTP ' + sessRes.status + ')');
+            const sess = await sessRes.json();
+            const uid = sess.session_uid || sess.uid || sess.id;
+            if (!uid) throw new Error('Session UID alınamadı');
+
+            // 2) execute wizard_state
+            const wizardState = _report.wizard_state || {};
+            const execRes = await fetch(API_BASE + '/sessions/' + encodeURIComponent(uid) + '/execute', {
+                method: 'POST',
+                headers: _authHeaders(),
+                body: JSON.stringify(wizardState),
+            });
+            if (!execRes.ok) {
+                let detail = 'HTTP ' + execRes.status;
+                try { const j = await execRes.json(); if (j && j.detail) detail = j.detail; } catch (_) { /* noop */ }
+                throw new Error('Çalıştırma başarısız: ' + detail);
+            }
+            const result = await execRes.json();
+
+            // 3) mark-run (best-effort)
+            fetch(API_BASE + '/saved-reports/' + encodeURIComponent(_reportId) + '/mark-run', {
+                method: 'POST',
+                headers: _authHeaders(),
+            }).catch(() => { /* noop */ });
+
+            // render result
+            if (resultMount) _renderRunResult(resultMount, result);
+
+            _toast('Sorgu çalıştırıldı', 'success');
+            if (typeof _opts.onRan === 'function') {
+                try { _opts.onRan(result); } catch (err) { console.error('[ReportDetailModal] onRan error:', err); }
+            }
+        } catch (err) {
+            console.error('[ReportDetailModal] run error:', err);
+            _toast((err && err.message) || 'Çalıştırma başarısız', 'error');
+            if (resultMount) {
+                _clear(resultMount);
+                const errBox = document.createElement('div');
+                errBox.className = 'rdm-result-error';
+                errBox.textContent = (err && err.message) || 'Çalıştırma başarısız';
+                resultMount.appendChild(errBox);
+            }
+        } finally {
+            _isRunning = false;
+            btn.disabled = false;
+            btn.classList.remove('is-loading');
+            if (originalLabel) originalLabel.textContent = origText;
+        }
+    }
+
+    function _renderRunResult(mount, result) {
+        _clear(mount);
+        const rows = (result && (result.rows || result.data)) || [];
+        const cols = (result && result.columns) || (rows.length > 0 ? Object.keys(rows[0]) : []);
+        if (!cols || cols.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'rdm-result-empty';
+            empty.textContent = 'Sonuç boş.';
+            mount.appendChild(empty);
+            return;
+        }
+        const wrap = document.createElement('div');
+        wrap.className = 'rdm-table-wrap';
+        const table = document.createElement('table');
+        table.className = 'rdm-table';
+        const thead = document.createElement('thead');
+        const trh = document.createElement('tr');
+        cols.forEach((c) => {
+            const th = document.createElement('th');
+            th.textContent = String(c);
+            trh.appendChild(th);
+        });
+        thead.appendChild(trh);
+        table.appendChild(thead);
+        const tbody = document.createElement('tbody');
+        rows.slice(0, 100).forEach((row) => {
+            const tr = document.createElement('tr');
+            cols.forEach((c) => {
+                const td = document.createElement('td');
+                const v = (row && typeof row === 'object') ? row[c] : '';
+                td.textContent = (v === null || v === undefined) ? '' : String(v);
+                tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+        mount.appendChild(wrap);
+        if (rows.length > 100) {
+            const note = document.createElement('div');
+            note.className = 'rdm-result-note';
+            note.textContent = 'İlk 100 satır gösteriliyor (toplam ' + rows.length + ').';
+            mount.appendChild(note);
+        }
+    }
+
+    // ─── Duplicate (inline rename mini-modal) ───
+    function _onDuplicate() {
+        _openRenameMini((newName) => {
+            fetch(API_BASE + '/saved-reports/' + encodeURIComponent(_reportId) + '/duplicate', {
+                method: 'POST',
+                headers: _authHeaders(),
+                body: JSON.stringify({ name: newName }),
+            })
+                .then((res) => {
+                    if (!res.ok) {
+                        return res.json().catch(() => ({})).then((j) => {
+                            throw new Error((j && j.detail) || ('HTTP ' + res.status));
+                        });
+                    }
+                    return res.json();
+                })
+                .then((data) => {
+                    const newId = (data && (data.report_id || data.id)) || null;
+                    _toast('Rapor kopyalandı', 'success');
+                    if (typeof _opts.onDuplicate === 'function') {
+                        try { _opts.onDuplicate(newId); } catch (e) { console.error('[ReportDetailModal] onDuplicate error:', e); }
+                    }
+                })
+                .catch((err) => {
+                    console.error('[ReportDetailModal] duplicate error:', err);
+                    _toast('Kopyalama başarısız: ' + (err && err.message ? err.message : ''), 'error');
+                });
+        });
+    }
+
+    function _openRenameMini(onConfirm) {
+        const overlay = document.createElement('div');
+        overlay.className = 'rdm-mini-overlay';
+
+        const dialog = document.createElement('div');
+        dialog.className = 'rdm-mini-dialog';
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.setAttribute('aria-labelledby', 'rdm-mini-title');
+
+        const title = document.createElement('h3');
+        title.className = 'rdm-mini-title';
+        title.id = 'rdm-mini-title';
+        title.textContent = 'Raporu Kopyala';
+        dialog.appendChild(title);
+
+        const label = document.createElement('label');
+        label.className = 'rdm-mini-label';
+        label.textContent = 'Yeni rapor adı';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'rdm-mini-input';
+        input.value = (_report && _report.name ? _report.name + ' (kopya)' : 'Adsız Rapor (kopya)');
+        label.appendChild(input);
+        dialog.appendChild(label);
+
+        const actions = document.createElement('div');
+        actions.className = 'rdm-mini-actions';
+
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'rdm-btn rdm-btn-secondary';
+        cancel.textContent = 'İptal';
+        actions.appendChild(cancel);
+
+        const save = document.createElement('button');
+        save.type = 'button';
+        save.className = 'rdm-btn rdm-btn-primary';
+        save.textContent = 'Kaydet';
+        actions.appendChild(save);
+
+        dialog.appendChild(actions);
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        const closeMini = () => {
+            document.removeEventListener('keydown', miniEsc);
+            overlay.remove();
+        };
+        const miniEsc = (e) => { if (e.key === 'Escape') closeMini(); };
+        document.addEventListener('keydown', miniEsc);
+
+        cancel.addEventListener('click', closeMini);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) closeMini(); });
+        save.addEventListener('click', () => {
+            const v = (input.value || '').trim();
+            if (!v) { input.focus(); return; }
+            closeMini();
+            onConfirm(v);
+        });
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); save.click(); }
+        });
+
+        requestAnimationFrame(() => { try { input.focus(); input.select(); } catch (_) { /* noop */ } });
+    }
+
+    // ─── Share ───
+    function _onShare() {
+        fetch(API_BASE + '/saved-reports/' + encodeURIComponent(_reportId) + '/share', {
+            method: 'POST',
+            headers: _authHeaders(),
+            body: JSON.stringify({ ttl_hours: 168 }),
+        })
+            .then((res) => {
+                if (!res.ok) {
+                    return res.json().catch(() => ({})).then((j) => {
+                        throw new Error((j && j.detail) || ('HTTP ' + res.status));
+                    });
+                }
+                return res.json();
+            })
+            .then((data) => {
+                const token = data && data.share_token;
+                if (!token) throw new Error('Share token alınamadı');
+                const url = window.location.origin + '/r/' + encodeURIComponent(token);
+                const writeClipboard = () => {
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        return navigator.clipboard.writeText(url);
+                    }
+                    return Promise.reject(new Error('clipboard unavailable'));
+                };
+                writeClipboard()
+                    .then(() => { _toast('Paylaşım linki panoya kopyalandı', 'success'); })
+                    .catch(() => { _toast('Link: ' + url, 'info'); });
+            })
+            .catch((err) => {
+                console.error('[ReportDetailModal] share error:', err);
+                _toast('Paylaşım başarısız: ' + (err && err.message ? err.message : ''), 'error');
+            });
+    }
+
+    // ─── Delete (custom confirm) ───
+    function _onDelete() {
+        _openConfirm({
+            title: 'Raporu Sil',
+            message: '"' + ((_report && _report.name) || 'Bu rapor') + '" kalıcı olarak silinecek. Bu işlem geri alınamaz.',
+            confirmText: 'Sil',
+            cancelText: 'İptal',
+            danger: true,
+            onConfirm: () => {
+                fetch(API_BASE + '/saved-reports/' + encodeURIComponent(_reportId), {
+                    method: 'DELETE',
+                    headers: _authHeaders(),
+                })
+                    .then((res) => {
+                        if (!res.ok) {
+                            return res.json().catch(() => ({})).then((j) => {
+                                throw new Error((j && j.detail) || ('HTTP ' + res.status));
+                            });
+                        }
+                        _toast('Rapor silindi', 'success');
+                        const deletedId = _reportId;
+                        close();
+                        if (typeof _opts.onDeleted === 'function') {
+                            try { _opts.onDeleted(deletedId); } catch (e) { console.error('[ReportDetailModal] onDeleted error:', e); }
+                        }
+                    })
+                    .catch((err) => {
+                        console.error('[ReportDetailModal] delete error:', err);
+                        _toast('Silme başarısız: ' + (err && err.message ? err.message : ''), 'error');
+                    });
+            },
+        });
+    }
+
+    function _openConfirm(cfg) {
+        const overlay = document.createElement('div');
+        overlay.className = 'rdm-confirm-overlay';
+
+        const dialog = document.createElement('div');
+        dialog.className = 'rdm-confirm-dialog';
+        dialog.setAttribute('role', 'alertdialog');
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.setAttribute('aria-labelledby', 'rdm-confirm-title');
+        dialog.setAttribute('aria-describedby', 'rdm-confirm-msg');
+
+        const h = document.createElement('h3');
+        h.className = 'rdm-confirm-title';
+        h.id = 'rdm-confirm-title';
+        h.textContent = cfg.title || 'Onayla';
+        dialog.appendChild(h);
+
+        const p = document.createElement('p');
+        p.className = 'rdm-confirm-msg';
+        p.id = 'rdm-confirm-msg';
+        p.textContent = cfg.message || '';
+        dialog.appendChild(p);
+
+        const actions = document.createElement('div');
+        actions.className = 'rdm-confirm-actions';
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'rdm-btn rdm-btn-secondary';
+        cancel.textContent = cfg.cancelText || 'İptal';
+        actions.appendChild(cancel);
+
+        const ok = document.createElement('button');
+        ok.type = 'button';
+        ok.className = 'rdm-btn ' + (cfg.danger ? 'rdm-btn-danger' : 'rdm-btn-primary');
+        ok.textContent = cfg.confirmText || 'Onayla';
+        actions.appendChild(ok);
+
+        dialog.appendChild(actions);
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        const closeConfirm = () => {
+            document.removeEventListener('keydown', escCfg);
+            overlay.remove();
+        };
+        const escCfg = (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeConfirm(); } };
+        document.addEventListener('keydown', escCfg);
+
+        cancel.addEventListener('click', closeConfirm);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) closeConfirm(); });
+        ok.addEventListener('click', () => {
+            closeConfirm();
+            if (typeof cfg.onConfirm === 'function') cfg.onConfirm();
+        });
+
+        requestAnimationFrame(() => { try { cancel.focus(); } catch (_) { /* noop */ } });
+    }
+
+    // ─── Fetch detail ───
+    async function _fetchDetail(id) {
+        const res = await fetch(API_BASE + '/saved-reports/' + encodeURIComponent(id), { headers: _authHeaders() });
+        if (!res.ok) {
+            let detail = 'HTTP ' + res.status;
+            try { const j = await res.json(); if (j && j.detail) detail = j.detail; } catch (_) { /* noop */ }
+            throw new Error(detail);
+        }
+        return await res.json();
+    }
+
+    // ─── Public ───
+    function open(reportId, opts) {
+        if (_overlay) { close(); }
+        _reportId = reportId;
+        _opts = Object.assign({}, opts || {});
+        _returnFocusEl = document.activeElement;
+
+        _createOverlay();
+        _renderLoading();
+
+        return new Promise((resolve) => {
+            _resolveOpen = resolve;
+            _fetchDetail(reportId)
+                .then((data) => {
+                    _report = data || {};
+                    _renderDetail();
+                })
+                .catch((err) => {
+                    console.error('[ReportDetailModal] fetch detail error:', err);
+                    _renderError((err && err.message) || 'Rapor yüklenemedi');
+                });
+        });
+    }
+
+    function close() {
+        if (!_overlay) return;
+        if (_escHandler) {
+            document.removeEventListener('keydown', _escHandler);
+            _escHandler = null;
+        }
+        if (_focusTrapHandler && _dialog) {
+            _dialog.removeEventListener('keydown', _focusTrapHandler);
+            _focusTrapHandler = null;
+        }
+        _overlay.classList.remove('is-visible');
+        const overlay = _overlay;
+        const returnEl = _returnFocusEl;
+        const resolve = _resolveOpen;
+
+        setTimeout(() => {
+            if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        }, 200);
+
+        document.body.style.overflow = '';
+        _overlay = null;
+        _dialog = null;
+        _report = null;
+        _reportId = null;
+        _opts = {};
+        _isRunning = false;
+        _resolveOpen = null;
+        _returnFocusEl = null;
+
+        if (returnEl && typeof returnEl.focus === 'function') {
+            try { returnEl.focus(); } catch (_) { /* noop */ }
+        }
+        if (typeof resolve === 'function') resolve();
+    }
+
+    window.ReportDetailModal = {
+        open: open,
+        close: close,
+    };
+})();
+
+
+/* === assets/js/modules/saved_reports_grid.js === */
+/**
+ * VYRA — Saved Reports Grid Module
+ * =================================
+ * Kullanıcının kayıtlı (tasarladığı) raporlarını kart grid olarak listeler.
+ *
+ * Public API:
+ *   window.SavedReportsGrid.mount(rootEl, { onOpenReport, onNewReport })
+ *   window.SavedReportsGrid.refresh()
+ *   window.SavedReportsGrid.unmount()
+ *
+ * Brief: 2026-05-23_aki-kesfi-B_saved-reports-grid
+ * Version: 1.0.0
+ */
+
+(function () {
+    'use strict';
+
+    // ─── State ───
+    const API_BASE = '/api/db-smart';
+    let _root = null;
+    let _opts = { onOpenReport: null, onNewReport: null };
+    let _searchTimer = null;
+    let _currentChip = 'all'; // all | last7 | mostRun
+    let _lastItems = [];
+
+    // ─── Utils ───
+    function _authHeaders() {
+        const token = localStorage.getItem('access_token');
+        const h = { 'Content-Type': 'application/json' };
+        if (token) h['Authorization'] = 'Bearer ' + token;
+        return h;
+    }
+
+    function _toast(msg, kind) {
+        if (window.showToast) {
+            try { window.showToast(msg, kind || 'info'); return; } catch (_) { /* noop */ }
+        }
+        // sessiz fallback (console)
+        try { console.log('[SavedReportsGrid]', kind || 'info', msg); } catch (_) { /* noop */ }
+    }
+
+    function _qs(sel, root) { return (root || _root).querySelector(sel); }
+    function _qsa(sel, root) { return Array.from((root || _root).querySelectorAll(sel)); }
+
+    function _clear(el) { while (el && el.firstChild) el.removeChild(el.firstChild); }
+
+    function _icon(name) {
+        // basit inline SVG ikon havuzu (fa olmadığı kabulü için)
+        const ns = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(ns, 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor');
+        svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round');
+        svg.setAttribute('stroke-linejoin', 'round');
+        svg.setAttribute('aria-hidden', 'true');
+        svg.classList.add('srg-icon');
+        const path = document.createElementNS(ns, 'path');
+        const paths = {
+            plus: 'M12 5v14M5 12h14',
+            search: 'M21 21l-4.35-4.35M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16z',
+            empty: 'M3 7h18M3 12h18M3 17h18',
+            chart: 'M3 3v18h18M7 14l4-4 4 4 5-5',
+        };
+        path.setAttribute('d', paths[name] || paths.empty);
+        svg.appendChild(path);
+        return svg;
+    }
+
+    // ─── Tarih formatı ───
+    const MONTH_TR = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+
+    function _relativeTime(isoStr) {
+        if (!isoStr) return '';
+        const d = new Date(isoStr);
+        if (isNaN(d.getTime())) return '';
+        const now = new Date();
+        const diffSec = Math.floor((now.getTime() - d.getTime()) / 1000);
+        if (diffSec < 60) return '<1dk önce';
+        if (diffSec < 3600) return Math.floor(diffSec / 60) + 'dk önce';
+        if (diffSec < 86400) return Math.floor(diffSec / 3600) + 'sa önce';
+        // gün hesabı (takvim günü farkı)
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        const startOfThat = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+        const diffDays = Math.round((startOfToday - startOfThat) / 86400000);
+        if (diffDays === 1) return 'dün';
+        if (diffDays > 1 && diffDays < 7) return diffDays + 'gün önce';
+        return d.getDate() + ' ' + MONTH_TR[d.getMonth()];
+    }
+
+    function _absoluteISO(isoStr) {
+        if (!isoStr) return '';
+        const d = new Date(isoStr);
+        if (isNaN(d.getTime())) return String(isoStr);
+        try { return d.toISOString(); } catch (_) { return String(isoStr); }
+    }
+
+    // ─── DOM iskelet ───
+    function _buildShell() {
+        _clear(_root);
+
+        const wrap = document.createElement('div');
+        wrap.className = 'srg-root';
+
+        // header
+        const header = document.createElement('header');
+        header.className = 'srg-header';
+        const title = document.createElement('h2');
+        title.className = 'srg-title';
+        title.textContent = 'Tasarladığım Raporlar';
+        header.appendChild(title);
+
+        const tools = document.createElement('div');
+        tools.className = 'srg-tools';
+
+        const search = document.createElement('input');
+        search.type = 'search';
+        search.className = 'srg-search';
+        search.placeholder = 'Rapor ara...';
+        search.setAttribute('aria-label', 'Rapor arama');
+        tools.appendChild(search);
+
+        const newBtn = document.createElement('button');
+        newBtn.type = 'button';
+        newBtn.className = 'srg-new-btn';
+        newBtn.setAttribute('data-tooltip', 'Yeni keşif başlat');
+        newBtn.setAttribute('aria-label', 'Yeni keşif başlat');
+        newBtn.appendChild(_icon('plus'));
+        const newLabel = document.createElement('span');
+        newLabel.textContent = 'Yeni Keşif';
+        newBtn.appendChild(newLabel);
+        tools.appendChild(newBtn);
+
+        header.appendChild(tools);
+        wrap.appendChild(header);
+
+        // chips
+        const chipsRow = document.createElement('div');
+        chipsRow.className = 'srg-chips';
+        chipsRow.setAttribute('role', 'tablist');
+        chipsRow.setAttribute('aria-label', 'Kategori filtresi');
+        const chipDefs = [
+            { id: 'all', label: 'Tümü' },
+            { id: 'last7', label: 'Son 7 gün' },
+            { id: 'mostRun', label: 'En çok çalıştırılan' },
+        ];
+        chipDefs.forEach((c) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'srg-chip' + (c.id === _currentChip ? ' is-active' : '');
+            b.setAttribute('role', 'tab');
+            b.setAttribute('aria-selected', c.id === _currentChip ? 'true' : 'false');
+            b.dataset.chip = c.id;
+            b.textContent = c.label;
+            chipsRow.appendChild(b);
+        });
+        wrap.appendChild(chipsRow);
+
+        // grid
+        const grid = document.createElement('div');
+        grid.className = 'srg-grid';
+        grid.setAttribute('role', 'list');
+        grid.setAttribute('aria-live', 'polite');
+        grid.setAttribute('aria-busy', 'false');
+        wrap.appendChild(grid);
+
+        // empty placeholder
+        const empty = document.createElement('div');
+        empty.className = 'srg-empty hidden';
+        wrap.appendChild(empty);
+
+        _root.appendChild(wrap);
+
+        // events
+        search.addEventListener('input', () => {
+            if (_searchTimer) clearTimeout(_searchTimer);
+            _searchTimer = setTimeout(() => { refresh(); }, 300);
+        });
+
+        newBtn.addEventListener('click', () => {
+            if (typeof _opts.onNewReport === 'function') {
+                try { _opts.onNewReport(); } catch (e) { console.error('[SavedReportsGrid] onNewReport error:', e); }
+            }
+        });
+
+        chipsRow.addEventListener('click', (e) => {
+            const t = e.target.closest('.srg-chip');
+            if (!t) return;
+            _currentChip = t.dataset.chip || 'all';
+            _qsa('.srg-chip').forEach((c) => {
+                const on = c.dataset.chip === _currentChip;
+                c.classList.toggle('is-active', on);
+                c.setAttribute('aria-selected', on ? 'true' : 'false');
+            });
+            _renderItems(_applyChipFilter(_lastItems));
+        });
+    }
+
+    // ─── Skeleton ───
+    function _renderSkeleton() {
+        const grid = _qs('.srg-grid');
+        const empty = _qs('.srg-empty');
+        if (!grid) return;
+        empty.classList.add('hidden');
+        grid.setAttribute('aria-busy', 'true');
+        _clear(grid);
+        for (let i = 0; i < 6; i++) {
+            const sk = document.createElement('div');
+            sk.className = 'srg-skel-card';
+            sk.setAttribute('aria-hidden', 'true');
+            const sh1 = document.createElement('div'); sh1.className = 'srg-skel-line srg-skel-line--title'; sk.appendChild(sh1);
+            const sh2 = document.createElement('div'); sh2.className = 'srg-skel-line'; sk.appendChild(sh2);
+            const sh3 = document.createElement('div'); sh3.className = 'srg-skel-line srg-skel-line--short'; sk.appendChild(sh3);
+            grid.appendChild(sk);
+        }
+    }
+
+    // ─── Empty state ───
+    function _renderEmpty() {
+        const grid = _qs('.srg-grid');
+        const empty = _qs('.srg-empty');
+        if (!grid || !empty) return;
+        _clear(grid);
+        _clear(empty);
+
+        const wrap = document.createElement('div');
+        wrap.className = 'vyra-empty-state';
+
+        const iconWrap = document.createElement('div');
+        iconWrap.className = 'vyra-empty-state__icon';
+        iconWrap.appendChild(_icon('chart'));
+        wrap.appendChild(iconWrap);
+
+        const h3 = document.createElement('h3');
+        h3.className = 'vyra-empty-state__title';
+        h3.textContent = 'Henüz kayıtlı raporun yok';
+        wrap.appendChild(h3);
+
+        const p = document.createElement('p');
+        p.className = 'vyra-empty-state__desc';
+        p.textContent = 'Yeni bir keşif başlatarak ilk raporunu oluştur. Tüm raporların burada görünecek.';
+        wrap.appendChild(p);
+
+        const cta = document.createElement('button');
+        cta.type = 'button';
+        cta.className = 'vyra-empty-state__cta srg-new-btn';
+        cta.setAttribute('aria-label', 'Yeni keşif başlat');
+        cta.appendChild(_icon('plus'));
+        const ctaLabel = document.createElement('span');
+        ctaLabel.textContent = 'Yeni Keşif';
+        cta.appendChild(ctaLabel);
+        cta.addEventListener('click', () => {
+            if (typeof _opts.onNewReport === 'function') {
+                try { _opts.onNewReport(); } catch (e) { console.error('[SavedReportsGrid] onNewReport error:', e); }
+            }
+        });
+        wrap.appendChild(cta);
+
+        empty.appendChild(wrap);
+        empty.classList.remove('hidden');
+    }
+
+    // ─── Kart ───
+    function _renderCard(report) {
+        const card = document.createElement('article');
+        card.className = 'srg-card';
+        card.setAttribute('role', 'listitem');
+        card.setAttribute('tabindex', '0');
+        card.dataset.reportId = String(report.id);
+
+        // head
+        const head = document.createElement('header');
+        head.className = 'srg-card-head';
+
+        const metric = document.createElement('span');
+        metric.className = 'srg-card-metric-badge';
+        const metricKey = report.metric_key || report.metric || '';
+        if (metricKey) {
+            metric.textContent = String(metricKey);
+        } else {
+            metric.textContent = '—';
+            metric.classList.add('srg-card-metric-badge--muted');
+        }
+        head.appendChild(metric);
+
+        const title = document.createElement('h3');
+        title.className = 'srg-card-title';
+        title.textContent = report.name || 'Adsız Rapor';
+        head.appendChild(title);
+
+        card.appendChild(head);
+
+        // desc
+        const desc = document.createElement('p');
+        desc.className = 'srg-card-desc';
+        desc.textContent = report.description || '';
+        card.appendChild(desc);
+
+        // foot
+        const foot = document.createElement('footer');
+        foot.className = 'srg-card-foot';
+
+        const time = document.createElement('span');
+        time.className = 'srg-card-time';
+        const ts = report.updated_at || report.last_run_at || report.created_at;
+        time.textContent = _relativeTime(ts);
+        const absIso = _absoluteISO(ts);
+        if (absIso) {
+            time.setAttribute('data-tooltip', absIso);
+            time.setAttribute('title', absIso);
+        }
+        foot.appendChild(time);
+
+        const tagsWrap = document.createElement('span');
+        tagsWrap.className = 'srg-card-tags';
+        const tags = Array.isArray(report.tags) ? report.tags : [];
+        tags.slice(0, 3).forEach((t) => {
+            const chip = document.createElement('span');
+            chip.className = 'srg-tag';
+            chip.textContent = String(t);
+            tagsWrap.appendChild(chip);
+        });
+        if (tags.length > 3) {
+            const more = document.createElement('span');
+            more.className = 'srg-tag srg-tag--more';
+            more.textContent = '+' + (tags.length - 3);
+            tagsWrap.appendChild(more);
+        }
+        foot.appendChild(tagsWrap);
+
+        card.appendChild(foot);
+
+        // events
+        const openHandler = () => {
+            if (typeof _opts.onOpenReport === 'function') {
+                try { _opts.onOpenReport(report.id); } catch (e) { console.error('[SavedReportsGrid] onOpenReport error:', e); }
+            }
+        };
+        card.addEventListener('click', openHandler);
+        card.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                openHandler();
+            }
+        });
+
+        return card;
+    }
+
+    // ─── Liste filtresi (chip) ───
+    function _applyChipFilter(items) {
+        if (!Array.isArray(items)) return [];
+        if (_currentChip === 'last7') {
+            const cutoff = Date.now() - 7 * 86400000;
+            return items.filter((r) => {
+                const t = r.updated_at || r.last_run_at || r.created_at;
+                if (!t) return false;
+                const d = new Date(t);
+                return !isNaN(d.getTime()) && d.getTime() >= cutoff;
+            });
+        }
+        if (_currentChip === 'mostRun') {
+            const sorted = items.slice().sort((a, b) => (b.run_count || 0) - (a.run_count || 0));
+            return sorted;
+        }
+        return items;
+    }
+
+    function _renderItems(items) {
+        const grid = _qs('.srg-grid');
+        const empty = _qs('.srg-empty');
+        if (!grid) return;
+        grid.setAttribute('aria-busy', 'false');
+        _clear(grid);
+
+        if (!items || items.length === 0) {
+            _renderEmpty();
+            return;
+        }
+        empty.classList.add('hidden');
+        items.forEach((r) => grid.appendChild(_renderCard(r)));
+    }
+
+    // ─── Fetch ───
+    async function _fetchList() {
+        const search = _qs('.srg-search');
+        const q = (search && search.value ? search.value.trim() : '');
+        const params = new URLSearchParams();
+        params.set('limit', '24');
+        if (q) params.set('q', q);
+        const url = API_BASE + '/saved-reports?' + params.toString();
+        const res = await fetch(url, { headers: _authHeaders() });
+        if (!res.ok) {
+            let detail = 'HTTP ' + res.status;
+            try {
+                const data = await res.json();
+                if (data && data.detail) detail = data.detail;
+            } catch (_) { /* noop */ }
+            throw new Error(detail);
+        }
+        const data = await res.json();
+        return Array.isArray(data && data.items) ? data.items : [];
+    }
+
+    // ─── Public ───
+    function mount(rootEl, opts) {
+        if (!rootEl) {
+            console.error('[SavedReportsGrid] mount: rootEl gerekli');
+            return;
+        }
+        _root = rootEl;
+        _opts = Object.assign({ onOpenReport: null, onNewReport: null }, opts || {});
+        _buildShell();
+        refresh();
+        SavedReportsGrid._instance = { rootEl: _root };
+    }
+
+    function refresh() {
+        if (!_root) return;
+        _renderSkeleton();
+        _fetchList()
+            .then((items) => {
+                _lastItems = items || [];
+                _renderItems(_applyChipFilter(_lastItems));
+            })
+            .catch((err) => {
+                console.error('[SavedReportsGrid] fetch error:', err);
+                const grid = _qs('.srg-grid');
+                if (grid) {
+                    grid.setAttribute('aria-busy', 'false');
+                    _clear(grid);
+                }
+                _renderEmpty();
+                _toast('Raporlar yüklenemedi: ' + (err && err.message ? err.message : 'bilinmeyen hata'), 'error');
+            });
+    }
+
+    function unmount() {
+        if (_searchTimer) { clearTimeout(_searchTimer); _searchTimer = null; }
+        if (_root) { _clear(_root); }
+        _root = null;
+        _opts = { onOpenReport: null, onNewReport: null };
+        _lastItems = [];
+        SavedReportsGrid._instance = null;
+    }
+
+    const SavedReportsGrid = {
+        mount: mount,
+        refresh: refresh,
+        unmount: unmount,
+        _instance: null,
+    };
+
+    window.SavedReportsGrid = SavedReportsGrid;
 })();
 
 

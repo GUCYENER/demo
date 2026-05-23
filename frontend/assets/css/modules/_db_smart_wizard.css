@@ -344,3 +344,383 @@
     white-space: nowrap;
     border: 0;
 }
+
+/* ============================================================
+   v3.33.0 — Modal wrapper (overlay + dialog)
+   HEBE Gate: role=dialog, aria-modal, focus trap, ESC, overlay click.
+   ============================================================ */
+.dsw-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(4px);
+}
+.dsw-modal-dialog {
+    background: var(--vyra-bg-elevated, #14161a);
+    color: var(--vyra-fg-primary, #e6e8eb);
+    border: 1px solid var(--vyra-border-subtle, #2c3138);
+    border-radius: var(--vyra-radius-md, 12px);
+    width: min(1100px, 95vw);
+    height: min(720px, 90vh);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, .4);
+    overflow: hidden;
+}
+.dsw-modal-dialog > .db-smart-wizard.dsw-in-modal {
+    flex: 1 1 auto;
+    min-height: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    margin: 0;
+    overflow: auto;
+}
+.dsw-modal-close {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 32px;
+    height: 32px;
+    line-height: 28px;
+    text-align: center;
+    font-size: 22px;
+    cursor: pointer;
+    background: transparent;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    border: 1px solid var(--vyra-border-subtle, #2c3138);
+    border-radius: var(--vyra-radius-sm, 6px);
+    z-index: 2;
+}
+.dsw-modal-close:hover {
+    background: var(--vyra-bg-hover, #2a2e34);
+    color: var(--vyra-fg-primary, #e6e8eb);
+}
+.dsw-modal-close:focus-visible {
+    outline: 2px solid var(--vyra-accent, #4f8cff);
+    outline-offset: 2px;
+}
+
+@media (max-width: 768px) {
+    .dsw-modal-dialog {
+        width: 100vw;
+        height: 100vh;
+        max-height: 100vh;
+        border-radius: 0;
+    }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .dsw-modal-overlay { animation: dsw-fade-in .15s ease; }
+    .dsw-modal-dialog { animation: dsw-scale-in .2s ease; }
+}
+@keyframes dsw-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+@keyframes dsw-scale-in {
+    from { opacity: 0; transform: scale(.96); }
+    to   { opacity: 1; transform: scale(1); }
+}
+
+/* ============================================================
+   v3.33.0 — Modern SaaS polish (modal scope only — inline panel görünümü etkilenmez)
+   ============================================================ */
+
+/* Dialog kabı: glass-morphism + derin shadow + gradient kenarlık ipucu */
+.dsw-modal-dialog {
+    background:
+        radial-gradient(1200px 600px at -10% -20%, rgba(79, 140, 255, 0.07), transparent 60%),
+        radial-gradient(900px 500px at 110% 120%, rgba(236, 72, 153, 0.06), transparent 55%),
+        var(--vyra-bg-elevated, #14161a);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    box-shadow:
+        0 30px 80px rgba(0, 0, 0, .55),
+        0 0 0 1px rgba(0, 0, 0, .3) inset;
+    border-radius: 16px;
+}
+
+/* Close button — daha hafif, hover'da accent glow */
+.dsw-modal-close {
+    top: 14px;
+    right: 14px;
+    width: 36px;
+    height: 36px;
+    line-height: 32px;
+    font-size: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 10px;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.dsw-modal-close:hover {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.35);
+    color: #ef4444;
+}
+
+/* ── Modal içindeki wizard panel: header / body / foot polish ────── */
+.dsw-modal-dialog > .db-smart-wizard.dsw-in-modal {
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    background: transparent;
+}
+
+/* HEADER — gradient bant + başlık + stepper alanı */
+.dsw-modal-dialog .dsw-in-modal .dsw-header {
+    padding: 22px 56px 0 28px;   /* sağda close button için boşluk */
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    margin-bottom: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    background:
+        linear-gradient(180deg, rgba(79, 140, 255, 0.04) 0%, transparent 100%);
+}
+.dsw-modal-dialog .dsw-in-modal .dsw-header h3,
+.dsw-modal-dialog .dsw-in-modal .dsw-header #dswTitle {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--vyra-fg-primary, #e6e8eb);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.dsw-modal-dialog .dsw-in-modal .dsw-header h3::before,
+.dsw-modal-dialog .dsw-in-modal .dsw-header #dswTitle::before {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 22px;
+    border-radius: 3px;
+    background: linear-gradient(180deg, #4f8cff 0%, #ec4899 100%);
+}
+
+/* STEPPER — sade pill-style; aktif: solid accent; tamamlanmış: subtle */
+.dsw-modal-dialog .dsw-in-modal .dsw-stepper {
+    display: flex;
+    gap: 6px;
+    padding: 0 0 16px 0;
+    margin: 0;
+    flex-wrap: wrap;
+    background: transparent;
+    border: 0;
+}
+.dsw-modal-dialog .dsw-in-modal .dsw-step {
+    flex: 0 0 auto;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.2;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+    /* gradient yerine sade */
+    box-shadow: none;
+}
+.dsw-modal-dialog .dsw-in-modal .dsw-step:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--vyra-fg-primary, #e6e8eb);
+    border-color: rgba(255, 255, 255, 0.12);
+}
+.dsw-modal-dialog .dsw-in-modal .dsw-step.active,
+.dsw-modal-dialog .dsw-in-modal .dsw-step[aria-selected="true"] {
+    background: linear-gradient(135deg, #4f8cff 0%, #6366f1 100%);
+    color: #fff;
+    border-color: transparent;
+    box-shadow: 0 4px 14px rgba(79, 140, 255, 0.35);
+}
+.dsw-modal-dialog .dsw-in-modal .dsw-step:focus-visible {
+    outline: 2px solid #4f8cff;
+    outline-offset: 2px;
+}
+
+/* BODY — geniş padding + nefes alan */
+.dsw-modal-dialog .dsw-in-modal .dsw-body {
+    flex: 1 1 auto;
+    overflow: auto;
+    padding: 24px 28px;
+    min-height: 0;
+}
+.dsw-modal-dialog .dsw-in-modal .dsw-step-panel {
+    padding: 0;
+}
+.dsw-modal-dialog .dsw-in-modal .dsw-hint {
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    font-size: 13px;
+    margin: 0 0 16px 0;
+    line-height: 1.5;
+}
+
+/* SEARCH ROW — modern card layout */
+.dsw-modal-dialog .dsw-in-modal .dsw-search-row {
+    display: grid;
+    grid-template-columns: 1fr 240px auto;
+    gap: 10px;
+    align-items: stretch;
+    margin-bottom: 16px;
+}
+
+/* INPUT / SELECT — modern field style */
+.dsw-modal-dialog .dsw-in-modal .dsw-input {
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--vyra-fg-primary, #e6e8eb);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 14px;
+    line-height: 1.4;
+    transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+    min-height: 40px;
+    box-sizing: border-box;
+}
+.dsw-modal-dialog .dsw-in-modal .dsw-input::placeholder {
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    opacity: 0.6;
+}
+.dsw-modal-dialog .dsw-in-modal .dsw-input:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.15);
+}
+.dsw-modal-dialog .dsw-in-modal .dsw-input:focus {
+    outline: none;
+    background: rgba(79, 140, 255, 0.04);
+    border-color: #4f8cff;
+    box-shadow: 0 0 0 3px rgba(79, 140, 255, 0.18);
+}
+/* select boş ise (sadece "" option veya hiç option yoksa) görsel ipucu */
+.dsw-modal-dialog .dsw-in-modal select.dsw-input {
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, var(--vyra-fg-secondary, #9aa1ab) 50%),
+                      linear-gradient(135deg, var(--vyra-fg-secondary, #9aa1ab) 50%, transparent 50%);
+    background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%;
+    background-size: 5px 5px;
+    background-repeat: no-repeat;
+    padding-right: 32px;
+}
+.dsw-modal-dialog .dsw-in-modal select.dsw-input:empty::before {
+    content: 'Kaynak yükleniyor...';
+}
+.dsw-modal-dialog .dsw-in-modal select.dsw-input option {
+    background: var(--vyra-bg-elevated, #14161a);
+    color: var(--vyra-fg-primary, #e6e8eb);
+}
+
+/* BUTTONS — solid primary + ghost secondary */
+.dsw-modal-dialog .dsw-in-modal .dsw-btn {
+    background: linear-gradient(135deg, #4f8cff 0%, #6366f1 100%);
+    color: #fff;
+    border: 0;
+    border-radius: 10px;
+    padding: 10px 18px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    min-height: 40px;
+    transition: transform 0.1s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+    box-shadow: 0 4px 14px rgba(79, 140, 255, 0.28);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+.dsw-modal-dialog .dsw-in-modal .dsw-btn:hover:not(:disabled) {
+    box-shadow: 0 6px 20px rgba(79, 140, 255, 0.45);
+    transform: translateY(-1px);
+}
+.dsw-modal-dialog .dsw-in-modal .dsw-btn:active:not(:disabled) { transform: translateY(0); }
+.dsw-modal-dialog .dsw-in-modal .dsw-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+.dsw-modal-dialog .dsw-in-modal .dsw-btn-ghost {
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    padding: 10px 18px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    min-height: 40px;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.dsw-modal-dialog .dsw-in-modal .dsw-btn-ghost:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--vyra-fg-primary, #e6e8eb);
+    border-color: rgba(255, 255, 255, 0.15);
+}
+.dsw-modal-dialog .dsw-in-modal .dsw-btn-ghost:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* RESULTS — kart listesi havası */
+.dsw-modal-dialog .dsw-in-modal .dsw-results {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+    min-height: 80px;
+}
+.dsw-modal-dialog .dsw-in-modal .dsw-results:empty::after {
+    content: 'Arama sonuçları burada görünecek.';
+    display: block;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    font-size: 13px;
+    text-align: center;
+    padding: 32px 16px;
+    border: 1px dashed rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+/* FOOT — sticky bottom bar */
+.dsw-modal-dialog .dsw-in-modal .dsw-foot {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 28px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(0, 0, 0, 0.18);
+    backdrop-filter: blur(6px);
+}
+.dsw-modal-dialog .dsw-in-modal .dsw-progress {
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    padding: 6px 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 999px;
+}
+
+/* Mobile: full-screen modal'da padding daralt */
+@media (max-width: 768px) {
+    .dsw-modal-dialog .dsw-in-modal .dsw-header { padding: 18px 56px 0 16px; }
+    .dsw-modal-dialog .dsw-in-modal .dsw-body { padding: 16px; }
+    .dsw-modal-dialog .dsw-in-modal .dsw-foot { padding: 12px 16px; }
+    .dsw-modal-dialog .dsw-in-modal .dsw-search-row {
+        grid-template-columns: 1fr;
+    }
+}

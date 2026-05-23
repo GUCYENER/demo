@@ -119,12 +119,30 @@
 
     function getLang() { return _currentLang; }
 
+    // v3.33.0 — idempotent init + ready promise
+    // Bug fix: hiçbir yer init() çağırmadığı için aki_kesif bundle yüklenmiyor,
+    // wizard.step.indicator gibi key'ler ham görünüyordu.
+    let _initPromise = null;
+    function ensureInit() {
+        if (!_initPromise) _initPromise = init();
+        return _initPromise;
+    }
+
     window.VyraI18n = {
         init: init,
+        ensureInit: ensureInit,
         t: t,
         applyTranslations: applyTranslations,
         setLang: setLang,
         getLang: getLang,
         SUPPORTED: SUPPORTED,
     };
+
+    // Auto-bootstrap: DOMContentLoaded'da (veya hemen) ensureInit() tetikle.
+    function _autoBoot() { ensureInit().catch(function (e) { console.warn('[i18n] auto-init failed', e); }); }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _autoBoot, { once: true });
+    } else {
+        _autoBoot();
+    }
 })();
