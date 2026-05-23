@@ -1734,55 +1734,139 @@ window.DSLearningModule = (function () {
     async function loadDbLoopStatus(sourceId) {
         const box = document.getElementById('dsDbLoopStatus');
         if (!box) return false;
+        // a11y: durum mesajlarını ekran okuyucu canlı bildirim alanı olarak işaretle
+        if (box.getAttribute('aria-live') !== 'polite') {
+            box.setAttribute('aria-live', 'polite');
+            box.setAttribute('aria-atomic', 'true');
+        }
         try {
             const res = await apiCall(`/${sourceId}/synthetic-status`);
             const job = res.job || { status: 'idle' };
             const status = job.status || 'idle';
             let html = '';
             if (status === 'running') {
-                html = `<div class="ds-dbloop-pill ds-dbloop-running"><i class="fa-solid fa-spinner fa-spin"></i> Çalışıyor (dialect: ${_escapeHtml(job.dialect || '?')})</div>`;
+                html = _renderDbLoopProgress(job, /*done*/ false);
             } else if (status === 'done') {
                 const s = job.summary || {};
-                const totalFail = (s.failed_execute || 0) + (s.failed_learn || 0);
-                const errors = Array.isArray(s.errors) ? s.errors : [];
-                let errBlock = '';
-                if (errors.length) {
-                    const items = errors.slice(0, 50).map(e => `<li>${_escapeHtml(String(e))}</li>`).join('');
-                    errBlock = `
-                        <details class="ds-dbloop-errdetails" style="margin-top:0.5rem;">
-                            <summary style="cursor:pointer; color:#dc2626;">
-                                ⚠️ Hata mesajları (${errors.length})
-                            </summary>
-                            <ul class="ds-dbloop-errlist" style="max-height:240px; overflow:auto; font-family:monospace; font-size:0.78rem;">
-                                ${items}
-                            </ul>
-                        </details>
+                // G2.2 — FK ilişkisi yoksa empty state
+                if ((s.total_fks ?? 0) === 0) {
+                    html = `
+                        <div class="ds-dbloop-empty-state" role="status">
+                            <i class="fa-solid fa-link-slash" aria-hidden="true"></i>
+                            <h3>FK ilişkisi bulunamadı</h3>
+                            <p>Bu veri kaynağında henüz FK tanımlı değil. "Veri Kaynakları" sayfasından kaynağı yeniden keşfedin veya FK çıkarımı (auto-inference) çalıştırın.</p>
+                        </div>
                     `;
+                } else {
+                    html = _renderDbLoopProgress(job, /*done*/ true);
                 }
-                html = `
-                    <div class="ds-dbloop-pill ds-dbloop-done"><i class="fa-solid fa-check"></i> Tamamlandı (${s.elapsed_ms || 0} ms)</div>
-                    <div class="ds-dbloop-stats">
-                        <span>FK: <strong>${s.total_fks || 0}</strong></span>
-                        <span>Denenen: <strong>${s.total_attempts || 0}</strong></span>
-                        <span>Başarılı: <strong style="color:#16a34a;">${s.success || 0}</strong></span>
-                        <span>Atlanan: <strong>${s.skipped_existing || 0}</strong></span>
-                        <span>Execute Hata: <strong style="color:#dc2626;">${s.failed_execute || 0}</strong></span>
-                        <span>Öğrenme Hata: <strong style="color:#dc2626;">${s.failed_learn || 0}</strong></span>
-                        <span>Toplam Hata: <strong style="color:#dc2626;">${totalFail}</strong></span>
-                    </div>
-                    ${errBlock}
-                `;
             } else if (status === 'error') {
-                html = `<div class="ds-dbloop-pill ds-dbloop-error"><i class="fa-solid fa-circle-exclamation"></i> Hata: ${_escapeHtml(job.error || 'bilinmeyen')}</div>`;
+                html = `<div class="ds-dbloop-pill ds-dbloop-error" role="alert"><i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i> Hata: ${_escapeHtml(job.error || 'bilinmeyen')}</div>`;
             } else {
                 html = `<div class="ds-dbloop-pill ds-dbloop-idle">Henüz çalıştırılmadı</div>`;
             }
             box.innerHTML = html;
+
+            // "Detaylar" expander davranışı
+            const detailsBtn = box.querySelector('#dsDbLoopDetailsBtn');
+            const detailsPanel = box.querySelector('#dsDbLoopDetailsPanel');
+            if (detailsBtn && detailsPanel) {
+                detailsBtn.addEventListener('click', () => {
+                    const open = detailsPanel.style.display !== 'none';
+                    detailsPanel.style.display = open ? 'none' : 'flex';
+                    detailsBtn.setAttribute('aria-expanded', String(!open));
+                });
+            }
             return status === 'done' || status === 'error';
         } catch (e) {
-            box.innerHTML = `<div class="ds-dbloop-pill ds-dbloop-error">Durum alınamadı</div>`;
+            box.innerHTML = `<div class="ds-dbloop-pill ds-dbloop-error" role="alert"><i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i> Durum alınamadı</div>`;
             return true;
         }
+    }
+
+    // v3.32.0 G2.1 — Progress bar render (running + done ortak)
+    function _renderDbLoopProgress(job, done) {
+        const s = job.summary || {};
+        const dialect = job.dialect || '?';
+        const total = Number(s.total_attempts ?? 0);
+        const success = Number(s.success ?? 0);
+        const skippedExisting = Number(s.skipped_existing ?? 0);
+        const skippedEmpty = Number(s.skipped_empty ?? 0);
+        const skippedRecent = Number(s.skipped_recent_failure ?? 0);
+        const skippedTotal = skippedExisting + skippedEmpty + skippedRecent;
+        const failExecute = Number(s.failed_execute ?? 0);
+        const failLearn = Number(s.failed_learn ?? 0);
+        const failed = failExecute + failLearn;
+        const junctionSuccess = Number(s.junction_success ?? 0);
+        const totalFks = Number(s.total_fks ?? 0);
+        const elapsedSec = s.elapsed_ms != null ? (Number(s.elapsed_ms) / 1000).toFixed(1) : null;
+
+        // running iken summary boş gelmiş olabilir → indeterminate
+        const hasSummary = Object.keys(s).length > 0 && total > 0;
+        const completed = success + failed;
+        const percent = hasSummary ? Math.max(0, Math.min(100, Math.round((completed / total) * 100))) : 0;
+        const barIndeterminate = !done && !hasSummary;
+
+        if (done) {
+            return `
+                <div class="ds-dbloop-progress done">
+                    <i class="fa-solid fa-circle-check" aria-hidden="true" style="color: var(--green);"></i>
+                    <span class="ds-dbloop-progress-summary">
+                        Tamamlandı: <strong>${success}</strong> başarılı,
+                        <strong>${skippedTotal}</strong> atlandı,
+                        <strong>${failed}</strong> hata
+                        ${elapsedSec != null ? `· ${elapsedSec}s` : ''}
+                        ${dialect && dialect !== '?' ? `· ${_escapeHtml(dialect)}` : ''}
+                    </span>
+                    <button type="button" class="ds-link-btn" id="dsDbLoopDetailsBtn"
+                            aria-label="Üretim detaylarını göster"
+                            data-tooltip="Junction / skip dağılımı"
+                            aria-expanded="false"
+                            aria-controls="dsDbLoopDetailsPanel">
+                        Detaylar
+                    </button>
+                    <div id="dsDbLoopDetailsPanel" class="ds-dbloop-progress-details" style="display:none;">
+                        <span>FK: <strong>${totalFks}</strong></span>
+                        <span>Denenen: <strong>${total}</strong></span>
+                        <span>Junction (N:M): <strong>${junctionSuccess}</strong></span>
+                        <span>Mevcut atlandı: <strong>${skippedExisting}</strong></span>
+                        <span>Boş tablo atlandı: <strong>${skippedEmpty}</strong></span>
+                        <span>Yakın hata atlandı: <strong>${skippedRecent}</strong></span>
+                        <span>Execute hata: <strong>${failExecute}</strong></span>
+                        <span>Öğrenme hata: <strong>${failLearn}</strong></span>
+                    </div>
+                </div>
+            `;
+        }
+
+        // RUNNING
+        const headLabel = hasSummary
+            ? `Sentetik üretim çalışıyor... <strong>${completed}/${total}</strong> deneme`
+            : `Başlatılıyor... (dialect: ${_escapeHtml(dialect)})`;
+        const ariaNow = barIndeterminate ? '' : `aria-valuenow="${percent}"`;
+        const barClass = barIndeterminate ? 'ds-dbloop-progress-bar indeterminate' : 'ds-dbloop-progress-bar';
+        const fillStyle = barIndeterminate ? '' : `style="width: ${percent}%"`;
+
+        return `
+            <div class="ds-dbloop-progress">
+                <div class="ds-dbloop-progress-header">
+                    <i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
+                    <span>${headLabel}</span>
+                </div>
+                <div class="${barClass}"
+                     role="progressbar"
+                     ${ariaNow}
+                     aria-valuemin="0" aria-valuemax="100"
+                     aria-label="FK Loop ilerleme${barIndeterminate ? ' (başlatılıyor)' : ''}">
+                    <div class="ds-dbloop-progress-fill" ${fillStyle}></div>
+                </div>
+                <div class="ds-dbloop-progress-stats">
+                    <span class="stat stat-success"><i class="fa-solid fa-circle-check" aria-hidden="true"></i> ${success} başarılı</span>
+                    <span class="stat stat-skip"><i class="fa-solid fa-circle-minus" aria-hidden="true"></i> ${skippedTotal} atlandı</span>
+                    <span class="stat stat-fail"><i class="fa-solid fa-circle-xmark" aria-hidden="true"></i> ${failed} hata</span>
+                </div>
+            </div>
+        `;
     }
 
     async function loadLearnedQueries(sourceId) {
@@ -1836,23 +1920,88 @@ window.DSLearningModule = (function () {
                 box.innerHTML = '<div class="ds-dbloop-empty">Hatalı deneme yok.</div>';
                 return;
             }
-            box.innerHTML = items.map(it => `
-                <div class="ds-dbloop-failrow" style="border:1px solid #fecaca; background:#fef2f2; padding:0.5rem 0.75rem; margin-bottom:0.5rem; border-radius:6px;">
-                    <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; margin-bottom:0.25rem;">
-                        <span class="ds-dbloop-badge" style="background:#dc2626; color:#fff;">${_escapeHtml(it.template_kind || '?')}</span>
-                        <span style="font-weight:600;">${_escapeHtml(it.from_table || '')}.${_escapeHtml(it.from_column || '')}</span>
-                        <span style="color:#6b7280;">→</span>
-                        <span style="font-weight:600;">${_escapeHtml(it.to_table || '')}.${_escapeHtml(it.to_column || '')}</span>
-                        <span style="margin-left:auto; color:#6b7280; font-size:0.75rem;">${_escapeHtml(it.executed_at || '')}</span>
+            // v3.32.0 G2.3 — accessible failure rows: ellipsis msg + tooltip + icon-only expand/copy buttons
+            box.innerHTML = items.map((it, idx) => {
+                const sqlId = `dsDbLoopFailSql_${idx}`;
+                const rawMsg = it.error_message || 'bilinmeyen hata';
+                const fromRel = `${it.from_table || ''}.${it.from_column || ''}`;
+                const toRel = `${it.to_table || ''}.${it.to_column || ''}`;
+                const renderedSql = it.rendered_sql || '';
+                return `
+                <div class="ds-dbloop-failrow-v2" data-idx="${idx}">
+                    <div class="fail-head">
+                        <span class="fail-kind">${_escapeHtml(it.template_kind || '?')}</span>
+                        <span class="fail-rel">${_escapeHtml(fromRel)}</span>
+                        <span class="fail-arrow" aria-hidden="true">→</span>
+                        <span class="fail-rel">${_escapeHtml(toRel)}</span>
+                        <span class="fail-time">${_escapeHtml(it.executed_at || '')}</span>
                     </div>
-                    <details>
-                        <summary style="cursor:pointer; color:#dc2626; font-size:0.85rem;">
-                            ❌ ${_escapeHtml((it.error_message || 'bilinmeyen hata').substring(0, 200))}
-                        </summary>
-                        <pre style="margin-top:0.5rem; padding:0.5rem; background:#fff; border:1px solid #e5e7eb; border-radius:4px; overflow:auto; max-height:200px; font-size:0.75rem;">${_escapeHtml(it.rendered_sql || '')}</pre>
-                    </details>
+                    <div class="fail-msg">
+                        <i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i>
+                        <span class="fail-msg-text" data-tooltip="${_escapeHtml(rawMsg)}" title="${_escapeHtml(rawMsg)}">${_escapeHtml(rawMsg)}</span>
+                        <button type="button"
+                                class="ds-dbloop-icon-btn ds-dbloop-fail-toggle"
+                                data-target="${sqlId}"
+                                aria-label="SQL'i göster/gizle"
+                                data-tooltip="Tam SQL'i göster/gizle"
+                                aria-expanded="false"
+                                aria-controls="${sqlId}">
+                            <i class="fa-solid fa-code" aria-hidden="true"></i>
+                        </button>
+                        <button type="button"
+                                class="ds-dbloop-icon-btn ds-dbloop-fail-copy"
+                                data-sql-target="${sqlId}"
+                                aria-label="Tam SQL'i panoya kopyala"
+                                data-tooltip="Tam SQL'i kopyala">
+                            <i class="fa-solid fa-copy" aria-hidden="true"></i>
+                        </button>
+                    </div>
+                    <div class="fail-sql-wrap">
+                        <pre id="${sqlId}" class="fail-sql">${_escapeHtml(renderedSql)}</pre>
+                    </div>
                 </div>
-            `).join('');
+            `;
+            }).join('');
+
+            // Expand/collapse handlers
+            box.querySelectorAll('.ds-dbloop-fail-toggle').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const row = btn.closest('.ds-dbloop-failrow-v2');
+                    if (!row) return;
+                    const isOpen = row.classList.toggle('expanded');
+                    btn.setAttribute('aria-expanded', String(isOpen));
+                });
+            });
+            // Copy handlers
+            box.querySelectorAll('.ds-dbloop-fail-copy').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const id = btn.getAttribute('data-sql-target');
+                    const pre = id ? document.getElementById(id) : null;
+                    const text = pre ? pre.textContent : '';
+                    if (!text) {
+                        toast('warning', 'Kopyalanacak SQL bulunamadı');
+                        return;
+                    }
+                    try {
+                        if (navigator.clipboard && navigator.clipboard.writeText) {
+                            await navigator.clipboard.writeText(text);
+                        } else {
+                            const ta = document.createElement('textarea');
+                            ta.value = text;
+                            ta.setAttribute('readonly', '');
+                            ta.style.position = 'fixed';
+                            ta.style.opacity = '0';
+                            document.body.appendChild(ta);
+                            ta.select();
+                            document.execCommand('copy');
+                            document.body.removeChild(ta);
+                        }
+                        toast('success', 'SQL kopyalandı');
+                    } catch (err) {
+                        toast('error', 'Kopyalama başarısız: ' + (err.message || err));
+                    }
+                });
+            });
         } catch (e) {
             box.innerHTML = `<div class="ds-dbloop-empty">Hatalar alınamadı: ${_escapeHtml(e.message || '')}</div>`;
         }

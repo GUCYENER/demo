@@ -51,7 +51,14 @@ DEFAULT_TOP_K = 3
 
 @dataclass
 class Relationship:
-    """ds_db_relationships satırının yalın temsili."""
+    """ds_db_relationships satırının yalın temsili.
+
+    v3.32.0: Composite FK desteği — ``from_columns`` / ``to_columns`` listeleri.
+    Backward compat: tek-column ilişkiler için ``from_column`` / ``to_column``
+    field'ları korunur ve listelerin ilk elemanıyla eşleşmesi beklenir. Eski
+    construction (sadece tekil field'lar ile) çalışmaya devam eder; listeler
+    __post_init__'te otomatik doldurulur.
+    """
     id: int
     from_schema: Optional[str]
     from_table: str
@@ -62,6 +69,33 @@ class Relationship:
     cardinality_from: Optional[str] = None   # '1' | 'N'
     cardinality_to: Optional[str] = None
     is_junction: bool = False
+    from_columns: List[str] = field(default_factory=list)
+    to_columns: List[str] = field(default_factory=list)
+    constraint_name: Optional[str] = None
+    confidence_score: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        # Backward compat: tekil column ilk eleman olur, liste boşsa tek-column
+        # FK olarak ele alınır.
+        if not self.from_columns and self.from_column:
+            self.from_columns = [self.from_column]
+        if not self.to_columns and self.to_column:
+            self.to_columns = [self.to_column]
+        # Eğer composite listeler verildi ama tekil column boş ise senkronize et
+        if self.from_columns and not self.from_column:
+            self.from_column = self.from_columns[0]
+        if self.to_columns and not self.to_column:
+            self.to_column = self.to_columns[0]
+
+    @property
+    def is_self_ref(self) -> bool:
+        """Self-referential FK mi? (örn. employee.manager_id → employee.id)"""
+        same_schema = (self.from_schema or "") == (self.to_schema or "")
+        return same_schema and self.from_table == self.to_table
+
+    @property
+    def is_composite(self) -> bool:
+        return len(self.from_columns) > 1 or len(self.to_columns) > 1
 
 
 @dataclass
@@ -130,33 +164,79 @@ def _full_name(schema: Optional[str], table: str) -> str:
 # G1 Templates
 # ─────────────────────────────────────────────────────────────
 
+def _fk_column_pairs(rel: Relationship) -> List[tuple]:
+    """Composite FK için ``[(from_col, to_col), ...]`` listesi döndür.
+
+    Tek-column FK'lerde tek elemanlı liste döner. Listelerin uzunluğu farklıysa
+    en kısasına göre zip yapılır (defansif). Boş liste durumunda tekil
+    ``from_column`` / ``to_column`` alanlarına düşer.
+    """
+    fcs = list(rel.from_columns or ([rel.from_column] if rel.from_column else []))
+    tcs = list(rel.to_columns or ([rel.to_column] if rel.to_column else []))
+    return list(zip(fcs, tcs))
+
+
 def render_lookup_join(rel: Relationship, dialect: str = "postgresql", limit: int = DEFAULT_LIMIT) -> RenderedQuery:
     d = dialect.lower()
     from_q = _qualify(rel.from_schema, rel.from_table, d)
     to_q = _qualify(rel.to_schema, rel.to_table, d)
-    from_col_q = _quote_identifier(rel.from_column, d)
-    to_col_q = _quote_identifier(rel.to_column, d)
     sel_prefix = _select_prefix(d, limit)
     limit_suffix = _limit_clause(d, limit)
+
+    pairs = _fk_column_pairs(rel)
+    if not pairs:
+        # defansif: pair yoksa eski davranışa düş
+        pairs = [(rel.from_column, rel.to_column)]
+
+    # SELECT: composite ise her column ayrı alias (from_key1, from_key2, ...)
+    sel_parts: List[str] = []
+    on_parts: List[str] = []
+    columns_meta: List[Dict[str, str]] = []
+    for i, (fc, tc) in enumerate(pairs, start=1):
+        fcq = _quote_identifier(fc, d)
+        tcq = _quote_identifier(tc, d)
+        if len(pairs) == 1:
+            sel_parts.append(f"a.{fcq} AS from_key")
+            sel_parts.append(f"b.{tcq} AS to_key")
+        else:
+            sel_parts.append(f"a.{fcq} AS from_key{i}")
+            sel_parts.append(f"b.{tcq} AS to_key{i}")
+        on_parts.append(f"a.{fcq} = b.{tcq}")
+        columns_meta.append({"name": fc, "table": rel.from_table, "role": f"from_key{i}" if len(pairs) > 1 else "from_key"})
+        columns_meta.append({"name": tc, "table": rel.to_table, "role": f"to_key{i}" if len(pairs) > 1 else "to_key"})
+
+    select_clause = ", ".join(sel_parts)
+    on_clause = " AND ".join(on_parts)
+
     sql = (
-        f"{sel_prefix} a.{from_col_q} AS from_key, b.{to_col_q} AS to_key "
-        f"FROM {from_q} a JOIN {to_q} b ON a.{from_col_q} = b.{to_col_q}"
+        f"{sel_prefix} {select_clause} "
+        f"FROM {from_q} a JOIN {to_q} b ON {on_clause}"
     )
     if limit_suffix:
         sql += f" {limit_suffix}"
+
+    # Self-ref durumunda question_tr daha anlamlı bir cümle olur
+    if rel.is_self_ref:
+        question_tr = (
+            f"{rel.from_table} tablosundaki kayıtların ilgili üst (parent) "
+            f"kayıtlarını göster"
+        )
+    else:
+        question_tr = (
+            f"{rel.from_table} tablosundaki kayıtların ilgili "
+            f"{rel.to_table} bilgilerini göster"
+        )
+
     full_from = _full_name(rel.from_schema, rel.from_table)
     full_to = _full_name(rel.to_schema, rel.to_table)
     return RenderedQuery(
         template_kind="LOOKUP_JOIN",
         dialect=d,
         sql=sql,
-        question_tr=f"{rel.from_table} tablosundaki kayıtların ilgili {rel.to_table} bilgilerini göster",
+        question_tr=question_tr,
         schema_signature=",".join(sorted({full_from.lower(), full_to.lower()})),
         tables=[full_from, full_to],
-        columns_meta=[
-            {"name": rel.from_column, "table": rel.from_table, "role": "from_key"},
-            {"name": rel.to_column, "table": rel.to_table, "role": "to_key"},
-        ],
+        columns_meta=columns_meta,
         complexity_score=COMPLEXITY_BY_KIND["LOOKUP_JOIN"],
         join_path=[full_from, full_to],
     )
@@ -166,30 +246,64 @@ def render_aggregate_count(rel: Relationship, dialect: str = "postgresql", limit
     d = dialect.lower()
     from_q = _qualify(rel.from_schema, rel.from_table, d)
     to_q = _qualify(rel.to_schema, rel.to_table, d)
-    from_col_q = _quote_identifier(rel.from_column, d)
-    to_col_q = _quote_identifier(rel.to_column, d)
     sel_prefix = _select_prefix(d, limit)
     limit_suffix = _limit_clause(d, limit)
+
+    pairs = _fk_column_pairs(rel)
+    if not pairs:
+        pairs = [(rel.from_column, rel.to_column)]
+
+    # GROUP BY: tüm to_columns; SELECT: ref_key (composite ise ref_key1..N)
+    sel_parts: List[str] = []
+    on_parts: List[str] = []
+    group_parts: List[str] = []
+    columns_meta: List[Dict[str, str]] = []
+    for i, (fc, tc) in enumerate(pairs, start=1):
+        fcq = _quote_identifier(fc, d)
+        tcq = _quote_identifier(tc, d)
+        if len(pairs) == 1:
+            sel_parts.append(f"b.{tcq} AS ref_key")
+        else:
+            sel_parts.append(f"b.{tcq} AS ref_key{i}")
+        on_parts.append(f"a.{fcq} = b.{tcq}")
+        group_parts.append(f"b.{tcq}")
+        columns_meta.append({"name": tc, "table": rel.to_table, "role": f"ref_key{i}" if len(pairs) > 1 else "ref_key"})
+    # COUNT: ilk from_column üzerinden (NULL'sız satırlar sayılır)
+    first_fcq = _quote_identifier(pairs[0][0], d)
+    columns_meta.append({"name": pairs[0][0], "table": rel.from_table, "role": "count_target"})
+
+    select_clause = ", ".join(sel_parts) + f", COUNT(a.{first_fcq}) AS cnt"
+    on_clause = " AND ".join(on_parts)
+    group_clause = ", ".join(group_parts)
+
     sql = (
-        f"{sel_prefix} b.{to_col_q} AS ref_key, COUNT(a.{from_col_q}) AS cnt "
-        f"FROM {to_q} b LEFT JOIN {from_q} a ON a.{from_col_q} = b.{to_col_q} "
-        f"GROUP BY b.{to_col_q} ORDER BY cnt DESC"
+        f"{sel_prefix} {select_clause} "
+        f"FROM {to_q} b LEFT JOIN {from_q} a ON {on_clause} "
+        f"GROUP BY {group_clause} ORDER BY cnt DESC"
     )
     if limit_suffix:
         sql += f" {limit_suffix}"
+
+    if rel.is_self_ref:
+        question_tr = (
+            f"Her {rel.from_table} parent'ı için alt (child) kayıt sayısı"
+        )
+    else:
+        question_tr = (
+            f"Her bir {rel.to_table} için kaç {rel.from_table} kaydı var "
+            f"(en fazlası başta)?"
+        )
+
     full_from = _full_name(rel.from_schema, rel.from_table)
     full_to = _full_name(rel.to_schema, rel.to_table)
     return RenderedQuery(
         template_kind="AGGREGATE_COUNT",
         dialect=d,
         sql=sql,
-        question_tr=f"Her bir {rel.to_table} için kaç {rel.from_table} kaydı var (en fazlası başta)?",
+        question_tr=question_tr,
         schema_signature=",".join(sorted({full_from.lower(), full_to.lower()})),
         tables=[full_from, full_to],
-        columns_meta=[
-            {"name": rel.to_column, "table": rel.to_table, "role": "ref_key"},
-            {"name": rel.from_column, "table": rel.from_table, "role": "count_target"},
-        ],
+        columns_meta=columns_meta,
         complexity_score=COMPLEXITY_BY_KIND["AGGREGATE_COUNT"],
         join_path=[full_to, full_from],
     )
