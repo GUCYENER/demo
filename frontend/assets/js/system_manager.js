@@ -46,36 +46,46 @@ window.SystemManagerModule = (function () {
         const token = localStorage.getItem('access_token');
         if (!token) return;
 
-        const storedStartTime = localStorage.getItem('session_start_time');
+        const now = new Date();
 
-        if (storedStartTime) {
-            const storedDate = new Date(storedStartTime);
-
-            // Geçerlilik kontrolü: JWT token expire ile karşılaştır
-            // Eğer saklanan süre > token expire süresi ise eski oturumdur, sıfırla
-            try {
-                const token = localStorage.getItem('access_token');
-                if (token) {
-                    const payload = JSON.parse(atob(token.split('.')[1]));
-                    const tokenIssuedAt = new Date(payload.iat * 1000);
-                    // Saklanan zaman, token'ın oluşturulma zamanından eskiyse → eski oturum
-                    if (storedDate < tokenIssuedAt) {
-                        sessionStartTime = tokenIssuedAt;
-                        localStorage.setItem('session_start_time', tokenIssuedAt.toISOString());
-                    } else {
-                        sessionStartTime = storedDate;
-                    }
-                } else {
-                    sessionStartTime = storedDate;
-                }
-            } catch (e) {
-                sessionStartTime = storedDate;
+        // v3.30.1: Gerçek login zamanı = JWT iat (issued-at).
+        // session_start_time localStorage cache amaçlıdır; canonical kaynak JWT'dir.
+        // Bu sayede checkExistingAuth auto-redirect veya başka bir yol session_start_time'ı
+        // güncellemese bile sayaç yanlış başlamaz.
+        //
+        // Senaryo matrisi:
+        //   1) Fresh login → iat = şimdi          → sayaç 0:00'dan başlar
+        //   2) Sayfa yenileme (30 dk sonra)       → iat = 30 dk önce → sayaç 30:00'dan devam
+        //   3) Eski token resume (>60 dk eski)    → iat çok eski   → sayaç sıfırla (yeni window)
+        //   4) Sunucu clock skew (iat future)     → negatif age    → güvenli reset
+        let baseTime;
+        try {
+            const payload = JSON.parse(atob(token.split('.')[1]));
+            if (!payload || typeof payload.iat !== 'number') {
+                throw new Error('JWT iat missing');
             }
-        } else {
-            // Fallback: session_start_time yoksa (eski sürümden gelen kullanıcılar)
-            sessionStartTime = new Date();
-            localStorage.setItem('session_start_time', sessionStartTime.toISOString());
+            const tokenIssuedAt = new Date(payload.iat * 1000);
+            const tokenAgeSec = Math.floor((now - tokenIssuedAt) / 1000);
+
+            if (tokenAgeSec < 0 || tokenAgeSec >= SESSION_WARN_AT_SECONDS) {
+                // Resume w/ stale token veya clock skew → fresh window
+                baseTime = now;
+            } else {
+                // Yakın zamanda issue edilmiş token → gerçek login zamanını kullan
+                baseTime = tokenIssuedAt;
+            }
+        } catch (e) {
+            // Malformed JWT — defansif fallback
+            const stored = localStorage.getItem('session_start_time');
+            baseTime = stored ? new Date(stored) : now;
+            // Stored da bayatsa reset
+            if (Math.floor((now - baseTime) / 1000) >= SESSION_WARN_AT_SECONDS) {
+                baseTime = now;
+            }
         }
+
+        sessionStartTime = baseTime;
+        localStorage.setItem('session_start_time', baseTime.toISOString());
 
         updateSessionTimer();
         sessionTimerInterval = setInterval(updateSessionTimer, 1000);

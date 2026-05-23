@@ -16962,36 +16962,46 @@ window.SystemManagerModule = (function () {
         const token = localStorage.getItem('access_token');
         if (!token) return;
 
-        const storedStartTime = localStorage.getItem('session_start_time');
+        const now = new Date();
 
-        if (storedStartTime) {
-            const storedDate = new Date(storedStartTime);
-
-            // Geçerlilik kontrolü: JWT token expire ile karşılaştır
-            // Eğer saklanan süre > token expire süresi ise eski oturumdur, sıfırla
-            try {
-                const token = localStorage.getItem('access_token');
-                if (token) {
-                    const payload = JSON.parse(atob(token.split('.')[1]));
-                    const tokenIssuedAt = new Date(payload.iat * 1000);
-                    // Saklanan zaman, token'ın oluşturulma zamanından eskiyse → eski oturum
-                    if (storedDate < tokenIssuedAt) {
-                        sessionStartTime = tokenIssuedAt;
-                        localStorage.setItem('session_start_time', tokenIssuedAt.toISOString());
-                    } else {
-                        sessionStartTime = storedDate;
-                    }
-                } else {
-                    sessionStartTime = storedDate;
-                }
-            } catch (e) {
-                sessionStartTime = storedDate;
+        // v3.30.1: Gerçek login zamanı = JWT iat (issued-at).
+        // session_start_time localStorage cache amaçlıdır; canonical kaynak JWT'dir.
+        // Bu sayede checkExistingAuth auto-redirect veya başka bir yol session_start_time'ı
+        // güncellemese bile sayaç yanlış başlamaz.
+        //
+        // Senaryo matrisi:
+        //   1) Fresh login → iat = şimdi          → sayaç 0:00'dan başlar
+        //   2) Sayfa yenileme (30 dk sonra)       → iat = 30 dk önce → sayaç 30:00'dan devam
+        //   3) Eski token resume (>60 dk eski)    → iat çok eski   → sayaç sıfırla (yeni window)
+        //   4) Sunucu clock skew (iat future)     → negatif age    → güvenli reset
+        let baseTime;
+        try {
+            const payload = JSON.parse(atob(token.split('.')[1]));
+            if (!payload || typeof payload.iat !== 'number') {
+                throw new Error('JWT iat missing');
             }
-        } else {
-            // Fallback: session_start_time yoksa (eski sürümden gelen kullanıcılar)
-            sessionStartTime = new Date();
-            localStorage.setItem('session_start_time', sessionStartTime.toISOString());
+            const tokenIssuedAt = new Date(payload.iat * 1000);
+            const tokenAgeSec = Math.floor((now - tokenIssuedAt) / 1000);
+
+            if (tokenAgeSec < 0 || tokenAgeSec >= SESSION_WARN_AT_SECONDS) {
+                // Resume w/ stale token veya clock skew → fresh window
+                baseTime = now;
+            } else {
+                // Yakın zamanda issue edilmiş token → gerçek login zamanını kullan
+                baseTime = tokenIssuedAt;
+            }
+        } catch (e) {
+            // Malformed JWT — defansif fallback
+            const stored = localStorage.getItem('session_start_time');
+            baseTime = stored ? new Date(stored) : now;
+            // Stored da bayatsa reset
+            if (Math.floor((now - baseTime) / 1000) >= SESSION_WARN_AT_SECONDS) {
+                baseTime = now;
+            }
         }
+
+        sessionStartTime = baseTime;
+        localStorage.setItem('session_start_time', baseTime.toISOString());
 
         updateSessionTimer();
         sessionTimerInterval = setInterval(updateSessionTimer, 1000);
@@ -29537,7 +29547,13 @@ const DSEnrichmentModule = (() => {
     let _selectedIds = new Set();
     let _pollingTimer = null;
     let _isPolling = false;
-    let _filterPendingApproval = false;
+    // v3.30.1: _filterPendingApproval bool yerine 3-yönlü enum
+    //   ''             → filtre yok
+    //   'pending_disc' → Keşif Bekliyor    (!enrichment_id)
+    //   'discovering'  → Devam Ediyor       (_discoveringIds içinde)
+    //   'pending_appr' → Onay Bekliyor      (enrichment_id && !is_approved)
+    let _statusFilter = '';
+    let _discoveringIds = new Set();   // v3.30.1: keşif istek atılan, henüz enrichment_id gelmeyen object_id'ler
     let _filterSchema = '';
 
     // ============================================
@@ -29555,7 +29571,8 @@ const DSEnrichmentModule = (() => {
         _searchQuery = '';
         _filterLowScore = false;
         _showApproved = false;
-        _filterPendingApproval = false;
+        _statusFilter = '';
+        _discoveringIds.clear();
         _filterSchema = '';
         _selectedIds.clear();
         _onCloseCallback = onCloseCallback || null;
@@ -29727,6 +29744,14 @@ const DSEnrichmentModule = (() => {
                 const newlyDiscovered = newPending.filter(x => x.enrichment_id && !prevDiscoveredIds.has(x.id));
 
                 _pendingData = newPending;
+
+                // v3.30.1: enrichment_id geleli → discovering set'inden temizle
+                for (const item of newPending) {
+                    if (item.enrichment_id) {
+                        _discoveringIds.delete(String(item.id));
+                    }
+                }
+
                 _renderStats(stats);
 
                 // Yeni keşfedilen tablo varsa sayfa 1'e dön + toast göster
@@ -29824,8 +29849,12 @@ const DSEnrichmentModule = (() => {
             return textMatch && scoreMatch && approvalMatch && schemaMatch;
         });
 
-        // Onay bekleyen filtresi (sadece kesfedilmis ama onayla beklenenler)
-        if (_filterPendingApproval) {
+        // v3.30.1: Status filter (3-yönlü: Keşif Bekliyor / Devam Ediyor / Onay Bekliyor)
+        if (_statusFilter === 'pending_disc') {
+            _filteredData = _filteredData.filter(item => !item.enrichment_id && !_discoveringIds.has(String(item.id)));
+        } else if (_statusFilter === 'discovering') {
+            _filteredData = _filteredData.filter(item => _discoveringIds.has(String(item.id)) && !item.enrichment_id);
+        } else if (_statusFilter === 'pending_appr') {
             _filteredData = _filteredData.filter(item => item.enrichment_id && !item.is_approved);
         }
 
@@ -29943,9 +29972,11 @@ const DSEnrichmentModule = (() => {
                         </td>
                         <td class="ds-action-cell">
                             <div class="ds-enrich-actions ds-action-nowrap">
-                                ${!item.enrichment_id ? `
-                                <span class="ds-status-badge ds-status-pending-disc"><i class="fa-solid fa-hourglass-half"></i> Keşif Bekliyor</span>
-                                ` : (!item.is_approved ? `
+                                ${!item.enrichment_id ? (
+                                  _discoveringIds.has(String(item.id))
+                                    ? `<span class="ds-status-badge ds-status-discovering"><i class="fa-solid fa-spinner fa-spin"></i> Devam Ediyor</span>`
+                                    : `<span class="ds-status-badge ds-status-pending-disc"><i class="fa-solid fa-hourglass-half"></i> Keşif Bekliyor</span>`
+                                ) : (!item.is_approved ? `
                                 <span class="ds-status-badge ds-status-pending-appr"><i class="fa-solid fa-clock"></i> Onay Bekliyor</span>
                                 <button class="ds-enrich-btn approve" onclick="DSEnrichmentModule.quickApprove(${item.id})" title="Direkt onayla" style="background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);">
                                     <i class="fa-solid fa-check"></i>
@@ -29966,7 +29997,9 @@ const DSEnrichmentModule = (() => {
             }
         }
 
-        const isAllSelected = items.length > 0 && items.every(i => _selectedIds.has(i.id.toString()));
+        // v3.30.1: cross-page select-all → header checkbox tüm filtrelenmiş, henüz onaylanmamış kayıtlara bakar
+        const _selectable = _filteredData.filter(i => !i.is_approved);
+        const isAllSelected = _selectable.length > 0 && _selectable.every(i => _selectedIds.has(i.id.toString()));
 
         // Build pagination wrapper
         let pageBtns = '';
@@ -29983,21 +30016,25 @@ const DSEnrichmentModule = (() => {
         }
 
         // ---- Buton disabled state hesaplamaları ----
-        const _btnUndiscoveredCount = _pendingData.filter(x => !x.enrichment_id).length;
+        // v3.30.1: "Tümü" butonları artık _filteredData scope'unda — aktif filtreyi onurlandırır.
+        // Filtre yoksa _filteredData ≡ _pendingData (görünür kayıtlar) → davranış değişmez.
+        const _isFiltered = !!(_searchQuery || _filterLowScore || _filterSchema || _statusFilter || _showApproved);
+        const _btnUndiscoveredCount = _filteredData.filter(x => !x.enrichment_id).length;
         const _btnSelUndiscovered   = Array.from(_selectedIds).filter(id => { const r = _pendingData.find(x => x.id == id); return r && !r.enrichment_id; }).length;
         const _btnSelApprovable     = Array.from(_selectedIds).filter(id => { const r = _pendingData.find(x => x.id == id); return r && r.enrichment_id && !r.is_approved; }).length;
-        const _btnAllApprovable     = _pendingData.filter(x => x.enrichment_id && !x.is_approved).length;
+        const _btnAllApprovable     = _filteredData.filter(x => x.enrichment_id && !x.is_approved).length;
         const _btnDiscoverAllDis    = _btnUndiscoveredCount === 0;
         const _btnDiscoverSelDis    = _btnSelUndiscovered === 0;
         const _btnApproveSelDis     = _btnSelApprovable === 0;
         const _btnApproveAllDis     = _btnAllApprovable === 0;
         // Tooltip metinleri
+        const _scopeLabel = _isFiltered ? 'filtrelenmiş' : 'tüm';
         const _ttDiscoverAll  = _pendingData.length === 0
             ? 'Tablolar yükleniyor...'
-            : (_btnDiscoverAllDis ? 'Tüm tablolar zaten keşfedilmiş' : 'Keşfedilmemiş tüm tabloları keşfet');
+            : (_btnDiscoverAllDis ? `${_scopeLabel.charAt(0).toUpperCase()+_scopeLabel.slice(1)} tablolarda keşfedilmemiş kayıt yok` : `${_btnUndiscoveredCount} ${_scopeLabel} tabloyu keşfet`);
         const _ttDiscoverSel  = (_btnSelUndiscovered === 0 && _selectedIds.size > 0) ? 'Seçili tablolar zaten keşfedilmiş' : 'Seçili keşfedilmemiş tabloları keşfet';
         const _ttApproveSel   = _btnApproveSelDis ? (_btnSelUndiscovered > 0 ? 'Seçili tablolar henüz keşfedilmemiş, önce keşfedin' : 'Onaylanacak seçili tablo yok') : 'Seçili keşfedilmiş tabloları onayla';
-        const _ttApproveAll   = _btnApproveAllDis ? (_btnUndiscoveredCount > 0 ? 'Önce tüm tabloları keşfedin' : 'Onaylanacak tablo yok') : `${_btnAllApprovable} keşfedilmiş tabloyu onayla`;
+        const _ttApproveAll   = _btnApproveAllDis ? (_btnUndiscoveredCount > 0 ? `Önce ${_scopeLabel} tabloları keşfedin` : 'Onaylanacak tablo yok') : `${_btnAllApprovable} ${_scopeLabel} keşfedilmiş tabloyu onayla`;
 
         // Schema dropdown için unique listesi oluştur
         const uniqueSchemas = [...new Set(_pendingData.map(x => x.schema_name).filter(Boolean))].sort();
@@ -30006,9 +30043,15 @@ const DSEnrichmentModule = (() => {
             schemaOptions += `<option value="${s}" ${_filterSchema === s ? 'selected' : ''}>${s}</option>`;
         }
 
+        // v3.30.1: Status filter counts (tüm sayfalar üzerinden _pendingData'dan)
+        const _cntPendingDisc  = _pendingData.filter(x => !x.enrichment_id && !_discoveringIds.has(String(x.id))).length;
+        const _cntDiscovering  = _pendingData.filter(x => _discoveringIds.has(String(x.id)) && !x.enrichment_id).length;
+        const _cntPendingAppr  = _pendingData.filter(x => x.enrichment_id && !x.is_approved).length;
+        const _pillStyle = (active, base, accent) => `padding:5px 10px; border-radius:6px; border:1px solid ${active ? accent : 'rgba(255,255,255,0.15)'}; background:${active ? base : 'transparent'}; color:${active ? accent : '#aaa'}; cursor:pointer; font-size:0.82rem; font-weight:600; white-space:nowrap; transition:all 0.2s;`;
+
         body.innerHTML = `
             <div class="ds-enrich-filter-bar" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; flex-wrap:wrap; gap:10px; flex-shrink:0;">
-                <div style="flex:1; max-width:800px; display:flex; gap:0.5rem; align-items:center;">
+                <div style="flex:1; max-width:1200px; display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
                     <button onclick="DSEnrichmentModule.refreshData()" style="padding:8px 14px; border-radius:6px; border:none; background:rgba(255,255,255,0.1); color:#fff; cursor:pointer;" title="Verileri Yenile">
                         <i class="fa-solid fa-sync"></i>
                     </button>
@@ -30016,24 +30059,42 @@ const DSEnrichmentModule = (() => {
                         style="padding:8px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.3); color:#fff; outline:none; font-size:0.85rem; min-width:130px; max-width:200px; cursor:pointer;">
                         ${schemaOptions}
                     </select>
-                    <div style="position:relative; flex:1;">
-                        <i class="fa-solid fa-search" style="position:absolute; left:12px; top:10px; color:#888;"></i>
-                        <input type="text" id="dsSearchInput" value="${_searchQuery}" placeholder="Tablo veya iş adı ara..."
-                            style="width:100%; padding:8px 32px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.2); color:#fff; outline:none;"
+                    <div style="position:relative; flex:1; min-width:300px;">
+                        <i class="fa-solid fa-search" style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:#888; pointer-events:none;"></i>
+                        <input type="text" id="dsSearchInput" value="${_escapeHtml(_searchQuery)}" placeholder="Tablo veya iş adı ara..."
+                            style="width:100%; padding:8px 36px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.2); color:#fff; outline:none;"
                             oninput="DSEnrichmentModule.filterTables(this.value)" autocomplete="off">
+                        <button type="button" id="dsSearchClearBtn" onclick="DSEnrichmentModule.clearSearch()"
+                            title="Aramayı temizle"
+                            style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:transparent; border:none; color:#888; cursor:pointer; padding:4px 6px; border-radius:4px; display:${_searchQuery ? 'inline-flex' : 'none'}; align-items:center; justify-content:center;">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
                     </div>
                     <label style="display:flex; align-items:center; gap:6px; color:#ddd; font-size:0.85rem; cursor:pointer; white-space:nowrap;">
-                        <input type="checkbox" ${_filterLowScore ? 'checked' : ''} onchange="DSEnrichmentModule.toggleLowScoreFilter(this.checked)" style="width: 16px; height: 16px; accent-color: var(--primary-color, #4f46e5);"> 
+                        <input type="checkbox" ${_filterLowScore ? 'checked' : ''} onchange="DSEnrichmentModule.toggleLowScoreFilter(this.checked)" style="width: 16px; height: 16px; accent-color: var(--primary-color, #4f46e5);">
                         Düşük Skor / İsimsizleri Göster
                     </label>
                     <label style="display:flex; align-items:center; gap:6px; color:#ddd; font-size:0.85rem; cursor:pointer; white-space:nowrap;">
-                        <input id="dsShowApprovedChk" type="checkbox" ${_showApproved ? 'checked' : ''} onchange="DSEnrichmentModule.toggleShowApprovedFilter(this.checked)" style="width: 16px; height: 16px; accent-color: #34d399;"> 
+                        <input id="dsShowApprovedChk" type="checkbox" ${_showApproved ? 'checked' : ''} onchange="DSEnrichmentModule.toggleShowApprovedFilter(this.checked)" style="width: 16px; height: 16px; accent-color: #34d399;">
                         Onaylıları Göster
                     </label>
-                    <button onclick="DSEnrichmentModule.togglePendingApprovalFilter()" 
-                            style="padding:5px 10px; border-radius:6px; border:1px solid ${_filterPendingApproval ? 'rgba(245,158,11,0.6)' : 'rgba(255,255,255,0.15)'}; background:${_filterPendingApproval ? 'rgba(245,158,11,0.2)' : 'transparent'}; color:${_filterPendingApproval ? '#f59e0b' : '#aaa'}; cursor:pointer; font-size:0.82rem; font-weight:600; white-space:nowrap; transition:all 0.2s;" title="Keşfedilmiş ama onaylanmamış tablolar">
-                        <i class="fa-solid fa-clock" style="margin-right:4px;"></i>Onay Bekleyenler (${_pendingData.filter(x => x.enrichment_id && !x.is_approved).length})
-                    </button>
+                    <div role="group" aria-label="Durum filtresi" style="display:inline-flex; gap:6px;">
+                        <button onclick="DSEnrichmentModule.setStatusFilter('pending_disc')"
+                                style="${_pillStyle(_statusFilter==='pending_disc', 'rgba(167,139,250,0.2)', '#a78bfa')}"
+                                title="Henüz keşfedilmemiş tablolar (tüm sayfalar)">
+                            <i class="fa-solid fa-hourglass-half" style="margin-right:4px;"></i>Keşif Bekleyenler (${_cntPendingDisc})
+                        </button>
+                        <button onclick="DSEnrichmentModule.setStatusFilter('discovering')"
+                                style="${_pillStyle(_statusFilter==='discovering', 'rgba(96,165,250,0.2)', '#60a5fa')}"
+                                title="Keşif isteği atılmış, sonuç bekleyen tablolar (tüm sayfalar)">
+                            <i class="fa-solid fa-spinner" style="margin-right:4px;"></i>Devam Edenler (${_cntDiscovering})
+                        </button>
+                        <button onclick="DSEnrichmentModule.setStatusFilter('pending_appr')"
+                                style="${_pillStyle(_statusFilter==='pending_appr', 'rgba(245,158,11,0.2)', '#f59e0b')}"
+                                title="Keşfedilmiş ama onaylanmamış tablolar (tüm sayfalar)">
+                            <i class="fa-solid fa-clock" style="margin-right:4px;"></i>Onay Bekleyenler (${_cntPendingAppr})
+                        </button>
+                    </div>
                 </div>
                 <div style="display:flex; align-items:center; gap:10px;">
                     <button id="dsBulkDiscoverAllBtn" onclick="DSEnrichmentModule.discoverAll()"
@@ -30078,7 +30139,7 @@ const DSEnrichmentModule = (() => {
                     <thead style="position:sticky; top:0; z-index:10; background:var(--bg-card, #1a1e29); box-shadow:0 2px 5px rgba(0,0,0,0.2);">
                         <tr>
                             <th style="width:40px; text-align:center;">
-                                <input type="checkbox" id="dsSelectAllChk" ${isAllSelected ? "checked" : ""} onchange="DSEnrichmentModule.toggleAllBulk(this.checked)" class="cursor-pointer" title="Bu sayfadaki tümünü seç" style="width:16px; height:16px; cursor:pointer; accent-color:var(--primary-color, #4f46e5); display:inline-block; visibility:visible; opacity:1;">
+                                <input type="checkbox" id="dsSelectAllChk" ${isAllSelected ? "checked" : ""} onchange="DSEnrichmentModule.toggleAllBulk(this.checked)" class="cursor-pointer" title="Tüm filtrelenmiş kayıtları seç (sayfa dışı dahil)" style="width:16px; height:16px; cursor:pointer; accent-color:var(--primary-color, #4f46e5); display:inline-block; visibility:visible; opacity:1;">
                             </th>
                             <th>Schema</th>
                             <th>Tablo</th>
@@ -30458,9 +30519,28 @@ const DSEnrichmentModule = (() => {
     }
 
     function togglePendingApprovalFilter() {
-        _filterPendingApproval = !_filterPendingApproval;
+        // v3.30.1: geriye-uyumluluk shim — eski adla çağrılırsa pending_appr toggle eder
+        setStatusFilter('pending_appr');
+    }
+
+    // v3.30.1: 3-yönlü status filtresi. Aynı değere ikinci tıklama filtreyi kapatır.
+    function setStatusFilter(value) {
+        const allowed = ['', 'pending_disc', 'discovering', 'pending_appr'];
+        const v = allowed.includes(value) ? value : '';
+        _statusFilter = (_statusFilter === v) ? '' : v;
         _currentPage = 1;
         applyFilterAndRender();
+    }
+
+    // v3.30.1: arama temizle butonu
+    function clearSearch() {
+        _searchQuery = '';
+        const inp = document.getElementById('dsSearchInput');
+        if (inp) inp.value = '';
+        _currentPage = 1;
+        applyFilterAndRender();
+        const newInp = document.getElementById('dsSearchInput');
+        if (newInp) newInp.focus();
     }
 
     function toggleCheckbox(chk) {
@@ -30473,11 +30553,10 @@ const DSEnrichmentModule = (() => {
     }
 
     function toggleAllBulk(checked) {
-        const startIndex = (_currentPage - 1) * _pageSize;
-        const endIndex = startIndex + _pageSize;
-        const pageData = _filteredData.slice(startIndex, endIndex);
-
-        pageData.forEach(item => {
+        // v3.30.1: Tüm filtrelenmiş kayıtları (sayfa dışındakileri dahil) seç/seçim kaldır.
+        // Önceden yalnızca aktif sayfa slice'ı işleniyordu → kullanıcı diğer sayfalardaki
+        // kayıtların seçimini fark etmiyor, "Seçilenleri Onayla/Keşfet" eksik çalışıyordu.
+        _filteredData.forEach(item => {
             if (item.is_approved) return;
             if (checked) _selectedIds.add(item.id.toString());
             else _selectedIds.delete(item.id.toString());
@@ -30520,6 +30599,9 @@ const DSEnrichmentModule = (() => {
                 _showToast(data.message || `${toDiscover.length} tablo için arkada keşif başlatıldı. Birazdan liste yeşillenecek.`, 'success');
                 // v3.14.0: Seçili satırların İŞLEM kolonunu "Devam Ediyor" olarak güncelle
                 _updateActionStatus(toDiscover, 'discovering');
+                // v3.30.1: filter count'ları için discovering set'ine ekle, render'ı tetikle
+                toDiscover.forEach(id => _discoveringIds.add(String(id)));
+                applyFilterAndRender();
             } else {
                 _showToast(data.message || 'Keşif başlatılamadı.', 'error');
             }
@@ -30533,10 +30615,12 @@ const DSEnrichmentModule = (() => {
     }
 
     async function discoverAll() {
-        // Keşfedilmemiş tüm tabloları keşfet (enrich-selected)
-        const unprocessed = _pendingData.filter(x => !x.enrichment_id).map(x => Number(x.id));
+        // v3.30.1: Filter-aware — _filteredData kullanılır.
+        //   Aktif filtre yok  → tüm pending data
+        //   Filtre var (schema/arama/status/...) → yalnızca o kapsamdaki keşfedilmemişler
+        const unprocessed = _filteredData.filter(x => !x.enrichment_id).map(x => Number(x.id));
         if (unprocessed.length === 0) {
-            _showToast('Keşfedilmemiş tablo bulunamadı. Tüm tablolar zaten keşfedilmiş.', 'info');
+            _showToast('Görüntülenen kapsamda keşfedilmemiş tablo yok.', 'info');
             return;
         }
 
@@ -30559,6 +30643,9 @@ const DSEnrichmentModule = (() => {
                 _showToast(data.message || `${unprocessed.length} tablo için keşif başlatıldı. Liste otomatik güncellenecek.`, 'success');
                 // v3.14.0: Tüm satırların İŞLEM kolonunu "Devam Ediyor" olarak güncelle
                 _updateActionStatus(unprocessed, 'discovering');
+                // v3.30.1: filter count'ları için discovering set'ine ekle, render'ı tetikle
+                unprocessed.forEach(id => _discoveringIds.add(String(id)));
+                applyFilterAndRender();
             } else {
                 _showToast(data.message || 'Keşif başlatılamadı.', 'warning');
             }
@@ -30614,10 +30701,11 @@ const DSEnrichmentModule = (() => {
 
         try {
             const token = localStorage.getItem('access_token');
-            const results = [];
-            
-            // Send requests sequentially using enrichment_id (not object_id)
-            for (const objectId of approvableIds) {
+
+            // v3.30.1: 5'li paralel pool (sıralı await yerine).
+            // backend bulk endpoint olmadığı için tek-tek POST gerekiyor; concurrency
+            // limiti server'ı korur, browser HTTP/1.1 host limiti zaten ~6.
+            const results = await _runConcurrent(approvableIds, 5, async (objectId) => {
                 const enrichmentId = objectToEnrichMap[objectId];
                 try {
                     const res = await fetch(
@@ -30632,14 +30720,14 @@ const DSEnrichmentModule = (() => {
                         }
                     );
                     const data = await res.json();
-                    results.push({objectId, enrichmentId, success: data.success});
-                } catch(err) {
+                    return { objectId, enrichmentId, success: data.success };
+                } catch (err) {
                     console.error("[DSEnrich] Onay hatası id:", objectId, err);
-                    results.push({objectId, enrichmentId, success: false});
+                    return { objectId, enrichmentId, success: false };
                 }
-            }
+            });
 
-            const successObjectIds = results.filter(r => r.success).map(r => String(r.objectId));
+            const successObjectIds = results.filter(r => r && r.success).map(r => String(r.objectId));
             
             if (successObjectIds.length > 0) {
                 // Başarılı olanları is_approved = true yap
@@ -30674,10 +30762,11 @@ const DSEnrichmentModule = (() => {
     // ============================================
 
     async function bulkApproveAll() {
-        // Keşfedilmiş ama onaylanmamış tüm tabloları toplu onayla
-        const toApprove = _pendingData.filter(x => x.enrichment_id && !x.is_approved);
+        // v3.30.1: Filter-aware — _filteredData üzerinden çalışır.
+        // Kullanıcı schema/arama/status ile sınırladıysa yalnızca o kapsamı onaylar.
+        const toApprove = _filteredData.filter(x => x.enrichment_id && !x.is_approved);
         if (toApprove.length === 0) {
-            _showToast('Onaylanacak tablo bulunamadı. Önce keşif yapın.', 'warning');
+            _showToast('Görüntülenen kapsamda onaylanacak tablo yok.', 'warning');
             return;
         }
 
@@ -30707,7 +30796,8 @@ const DSEnrichmentModule = (() => {
             let successCount = 0;
             let failCount = 0;
 
-            for (const item of toApprove) {
+            // v3.30.1: 5'li paralel pool — sıralı await yerine ~5x hız
+            await _runConcurrent(toApprove, 5, async (item) => {
                 try {
                     const res = await fetch(
                         `/api/data-sources/${_currentSourceId}/enrichment-approve/${item.enrichment_id}`,
@@ -30730,7 +30820,7 @@ const DSEnrichmentModule = (() => {
                 } catch (e) {
                     failCount++;
                 }
-            }
+            });
 
             if (successCount > 0) {
                 const msg = failCount > 0
@@ -30805,6 +30895,28 @@ const DSEnrichmentModule = (() => {
         });
     }
 
+    // v3.30.1: Sınırlı paralellik (concurrency pool).
+    // Onay endpoint'i bulk değil → sıralı await yerine N paralel worker.
+    // 100 onay senaryosu: 100×800ms (sıralı 80sn) → ~16sn (5'li paralel).
+    async function _runConcurrent(items, limit, worker) {
+        const results = new Array(items.length);
+        let idx = 0;
+        const poolSize = Math.min(limit, items.length);
+        const runners = Array.from({ length: poolSize }, async () => {
+            while (true) {
+                const i = idx++;
+                if (i >= items.length) return;
+                try {
+                    results[i] = await worker(items[i], i);
+                } catch (e) {
+                    results[i] = { error: e };
+                }
+            }
+        });
+        await Promise.all(runners);
+        return results;
+    }
+
     function _showToast(message, type) {
         if (typeof showToast === 'function') {
             showToast(message, type);
@@ -30829,6 +30941,8 @@ const DSEnrichmentModule = (() => {
         toggleLowScoreFilter,
         toggleShowApprovedFilter,
         togglePendingApprovalFilter,
+        setStatusFilter,
+        clearSearch,
         changePage,
         toggleCheckbox,
         toggleAllBulk,
