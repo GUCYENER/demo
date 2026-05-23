@@ -113,7 +113,128 @@ def _build_context(state: Dict[str, Any]) -> str:
         except Exception as exc:
             logger.debug("[sql_generate] sample data injection skipped: %s", exc)
 
+    # v3.32.0 Ajan-E — JOIN HINTS injection
+    # Seçili tablolar arasında ds_db_relationships'te tanımlı FK edge'leri LLM'e
+    # yapılandırılmış formatta sunulur. Amaç: customer+orders gibi FK ile birleşik
+    # sorgularda LLM'in JOIN yolunu doğru kurabilmesi (ambiguity_gate'in gereksiz
+    # clarification açmasını azaltır).
+    if cur is not None and source_id is not None and selected and len(selected) >= 2:
+        try:
+            table_pairs = [
+                (c.get("schema_name") or "", c.get("table_name") or "")
+                for c in selected
+                if c.get("table_name")
+            ]
+            hint_block = _fetch_join_hints(cur, source_id, table_pairs)
+            if hint_block:
+                lines.append("")
+                lines.append(hint_block)
+        except Exception as exc:
+            logger.debug("[sql_generate] join hints injection skipped: %s", exc)
+
     return "\n".join(lines)
+
+
+def _fetch_join_hints(cur, source_id: int, table_pairs: List[tuple]) -> str:
+    """v3.32.0 — Seçili tablolar arasındaki FK edge'lerini LLM-okuyabilir formatta üret.
+
+    Args:
+        cur: aktif DB cursor
+        source_id: aktif data_source.id
+        table_pairs: [(schema, table), ...] selected tables
+
+    Returns:
+        Formatted "JOIN HINTS:" bloğu (string), edge yoksa "".
+
+    Notes:
+        - Sadece her İKİ tablo da selected içindeyse edge döndürülür (transitive değil).
+        - Composite FK'ler `constraint_name` ile gruplanır → tek satır.
+        - `confidence_score >= 0.7` threshold (junction + inferred low-conf filter).
+        - Max 20 edge (prompt budget koruması).
+        - Schema kıyaslamasında boş schema ve "public" eşdeğer kabul edilir.
+    """
+    if not table_pairs or len(table_pairs) < 2:
+        return ""
+
+    def _norm_schema(s: str) -> str:
+        return (s or "").lower() if (s or "").lower() not in ("", "public") else ""
+
+    selected_keys = {(_norm_schema(s), (t or "").lower()) for s, t in table_pairs if t}
+    if len(selected_keys) < 2:
+        return ""
+
+    cur.execute(
+        """
+        SELECT from_schema, from_table, from_column,
+               to_schema, to_table, to_column,
+               constraint_name, confidence_score, is_inferred
+        FROM ds_db_relationships
+        WHERE source_id = %s
+          AND confidence_score >= 0.7
+        ORDER BY constraint_name NULLS LAST, fk_position
+        """,
+        (source_id,),
+    )
+    rows = cur.fetchall() or []
+    if not rows:
+        return ""
+
+    # Composite FK'leri constraint_name ile grupla
+    grouped: Dict[tuple, Dict[str, Any]] = {}
+    for r in rows:
+        # Row hem dict hem tuple olabilir; ikisini de tolere et
+        if isinstance(r, dict):
+            from_sch = r.get("from_schema") or ""
+            from_tbl = r.get("from_table") or ""
+            from_col = r.get("from_column") or ""
+            to_sch = r.get("to_schema") or ""
+            to_tbl = r.get("to_table") or ""
+            to_col = r.get("to_column") or ""
+            cname = r.get("constraint_name")
+            conf = r.get("confidence_score") or 0.0
+            is_inferred = r.get("is_inferred") or False
+        else:
+            from_sch, from_tbl, from_col, to_sch, to_tbl, to_col, cname, conf, is_inferred = r
+
+        from_key = (_norm_schema(from_sch), (from_tbl or "").lower())
+        to_key = (_norm_schema(to_sch), (to_tbl or "").lower())
+        if from_key not in selected_keys or to_key not in selected_keys:
+            continue
+
+        # Composite group key (constraint_name yoksa unique fallback)
+        gkey = (cname, from_key, to_key) if cname else (f"__id_{id(r)}", from_key, to_key)
+        if gkey not in grouped:
+            grouped[gkey] = {
+                "from_sch": from_sch, "from_tbl": from_tbl,
+                "to_sch": to_sch, "to_tbl": to_tbl,
+                "from_cols": [], "to_cols": [],
+                "constraint": cname or "",
+                "conf": float(conf or 0.0),
+                "is_inferred": bool(is_inferred),
+            }
+        grouped[gkey]["from_cols"].append(from_col)
+        grouped[gkey]["to_cols"].append(to_col)
+
+    if not grouped:
+        return ""
+
+    hint_lines: List[str] = ["JOIN HINTS (bilinen FK ilişkileri):"]
+    for gkey, g in list(grouped.items())[:20]:
+        from_qual = f"{g['from_sch']}." if g["from_sch"] and g["from_sch"] != "public" else ""
+        to_qual = f"{g['to_sch']}." if g["to_sch"] and g["to_sch"] != "public" else ""
+        if len(g["from_cols"]) == 1:
+            cols_part = f"{from_qual}{g['from_tbl']}.{g['from_cols'][0]} → {to_qual}{g['to_tbl']}.{g['to_cols'][0]}"
+        else:
+            from_cols = ", ".join(g["from_cols"])
+            to_cols = ", ".join(g["to_cols"])
+            cols_part = (
+                f"{from_qual}{g['from_tbl']}.({from_cols}) → "
+                f"{to_qual}{g['to_tbl']}.({to_cols})  [composite]"
+            )
+        origin = "inferred" if g["is_inferred"] else "declared"
+        hint_lines.append(f"  {cols_part}  [{origin}, conf={g['conf']:.2f}]")
+
+    return "\n".join(hint_lines)
 
 
 def _candidate_signature(state: Dict[str, Any]) -> str:

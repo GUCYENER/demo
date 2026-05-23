@@ -697,6 +697,279 @@ class SafeSQLExecutor:
                 except Exception:
                     pass
 
+    # =====================================================
+    # v3.32.0 Ajan-F: Dialect-aware EXPLAIN
+    # =====================================================
+    def explain_plan(
+        self,
+        query: str,
+        dialect: str,
+        source: dict,
+    ) -> Dict[str, Any]:
+        """
+        Dialect-aware EXPLAIN — predict_size / result_size_predictor için
+        plan satır tahminini döndürür.
+
+        Returns:
+            {
+              "estimated_rows": int | None,
+              "dialect": <dialect>,
+              "raw": <plan blob veya None>,
+              "error": <str | None>,  # plan alınamadıysa açıklama
+            }
+
+        Notlar:
+          - PG burada DEVRE DIŞI — mevcut PG EXPLAIN akışı
+            ``make_explain_callable`` üzerinden yürür (backward compat).
+            Bu method PG için no-op ``{"estimated_rows": None, ...}`` döner;
+            caller PG'de bu çağrıyı kullanmamalıdır.
+          - MSSQL: SET SHOWPLAN_XML ON modunda query çalıştırılmaz,
+            sadece plan XML'i dönüyor. XML'den en üst node'un
+            ``StatementEstRows`` / ``EstimateRows`` attribute'u alınır.
+          - Oracle: EXPLAIN PLAN FOR + plan_table sorgusu. Best-effort;
+            plan_table user'a aitse okunur, değilse None.
+          - Query injection riski: ``query`` zaten validate_sql/SafeSQL
+            akışından geçmiş ``state["sql"]`` olmalıdır.
+        """
+        from app.services.ds_learning_service import _get_db_connector, _decrypt_password
+
+        d = (dialect or "").lower()
+        result: Dict[str, Any] = {
+            "estimated_rows": None,
+            "dialect": d,
+            "raw": None,
+            "error": None,
+        }
+
+        # PG: bu method PG için no-op — caller mevcut make_explain_callable yolunu kullansın.
+        if d in ("postgresql", "postgres", "pg"):
+            result["error"] = "pg_handled_elsewhere"
+            return result
+
+        if d not in ("mssql", "sqlserver", "oracle"):
+            result["error"] = f"unsupported_dialect:{d}"
+            return result
+
+        # Query gövdesini sterilize et — sonundaki ';' MSSQL/Oracle'da
+        # multi-statement gibi davranabilir.
+        q = (query or "").strip().rstrip(";").strip()
+        if not q:
+            result["error"] = "empty_query"
+            return result
+
+        # Çoklu statement koruması: rstrip(';') sonrası gövde içinde hâlâ ';'
+        # varsa (string literal dışında) reddet — SHOWPLAN_XML modunda
+        # 2. statement query'yi çalıştırırdı.
+        q_no_strings = re.sub(r"'[^']*'", "", q)
+        if ";" in q_no_strings:
+            result["error"] = "multi_statement_in_query"
+            return result
+
+        password = _decrypt_password(source.get("db_password_encrypted", ""))
+        conn = None
+        try:
+            conn, _detected = _get_db_connector(source, password)
+
+            if d in ("mssql", "sqlserver"):
+                return self._explain_mssql(conn, q, result)
+            # oracle
+            return self._explain_oracle(conn, q, result)
+        except Exception as e:
+            logger.warning("[explain_plan] %s dialect=%s err=%s", type(e).__name__, d, e)
+            result["error"] = f"connect_or_exec_error:{type(e).__name__}"
+            return result
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    # ---- MSSQL ----------------------------------------------------------
+    def _explain_mssql(self, conn, query: str, result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        MSSQL SHOWPLAN_XML — plan XML'i fetch eder, EstimateRows / StatementEstRows
+        attribute'undan en üst tahmini çıkarır.
+        """
+        import xml.etree.ElementTree as ET
+
+        cur = conn.cursor()
+        plan_xml: Optional[str] = None
+        try:
+            try:
+                cur.execute("SET SHOWPLAN_XML ON")
+            except Exception as e:
+                result["error"] = f"showplan_on_failed:{type(e).__name__}"
+                return result
+
+            try:
+                cur.execute(query)
+                # SHOWPLAN_XML modunda her statement için bir result set döner.
+                # İlk row, ilk kolon plan XML string'i.
+                row = None
+                try:
+                    row = cur.fetchone()
+                except Exception:
+                    row = None
+                # Bazı sürücülerde plan birden çok result set'te gelebilir —
+                # nextset ile sırayla ilk XML'i topla.
+                if row is None and hasattr(cur, "nextset"):
+                    try:
+                        while cur.nextset():  # type: ignore[attr-defined]
+                            try:
+                                row = cur.fetchone()
+                                if row is not None:
+                                    break
+                            except Exception:
+                                continue
+                    except Exception:
+                        pass
+                if row:
+                    # row tuple veya dict olabilir
+                    if isinstance(row, dict):
+                        plan_xml = next(iter(row.values()), None)
+                    else:
+                        plan_xml = row[0] if len(row) > 0 else None
+                    if isinstance(plan_xml, (bytes, bytearray)):
+                        try:
+                            plan_xml = plan_xml.decode("utf-8", errors="replace")
+                        except Exception:
+                            plan_xml = None
+            finally:
+                # SHOWPLAN_XML'i her durumda kapat — session leak olmasın.
+                try:
+                    cur.execute("SET SHOWPLAN_XML OFF")
+                except Exception:
+                    pass
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+
+        if not plan_xml or not isinstance(plan_xml, str):
+            result["error"] = "no_plan_xml"
+            return result
+
+        result["raw"] = plan_xml[:4000]
+        try:
+            root = ET.fromstring(plan_xml)
+        except ET.ParseError as e:
+            result["error"] = f"xml_parse_error:{e}"
+            return result
+
+        # showplanxml namespace — attribute'lar namespaced değil ama elementler öyle.
+        # En kapsamlı tahmin: StmtSimple/@StatementEstRows. Yoksa en üst RelOp/@EstimateRows.
+        est: Optional[float] = None
+
+        def _walk(elem):
+            nonlocal est
+            tag = elem.tag.split("}", 1)[-1] if "}" in elem.tag else elem.tag
+            if tag == "StmtSimple":
+                v = elem.attrib.get("StatementEstRows")
+                if v is not None:
+                    try:
+                        est = float(v)
+                        return True
+                    except (TypeError, ValueError):
+                        pass
+            if tag == "RelOp":
+                v = elem.attrib.get("EstimateRows")
+                if v is not None:
+                    try:
+                        est = float(v)
+                        return True
+                    except (TypeError, ValueError):
+                        pass
+            for child in elem:
+                if _walk(child):
+                    return True
+            return False
+
+        _walk(root)
+        if est is not None:
+            try:
+                # MSSQL float verir (ör. 1234.5) — int'e yuvarla.
+                result["estimated_rows"] = int(round(est))
+            except (TypeError, ValueError):
+                result["estimated_rows"] = None
+        else:
+            result["error"] = "no_estimate_in_plan"
+        return result
+
+    # ---- Oracle ---------------------------------------------------------
+    def _explain_oracle(self, conn, query: str, result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Oracle EXPLAIN PLAN FOR — plan_table'dan en üst node'un cardinality'sini alır.
+        plan_table user'a sahip olmayabilir → exception'da estimated_rows=None döner.
+        Sonunda plan_table'dan kendi statement_id satırlarını best-effort temizler.
+        """
+        import uuid
+
+        stmt_id = f"vyra_{uuid.uuid4().hex[:24]}"
+        cur = conn.cursor()
+        plan_inserted = False
+        try:
+            # EXPLAIN PLAN statement — DDL/DML değil; oracle özel
+            try:
+                cur.execute(f"EXPLAIN PLAN SET STATEMENT_ID = '{stmt_id}' FOR {query}")
+                plan_inserted = True
+            except Exception as e:
+                logger.warning("[explain_oracle] EXPLAIN PLAN failed: %s", e)
+                result["error"] = f"explain_plan_failed:{type(e).__name__}"
+                return result
+
+            # Top-level satır id=0
+            try:
+                cur.execute(
+                    "SELECT cardinality FROM plan_table "
+                    "WHERE statement_id = :sid AND id = 0",
+                    {"sid": stmt_id},
+                )
+                row = cur.fetchone()
+            except Exception as e:
+                logger.warning("[explain_oracle] plan_table read failed: %s", e)
+                result["error"] = f"plan_table_unavailable:{type(e).__name__}"
+                row = None
+
+            if row:
+                # row: tuple veya dict
+                val = None
+                if isinstance(row, dict):
+                    val = next(iter(row.values()), None)
+                else:
+                    val = row[0] if len(row) > 0 else None
+                if val is not None:
+                    try:
+                        result["estimated_rows"] = int(val)
+                        result["raw"] = {"statement_id": stmt_id, "cardinality": int(val)}
+                    except (TypeError, ValueError):
+                        result["error"] = "cardinality_not_numeric"
+                else:
+                    result["error"] = "null_cardinality"
+            else:
+                if not result.get("error"):
+                    result["error"] = "no_plan_row"
+            return result
+        finally:
+            # Cleanup (best-effort)
+            if plan_inserted:
+                try:
+                    cur.execute(
+                        "DELETE FROM plan_table WHERE statement_id = :sid",
+                        {"sid": stmt_id},
+                    )
+                    try:
+                        conn.commit()
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+            try:
+                cur.close()
+            except Exception:
+                pass
+
     def get_allowed_tables(self, source_id: int) -> List[str]:
         """
         DS Learning keşfinden izin verilen tablo adlarını çeker.

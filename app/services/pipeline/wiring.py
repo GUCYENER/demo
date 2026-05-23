@@ -159,8 +159,10 @@ def make_explain_callable(
     validate node için EXPLAIN callable. SQL'i hedefte EXPLAIN ile döndürür.
 
     PG: EXPLAIN (FORMAT JSON) ...
-    Oracle: EXPLAIN PLAN FOR ... + SELECT FROM PLAN_TABLE
-    MSSQL: SET SHOWPLAN_XML — riskli; sadece SELECT 1 ile syntax check
+    Oracle: EXPLAIN PLAN FOR ... + SELECT cardinality FROM PLAN_TABLE
+            (SafeSQLExecutor.explain_plan, v3.32.0 Ajan-F)
+    MSSQL: SET SHOWPLAN_XML ON → query → SET SHOWPLAN_XML OFF; XML parse
+            (SafeSQLExecutor.explain_plan, v3.32.0 Ajan-F)
     MySQL: EXPLAIN FORMAT=JSON ...
 
     Hata fırlatırsa validate node 'explain: ...' error'ı ekler.
@@ -189,17 +191,27 @@ def make_explain_callable(
             explain_sql = f"EXPLAIN (FORMAT JSON) {sql.rstrip(';')}"
         elif d == "mysql":
             explain_sql = f"EXPLAIN FORMAT=JSON {sql.rstrip(';')}"
-        elif d in ("mssql", "sqlserver"):
-            # MSSQL'de güvenli, yan etkisiz bir EXPLAIN ekvivalenti yok:
-            # `SELECT TOP 0 * FROM (<sql>) AS _t` sorguyu derleyip çalıştırır
-            # (TOP 0 olsa bile yan etkili UDF'leri tetikleyebilir) ve birden
-            # çok statement içeren bir gövdede sadece son SELECT'i sarmalar.
-            # Bu yüzden EXPLAIN devre dışı — predictor reltuples yoluna düşer.
-            return None
-        elif d == "oracle":
-            # Oracle için EXPLAIN PLAN ayrı bir DML — SafeSQL whitelist'i bunu reddedebilir
-            # Bu yüzden None döner — predictor reltuples'a düşer
-            return None
+        elif d in ("mssql", "sqlserver", "oracle"):
+            # v3.32.0 Ajan-F: SafeSQLExecutor.explain_plan dialect-aware
+            # EXPLAIN yürütür (MSSQL=SHOWPLAN_XML, Oracle=EXPLAIN PLAN +
+            # plan_table). Plan satır tahminini predictor'a
+            # ``{"rows": N}`` formatında verir; predictor zaten bu anahtarı tanır.
+            try:
+                plan = executor.explain_plan(sql, dialect=d, source=source_dict)
+            except Exception as e:
+                logger.debug("[wiring.explain] %s err: %s", d, e)
+                return None
+            if not isinstance(plan, dict):
+                return None
+            rows = plan.get("estimated_rows")
+            if rows is None:
+                # Plan alınamadıysa predictor reltuples yoluna düşer
+                logger.debug(
+                    "[wiring.explain] %s estimate yok (err=%s)",
+                    d, plan.get("error"),
+                )
+                return None
+            return {"rows": int(rows)}
         else:
             return None
         try:
