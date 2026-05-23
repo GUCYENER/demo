@@ -3789,7 +3789,7 @@ netstat -an | findstr "5005"
 
 **Geliştirici:** Yasın Fazlıoğlu  
 **E-posta:** yasin.fazlioglu@consultant.turkcell.com.tr  
-**Versiyon:** 3.31.0 (Backend bulk approve endpoint + transactional SAVEPOINT + ThreadPool paralel schema_record + refactor sweep R001/R002/R003)
+**Versiyon:** 3.31.0 (Backend bulk approve endpoint + transactional SAVEPOINT + ThreadPool paralel schema_record + refactor sweep R001/R002/R003 + Council Gate code-review fix: ARES cross-tenant ACL guard, HEPHAESTUS worker company-RLS context + pool clamp + SAVEPOINT release, TYCHE response shape + dead code)
 
 ---
 

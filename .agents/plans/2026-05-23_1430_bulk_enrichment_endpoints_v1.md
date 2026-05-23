@@ -3,12 +3,18 @@ plan_id: bulk_enrichment_endpoints
 title: Backend bulk-approve + bulk-discover endpoints (paralel + transaction-safe)
 created: 2026-05-23
 branch: hira
-status: pending
+status: done
 version_target: v3.31.0
 council_mod: 2
 hebe_gate_required: true
 owner_agent: HEPHAESTUS + ARES + TYCHE
 trigger: v3.31.0 sprint başlangıcında
+last_commit: 4ec2957
+closed_at: 2026-05-23
+closure_note: |
+  Faz 1 implementation: b0aef2b
+  Council Gate fix: 4ec2957 (ARES Y1 cross-tenant ACL, HEPHAESTUS K1 worker company-RLS + pool clamp, HEPHAESTUS O1/O2 SAVEPOINT release, TYCHE Y3 response shape + O4 dead code, ARES D3 warning sanitize, defensive int cast)
+  Faz 2 (ayrı sprint): BackgroundTasks ile schema_record async + composite index ds_table_enrichments(source_id, id)
 ---
 
 ## Context (Neden bu değişiklik?)
