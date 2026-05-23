@@ -3,12 +3,20 @@ plan_id: ux_modern_tooltips_concurrent_gate
 title: UX paketi — modern tooltip component + concurrent operation button gating
 created: 2026-05-23
 branch: hira (v3.32.0 sprint)
-status: pending
-version_target: v3.32.0 (provisional)
+status: done
+closed_at: 2026-05-23
+last_commit: 33e01b2
+version_target: v3.32.0
 council_mod: 1
 hebe_gate_required: false
 owner_agent: ATHENA + TYCHE
 trigger: kullanıcı feedback (2026-05-23) — DS enrichment paneli native browser tooltip görünümü SaaS-modern değil; ayrıca keşif çalışırken onay butonu basılabiliyor ama backend reddediyor (UX confusion)
+closure_note: |
+  Global [data-tt] tooltip utility (ui_tooltip.css) build.mjs CSS_FILES'a eklendi.
+  19 data-tt occurrence bundle'da, 0 native title= source'ta.
+  _runningJob state machine — 3s poll + exponential backoff (max 30s), openPanel/
+  closePanel lifecycle'a hook'lu. 4 bulk action buton state-aware (disabled +
+  dynamic tooltip).
 ---
 
 ## Context

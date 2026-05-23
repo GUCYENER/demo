@@ -3789,7 +3789,8 @@ netstat -an | findstr "5005"
 
 **Geliştirici:** Yasın Fazlıoğlu  
 **E-posta:** yasin.fazlioglu@consultant.turkcell.com.tr  
-**Versiyon:** 3.31.0 (Backend bulk approve endpoint + transactional SAVEPOINT + ThreadPool paralel schema_record + refactor sweep R001/R002/R003 + Council Gate code-review fix: ARES cross-tenant ACL guard, HEPHAESTUS worker company-RLS context + pool clamp + SAVEPOINT release, TYCHE response shape + dead code)
+**Versiyon:** 3.32.0 (Faz 2 perf — /enrichment-approve-bulk artık fastapi.BackgroundTasks ile post-response schema_record + composite index `(source_id,id)` CONCURRENTLY + ds_schema_record_warnings PERMISSIVE RLS tablosu (mig 043); UX paketi — global `[data-tt]` modern dark tooltip utility (ui_tooltip.css) native `title=` yerine + `_runningJob` state machine: 3s poll + exponential backoff (30s tavan), 4 bulk action butonu state-aware concurrent gate)  
+**Önceki:** 3.31.0 (Backend bulk approve endpoint + transactional SAVEPOINT + ThreadPool paralel schema_record + Council Gate fix: ACL guard, worker RLS, pool clamp, SAVEPOINT release)
 
 ---
 

@@ -3,13 +3,20 @@ plan_id: bulk_phase2_backgroundtasks
 title: Bulk approve Faz 2 — BackgroundTasks + composite index (perf/scale)
 created: 2026-05-23
 branch: hira (v3.32.0 sprint başında yeni branch)
-status: pending
-version_target: v3.32.0 (provisional)
+status: done
+closed_at: 2026-05-23
+last_commit: 46fabc1
+version_target: v3.32.0
 council_mod: 2
 hebe_gate_required: false
 owner_agent: HEPHAESTUS + TYCHE
 trigger: v3.31.0 production'da bulk approve latency veya pool starvation sinyali alınırsa, veya 100+ tablo onayı yaygın akış olursa
 predecessor: 2026-05-23_1430_bulk_enrichment_endpoints_v1.md (Faz 1 — done, last_commit 4ec2957)
+closure_note: |
+  Migration 043 uygulandı (composite index CONCURRENTLY + ds_schema_record_warnings RLS).
+  /enrichment-approve-bulk artık fastapi.BackgroundTasks kullanıyor; response shape
+  schema_record_pending (bool). Worker pool max_parallel clamp=3 korundu (pool guard).
+  Failures ds_schema_record_warnings tablosuna INSERT ediliyor; ASLA raise yok.
 ---
 
 ## Context (Neden bu sprint?)
