@@ -925,6 +925,82 @@ document.getElementById('themeToggleBtn').addEventListener('click', function(e) 
   }
 });
 
+// v3.33.0 — Akıllı Veri Keşfi mode helpers
+function _akiKesifHideChrome(hide) {
+  // n-input-zone gizle / göster (aki_kesif modunda input bar semantik değil)
+  var inputZone = document.querySelector('.n-input-zone');
+  if (inputZone) { inputZone.style.display = hide ? 'none' : ''; }
+  // Dialog messages (karşılama) — aki_kesif'te grid render alanı olarak kullanılır
+  var dm = document.getElementById('dialogMessages');
+  if (dm) {
+    if (hide) {
+      dm.classList.add('aki-kesif-grid-host');
+    } else {
+      dm.classList.remove('aki-kesif-grid-host');
+      // Grid unmount edip içeriği temizle
+      if (window.SavedReportsGrid && typeof window.SavedReportsGrid.unmount === 'function') {
+        try { window.SavedReportsGrid.unmount(); } catch (e) { /* ignore */ }
+      }
+    }
+  }
+}
+
+function _akiKesifMountGrid() {
+  var host = document.getElementById('dialogMessages');
+  if (!host) return;
+  // İçeriği temizle (karşılama mesajı vs.)
+  host.innerHTML = '';
+  if (!window.SavedReportsGrid || typeof window.SavedReportsGrid.mount !== 'function') {
+    host.textContent = 'Akıllı Veri Keşfi modülü yükleniyor...';
+    return;
+  }
+  window.SavedReportsGrid.mount(host, {
+    onOpenReport: function (reportId) {
+      if (window.ReportDetailModal && typeof window.ReportDetailModal.open === 'function') {
+        window.ReportDetailModal.open(reportId, {
+          onEdit: function (id) {
+            _akiKesifOpenWizard(id);
+          },
+          onDuplicate: function () { if (window.SavedReportsGrid.refresh) window.SavedReportsGrid.refresh(); },
+          onDeleted: function () { if (window.SavedReportsGrid.refresh) window.SavedReportsGrid.refresh(); },
+          onRan: function () { if (window.SavedReportsGrid.refresh) window.SavedReportsGrid.refresh(); },
+        });
+      }
+    },
+    onNewReport: function () { _akiKesifOpenWizard(null); },
+  });
+}
+
+function _akiKesifOpenWizard(reportId) {
+  if (!window.DbSmartWizardModule || typeof window.DbSmartWizardModule.openAsModal !== 'function') {
+    console.warn('[aki_kesif] DbSmartWizardModule.openAsModal yüklü değil');
+    return;
+  }
+  window.DbSmartWizardModule.openAsModal({
+    reportId: reportId || undefined,
+    onSave: function () {
+      if (window.SavedReportsGrid && typeof window.SavedReportsGrid.refresh === 'function') {
+        window.SavedReportsGrid.refresh();
+      }
+    },
+  });
+}
+
+// "Yeni Soru Sor" header butonu — aki_kesif aktifken wizard modal aç
+document.addEventListener('DOMContentLoaded', function () {
+  var newBtn = document.getElementById('dialogNewBtn');
+  if (newBtn && !newBtn._akiKesifBound) {
+    newBtn.addEventListener('click', function () {
+      var ak = document.getElementById('modeAkiKesif');
+      if (ak && ak.classList.contains('selected')) {
+        _akiKesifOpenWizard(null);
+      }
+      // Diğer modlarda mevcut davranış (dialog reset) DialogChatModule tarafında
+    }, true); // capture phase — diğer dinleyicilerden önce çalışsın
+    newBtn._akiKesifBound = true;
+  }
+});
+
 window.selectChatMode = function(mode) {
   // v3.18.0: feature permission guard
   if (window.VYRA_FeaturePermissions && typeof window.VYRA_FeaturePermissions.guard === 'function') {
@@ -942,6 +1018,8 @@ window.selectChatMode = function(mode) {
   // Wizard panelini varsayılan olarak gizle
   var wiz = document.getElementById('dbSmartWizardPanel');
   if (wiz) { wiz.classList.add('hidden'); wiz.hidden = true; }
+  // aki_kesif chrome'unu restore et (eski moddan çıkıyor olabiliriz)
+  if (mode !== 'aki_kesif') { _akiKesifHideChrome(false); }
   // v3.19.2: Sub-tab label aktif moda göre güncellenir
   var tabLabel = document.getElementById('tabDialogLabel');
   if (mode === 'kb') {
@@ -963,13 +1041,11 @@ window.selectChatMode = function(mode) {
       window.DialogChatModule.switchToLlmMode();
     }
   } else if (mode === 'aki_kesif') {
-    // v3.30.0 Akıllı Veri Keşfi (Wizard)
+    // v3.33.0 Akıllı Veri Keşfi — dinamik rapor stüdyosu (grid + modal wizard)
     if (ak) ak.classList.add('selected');
     if (tabLabel) tabLabel.textContent = 'Akıllı Veri Keşfi';
-    if (wiz) { wiz.classList.remove('hidden'); wiz.hidden = false; }
-    if (window.DbSmartWizardModule && typeof window.DbSmartWizardModule.init === 'function') {
-      window.DbSmartWizardModule.init();
-    }
+    _akiKesifHideChrome(true);
+    _akiKesifMountGrid();
   }
 };
 </script>

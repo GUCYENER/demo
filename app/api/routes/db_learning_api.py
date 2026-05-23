@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.api.routes.auth import get_current_user
+from app.api.routes.auth import get_current_user, get_current_admin
 from app.core.db import apply_company_scope, get_db_context, get_db_conn
 
 logger = logging.getLogger(__name__)
@@ -1528,3 +1528,354 @@ def integrate_new_tables_endpoint(
             _set_job(source_id, status="error", error=str(exc)[:300])
             logger.exception("[integrate-new-tables] failed source_id=%s", source_id)
             raise HTTPException(status_code=500, detail=str(exc)[:300])
+
+
+# ─────────────────────────────────────────────────────────────
+# v3.32.0 Ajan-I MVP — Error Pattern Approval (admin review)
+# ─────────────────────────────────────────────────────────────
+#
+# self_heal_node "rewrite" kararıyla LLM'e yeniden ürettirdiği SQL'leri
+# learned_query_failures tablosuna yazıyor (record_failure + mark_corrected).
+# Bu MVP, admin'in son 50 rewrite'ı görüp her birini approve/reject ile
+# etiketleyebileceği basit endpoint çiftini sunar.
+#
+# Migration 040_v3320_error_pattern_review eklenen kolonlar:
+#   review_status TEXT ('pending'|'approved'|'rejected') DEFAULT 'pending'
+#   reviewed_by   INTEGER NULL REFERENCES users(id)
+#   reviewed_at   TIMESTAMPTZ NULL
+#   review_note   TEXT NULL
+#
+# Endpoint'ler tenant scope (apply_company_scope) altında çalışır; admin
+# yetkisi get_current_admin ile zorlanır.
+# ─────────────────────────────────────────────────────────────
+
+# Pydantic schema — admin review decision
+class ErrorRewriteReviewRequest(BaseModel):
+    decision: str = Field(..., pattern=r"^(approved|rejected)$",
+                          description="'approved' | 'rejected'")
+    note: Optional[str] = Field(default=None, max_length=2048,
+                                description="Opsiyonel admin notu (özellikle reject için)")
+
+
+@router.get("/admin/error-rewrites", tags=["admin_error_review"])
+def list_error_rewrites_endpoint(
+    status: str = Query("pending", pattern=r"^(pending|approved|rejected|all)$"),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: Dict[str, Any] = Depends(get_current_admin),
+):
+    """Son N self_heal rewrite kaydını listeler (varsayılan: pending son 50).
+
+    RLS company scope altında çalışır — admin yalnız kendi tenant'ının
+    rewrite'larını görür.
+    """
+    company_id = current_user.get("company_id")
+    if company_id is None:
+        raise HTTPException(status_code=403, detail="Tenant kapsamı belirlenemedi")
+
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        try:
+            apply_company_scope(cur, company_id=company_id)
+            if status == "all":
+                cur.execute(
+                    """
+                    SELECT id, source_id, question, error_class, error_message,
+                           failed_sql, corrected_sql, recurrence_count,
+                           review_status, reviewed_by, reviewed_at, review_note,
+                           created_at, last_seen_at
+                    FROM learned_query_failures
+                    WHERE corrected_sql IS NOT NULL
+                    ORDER BY last_seen_at DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id, source_id, question, error_class, error_message,
+                           failed_sql, corrected_sql, recurrence_count,
+                           review_status, reviewed_by, reviewed_at, review_note,
+                           created_at, last_seen_at
+                    FROM learned_query_failures
+                    WHERE review_status = %s
+                      AND corrected_sql IS NOT NULL
+                    ORDER BY last_seen_at DESC
+                    LIMIT %s
+                    """,
+                    (status, limit),
+                )
+            rows = cur.fetchall() or []
+            items: List[Dict[str, Any]] = []
+            for r in rows:
+                def _g(k):
+                    return r.get(k) if hasattr(r, "get") else None
+                items.append({
+                    "id": int(_g("id") or 0),
+                    "source_id": int(_g("source_id") or 0),
+                    "question": _g("question") or "",
+                    "error_class": _g("error_class") or "unknown",
+                    "error_message": _g("error_message"),
+                    "original_sql": _g("failed_sql") or "",
+                    "rewritten_sql": _g("corrected_sql") or "",
+                    "recurrence_count": int(_g("recurrence_count") or 0),
+                    "review_status": _g("review_status") or "pending",
+                    "reviewed_by": _g("reviewed_by"),
+                    "reviewed_at": (_g("reviewed_at").isoformat()
+                                    if _g("reviewed_at") else None),
+                    "review_note": _g("review_note"),
+                    "created_at": (_g("created_at").isoformat()
+                                   if _g("created_at") else None),
+                    "last_seen_at": (_g("last_seen_at").isoformat()
+                                     if _g("last_seen_at") else None),
+                })
+            return {"success": True, "items": items, "count": len(items),
+                    "status_filter": status, "limit": limit}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("[admin/error-rewrites] list failed")
+            raise HTTPException(status_code=500, detail=str(exc)[:300])
+        finally:
+            cur.close()
+
+
+@router.post("/admin/error-rewrites/{rewrite_id}/review", tags=["admin_error_review"])
+def review_error_rewrite_endpoint(
+    rewrite_id: int,
+    payload: ErrorRewriteReviewRequest,
+    current_user: Dict[str, Any] = Depends(get_current_admin),
+):
+    """Admin onayı/reddi — review_status set + audit log.
+
+    'approved' → review_status='approved' + admin_approved=TRUE
+                 (corrected_sql artık few-shot pool'a uygun).
+    'rejected' → review_status='rejected' + admin_approved=FALSE
+                 + corrected_sql=NULL (LLM hint olarak verilmesin).
+    """
+    company_id = current_user.get("company_id")
+    user_id = current_user.get("id")
+    if company_id is None or user_id is None:
+        raise HTTPException(status_code=403, detail="Tenant/kullanıcı kapsamı belirlenemedi")
+
+    decision = payload.decision
+    note = (payload.note or "").strip() or None
+
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        try:
+            apply_company_scope(cur, company_id=company_id)
+            # Kayıt mevcut tenant'a ait mi (RLS zaten kısıtlar, ek savunma)
+            cur.execute(
+                "SELECT id, review_status FROM learned_query_failures WHERE id = %s",
+                (rewrite_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Rewrite kaydı bulunamadı")
+
+            if decision == "approved":
+                cur.execute(
+                    """
+                    UPDATE learned_query_failures
+                    SET review_status = 'approved',
+                        admin_approved = TRUE,
+                        reviewed_by = %s,
+                        reviewed_at = NOW(),
+                        review_note = %s
+                    WHERE id = %s
+                    """,
+                    (int(user_id), note, rewrite_id),
+                )
+            else:  # rejected
+                cur.execute(
+                    """
+                    UPDATE learned_query_failures
+                    SET review_status = 'rejected',
+                        admin_approved = FALSE,
+                        corrected_sql = NULL,
+                        pattern_hint = NULL,
+                        reviewed_by = %s,
+                        reviewed_at = NOW(),
+                        review_note = %s
+                    WHERE id = %s
+                    """,
+                    (int(user_id), note, rewrite_id),
+                )
+
+            if not (cur.rowcount or 0):
+                raise HTTPException(status_code=404, detail="Rewrite kaydı güncellenemedi")
+            conn.commit()
+
+            # Audit log — best-effort (mevcut util kullan)
+            try:
+                from app.services.logging_service import log_system_event
+                log_system_event(
+                    "INFO",
+                    f"[error-rewrite-review] id={rewrite_id} decision={decision} "
+                    f"by_user={user_id} company={company_id}",
+                    "admin_error_review",
+                )
+            except Exception:
+                pass
+
+            return {
+                "success": True,
+                "id": rewrite_id,
+                "decision": decision,
+                "reviewed_by": int(user_id),
+            }
+        except HTTPException:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+        except Exception as exc:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            logger.exception("[admin/error-rewrites/review] failed id=%s", rewrite_id)
+            raise HTTPException(status_code=500, detail=str(exc)[:300])
+        finally:
+            cur.close()
+
+
+# ─────────────────────────────────────────────────────────────
+# v3.32.0 Ajan-G — Learned-Queries Cache Hit Dashboard
+# ─────────────────────────────────────────────────────────────
+#
+# learned_db_queries tablosundaki hit_count / last_hit_at alanlarını
+# admin panelinde görünür kılar. Cache effectiveness ölçümü için
+# özet metrikler + Top-10 most-hit query listesi döner.
+#
+# NOT: Brief'te URL `/api/db-learning/cache-stats?source_id=N` olarak
+# verildi ancak bu dosyanın router prefix'i `/api/data-sources` ve
+# parent dispatcher (main.py) bu task'ın scope'u dışında. Bu nedenle
+# endpoint mevcut router üzerine `/{source_id}/cache-stats` path'iyle
+# eklendi → çağrı: GET /api/data-sources/{source_id}/cache-stats
+# Parent dispatcher dilerse `/api/db-learning/cache-stats?source_id=N`
+# alias'ını ileride ekleyebilir.
+# ─────────────────────────────────────────────────────────────
+
+@router.get("/{source_id}/cache-stats")
+def learned_queries_cache_stats_endpoint(
+    source_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """learned_db_queries cache effectiveness metrics + Top-10 most-hit list.
+
+    Response:
+      {
+        "success": true,
+        "source_id": N,
+        "summary": {
+          "total": int,         # toplam aktif öğrenilmiş sorgu sayısı
+          "total_hits": int,    # SUM(hit_count)
+          "used_count": int,    # hit_count > 0 olan satır sayısı
+          "hit_rate": float     # used_count / total (0.0-1.0), total=0 ise 0.0
+        },
+        "top": [
+          {
+            "id": int, "question_text": str,
+            "sql_preview": str,   # 200 chr trunc + '...'
+            "sql_truncated": bool,
+            "hit_count": int,
+            "last_hit_at": iso8601|null,
+            "created_at": iso8601|null
+          }, ...  # max 10
+        ]
+      }
+    """
+    company_id = current_user.get("company_id")
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        try:
+            apply_company_scope(cur, company_id=company_id)
+            _ensure_source_visible(cur, source_id)
+
+            # Summary aggregate
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*)                                            AS total,
+                    COALESCE(SUM(hit_count), 0)                         AS total_hits,
+                    COUNT(*) FILTER (WHERE hit_count > 0)               AS used_count
+                FROM learned_db_queries
+                WHERE source_id = %s
+                  AND deleted_at IS NULL
+                """,
+                (source_id,),
+            )
+            srow = cur.fetchone()
+
+            def _sg(k, idx):
+                if srow is None:
+                    return 0
+                if hasattr(srow, "get"):
+                    return int(srow.get(k) or 0)
+                return int(srow[idx] or 0)
+
+            total = _sg("total", 0)
+            total_hits = _sg("total_hits", 1)
+            used_count = _sg("used_count", 2)
+            hit_rate = (used_count / total) if total > 0 else 0.0
+            summary = {
+                "total": total,
+                "total_hits": total_hits,
+                "used_count": used_count,
+                "hit_rate": round(hit_rate, 4),
+            }
+
+            # Top-10 most-hit
+            cur.execute(
+                """
+                SELECT id, question_text, sql_query, hit_count,
+                       last_hit_at, created_at
+                FROM learned_db_queries
+                WHERE source_id = %s
+                  AND deleted_at IS NULL
+                ORDER BY hit_count DESC NULLS LAST,
+                         last_hit_at DESC NULLS LAST
+                LIMIT 10
+                """,
+                (source_id,),
+            )
+            rows = cur.fetchall() or []
+
+            top: List[Dict[str, Any]] = []
+            for r in rows:
+                def _g(k, idx):
+                    if hasattr(r, "get"):
+                        return r.get(k)
+                    return r[idx] if idx < len(r) else None
+
+                sql_raw = _g("sql_query", 2) or ""
+                truncated = len(sql_raw) > 200
+                sql_preview = (sql_raw[:200] + "...") if truncated else sql_raw
+                last_hit = _g("last_hit_at", 4)
+                created = _g("created_at", 5)
+                top.append({
+                    "id": int(_g("id", 0) or 0),
+                    "question_text": _g("question_text", 1) or "",
+                    "sql_preview": sql_preview,
+                    "sql_truncated": truncated,
+                    "hit_count": int(_g("hit_count", 3) or 0),
+                    "last_hit_at": last_hit.isoformat() if last_hit else None,
+                    "created_at": created.isoformat() if created else None,
+                })
+
+            return {
+                "success": True,
+                "source_id": source_id,
+                "summary": summary,
+                "top": top,
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("[cache-stats] failed source_id=%s", source_id)
+            raise HTTPException(status_code=500, detail=str(exc)[:300])
+        finally:
+            cur.close()

@@ -25,6 +25,39 @@ _FROM_TABLE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# v3.32.0: SQL içindeki TÜM tabloları (FROM + JOIN) yakalar. Preview validation
+# için kullanılır: ranker'ın picked table'ı gerçekten SQL'de yer alıyor mu?
+_FROM_OR_JOIN_TABLE_RE = re.compile(
+    r"\b(?:FROM|JOIN)\s+"
+    r"(?:[\"\[`]?(?P<schema>[A-Za-z_][\w]*)[\"\]`]?\.)?"
+    r"[\"\[`]?(?P<table>[A-Za-z_][\w]*)[\"\]`]?",
+    re.IGNORECASE,
+)
+
+
+def extract_all_tables_from_sql(sql: str) -> List[Dict[str, Optional[str]]]:
+    """SQL içindeki tüm FROM + JOIN tablolarını döner.
+
+    Returns list of ``{"schema": str|None, "table": str}``. Duplicates removed,
+    case-preserved as in original SQL. Subquery / CTE içeriği de yakalanır
+    (basit regex — semantik analiz değil, validation/heuristic için yeterli).
+    """
+    if not sql or not isinstance(sql, str):
+        return []
+    seen: set = set()
+    out: List[Dict[str, Optional[str]]] = []
+    for m in _FROM_OR_JOIN_TABLE_RE.finditer(sql):
+        tbl = m.group("table")
+        if not tbl:
+            continue
+        sch = m.group("schema")
+        key = (str(sch).lower() if sch else None, tbl.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"schema": sch, "table": tbl})
+    return out
+
 
 def extract_first_table_from_sql(sql: str) -> Optional[Dict[str, Optional[str]]]:
     """SQL FROM cümlesinden ilk tabloyu yakalar.
@@ -204,3 +237,39 @@ def pick_top_table_for_preview(final_state: Dict[str, Any]) -> Optional[Dict[str
                 return {"schema": first.get("schema_name") or first.get("schema"), "table": tbl}
 
     return None
+
+
+def pick_preview_table_validated(final_state: Dict[str, Any]) -> Optional[Dict[str, Optional[str]]]:
+    """v3.32.0: Ranker pick'ini final SQL ile cross-check ederek preview tablosunu döner.
+
+    Davranış:
+      1. Multi-table JOIN (≥2 tablo) → ``None`` (preview tek-tablo gösterir,
+         multi-table sonucunu yanıltıcı şekilde temsil eder).
+      2. Single-table SQL → SQL'deki tabloyu döner (ranker pick yanlışsa bile
+         doğru tabloyu gösterir — kullanıcı kafa karışıklığı önlenir).
+      3. SQL yoksa → eski ``pick_top_table_for_preview`` davranışına fallback.
+
+    Bu senaryo `selected_tables[0]=ABONELIKLER` ama final SQL'in
+    ``MUSTERILER ⋈ SIPARISLER ⋈ FATURALAR ⋈ ODEMELER`` olduğu kullanıcı
+    raporundan sonra eklendi.
+    """
+    if not isinstance(final_state, dict):
+        return None
+
+    sql = final_state.get("sql") or final_state.get("sql_executed") or ""
+    if not sql:
+        # SQL henüz üretilmemiş — eski davranışa düş (ranker pick).
+        return pick_top_table_for_preview(final_state)
+
+    sql_tables = extract_all_tables_from_sql(sql)
+    if not sql_tables:
+        # SQL var ama parse edilemedi (CTE/subquery vs.) → ranker pick'e güven.
+        return pick_top_table_for_preview(final_state)
+
+    if len(sql_tables) >= 2:
+        # Multi-table JOIN — preview yanıltıcı, atla.
+        return None
+
+    # Single-table → her zaman SQL'deki tabloyu kullan, ranker pick'i değil.
+    only = sql_tables[0]
+    return {"schema": only.get("schema"), "table": only.get("table")}

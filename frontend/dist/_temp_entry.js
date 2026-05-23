@@ -1042,6 +1042,18 @@ window.NgssNotification = NgssNotification;
         getTokens,
         setTokens,
     };
+
+    // v3.32.0: Canonical Authorization header helper.
+    // query_builder.js (ve diğer bundle modülleri) `window.getAuthHeader()` bekliyor;
+    // daha önce hiçbir modül tanımlamıyordu → /api/query-state/preview gibi auth'lu
+    // çağrılar header'sız gidip 401 dönüyordu. api_client.js bundle'da olduğu için
+    // home.html'de bu helper artık her zaman tanımlı.
+    if (!window.getAuthHeader) {
+        window.getAuthHeader = function () {
+            const { access } = getTokens();
+            return access ? { Authorization: 'Bearer ' + access } : {};
+        };
+    }
 })();
 
 
@@ -9465,6 +9477,11 @@ window.DialogTicketModule = (function () {
             sqlBox.textContent = data.sql || '';
             _announce(root, 'SQL üretildi');
 
+            // v3.32.0: SQL'i state'e cache'le ve action butonlarını aktif et
+            state.lastSql = data.sql || '';
+            state.lastParams = data.params || [];
+            _enableActionButtons(root, !!state.lastSql);
+
             if (typeof state.onSqlReady === 'function') {
                 state.onSqlReady(data.sql, data.params || [], data.warnings || []);
             }
@@ -9473,6 +9490,188 @@ window.DialogTicketModule = (function () {
             statusEl.textContent = `Ağ hatası: ${err.message}`;
             statusEl.classList.add('qb-status-error');
         }
+    }
+
+    // ── v3.32.0: Action helpers ────────────────────────────────────────
+
+    function _enableActionButtons(root, enabled) {
+        for (const cls of ['.qb-copy-btn', '.qb-exec-btn', '.qb-send-btn']) {
+            const btn = root.querySelector(cls);
+            if (!btn) continue;
+            if (enabled) btn.removeAttribute('disabled');
+            else btn.setAttribute('disabled', 'true');
+        }
+    }
+
+    async function _copySql(state, root) {
+        const statusEl = root.querySelector('.qb-status');
+        if (!state.lastSql) {
+            statusEl.textContent = 'Önce "SQL Önizle" tıklayın.';
+            return;
+        }
+        try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(state.lastSql);
+            } else {
+                // Fallback: textarea trick
+                const ta = document.createElement('textarea');
+                ta.value = state.lastSql;
+                ta.setAttribute('readonly', '');
+                ta.style.position = 'absolute';
+                ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+            }
+            statusEl.classList.remove('qb-status-error');
+            statusEl.textContent = 'SQL panoya kopyalandı.';
+            if (window.showToast) window.showToast('SQL panoya kopyalandı', 'success');
+            _announce(root, 'SQL panoya kopyalandı');
+        } catch (err) {
+            statusEl.classList.add('qb-status-error');
+            statusEl.textContent = `Kopyalama hatası: ${err.message}`;
+        }
+    }
+
+    async function _executeSql(state, root) {
+        const statusEl = root.querySelector('.qb-status');
+        const resultSection = root.querySelector('.qb-result-section');
+        const resultMeta = root.querySelector('.qb-result-meta');
+        const resultBody = root.querySelector('.qb-result-body');
+
+        if (!state.lastSql) {
+            statusEl.textContent = 'Önce "SQL Önizle" tıklayın.';
+            return;
+        }
+        if (!state.sourceId) {
+            statusEl.classList.add('qb-status-error');
+            statusEl.textContent = 'source_id eksik — execute mümkün değil.';
+            return;
+        }
+
+        // execute=true ile aynı preview endpoint'ini çağırıyoruz; backend
+        // params'ı strict whitelist ile inline edip SafeSQLExecutor üzerinden
+        // 5sn timeout + 100 satır cap ile çalıştırır.
+        const body = {
+            source_id: state.sourceId,
+            schema: state.schema || null,
+            table: state.table,
+            dialect: state.dialect || null,
+            selected_columns: state.selected,
+            filters: _coerceFilters(state.filters),
+            order_by: state.orderColumn ? {
+                column: state.orderColumn,
+                direction: state.orderDir || 'ASC',
+            } : null,
+            limit: Number(state.limit) || 100,
+            execute: true,
+        };
+
+        statusEl.textContent = 'Çalıştırılıyor (5sn timeout)...';
+        statusEl.setAttribute('aria-busy', 'true');
+        statusEl.classList.remove('qb-status-error');
+        resultSection.setAttribute('hidden', 'hidden');
+        resultBody.innerHTML = '';
+        resultMeta.textContent = '';
+
+        try {
+            const apiBase = (window.VYRA_API_BASE || '');
+            const resp = await fetch(`${apiBase}/api/query-state/preview`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(window.getAuthHeader ? window.getAuthHeader() : {}),
+                },
+                body: JSON.stringify(body),
+            });
+            const data = await resp.json().catch(() => ({}));
+            statusEl.removeAttribute('aria-busy');
+
+            if (!resp.ok) {
+                statusEl.classList.add('qb-status-error');
+                statusEl.textContent = `HTTP ${resp.status}: ${(data && (data.detail || data.execute_error)) || 'Hata'}`;
+                return;
+            }
+            if (data.success === false) {
+                resultSection.removeAttribute('hidden');
+                resultMeta.textContent = '⚠ Çalıştırma hatası';
+                resultBody.innerHTML = `<div class="qb-result-error">${_escHtml(data.execute_error || 'Bilinmeyen hata')}</div>`;
+                statusEl.classList.add('qb-status-error');
+                statusEl.textContent = 'Sorgu hata döndürdü — detay için sonuç alanına bakın.';
+                return;
+            }
+            // Başarılı — sonucu render et
+            const rows = Array.isArray(data.rows) ? data.rows : [];
+            const cols = Array.isArray(data.columns) && data.columns.length
+                ? data.columns
+                : (rows[0] && typeof rows[0] === 'object' ? Object.keys(rows[0]) : []);
+            resultSection.removeAttribute('hidden');
+            resultMeta.textContent = `${rows.length} satır`
+                + (data.row_count && data.row_count !== rows.length ? ` (toplam: ${data.row_count})` : '')
+                + (data.truncated ? ' • cap uygulandı' : '')
+                + (data.elapsed_ms ? ` • ${Math.round(data.elapsed_ms)}ms` : '');
+            resultBody.innerHTML = _renderResultTable(cols, rows);
+            statusEl.textContent = 'Sorgu çalıştırıldı.';
+            if (window.showToast) window.showToast(`Sorgu başarılı (${rows.length} satır)`, 'success');
+            _announce(root, `Sorgu çalıştırıldı, ${rows.length} satır`);
+        } catch (err) {
+            statusEl.removeAttribute('aria-busy');
+            statusEl.classList.add('qb-status-error');
+            statusEl.textContent = `Ağ hatası: ${err.message}`;
+        }
+    }
+
+    function _sendSqlToChat(state, root) {
+        const statusEl = root.querySelector('.qb-status');
+        if (!state.lastSql) {
+            statusEl.textContent = 'Önce "SQL Önizle" tıklayın.';
+            return;
+        }
+        const inp = document.getElementById('dialogInput');
+        if (!inp) {
+            statusEl.classList.add('qb-status-error');
+            statusEl.textContent = 'Sohbet kutusu bulunamadı.';
+            return;
+        }
+        const prefix = `Şu SQL'i çalıştırıp sonucunu açıklar mısın:\n\`\`\`sql\n${state.lastSql}\n\`\`\``;
+        inp.value = prefix;
+        inp.focus();
+        // textarea ise yüksekliği güncellesin
+        try { inp.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
+        statusEl.classList.remove('qb-status-error');
+        statusEl.textContent = 'SQL sohbet kutusuna kopyalandı — göndermek için Enter\'a basın.';
+        if (window.showToast) window.showToast('SQL sohbet kutusuna yapıştırıldı', 'info');
+        _announce(root, 'SQL sohbet kutusuna kopyalandı');
+    }
+
+    function _escHtml(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function _renderResultTable(cols, rows) {
+        if (!rows || !rows.length) {
+            return '<div class="qb-result-empty">Sonuç boş.</div>';
+        }
+        const colList = (cols && cols.length) ? cols : Object.keys(rows[0] || {});
+        let html = '<div class="qb-result-table-wrap"><table class="qb-result-table"><thead><tr>';
+        for (const c of colList) html += `<th>${_escHtml(c)}</th>`;
+        html += '</tr></thead><tbody>';
+        for (const r of rows) {
+            html += '<tr>';
+            for (const c of colList) {
+                const v = r && typeof r === 'object' ? r[c] : null;
+                const txt = v == null ? '' : String(v);
+                const trunc = txt.length > 120 ? txt.slice(0, 117) + '…' : txt;
+                html += `<td title="${_escHtml(txt)}">${_escHtml(trunc)}</td>`;
+            }
+            html += '</tr>';
+        }
+        html += '</tbody></table></div>';
+        return html;
     }
 
     function open(opts) {
@@ -9632,9 +9831,47 @@ window.DialogTicketModule = (function () {
             type: 'button',
             class: 'qb-preview-btn',
             text: 'SQL Önizle',
+            'data-tooltip': 'Parametrize SELECT SQL üretir (yürütmez)',
         });
         previewBtn.addEventListener('click', () => _fetchPreview(state, root));
         actions.appendChild(previewBtn);
+
+        // v3.32.0: Kopyala
+        const copyBtn = _el('button', {
+            type: 'button',
+            class: 'qb-copy-btn',
+            text: '📋 Kopyala',
+            disabled: 'true',
+            'aria-label': 'SQL\'i panoya kopyala',
+            'data-tooltip': 'Üretilen SQL\'i panoya kopyalar (dış DB tool için)',
+        });
+        copyBtn.addEventListener('click', () => _copySql(state, root));
+        actions.appendChild(copyBtn);
+
+        // v3.32.0: Çalıştır
+        const execBtn = _el('button', {
+            type: 'button',
+            class: 'qb-exec-btn',
+            text: '▶️ Çalıştır',
+            disabled: 'true',
+            'aria-label': 'SQL\'i veritabanında çalıştır',
+            'data-tooltip': '5sn timeout, 100 satır cap ile yürütür',
+        });
+        execBtn.addEventListener('click', () => _executeSql(state, root));
+        actions.appendChild(execBtn);
+
+        // v3.32.0: Asistana Gönder
+        const sendBtn = _el('button', {
+            type: 'button',
+            class: 'qb-send-btn',
+            text: '💬 Asistana Gönder',
+            disabled: 'true',
+            'aria-label': 'SQL\'i sohbet kutusuna gönder',
+            'data-tooltip': 'SQL\'i sohbet kutusuna yapıştırır — manuel gönderirsin',
+        });
+        sendBtn.addEventListener('click', () => _sendSqlToChat(state, root));
+        actions.appendChild(sendBtn);
+
         root.appendChild(actions);
 
         // SQL output
@@ -9647,6 +9884,17 @@ window.DialogTicketModule = (function () {
         });
         sqlSection.appendChild(sqlBox);
         root.appendChild(sqlSection);
+
+        // v3.32.0: Execute sonucu (gizli, dolduğunda görünür)
+        const resultSection = _el('div', {
+            class: 'qb-section qb-result-section',
+            hidden: 'hidden',
+            'aria-label': 'SQL çalıştırma sonucu',
+        });
+        resultSection.appendChild(_el('h4', { class: 'qb-section-title', text: 'Sonuç' }));
+        resultSection.appendChild(_el('div', { class: 'qb-result-meta', role: 'status', 'aria-live': 'polite' }));
+        resultSection.appendChild(_el('div', { class: 'qb-result-body' }));
+        root.appendChild(resultSection);
 
         // Live region + status
         root.appendChild(_el('div', {
@@ -29045,55 +29293,139 @@ window.DSLearningModule = (function () {
     async function loadDbLoopStatus(sourceId) {
         const box = document.getElementById('dsDbLoopStatus');
         if (!box) return false;
+        // a11y: durum mesajlarını ekran okuyucu canlı bildirim alanı olarak işaretle
+        if (box.getAttribute('aria-live') !== 'polite') {
+            box.setAttribute('aria-live', 'polite');
+            box.setAttribute('aria-atomic', 'true');
+        }
         try {
             const res = await apiCall(`/${sourceId}/synthetic-status`);
             const job = res.job || { status: 'idle' };
             const status = job.status || 'idle';
             let html = '';
             if (status === 'running') {
-                html = `<div class="ds-dbloop-pill ds-dbloop-running"><i class="fa-solid fa-spinner fa-spin"></i> Çalışıyor (dialect: ${_escapeHtml(job.dialect || '?')})</div>`;
+                html = _renderDbLoopProgress(job, /*done*/ false);
             } else if (status === 'done') {
                 const s = job.summary || {};
-                const totalFail = (s.failed_execute || 0) + (s.failed_learn || 0);
-                const errors = Array.isArray(s.errors) ? s.errors : [];
-                let errBlock = '';
-                if (errors.length) {
-                    const items = errors.slice(0, 50).map(e => `<li>${_escapeHtml(String(e))}</li>`).join('');
-                    errBlock = `
-                        <details class="ds-dbloop-errdetails" style="margin-top:0.5rem;">
-                            <summary style="cursor:pointer; color:#dc2626;">
-                                ⚠️ Hata mesajları (${errors.length})
-                            </summary>
-                            <ul class="ds-dbloop-errlist" style="max-height:240px; overflow:auto; font-family:monospace; font-size:0.78rem;">
-                                ${items}
-                            </ul>
-                        </details>
+                // G2.2 — FK ilişkisi yoksa empty state
+                if ((s.total_fks ?? 0) === 0) {
+                    html = `
+                        <div class="ds-dbloop-empty-state" role="status">
+                            <i class="fa-solid fa-link-slash" aria-hidden="true"></i>
+                            <h3>FK ilişkisi bulunamadı</h3>
+                            <p>Bu veri kaynağında henüz FK tanımlı değil. "Veri Kaynakları" sayfasından kaynağı yeniden keşfedin veya FK çıkarımı (auto-inference) çalıştırın.</p>
+                        </div>
                     `;
+                } else {
+                    html = _renderDbLoopProgress(job, /*done*/ true);
                 }
-                html = `
-                    <div class="ds-dbloop-pill ds-dbloop-done"><i class="fa-solid fa-check"></i> Tamamlandı (${s.elapsed_ms || 0} ms)</div>
-                    <div class="ds-dbloop-stats">
-                        <span>FK: <strong>${s.total_fks || 0}</strong></span>
-                        <span>Denenen: <strong>${s.total_attempts || 0}</strong></span>
-                        <span>Başarılı: <strong style="color:#16a34a;">${s.success || 0}</strong></span>
-                        <span>Atlanan: <strong>${s.skipped_existing || 0}</strong></span>
-                        <span>Execute Hata: <strong style="color:#dc2626;">${s.failed_execute || 0}</strong></span>
-                        <span>Öğrenme Hata: <strong style="color:#dc2626;">${s.failed_learn || 0}</strong></span>
-                        <span>Toplam Hata: <strong style="color:#dc2626;">${totalFail}</strong></span>
-                    </div>
-                    ${errBlock}
-                `;
             } else if (status === 'error') {
-                html = `<div class="ds-dbloop-pill ds-dbloop-error"><i class="fa-solid fa-circle-exclamation"></i> Hata: ${_escapeHtml(job.error || 'bilinmeyen')}</div>`;
+                html = `<div class="ds-dbloop-pill ds-dbloop-error" role="alert"><i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i> Hata: ${_escapeHtml(job.error || 'bilinmeyen')}</div>`;
             } else {
                 html = `<div class="ds-dbloop-pill ds-dbloop-idle">Henüz çalıştırılmadı</div>`;
             }
             box.innerHTML = html;
+
+            // "Detaylar" expander davranışı
+            const detailsBtn = box.querySelector('#dsDbLoopDetailsBtn');
+            const detailsPanel = box.querySelector('#dsDbLoopDetailsPanel');
+            if (detailsBtn && detailsPanel) {
+                detailsBtn.addEventListener('click', () => {
+                    const open = detailsPanel.style.display !== 'none';
+                    detailsPanel.style.display = open ? 'none' : 'flex';
+                    detailsBtn.setAttribute('aria-expanded', String(!open));
+                });
+            }
             return status === 'done' || status === 'error';
         } catch (e) {
-            box.innerHTML = `<div class="ds-dbloop-pill ds-dbloop-error">Durum alınamadı</div>`;
+            box.innerHTML = `<div class="ds-dbloop-pill ds-dbloop-error" role="alert"><i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i> Durum alınamadı</div>`;
             return true;
         }
+    }
+
+    // v3.32.0 G2.1 — Progress bar render (running + done ortak)
+    function _renderDbLoopProgress(job, done) {
+        const s = job.summary || {};
+        const dialect = job.dialect || '?';
+        const total = Number(s.total_attempts ?? 0);
+        const success = Number(s.success ?? 0);
+        const skippedExisting = Number(s.skipped_existing ?? 0);
+        const skippedEmpty = Number(s.skipped_empty ?? 0);
+        const skippedRecent = Number(s.skipped_recent_failure ?? 0);
+        const skippedTotal = skippedExisting + skippedEmpty + skippedRecent;
+        const failExecute = Number(s.failed_execute ?? 0);
+        const failLearn = Number(s.failed_learn ?? 0);
+        const failed = failExecute + failLearn;
+        const junctionSuccess = Number(s.junction_success ?? 0);
+        const totalFks = Number(s.total_fks ?? 0);
+        const elapsedSec = s.elapsed_ms != null ? (Number(s.elapsed_ms) / 1000).toFixed(1) : null;
+
+        // running iken summary boş gelmiş olabilir → indeterminate
+        const hasSummary = Object.keys(s).length > 0 && total > 0;
+        const completed = success + failed;
+        const percent = hasSummary ? Math.max(0, Math.min(100, Math.round((completed / total) * 100))) : 0;
+        const barIndeterminate = !done && !hasSummary;
+
+        if (done) {
+            return `
+                <div class="ds-dbloop-progress done">
+                    <i class="fa-solid fa-circle-check" aria-hidden="true" style="color: var(--green);"></i>
+                    <span class="ds-dbloop-progress-summary">
+                        Tamamlandı: <strong>${success}</strong> başarılı,
+                        <strong>${skippedTotal}</strong> atlandı,
+                        <strong>${failed}</strong> hata
+                        ${elapsedSec != null ? `· ${elapsedSec}s` : ''}
+                        ${dialect && dialect !== '?' ? `· ${_escapeHtml(dialect)}` : ''}
+                    </span>
+                    <button type="button" class="ds-link-btn" id="dsDbLoopDetailsBtn"
+                            aria-label="Üretim detaylarını göster"
+                            data-tooltip="Junction / skip dağılımı"
+                            aria-expanded="false"
+                            aria-controls="dsDbLoopDetailsPanel">
+                        Detaylar
+                    </button>
+                    <div id="dsDbLoopDetailsPanel" class="ds-dbloop-progress-details" style="display:none;">
+                        <span>FK: <strong>${totalFks}</strong></span>
+                        <span>Denenen: <strong>${total}</strong></span>
+                        <span>Junction (N:M): <strong>${junctionSuccess}</strong></span>
+                        <span>Mevcut atlandı: <strong>${skippedExisting}</strong></span>
+                        <span>Boş tablo atlandı: <strong>${skippedEmpty}</strong></span>
+                        <span>Yakın hata atlandı: <strong>${skippedRecent}</strong></span>
+                        <span>Execute hata: <strong>${failExecute}</strong></span>
+                        <span>Öğrenme hata: <strong>${failLearn}</strong></span>
+                    </div>
+                </div>
+            `;
+        }
+
+        // RUNNING
+        const headLabel = hasSummary
+            ? `Sentetik üretim çalışıyor... <strong>${completed}/${total}</strong> deneme`
+            : `Başlatılıyor... (dialect: ${_escapeHtml(dialect)})`;
+        const ariaNow = barIndeterminate ? '' : `aria-valuenow="${percent}"`;
+        const barClass = barIndeterminate ? 'ds-dbloop-progress-bar indeterminate' : 'ds-dbloop-progress-bar';
+        const fillStyle = barIndeterminate ? '' : `style="width: ${percent}%"`;
+
+        return `
+            <div class="ds-dbloop-progress">
+                <div class="ds-dbloop-progress-header">
+                    <i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
+                    <span>${headLabel}</span>
+                </div>
+                <div class="${barClass}"
+                     role="progressbar"
+                     ${ariaNow}
+                     aria-valuemin="0" aria-valuemax="100"
+                     aria-label="FK Loop ilerleme${barIndeterminate ? ' (başlatılıyor)' : ''}">
+                    <div class="ds-dbloop-progress-fill" ${fillStyle}></div>
+                </div>
+                <div class="ds-dbloop-progress-stats">
+                    <span class="stat stat-success"><i class="fa-solid fa-circle-check" aria-hidden="true"></i> ${success} başarılı</span>
+                    <span class="stat stat-skip"><i class="fa-solid fa-circle-minus" aria-hidden="true"></i> ${skippedTotal} atlandı</span>
+                    <span class="stat stat-fail"><i class="fa-solid fa-circle-xmark" aria-hidden="true"></i> ${failed} hata</span>
+                </div>
+            </div>
+        `;
     }
 
     async function loadLearnedQueries(sourceId) {
@@ -29147,23 +29479,88 @@ window.DSLearningModule = (function () {
                 box.innerHTML = '<div class="ds-dbloop-empty">Hatalı deneme yok.</div>';
                 return;
             }
-            box.innerHTML = items.map(it => `
-                <div class="ds-dbloop-failrow" style="border:1px solid #fecaca; background:#fef2f2; padding:0.5rem 0.75rem; margin-bottom:0.5rem; border-radius:6px;">
-                    <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; margin-bottom:0.25rem;">
-                        <span class="ds-dbloop-badge" style="background:#dc2626; color:#fff;">${_escapeHtml(it.template_kind || '?')}</span>
-                        <span style="font-weight:600;">${_escapeHtml(it.from_table || '')}.${_escapeHtml(it.from_column || '')}</span>
-                        <span style="color:#6b7280;">→</span>
-                        <span style="font-weight:600;">${_escapeHtml(it.to_table || '')}.${_escapeHtml(it.to_column || '')}</span>
-                        <span style="margin-left:auto; color:#6b7280; font-size:0.75rem;">${_escapeHtml(it.executed_at || '')}</span>
+            // v3.32.0 G2.3 — accessible failure rows: ellipsis msg + tooltip + icon-only expand/copy buttons
+            box.innerHTML = items.map((it, idx) => {
+                const sqlId = `dsDbLoopFailSql_${idx}`;
+                const rawMsg = it.error_message || 'bilinmeyen hata';
+                const fromRel = `${it.from_table || ''}.${it.from_column || ''}`;
+                const toRel = `${it.to_table || ''}.${it.to_column || ''}`;
+                const renderedSql = it.rendered_sql || '';
+                return `
+                <div class="ds-dbloop-failrow-v2" data-idx="${idx}">
+                    <div class="fail-head">
+                        <span class="fail-kind">${_escapeHtml(it.template_kind || '?')}</span>
+                        <span class="fail-rel">${_escapeHtml(fromRel)}</span>
+                        <span class="fail-arrow" aria-hidden="true">→</span>
+                        <span class="fail-rel">${_escapeHtml(toRel)}</span>
+                        <span class="fail-time">${_escapeHtml(it.executed_at || '')}</span>
                     </div>
-                    <details>
-                        <summary style="cursor:pointer; color:#dc2626; font-size:0.85rem;">
-                            ❌ ${_escapeHtml((it.error_message || 'bilinmeyen hata').substring(0, 200))}
-                        </summary>
-                        <pre style="margin-top:0.5rem; padding:0.5rem; background:#fff; border:1px solid #e5e7eb; border-radius:4px; overflow:auto; max-height:200px; font-size:0.75rem;">${_escapeHtml(it.rendered_sql || '')}</pre>
-                    </details>
+                    <div class="fail-msg">
+                        <i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i>
+                        <span class="fail-msg-text" data-tooltip="${_escapeHtml(rawMsg)}" title="${_escapeHtml(rawMsg)}">${_escapeHtml(rawMsg)}</span>
+                        <button type="button"
+                                class="ds-dbloop-icon-btn ds-dbloop-fail-toggle"
+                                data-target="${sqlId}"
+                                aria-label="SQL'i göster/gizle"
+                                data-tooltip="Tam SQL'i göster/gizle"
+                                aria-expanded="false"
+                                aria-controls="${sqlId}">
+                            <i class="fa-solid fa-code" aria-hidden="true"></i>
+                        </button>
+                        <button type="button"
+                                class="ds-dbloop-icon-btn ds-dbloop-fail-copy"
+                                data-sql-target="${sqlId}"
+                                aria-label="Tam SQL'i panoya kopyala"
+                                data-tooltip="Tam SQL'i kopyala">
+                            <i class="fa-solid fa-copy" aria-hidden="true"></i>
+                        </button>
+                    </div>
+                    <div class="fail-sql-wrap">
+                        <pre id="${sqlId}" class="fail-sql">${_escapeHtml(renderedSql)}</pre>
+                    </div>
                 </div>
-            `).join('');
+            `;
+            }).join('');
+
+            // Expand/collapse handlers
+            box.querySelectorAll('.ds-dbloop-fail-toggle').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const row = btn.closest('.ds-dbloop-failrow-v2');
+                    if (!row) return;
+                    const isOpen = row.classList.toggle('expanded');
+                    btn.setAttribute('aria-expanded', String(isOpen));
+                });
+            });
+            // Copy handlers
+            box.querySelectorAll('.ds-dbloop-fail-copy').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const id = btn.getAttribute('data-sql-target');
+                    const pre = id ? document.getElementById(id) : null;
+                    const text = pre ? pre.textContent : '';
+                    if (!text) {
+                        toast('warning', 'Kopyalanacak SQL bulunamadı');
+                        return;
+                    }
+                    try {
+                        if (navigator.clipboard && navigator.clipboard.writeText) {
+                            await navigator.clipboard.writeText(text);
+                        } else {
+                            const ta = document.createElement('textarea');
+                            ta.value = text;
+                            ta.setAttribute('readonly', '');
+                            ta.style.position = 'fixed';
+                            ta.style.opacity = '0';
+                            document.body.appendChild(ta);
+                            ta.select();
+                            document.execCommand('copy');
+                            document.body.removeChild(ta);
+                        }
+                        toast('success', 'SQL kopyalandı');
+                    } catch (err) {
+                        toast('error', 'Kopyalama başarısız: ' + (err.message || err));
+                    }
+                });
+            });
         } catch (e) {
             box.innerHTML = `<div class="ds-dbloop-empty">Hatalar alınamadı: ${_escapeHtml(e.message || '')}</div>`;
         }
@@ -33782,6 +34179,157 @@ window.ThemePickerPopup = (function () {
 })(window);
 
 
+/* === assets/js/i18n/loader.js === */
+/**
+ * VYRA i18n Loader (v3.30.0 FAZ 5 P34)
+ * =====================================
+ * Hafif, dependency-free i18n yardımcısı. DB Smart Wizard ("Akıllı Veri
+ * Keşfi") modülü için TR (default) + EN bundle yüklemeyi yönetir.
+ *
+ * API:
+ *   window.VyraI18n.init()                         → detect + load active bundle
+ *   window.VyraI18n.t(key, params?)                → string lookup + fallback
+ *   window.VyraI18n.applyTranslations(rootEl)      → [data-i18n] + [data-i18n-attr] sweep
+ *   window.VyraI18n.setLang(lang)                  → switch + persist
+ *   window.VyraI18n.getLang()                      → current ('tr' | 'en')
+ *
+ * Bundle path: /assets/js/i18n/aki_kesif_<lang>.json
+ *   (FastAPI StaticFiles mount '/assets' → frontend/assets)
+ *
+ * Detection priority:
+ *   1) URL ?lang=tr|en
+ *   2) localStorage 'vyra.lang'
+ *   3) navigator.language slice(0,2)
+ *   4) FALLBACK 'tr'
+ *
+ * ARES gate: t() çıktısı yalnız textContent (innerHTML değil). XSS yok.
+ */
+(function () {
+    'use strict';
+    const STORAGE_KEY = 'vyra.lang';
+    const FALLBACK = 'tr';
+    const SUPPORTED = ['tr', 'en'];
+    const _bundles = {};   // {lang: {key: str}}
+    let _currentLang = null;
+
+    function detectLang() {
+        // Priority: URL > localStorage > navigator.language > FALLBACK
+        try {
+            const u = new URLSearchParams(window.location.search).get('lang');
+            if (u && SUPPORTED.includes(u)) return u;
+        } catch (e) { /* ignore */ }
+        try {
+            const s = localStorage.getItem(STORAGE_KEY);
+            if (s && SUPPORTED.includes(s)) return s;
+        } catch (e) { /* ignore */ }
+        try {
+            const n = (navigator.language || 'tr').slice(0, 2).toLowerCase();
+            if (SUPPORTED.includes(n)) return n;
+        } catch (e) { /* ignore */ }
+        return FALLBACK;
+    }
+
+    async function loadBundle(lang) {
+        if (_bundles[lang]) return _bundles[lang];
+        try {
+            const res = await fetch('/assets/js/i18n/aki_kesif_' + lang + '.json',
+                                    { cache: 'no-cache' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            _bundles[lang] = await res.json();
+            return _bundles[lang];
+        } catch (e) {
+            console.warn('[i18n] bundle load failed', lang, e);
+            if (lang !== FALLBACK) return loadBundle(FALLBACK);
+            _bundles[lang] = {};
+            return {};
+        }
+    }
+
+    async function init() {
+        _currentLang = detectLang();
+        await loadBundle(_currentLang);
+        // <html lang="…"> — SR + Lighthouse i18n
+        try { document.documentElement.setAttribute('lang', _currentLang); } catch (e) { /* ignore */ }
+        return _currentLang;
+    }
+
+    function t(key, params) {
+        const bundle = _bundles[_currentLang] || {};
+        let raw = bundle[key];
+        if (raw === undefined && _currentLang !== FALLBACK) {
+            raw = (_bundles[FALLBACK] || {})[key];
+        }
+        if (raw === undefined) return key;   // debug passthrough
+        if (params && typeof params === 'object') {
+            return String(raw).replace(/\{(\w+)\}/g, function (m, k) {
+                return (k in params) ? String(params[k]) : m;
+            });
+        }
+        return raw;
+    }
+
+    function applyTranslations(rootEl) {
+        if (!rootEl || typeof rootEl.querySelectorAll !== 'function') return;
+        rootEl.querySelectorAll('[data-i18n]').forEach(function (el) {
+            const key = el.getAttribute('data-i18n');
+            const paramsAttr = el.getAttribute('data-i18n-params');
+            let p = null;
+            if (paramsAttr) { try { p = JSON.parse(paramsAttr); } catch (e) { /* ignore */ } }
+            // textContent — innerHTML değil (ARES XSS gate)
+            el.textContent = t(key, p);
+        });
+        rootEl.querySelectorAll('[data-i18n-attr]').forEach(function (el) {
+            // data-i18n-attr="title:tooltip.help;aria-label:button.save"
+            const spec = el.getAttribute('data-i18n-attr') || '';
+            spec.split(';').forEach(function (pair) {
+                const parts = pair.split(':').map(function (s) { return s.trim(); });
+                const attr = parts[0], key = parts[1];
+                if (attr && key) el.setAttribute(attr, t(key));
+            });
+        });
+    }
+
+    function setLang(lang) {
+        if (!SUPPORTED.includes(lang)) return Promise.resolve(_currentLang);
+        try { localStorage.setItem(STORAGE_KEY, lang); } catch (e) { /* ignore */ }
+        return loadBundle(lang).then(function () {
+            _currentLang = lang;
+            try { document.documentElement.setAttribute('lang', lang); } catch (e) { /* ignore */ }
+            return lang;
+        });
+    }
+
+    function getLang() { return _currentLang; }
+
+    // v3.33.0 — idempotent init + ready promise
+    // Bug fix: hiçbir yer init() çağırmadığı için aki_kesif bundle yüklenmiyor,
+    // wizard.step.indicator gibi key'ler ham görünüyordu.
+    let _initPromise = null;
+    function ensureInit() {
+        if (!_initPromise) _initPromise = init();
+        return _initPromise;
+    }
+
+    window.VyraI18n = {
+        init: init,
+        ensureInit: ensureInit,
+        t: t,
+        applyTranslations: applyTranslations,
+        setLang: setLang,
+        getLang: getLang,
+        SUPPORTED: SUPPORTED,
+    };
+
+    // Auto-bootstrap: DOMContentLoaded'da (veya hemen) ensureInit() tetikle.
+    function _autoBoot() { ensureInit().catch(function (e) { console.warn('[i18n] auto-init failed', e); }); }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _autoBoot, { once: true });
+    } else {
+        _autoBoot();
+    }
+})();
+
+
 /* === assets/js/modules/db_smart_ast_history.js === */
 /**
  * VYRA — DB Smart AST History (Faz 3 / P20-B / v3.30.0)
@@ -35615,9 +36163,33 @@ window.ThemePickerPopup = (function () {
         }
     }
 
-    function init() {
+    // v3.33.0 — i18n bundle hazır olana kadar bekle (step.indicator vb. için)
+    async function _ensureI18n() {
+        if (!window.VyraI18n) return;
+        try {
+            if (typeof window.VyraI18n.ensureInit === 'function') {
+                await window.VyraI18n.ensureInit();
+            } else if (typeof window.VyraI18n.init === 'function') {
+                await window.VyraI18n.init();
+            }
+        } catch (e) { /* graceful: passthrough fallback */ }
+    }
+
+    function init(opts) {
+        opts = opts || {};
         // Record opener for return-focus (HEBE Gate)
         _state._lastFocusEl = document.activeElement;
+        // i18n bundle async load (fire-and-forget; UI metinleri sonra applyTranslations)
+        _ensureI18n().then(function () {
+            try {
+                if (window.VyraI18n && typeof window.VyraI18n.applyTranslations === 'function') {
+                    const root = document.getElementById('dbSmartWizardPanel');
+                    if (root) window.VyraI18n.applyTranslations(root);
+                }
+                // step indicator'ı yeniden bas
+                _setStep(_state.currentStep);
+            } catch (e) { /* ignore */ }
+        });
 
         // Buton binding'leri (idempotent)
         const searchBtn = document.getElementById('dswSearchBtn');
@@ -35668,12 +36240,2188 @@ window.ThemePickerPopup = (function () {
         _ensureSession();
     }
 
+    // ============================================================
+    // v3.33.0 — Modal wrapper (overlay + dialog)
+    // ============================================================
+    // Strateji: inline panel'i klonlamak yerine **taşı** (appendChild).
+    //   - DOM event listener'ları + _bound flag'leri korunur (Agent A note #3).
+    //   - Modal kapanınca panel orijinal parent'a iade edilir.
+
+    let _modalState = {
+        open: false,
+        overlay: null,
+        dialog: null,
+        panelOrigParent: null,
+        panelOrigNextSibling: null,
+        prevBodyOverflow: null,
+        resolve: null,
+        opener: null,
+    };
+
+    function isOpen() { return !!_modalState.open; }
+
+    function _trapFocus(e) {
+        if (e.key !== 'Tab') return;
+        const dialog = _modalState.dialog;
+        if (!dialog) return;
+        const focusables = dialog.querySelectorAll(
+            'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])'
+        );
+        if (!focusables.length) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+            e.preventDefault(); last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+            e.preventDefault(); first.focus();
+        }
+    }
+
+    function _onModalKeydown(e) {
+        if (e.key === 'Escape') { e.stopPropagation(); closeModal({ action: 'cancelled' }); return; }
+        _trapFocus(e);
+    }
+
+    function _onOverlayClick(e) {
+        if (e.target === _modalState.overlay) closeModal({ action: 'cancelled' });
+    }
+
+    async function openAsModal(opts) {
+        opts = opts || {};
+        if (_modalState.open) return Promise.resolve(null);
+
+        // Wizard panel DOM'unu modal'a taşı
+        const panel = document.getElementById('dbSmartWizardPanel');
+        if (!panel) {
+            console.warn('[DbSmartWizard] panel DOM bulunamadı');
+            return Promise.resolve(null);
+        }
+
+        _modalState.opener = document.activeElement;
+        _state._lastFocusEl = _modalState.opener;
+
+        // Overlay + dialog
+        const overlay = document.createElement('div');
+        overlay.className = 'dsw-modal-overlay';
+        overlay.setAttribute('role', 'presentation');
+        overlay.addEventListener('click', _onOverlayClick);
+
+        const dialog = document.createElement('div');
+        dialog.className = 'dsw-modal-dialog';
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.setAttribute('aria-labelledby', 'dswTitle');
+
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'dsw-modal-close';
+        closeBtn.setAttribute('aria-label', 'Kapat');
+        closeBtn.setAttribute('data-tooltip', 'Kapat (Esc)');
+        closeBtn.textContent = '×';
+        closeBtn.addEventListener('click', function () { closeModal({ action: 'cancelled' }); });
+
+        dialog.appendChild(closeBtn);
+
+        // Panel'i taşı (klonlama yok — event binding korunur)
+        _modalState.panelOrigParent = panel.parentNode;
+        _modalState.panelOrigNextSibling = panel.nextSibling;
+        panel.classList.remove('hidden');
+        panel.hidden = false;
+        panel.classList.add('dsw-in-modal');
+        dialog.appendChild(panel);
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        // Body scroll lock
+        _modalState.prevBodyOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+
+        _modalState.open = true;
+        _modalState.overlay = overlay;
+        _modalState.dialog = dialog;
+
+        // ESC + focus trap
+        document.addEventListener('keydown', _onModalKeydown, true);
+
+        // Wizard init/hydrate
+        init({ mode: 'modal' });
+
+        // reportId verilmişse hydrate dene (best-effort, hatayı yutar)
+        if (opts.reportId) {
+            _hydrateFromSavedReport(opts.reportId).catch(function (e) {
+                console.warn('[DbSmartWizard] reportId hydrate failed', e);
+            });
+        }
+
+        // İlk focusable'a focus
+        setTimeout(function () {
+            try {
+                const target = dialog.querySelector(
+                    'input,select,textarea,button:not([disabled]),[tabindex]:not([tabindex="-1"])'
+                );
+                if (target) target.focus();
+            } catch (e) { /* ignore */ }
+        }, 0);
+
+        return new Promise(function (resolve) {
+            _modalState.resolve = function (payload) {
+                resolve(payload);
+                if (opts && typeof opts.onClose === 'function') {
+                    try { opts.onClose(payload); } catch (e) { /* ignore */ }
+                }
+                if (payload && payload.action === 'saved' && opts && typeof opts.onSave === 'function') {
+                    try { opts.onSave(payload); } catch (e) { /* ignore */ }
+                }
+            };
+        });
+    }
+
+    async function _hydrateFromSavedReport(reportId) {
+        const url = API_BASE + '/saved-reports/' + encodeURIComponent(reportId);
+        const data = await _fetchJson(url);
+        if (data && data.wizard_state && typeof data.wizard_state === 'object') {
+            const ws = data.wizard_state;
+            if (ws.sourceId) _state.sourceId = ws.sourceId;
+            if (ws.selectedTableId) _state.selectedTableId = ws.selectedTableId;
+            if (ws.selectedTableObjectName) _state.selectedTableObjectName = ws.selectedTableObjectName;
+            if (ws.selectedTableSchema) _state.selectedTableSchema = ws.selectedTableSchema;
+            if (ws.selectedTableLabel) _state.selectedTableLabel = ws.selectedTableLabel;
+            if (Array.isArray(ws.selectedTables)) _state.selectedTables = ws.selectedTables;
+            if (ws.metric) _state.metric = ws.metric;
+            if (Array.isArray(ws.filters)) _state.filters = ws.filters;
+            _setStep(0);
+        }
+    }
+
+    function closeModal(payload) {
+        if (!_modalState.open) return;
+        const overlay = _modalState.overlay;
+        const panel = document.getElementById('dbSmartWizardPanel');
+
+        document.removeEventListener('keydown', _onModalKeydown, true);
+
+        // Panel'i orijinal parent'a iade et + gizle
+        if (panel) {
+            panel.classList.remove('dsw-in-modal');
+            try {
+                if (_modalState.panelOrigParent) {
+                    if (_modalState.panelOrigNextSibling && _modalState.panelOrigNextSibling.parentNode === _modalState.panelOrigParent) {
+                        _modalState.panelOrigParent.insertBefore(panel, _modalState.panelOrigNextSibling);
+                    } else {
+                        _modalState.panelOrigParent.appendChild(panel);
+                    }
+                }
+            } catch (e) { /* ignore */ }
+            panel.classList.add('hidden');
+            panel.setAttribute('hidden', '');
+        }
+
+        if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+
+        // Body scroll restore
+        document.body.style.overflow = _modalState.prevBodyOverflow || '';
+
+        // Return focus
+        if (_modalState.opener && typeof _modalState.opener.focus === 'function') {
+            try { _modalState.opener.focus(); } catch (e) { /* ignore */ }
+        }
+
+        const resolve = _modalState.resolve;
+        _modalState = {
+            open: false, overlay: null, dialog: null,
+            panelOrigParent: null, panelOrigNextSibling: null,
+            prevBodyOverflow: null, resolve: null, opener: null,
+        };
+        if (typeof resolve === 'function') {
+            resolve(payload || { action: 'cancelled' });
+        }
+    }
+
+    // Save sonrası dışarıdan tetiklenebilir hook (ileride wizard finish'i çağıracak)
+    function _notifySaved(reportId, name) {
+        if (_modalState.open) {
+            closeModal({ action: 'saved', reportId: reportId, name: name });
+        }
+    }
+
     window.DbSmartWizardModule = {
         init: init,
         close: _closeWizard,
+        openAsModal: openAsModal,
+        closeModal: closeModal,
+        isOpen: isOpen,
+        _notifySaved: _notifySaved,
         getState: function () { return Object.assign({}, _state); },
     };
 })();
+
+
+/* === assets/js/modules/report_detail_modal.js === */
+/**
+ * VYRA — Report Detail Modal Module
+ * ==================================
+ * Kayıtlı bir raporun detayını gösterir; Çalıştır / Düzenle / Kopyala / Paylaş / Sil aksiyonları.
+ *
+ * Public API:
+ *   window.ReportDetailModal.open(reportId, {
+ *     onEdit(reportId),
+ *     onDuplicate(newReportId),
+ *     onDeleted(reportId),
+ *     onRan(result),
+ *   }) -> Promise
+ *   window.ReportDetailModal.close()
+ *
+ * HEBE: aria-modal, role=dialog, ESC, overlay click, focus trap, return-focus, body scroll lock.
+ *
+ * Brief: 2026-05-23_aki-kesfi-B_saved-reports-grid
+ * Version: 1.0.0
+ */
+
+(function () {
+    'use strict';
+
+    const API_BASE = '/api/db-smart';
+
+    // ─── State ───
+    let _overlay = null;
+    let _dialog = null;
+    let _opts = {};
+    let _reportId = null;
+    let _report = null;
+    let _returnFocusEl = null;
+    let _escHandler = null;
+    let _focusTrapHandler = null;
+    let _resolveOpen = null;
+    let _isRunning = false;
+
+    // ─── Utils ───
+    function _authHeaders() {
+        const token = localStorage.getItem('access_token');
+        const h = { 'Content-Type': 'application/json' };
+        if (token) h['Authorization'] = 'Bearer ' + token;
+        return h;
+    }
+
+    function _toast(msg, kind) {
+        if (window.showToast) {
+            try { window.showToast(msg, kind || 'info'); return; } catch (_) { /* noop */ }
+        }
+        try { console.log('[ReportDetailModal]', kind || 'info', msg); } catch (_) { /* noop */ }
+    }
+
+    function _clear(el) { while (el && el.firstChild) el.removeChild(el.firstChild); }
+
+    function _svg(d) {
+        const ns = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(ns, 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor');
+        svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round');
+        svg.setAttribute('stroke-linejoin', 'round');
+        svg.setAttribute('aria-hidden', 'true');
+        svg.classList.add('rdm-icon');
+        const path = document.createElementNS(ns, 'path');
+        path.setAttribute('d', d);
+        svg.appendChild(path);
+        return svg;
+    }
+
+    const ICONS = {
+        play: 'M8 5v14l11-7z',
+        edit: 'M11 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z',
+        copy: 'M9 9h10v10H9zM5 5h10v4M5 5v10h4',
+        share: 'M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7M16 6l-4-4-4 4M12 2v14',
+        trash: 'M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14',
+        close: 'M18 6L6 18M6 6l12 12',
+        spinner: 'M12 2a10 10 0 1 0 10 10',
+    };
+
+    // ─── Tarih ───
+    const MONTH_TR = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+    function _relativeTime(isoStr) {
+        if (!isoStr) return '';
+        const d = new Date(isoStr);
+        if (isNaN(d.getTime())) return '';
+        const now = new Date();
+        const diffSec = Math.floor((now.getTime() - d.getTime()) / 1000);
+        if (diffSec < 60) return '<1dk önce';
+        if (diffSec < 3600) return Math.floor(diffSec / 60) + 'dk önce';
+        if (diffSec < 86400) return Math.floor(diffSec / 3600) + 'sa önce';
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        const startOfThat = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+        const diffDays = Math.round((startOfToday - startOfThat) / 86400000);
+        if (diffDays === 1) return 'dün';
+        if (diffDays > 1 && diffDays < 7) return diffDays + 'gün önce';
+        return d.getDate() + ' ' + MONTH_TR[d.getMonth()];
+    }
+    function _absoluteISO(isoStr) {
+        if (!isoStr) return '';
+        const d = new Date(isoStr);
+        if (isNaN(d.getTime())) return String(isoStr);
+        try { return d.toISOString(); } catch (_) { return String(isoStr); }
+    }
+
+    // ─── Focus trap ───
+    function _focusableEls(container) {
+        const sel = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+        return Array.from(container.querySelectorAll(sel)).filter((el) => {
+            return el.offsetParent !== null || el === document.activeElement;
+        });
+    }
+
+    function _installFocusTrap(container) {
+        _focusTrapHandler = function (e) {
+            if (e.key !== 'Tab') return;
+            const els = _focusableEls(container);
+            if (els.length === 0) return;
+            const first = els[0];
+            const last = els[els.length - 1];
+            if (e.shiftKey && document.activeElement === first) {
+                e.preventDefault();
+                last.focus();
+            } else if (!e.shiftKey && document.activeElement === last) {
+                e.preventDefault();
+                first.focus();
+            }
+        };
+        container.addEventListener('keydown', _focusTrapHandler);
+    }
+
+    // ─── Modal shell ───
+    function _createOverlay() {
+        const overlay = document.createElement('div');
+        overlay.className = 'rdm-overlay';
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) close();
+        });
+
+        const dialog = document.createElement('div');
+        dialog.className = 'rdm-dialog';
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.setAttribute('aria-labelledby', 'rdm-title');
+        dialog.setAttribute('tabindex', '-1');
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        // body scroll lock
+        document.body.style.overflow = 'hidden';
+
+        // ESC
+        _escHandler = function (e) {
+            if (e.key === 'Escape') {
+                // confirm modal açıksa ona bırak
+                if (document.querySelector('.rdm-confirm-overlay')) return;
+                close();
+            }
+        };
+        document.addEventListener('keydown', _escHandler);
+
+        _installFocusTrap(dialog);
+
+        _overlay = overlay;
+        _dialog = dialog;
+
+        // mount sonrası dialog'a focus
+        requestAnimationFrame(() => {
+            try { dialog.focus(); } catch (_) { /* noop */ }
+            overlay.classList.add('is-visible');
+        });
+    }
+
+    function _renderLoading() {
+        if (!_dialog) return;
+        _clear(_dialog);
+        const loading = document.createElement('div');
+        loading.className = 'rdm-loading';
+        const sp = document.createElement('div');
+        sp.className = 'rdm-spinner';
+        loading.appendChild(sp);
+        const t = document.createElement('div');
+        t.className = 'rdm-loading-text';
+        t.textContent = 'Rapor yükleniyor...';
+        loading.appendChild(t);
+        _dialog.appendChild(loading);
+    }
+
+    function _renderError(msg) {
+        if (!_dialog) return;
+        _clear(_dialog);
+        const wrap = document.createElement('div');
+        wrap.className = 'rdm-error';
+        const t = document.createElement('div');
+        t.className = 'rdm-error-text';
+        t.textContent = msg || 'Bir hata oluştu.';
+        wrap.appendChild(t);
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'rdm-btn rdm-btn-secondary';
+        closeBtn.textContent = 'Kapat';
+        closeBtn.addEventListener('click', close);
+        wrap.appendChild(closeBtn);
+        _dialog.appendChild(wrap);
+    }
+
+    // ─── Detail render ───
+    function _renderDetail() {
+        if (!_dialog || !_report) return;
+        _clear(_dialog);
+
+        // header
+        const header = document.createElement('header');
+        header.className = 'rdm-header';
+
+        const headerLeft = document.createElement('div');
+        headerLeft.className = 'rdm-header-left';
+
+        const title = document.createElement('h2');
+        title.className = 'rdm-title';
+        title.id = 'rdm-title';
+        title.textContent = _report.name || 'Adsız Rapor';
+        headerLeft.appendChild(title);
+
+        const meta = document.createElement('div');
+        meta.className = 'rdm-meta';
+
+        const ts = _report.updated_at || _report.last_run_at || _report.created_at;
+        if (ts) {
+            const time = document.createElement('span');
+            time.className = 'rdm-meta-time';
+            time.textContent = _relativeTime(ts);
+            const abs = _absoluteISO(ts);
+            time.setAttribute('data-tooltip', abs);
+            time.setAttribute('title', abs);
+            meta.appendChild(time);
+        }
+
+        const metricKey = _report.metric_key || _report.metric;
+        if (metricKey) {
+            const metric = document.createElement('span');
+            metric.className = 'rdm-metric-badge';
+            metric.textContent = String(metricKey);
+            meta.appendChild(metric);
+        }
+
+        const tags = Array.isArray(_report.tags) ? _report.tags : [];
+        if (tags.length > 0) {
+            const tagWrap = document.createElement('span');
+            tagWrap.className = 'rdm-tags';
+            tags.forEach((t) => {
+                const c = document.createElement('span');
+                c.className = 'rdm-tag';
+                c.textContent = String(t);
+                tagWrap.appendChild(c);
+            });
+            meta.appendChild(tagWrap);
+        }
+
+        headerLeft.appendChild(meta);
+        header.appendChild(headerLeft);
+
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'rdm-icon-btn rdm-close-btn';
+        closeBtn.setAttribute('aria-label', 'Kapat');
+        closeBtn.setAttribute('data-tooltip', 'Kapat');
+        closeBtn.appendChild(_svg(ICONS.close));
+        closeBtn.addEventListener('click', close);
+        header.appendChild(closeBtn);
+
+        _dialog.appendChild(header);
+
+        // description
+        if (_report.description) {
+            const desc = document.createElement('p');
+            desc.className = 'rdm-description';
+            desc.textContent = _report.description;
+            _dialog.appendChild(desc);
+        }
+
+        // body
+        const body = document.createElement('div');
+        body.className = 'rdm-body';
+
+        // preview area
+        const preview = document.createElement('div');
+        preview.className = 'rdm-preview';
+        const hint = document.createElement('div');
+        hint.className = 'rdm-preview-hint';
+        if (_report.last_run_at) {
+            hint.textContent = 'Son çalıştırma: ' + _relativeTime(_report.last_run_at) + ' — sonucu güncellemek için Çalıştır\'a bas.';
+        } else {
+            hint.textContent = 'Henüz çalıştırılmadı. Çalıştır butonu ile sorguyu yürütebilirsin.';
+        }
+        preview.appendChild(hint);
+
+        const resultMount = document.createElement('div');
+        resultMount.className = 'rdm-result-mount';
+        preview.appendChild(resultMount);
+
+        body.appendChild(preview);
+
+        // SQL accordion
+        if (_report.last_sql) {
+            const details = document.createElement('details');
+            details.className = 'rdm-sql-accordion';
+            const summary = document.createElement('summary');
+            summary.className = 'rdm-sql-summary';
+            summary.textContent = 'SQL\'i göster';
+            details.appendChild(summary);
+            const pre = document.createElement('pre');
+            pre.className = 'rdm-sql-pre';
+            pre.textContent = String(_report.last_sql);
+            details.appendChild(pre);
+            body.appendChild(details);
+        }
+
+        _dialog.appendChild(body);
+
+        // footer actions
+        const footer = document.createElement('footer');
+        footer.className = 'rdm-footer';
+
+        const runBtn = _makeActionBtn('Çalıştır', ICONS.play, 'rdm-btn-primary');
+        runBtn.dataset.role = 'run';
+        runBtn.addEventListener('click', _onRun);
+        footer.appendChild(runBtn);
+
+        const editBtn = _makeActionBtn('Düzenle', ICONS.edit, 'rdm-btn-secondary');
+        editBtn.addEventListener('click', () => {
+            if (typeof _opts.onEdit === 'function') {
+                try { _opts.onEdit(_reportId); } catch (e) { console.error('[ReportDetailModal] onEdit error:', e); }
+            }
+            close();
+        });
+        footer.appendChild(editBtn);
+
+        const dupBtn = _makeActionBtn('Kopyala', ICONS.copy, 'rdm-btn-secondary');
+        dupBtn.addEventListener('click', _onDuplicate);
+        footer.appendChild(dupBtn);
+
+        const shareBtn = _makeActionBtn('Paylaş', ICONS.share, 'rdm-btn-secondary');
+        shareBtn.addEventListener('click', _onShare);
+        footer.appendChild(shareBtn);
+
+        const delBtn = _makeActionBtn('Sil', ICONS.trash, 'rdm-btn-danger');
+        delBtn.addEventListener('click', _onDelete);
+        footer.appendChild(delBtn);
+
+        _dialog.appendChild(footer);
+
+        // initial focus → run button
+        requestAnimationFrame(() => {
+            try { runBtn.focus(); } catch (_) { /* noop */ }
+        });
+    }
+
+    function _makeActionBtn(label, iconPath, variantClass) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'rdm-btn ' + (variantClass || '');
+        b.appendChild(_svg(iconPath));
+        const span = document.createElement('span');
+        span.textContent = label;
+        span.className = 'rdm-btn-label';
+        b.appendChild(span);
+        return b;
+    }
+
+    // ─── Aksiyonlar ───
+    async function _onRun(e) {
+        if (_isRunning) return;
+        const btn = e.currentTarget;
+        _isRunning = true;
+        const originalLabel = btn.querySelector('.rdm-btn-label');
+        const origText = originalLabel ? originalLabel.textContent : 'Çalıştır';
+        btn.disabled = true;
+        btn.classList.add('is-loading');
+        if (originalLabel) originalLabel.textContent = 'Çalıştırılıyor...';
+
+        const resultMount = _dialog.querySelector('.rdm-result-mount');
+        if (resultMount) {
+            _clear(resultMount);
+            const spin = document.createElement('div');
+            spin.className = 'rdm-result-loading';
+            spin.textContent = 'Sorgu çalıştırılıyor...';
+            resultMount.appendChild(spin);
+        }
+
+        try {
+            // 1) yeni session
+            const sessRes = await fetch(API_BASE + '/sessions', {
+                method: 'POST',
+                headers: _authHeaders(),
+                body: JSON.stringify({}),
+            });
+            if (!sessRes.ok) throw new Error('Session oluşturulamadı (HTTP ' + sessRes.status + ')');
+            const sess = await sessRes.json();
+            const uid = sess.session_uid || sess.uid || sess.id;
+            if (!uid) throw new Error('Session UID alınamadı');
+
+            // 2) execute wizard_state
+            const wizardState = _report.wizard_state || {};
+            const execRes = await fetch(API_BASE + '/sessions/' + encodeURIComponent(uid) + '/execute', {
+                method: 'POST',
+                headers: _authHeaders(),
+                body: JSON.stringify(wizardState),
+            });
+            if (!execRes.ok) {
+                let detail = 'HTTP ' + execRes.status;
+                try { const j = await execRes.json(); if (j && j.detail) detail = j.detail; } catch (_) { /* noop */ }
+                throw new Error('Çalıştırma başarısız: ' + detail);
+            }
+            const result = await execRes.json();
+
+            // 3) mark-run (best-effort)
+            fetch(API_BASE + '/saved-reports/' + encodeURIComponent(_reportId) + '/mark-run', {
+                method: 'POST',
+                headers: _authHeaders(),
+            }).catch(() => { /* noop */ });
+
+            // render result
+            if (resultMount) _renderRunResult(resultMount, result);
+
+            _toast('Sorgu çalıştırıldı', 'success');
+            if (typeof _opts.onRan === 'function') {
+                try { _opts.onRan(result); } catch (err) { console.error('[ReportDetailModal] onRan error:', err); }
+            }
+        } catch (err) {
+            console.error('[ReportDetailModal] run error:', err);
+            _toast((err && err.message) || 'Çalıştırma başarısız', 'error');
+            if (resultMount) {
+                _clear(resultMount);
+                const errBox = document.createElement('div');
+                errBox.className = 'rdm-result-error';
+                errBox.textContent = (err && err.message) || 'Çalıştırma başarısız';
+                resultMount.appendChild(errBox);
+            }
+        } finally {
+            _isRunning = false;
+            btn.disabled = false;
+            btn.classList.remove('is-loading');
+            if (originalLabel) originalLabel.textContent = origText;
+        }
+    }
+
+    function _renderRunResult(mount, result) {
+        _clear(mount);
+        const rows = (result && (result.rows || result.data)) || [];
+        const cols = (result && result.columns) || (rows.length > 0 ? Object.keys(rows[0]) : []);
+        if (!cols || cols.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'rdm-result-empty';
+            empty.textContent = 'Sonuç boş.';
+            mount.appendChild(empty);
+            return;
+        }
+        const wrap = document.createElement('div');
+        wrap.className = 'rdm-table-wrap';
+        const table = document.createElement('table');
+        table.className = 'rdm-table';
+        const thead = document.createElement('thead');
+        const trh = document.createElement('tr');
+        cols.forEach((c) => {
+            const th = document.createElement('th');
+            th.textContent = String(c);
+            trh.appendChild(th);
+        });
+        thead.appendChild(trh);
+        table.appendChild(thead);
+        const tbody = document.createElement('tbody');
+        rows.slice(0, 100).forEach((row) => {
+            const tr = document.createElement('tr');
+            cols.forEach((c) => {
+                const td = document.createElement('td');
+                const v = (row && typeof row === 'object') ? row[c] : '';
+                td.textContent = (v === null || v === undefined) ? '' : String(v);
+                tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+        mount.appendChild(wrap);
+        if (rows.length > 100) {
+            const note = document.createElement('div');
+            note.className = 'rdm-result-note';
+            note.textContent = 'İlk 100 satır gösteriliyor (toplam ' + rows.length + ').';
+            mount.appendChild(note);
+        }
+    }
+
+    // ─── Duplicate (inline rename mini-modal) ───
+    function _onDuplicate() {
+        _openRenameMini((newName) => {
+            fetch(API_BASE + '/saved-reports/' + encodeURIComponent(_reportId) + '/duplicate', {
+                method: 'POST',
+                headers: _authHeaders(),
+                body: JSON.stringify({ name: newName }),
+            })
+                .then((res) => {
+                    if (!res.ok) {
+                        return res.json().catch(() => ({})).then((j) => {
+                            throw new Error((j && j.detail) || ('HTTP ' + res.status));
+                        });
+                    }
+                    return res.json();
+                })
+                .then((data) => {
+                    const newId = (data && (data.report_id || data.id)) || null;
+                    _toast('Rapor kopyalandı', 'success');
+                    if (typeof _opts.onDuplicate === 'function') {
+                        try { _opts.onDuplicate(newId); } catch (e) { console.error('[ReportDetailModal] onDuplicate error:', e); }
+                    }
+                })
+                .catch((err) => {
+                    console.error('[ReportDetailModal] duplicate error:', err);
+                    _toast('Kopyalama başarısız: ' + (err && err.message ? err.message : ''), 'error');
+                });
+        });
+    }
+
+    function _openRenameMini(onConfirm) {
+        const overlay = document.createElement('div');
+        overlay.className = 'rdm-mini-overlay';
+
+        const dialog = document.createElement('div');
+        dialog.className = 'rdm-mini-dialog';
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.setAttribute('aria-labelledby', 'rdm-mini-title');
+
+        const title = document.createElement('h3');
+        title.className = 'rdm-mini-title';
+        title.id = 'rdm-mini-title';
+        title.textContent = 'Raporu Kopyala';
+        dialog.appendChild(title);
+
+        const label = document.createElement('label');
+        label.className = 'rdm-mini-label';
+        label.textContent = 'Yeni rapor adı';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'rdm-mini-input';
+        input.value = (_report && _report.name ? _report.name + ' (kopya)' : 'Adsız Rapor (kopya)');
+        label.appendChild(input);
+        dialog.appendChild(label);
+
+        const actions = document.createElement('div');
+        actions.className = 'rdm-mini-actions';
+
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'rdm-btn rdm-btn-secondary';
+        cancel.textContent = 'İptal';
+        actions.appendChild(cancel);
+
+        const save = document.createElement('button');
+        save.type = 'button';
+        save.className = 'rdm-btn rdm-btn-primary';
+        save.textContent = 'Kaydet';
+        actions.appendChild(save);
+
+        dialog.appendChild(actions);
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        const closeMini = () => {
+            document.removeEventListener('keydown', miniEsc);
+            overlay.remove();
+        };
+        const miniEsc = (e) => { if (e.key === 'Escape') closeMini(); };
+        document.addEventListener('keydown', miniEsc);
+
+        cancel.addEventListener('click', closeMini);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) closeMini(); });
+        save.addEventListener('click', () => {
+            const v = (input.value || '').trim();
+            if (!v) { input.focus(); return; }
+            closeMini();
+            onConfirm(v);
+        });
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); save.click(); }
+        });
+
+        requestAnimationFrame(() => { try { input.focus(); input.select(); } catch (_) { /* noop */ } });
+    }
+
+    // ─── Share ───
+    function _onShare() {
+        fetch(API_BASE + '/saved-reports/' + encodeURIComponent(_reportId) + '/share', {
+            method: 'POST',
+            headers: _authHeaders(),
+            body: JSON.stringify({ ttl_hours: 168 }),
+        })
+            .then((res) => {
+                if (!res.ok) {
+                    return res.json().catch(() => ({})).then((j) => {
+                        throw new Error((j && j.detail) || ('HTTP ' + res.status));
+                    });
+                }
+                return res.json();
+            })
+            .then((data) => {
+                const token = data && data.share_token;
+                if (!token) throw new Error('Share token alınamadı');
+                const url = window.location.origin + '/r/' + encodeURIComponent(token);
+                const writeClipboard = () => {
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        return navigator.clipboard.writeText(url);
+                    }
+                    return Promise.reject(new Error('clipboard unavailable'));
+                };
+                writeClipboard()
+                    .then(() => { _toast('Paylaşım linki panoya kopyalandı', 'success'); })
+                    .catch(() => { _toast('Link: ' + url, 'info'); });
+            })
+            .catch((err) => {
+                console.error('[ReportDetailModal] share error:', err);
+                _toast('Paylaşım başarısız: ' + (err && err.message ? err.message : ''), 'error');
+            });
+    }
+
+    // ─── Delete (custom confirm) ───
+    function _onDelete() {
+        _openConfirm({
+            title: 'Raporu Sil',
+            message: '"' + ((_report && _report.name) || 'Bu rapor') + '" kalıcı olarak silinecek. Bu işlem geri alınamaz.',
+            confirmText: 'Sil',
+            cancelText: 'İptal',
+            danger: true,
+            onConfirm: () => {
+                fetch(API_BASE + '/saved-reports/' + encodeURIComponent(_reportId), {
+                    method: 'DELETE',
+                    headers: _authHeaders(),
+                })
+                    .then((res) => {
+                        if (!res.ok) {
+                            return res.json().catch(() => ({})).then((j) => {
+                                throw new Error((j && j.detail) || ('HTTP ' + res.status));
+                            });
+                        }
+                        _toast('Rapor silindi', 'success');
+                        const deletedId = _reportId;
+                        close();
+                        if (typeof _opts.onDeleted === 'function') {
+                            try { _opts.onDeleted(deletedId); } catch (e) { console.error('[ReportDetailModal] onDeleted error:', e); }
+                        }
+                    })
+                    .catch((err) => {
+                        console.error('[ReportDetailModal] delete error:', err);
+                        _toast('Silme başarısız: ' + (err && err.message ? err.message : ''), 'error');
+                    });
+            },
+        });
+    }
+
+    function _openConfirm(cfg) {
+        const overlay = document.createElement('div');
+        overlay.className = 'rdm-confirm-overlay';
+
+        const dialog = document.createElement('div');
+        dialog.className = 'rdm-confirm-dialog';
+        dialog.setAttribute('role', 'alertdialog');
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.setAttribute('aria-labelledby', 'rdm-confirm-title');
+        dialog.setAttribute('aria-describedby', 'rdm-confirm-msg');
+
+        const h = document.createElement('h3');
+        h.className = 'rdm-confirm-title';
+        h.id = 'rdm-confirm-title';
+        h.textContent = cfg.title || 'Onayla';
+        dialog.appendChild(h);
+
+        const p = document.createElement('p');
+        p.className = 'rdm-confirm-msg';
+        p.id = 'rdm-confirm-msg';
+        p.textContent = cfg.message || '';
+        dialog.appendChild(p);
+
+        const actions = document.createElement('div');
+        actions.className = 'rdm-confirm-actions';
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'rdm-btn rdm-btn-secondary';
+        cancel.textContent = cfg.cancelText || 'İptal';
+        actions.appendChild(cancel);
+
+        const ok = document.createElement('button');
+        ok.type = 'button';
+        ok.className = 'rdm-btn ' + (cfg.danger ? 'rdm-btn-danger' : 'rdm-btn-primary');
+        ok.textContent = cfg.confirmText || 'Onayla';
+        actions.appendChild(ok);
+
+        dialog.appendChild(actions);
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        const closeConfirm = () => {
+            document.removeEventListener('keydown', escCfg);
+            overlay.remove();
+        };
+        const escCfg = (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeConfirm(); } };
+        document.addEventListener('keydown', escCfg);
+
+        cancel.addEventListener('click', closeConfirm);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) closeConfirm(); });
+        ok.addEventListener('click', () => {
+            closeConfirm();
+            if (typeof cfg.onConfirm === 'function') cfg.onConfirm();
+        });
+
+        requestAnimationFrame(() => { try { cancel.focus(); } catch (_) { /* noop */ } });
+    }
+
+    // ─── Fetch detail ───
+    async function _fetchDetail(id) {
+        const res = await fetch(API_BASE + '/saved-reports/' + encodeURIComponent(id), { headers: _authHeaders() });
+        if (!res.ok) {
+            let detail = 'HTTP ' + res.status;
+            try { const j = await res.json(); if (j && j.detail) detail = j.detail; } catch (_) { /* noop */ }
+            throw new Error(detail);
+        }
+        return await res.json();
+    }
+
+    // ─── Public ───
+    function open(reportId, opts) {
+        if (_overlay) { close(); }
+        _reportId = reportId;
+        _opts = Object.assign({}, opts || {});
+        _returnFocusEl = document.activeElement;
+
+        _createOverlay();
+        _renderLoading();
+
+        return new Promise((resolve) => {
+            _resolveOpen = resolve;
+            _fetchDetail(reportId)
+                .then((data) => {
+                    _report = data || {};
+                    _renderDetail();
+                })
+                .catch((err) => {
+                    console.error('[ReportDetailModal] fetch detail error:', err);
+                    _renderError((err && err.message) || 'Rapor yüklenemedi');
+                });
+        });
+    }
+
+    function close() {
+        if (!_overlay) return;
+        if (_escHandler) {
+            document.removeEventListener('keydown', _escHandler);
+            _escHandler = null;
+        }
+        if (_focusTrapHandler && _dialog) {
+            _dialog.removeEventListener('keydown', _focusTrapHandler);
+            _focusTrapHandler = null;
+        }
+        _overlay.classList.remove('is-visible');
+        const overlay = _overlay;
+        const returnEl = _returnFocusEl;
+        const resolve = _resolveOpen;
+
+        setTimeout(() => {
+            if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        }, 200);
+
+        document.body.style.overflow = '';
+        _overlay = null;
+        _dialog = null;
+        _report = null;
+        _reportId = null;
+        _opts = {};
+        _isRunning = false;
+        _resolveOpen = null;
+        _returnFocusEl = null;
+
+        if (returnEl && typeof returnEl.focus === 'function') {
+            try { returnEl.focus(); } catch (_) { /* noop */ }
+        }
+        if (typeof resolve === 'function') resolve();
+    }
+
+    window.ReportDetailModal = {
+        open: open,
+        close: close,
+    };
+})();
+
+
+/* === assets/js/modules/saved_reports_grid.js === */
+/**
+ * VYRA — Saved Reports Grid Module
+ * =================================
+ * Kullanıcının kayıtlı (tasarladığı) raporlarını kart grid olarak listeler.
+ *
+ * Public API:
+ *   window.SavedReportsGrid.mount(rootEl, { onOpenReport, onNewReport })
+ *   window.SavedReportsGrid.refresh()
+ *   window.SavedReportsGrid.unmount()
+ *
+ * Brief: 2026-05-23_aki-kesfi-B_saved-reports-grid
+ * Version: 1.0.0
+ */
+
+(function () {
+    'use strict';
+
+    // ─── State ───
+    const API_BASE = '/api/db-smart';
+    let _root = null;
+    let _opts = { onOpenReport: null, onNewReport: null };
+    let _searchTimer = null;
+    let _currentChip = 'all'; // all | last7 | mostRun
+    let _lastItems = [];
+
+    // ─── Utils ───
+    function _authHeaders() {
+        const token = localStorage.getItem('access_token');
+        const h = { 'Content-Type': 'application/json' };
+        if (token) h['Authorization'] = 'Bearer ' + token;
+        return h;
+    }
+
+    function _toast(msg, kind) {
+        if (window.showToast) {
+            try { window.showToast(msg, kind || 'info'); return; } catch (_) { /* noop */ }
+        }
+        // sessiz fallback (console)
+        try { console.log('[SavedReportsGrid]', kind || 'info', msg); } catch (_) { /* noop */ }
+    }
+
+    function _qs(sel, root) { return (root || _root).querySelector(sel); }
+    function _qsa(sel, root) { return Array.from((root || _root).querySelectorAll(sel)); }
+
+    function _clear(el) { while (el && el.firstChild) el.removeChild(el.firstChild); }
+
+    function _icon(name) {
+        // basit inline SVG ikon havuzu (fa olmadığı kabulü için)
+        const ns = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(ns, 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor');
+        svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round');
+        svg.setAttribute('stroke-linejoin', 'round');
+        svg.setAttribute('aria-hidden', 'true');
+        svg.classList.add('srg-icon');
+        const path = document.createElementNS(ns, 'path');
+        const paths = {
+            plus: 'M12 5v14M5 12h14',
+            search: 'M21 21l-4.35-4.35M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16z',
+            empty: 'M3 7h18M3 12h18M3 17h18',
+            chart: 'M3 3v18h18M7 14l4-4 4 4 5-5',
+        };
+        path.setAttribute('d', paths[name] || paths.empty);
+        svg.appendChild(path);
+        return svg;
+    }
+
+    // ─── Tarih formatı ───
+    const MONTH_TR = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+
+    function _relativeTime(isoStr) {
+        if (!isoStr) return '';
+        const d = new Date(isoStr);
+        if (isNaN(d.getTime())) return '';
+        const now = new Date();
+        const diffSec = Math.floor((now.getTime() - d.getTime()) / 1000);
+        if (diffSec < 60) return '<1dk önce';
+        if (diffSec < 3600) return Math.floor(diffSec / 60) + 'dk önce';
+        if (diffSec < 86400) return Math.floor(diffSec / 3600) + 'sa önce';
+        // gün hesabı (takvim günü farkı)
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        const startOfThat = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+        const diffDays = Math.round((startOfToday - startOfThat) / 86400000);
+        if (diffDays === 1) return 'dün';
+        if (diffDays > 1 && diffDays < 7) return diffDays + 'gün önce';
+        return d.getDate() + ' ' + MONTH_TR[d.getMonth()];
+    }
+
+    function _absoluteISO(isoStr) {
+        if (!isoStr) return '';
+        const d = new Date(isoStr);
+        if (isNaN(d.getTime())) return String(isoStr);
+        try { return d.toISOString(); } catch (_) { return String(isoStr); }
+    }
+
+    // ─── DOM iskelet ───
+    function _buildShell() {
+        _clear(_root);
+
+        const wrap = document.createElement('div');
+        wrap.className = 'srg-root';
+
+        // header
+        const header = document.createElement('header');
+        header.className = 'srg-header';
+        const title = document.createElement('h2');
+        title.className = 'srg-title';
+        title.textContent = 'Tasarladığım Raporlar';
+        header.appendChild(title);
+
+        const tools = document.createElement('div');
+        tools.className = 'srg-tools';
+
+        const search = document.createElement('input');
+        search.type = 'search';
+        search.className = 'srg-search';
+        search.placeholder = 'Rapor ara...';
+        search.setAttribute('aria-label', 'Rapor arama');
+        tools.appendChild(search);
+
+        const newBtn = document.createElement('button');
+        newBtn.type = 'button';
+        newBtn.className = 'srg-new-btn';
+        newBtn.setAttribute('data-tooltip', 'Yeni keşif başlat');
+        newBtn.setAttribute('aria-label', 'Yeni keşif başlat');
+        newBtn.appendChild(_icon('plus'));
+        const newLabel = document.createElement('span');
+        newLabel.textContent = 'Yeni Keşif';
+        newBtn.appendChild(newLabel);
+        tools.appendChild(newBtn);
+
+        header.appendChild(tools);
+        wrap.appendChild(header);
+
+        // chips
+        const chipsRow = document.createElement('div');
+        chipsRow.className = 'srg-chips';
+        chipsRow.setAttribute('role', 'tablist');
+        chipsRow.setAttribute('aria-label', 'Kategori filtresi');
+        const chipDefs = [
+            { id: 'all', label: 'Tümü' },
+            { id: 'last7', label: 'Son 7 gün' },
+            { id: 'mostRun', label: 'En çok çalıştırılan' },
+        ];
+        chipDefs.forEach((c) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'srg-chip' + (c.id === _currentChip ? ' is-active' : '');
+            b.setAttribute('role', 'tab');
+            b.setAttribute('aria-selected', c.id === _currentChip ? 'true' : 'false');
+            b.dataset.chip = c.id;
+            b.textContent = c.label;
+            chipsRow.appendChild(b);
+        });
+        wrap.appendChild(chipsRow);
+
+        // grid
+        const grid = document.createElement('div');
+        grid.className = 'srg-grid';
+        grid.setAttribute('role', 'list');
+        grid.setAttribute('aria-live', 'polite');
+        grid.setAttribute('aria-busy', 'false');
+        wrap.appendChild(grid);
+
+        // empty placeholder
+        const empty = document.createElement('div');
+        empty.className = 'srg-empty hidden';
+        wrap.appendChild(empty);
+
+        _root.appendChild(wrap);
+
+        // events
+        search.addEventListener('input', () => {
+            if (_searchTimer) clearTimeout(_searchTimer);
+            _searchTimer = setTimeout(() => { refresh(); }, 300);
+        });
+
+        newBtn.addEventListener('click', () => {
+            if (typeof _opts.onNewReport === 'function') {
+                try { _opts.onNewReport(); } catch (e) { console.error('[SavedReportsGrid] onNewReport error:', e); }
+            }
+        });
+
+        chipsRow.addEventListener('click', (e) => {
+            const t = e.target.closest('.srg-chip');
+            if (!t) return;
+            _currentChip = t.dataset.chip || 'all';
+            _qsa('.srg-chip').forEach((c) => {
+                const on = c.dataset.chip === _currentChip;
+                c.classList.toggle('is-active', on);
+                c.setAttribute('aria-selected', on ? 'true' : 'false');
+            });
+            _renderItems(_applyChipFilter(_lastItems));
+        });
+    }
+
+    // ─── Skeleton ───
+    function _renderSkeleton() {
+        const grid = _qs('.srg-grid');
+        const empty = _qs('.srg-empty');
+        if (!grid) return;
+        empty.classList.add('hidden');
+        grid.setAttribute('aria-busy', 'true');
+        _clear(grid);
+        for (let i = 0; i < 6; i++) {
+            const sk = document.createElement('div');
+            sk.className = 'srg-skel-card';
+            sk.setAttribute('aria-hidden', 'true');
+            const sh1 = document.createElement('div'); sh1.className = 'srg-skel-line srg-skel-line--title'; sk.appendChild(sh1);
+            const sh2 = document.createElement('div'); sh2.className = 'srg-skel-line'; sk.appendChild(sh2);
+            const sh3 = document.createElement('div'); sh3.className = 'srg-skel-line srg-skel-line--short'; sk.appendChild(sh3);
+            grid.appendChild(sk);
+        }
+    }
+
+    // ─── Empty state ───
+    function _renderEmpty() {
+        const grid = _qs('.srg-grid');
+        const empty = _qs('.srg-empty');
+        if (!grid || !empty) return;
+        _clear(grid);
+        _clear(empty);
+
+        const wrap = document.createElement('div');
+        wrap.className = 'vyra-empty-state';
+
+        const iconWrap = document.createElement('div');
+        iconWrap.className = 'vyra-empty-state__icon';
+        iconWrap.appendChild(_icon('chart'));
+        wrap.appendChild(iconWrap);
+
+        const h3 = document.createElement('h3');
+        h3.className = 'vyra-empty-state__title';
+        h3.textContent = 'Henüz kayıtlı raporun yok';
+        wrap.appendChild(h3);
+
+        const p = document.createElement('p');
+        p.className = 'vyra-empty-state__desc';
+        p.textContent = 'Yeni bir keşif başlatarak ilk raporunu oluştur. Tüm raporların burada görünecek.';
+        wrap.appendChild(p);
+
+        const cta = document.createElement('button');
+        cta.type = 'button';
+        cta.className = 'vyra-empty-state__cta srg-new-btn';
+        cta.setAttribute('aria-label', 'Yeni keşif başlat');
+        cta.appendChild(_icon('plus'));
+        const ctaLabel = document.createElement('span');
+        ctaLabel.textContent = 'Yeni Keşif';
+        cta.appendChild(ctaLabel);
+        cta.addEventListener('click', () => {
+            if (typeof _opts.onNewReport === 'function') {
+                try { _opts.onNewReport(); } catch (e) { console.error('[SavedReportsGrid] onNewReport error:', e); }
+            }
+        });
+        wrap.appendChild(cta);
+
+        empty.appendChild(wrap);
+        empty.classList.remove('hidden');
+    }
+
+    // ─── Kart ───
+    function _renderCard(report) {
+        const card = document.createElement('article');
+        card.className = 'srg-card';
+        card.setAttribute('role', 'listitem');
+        card.setAttribute('tabindex', '0');
+        card.dataset.reportId = String(report.id);
+
+        // head
+        const head = document.createElement('header');
+        head.className = 'srg-card-head';
+
+        const metric = document.createElement('span');
+        metric.className = 'srg-card-metric-badge';
+        const metricKey = report.metric_key || report.metric || '';
+        if (metricKey) {
+            metric.textContent = String(metricKey);
+        } else {
+            metric.textContent = '—';
+            metric.classList.add('srg-card-metric-badge--muted');
+        }
+        head.appendChild(metric);
+
+        const title = document.createElement('h3');
+        title.className = 'srg-card-title';
+        title.textContent = report.name || 'Adsız Rapor';
+        head.appendChild(title);
+
+        card.appendChild(head);
+
+        // desc
+        const desc = document.createElement('p');
+        desc.className = 'srg-card-desc';
+        desc.textContent = report.description || '';
+        card.appendChild(desc);
+
+        // foot
+        const foot = document.createElement('footer');
+        foot.className = 'srg-card-foot';
+
+        const time = document.createElement('span');
+        time.className = 'srg-card-time';
+        const ts = report.updated_at || report.last_run_at || report.created_at;
+        time.textContent = _relativeTime(ts);
+        const absIso = _absoluteISO(ts);
+        if (absIso) {
+            time.setAttribute('data-tooltip', absIso);
+            time.setAttribute('title', absIso);
+        }
+        foot.appendChild(time);
+
+        const tagsWrap = document.createElement('span');
+        tagsWrap.className = 'srg-card-tags';
+        const tags = Array.isArray(report.tags) ? report.tags : [];
+        tags.slice(0, 3).forEach((t) => {
+            const chip = document.createElement('span');
+            chip.className = 'srg-tag';
+            chip.textContent = String(t);
+            tagsWrap.appendChild(chip);
+        });
+        if (tags.length > 3) {
+            const more = document.createElement('span');
+            more.className = 'srg-tag srg-tag--more';
+            more.textContent = '+' + (tags.length - 3);
+            tagsWrap.appendChild(more);
+        }
+        foot.appendChild(tagsWrap);
+
+        card.appendChild(foot);
+
+        // events
+        const openHandler = () => {
+            if (typeof _opts.onOpenReport === 'function') {
+                try { _opts.onOpenReport(report.id); } catch (e) { console.error('[SavedReportsGrid] onOpenReport error:', e); }
+            }
+        };
+        card.addEventListener('click', openHandler);
+        card.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                openHandler();
+            }
+        });
+
+        return card;
+    }
+
+    // ─── Liste filtresi (chip) ───
+    function _applyChipFilter(items) {
+        if (!Array.isArray(items)) return [];
+        if (_currentChip === 'last7') {
+            const cutoff = Date.now() - 7 * 86400000;
+            return items.filter((r) => {
+                const t = r.updated_at || r.last_run_at || r.created_at;
+                if (!t) return false;
+                const d = new Date(t);
+                return !isNaN(d.getTime()) && d.getTime() >= cutoff;
+            });
+        }
+        if (_currentChip === 'mostRun') {
+            const sorted = items.slice().sort((a, b) => (b.run_count || 0) - (a.run_count || 0));
+            return sorted;
+        }
+        return items;
+    }
+
+    function _renderItems(items) {
+        const grid = _qs('.srg-grid');
+        const empty = _qs('.srg-empty');
+        if (!grid) return;
+        grid.setAttribute('aria-busy', 'false');
+        _clear(grid);
+
+        if (!items || items.length === 0) {
+            _renderEmpty();
+            return;
+        }
+        empty.classList.add('hidden');
+        items.forEach((r) => grid.appendChild(_renderCard(r)));
+    }
+
+    // ─── Fetch ───
+    async function _fetchList() {
+        const search = _qs('.srg-search');
+        const q = (search && search.value ? search.value.trim() : '');
+        const params = new URLSearchParams();
+        params.set('limit', '24');
+        if (q) params.set('q', q);
+        const url = API_BASE + '/saved-reports?' + params.toString();
+        const res = await fetch(url, { headers: _authHeaders() });
+        if (!res.ok) {
+            let detail = 'HTTP ' + res.status;
+            try {
+                const data = await res.json();
+                if (data && data.detail) detail = data.detail;
+            } catch (_) { /* noop */ }
+            throw new Error(detail);
+        }
+        const data = await res.json();
+        return Array.isArray(data && data.items) ? data.items : [];
+    }
+
+    // ─── Public ───
+    function mount(rootEl, opts) {
+        if (!rootEl) {
+            console.error('[SavedReportsGrid] mount: rootEl gerekli');
+            return;
+        }
+        _root = rootEl;
+        _opts = Object.assign({ onOpenReport: null, onNewReport: null }, opts || {});
+        _buildShell();
+        refresh();
+        SavedReportsGrid._instance = { rootEl: _root };
+    }
+
+    function refresh() {
+        if (!_root) return;
+        _renderSkeleton();
+        _fetchList()
+            .then((items) => {
+                _lastItems = items || [];
+                _renderItems(_applyChipFilter(_lastItems));
+            })
+            .catch((err) => {
+                console.error('[SavedReportsGrid] fetch error:', err);
+                const grid = _qs('.srg-grid');
+                if (grid) {
+                    grid.setAttribute('aria-busy', 'false');
+                    _clear(grid);
+                }
+                _renderEmpty();
+                _toast('Raporlar yüklenemedi: ' + (err && err.message ? err.message : 'bilinmeyen hata'), 'error');
+            });
+    }
+
+    function unmount() {
+        if (_searchTimer) { clearTimeout(_searchTimer); _searchTimer = null; }
+        if (_root) { _clear(_root); }
+        _root = null;
+        _opts = { onOpenReport: null, onNewReport: null };
+        _lastItems = [];
+        SavedReportsGrid._instance = null;
+    }
+
+    const SavedReportsGrid = {
+        mount: mount,
+        refresh: refresh,
+        unmount: unmount,
+        _instance: null,
+    };
+
+    window.SavedReportsGrid = SavedReportsGrid;
+})();
+
+
+/* === assets/js/modules/learning_cache_dashboard.js === */
+/* -----------------------------------------------
+   VYRA — Learning Cache Hit Dashboard (Ajan-G)
+   v3.32.0
+
+   learned_db_queries cache effectiveness widget'ı.
+   - 3 metrik kart: Total Queries, Total Hits, Hit Rate %
+   - Top-10 most-hit query tablosu (ARIA + tooltip + SQL toggle)
+   - Empty / loading / error state'leri
+   - ARIA: role=status, aria-busy, role=table
+   - alert/confirm/prompt YASAK → window.showToast
+   - Hex sabit YOK → tüm renkler design token'lar üzerinden CSS sınıflarıyla
+------------------------------------------------ */
+
+const LCD_API_BASE = (typeof window !== 'undefined' && window.LCD_API_BASE_URL) || 'http://localhost:8002';
+
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+function _toast(type, message) {
+    if (typeof window === 'undefined') return;
+    if (window.VyraToast && typeof window.VyraToast[type] === 'function') {
+        window.VyraToast[type](message);
+        return;
+    }
+    if (typeof window.showToast === 'function') {
+        window.showToast(type, message);
+        return;
+    }
+    // Son çare: console — alert/confirm/prompt YASAK
+    console.log(`[learning-cache toast ${type}]`, message);
+}
+
+function _escape(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function _relativeTime(iso) {
+    if (!iso) return '—';
+    const then = new Date(iso);
+    if (Number.isNaN(then.getTime())) return '—';
+    const diffMs = Date.now() - then.getTime();
+    const sec = Math.floor(diffMs / 1000);
+    if (sec < 60) return `${sec} sn önce`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min} dk önce`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr} sa önce`;
+    const day = Math.floor(hr / 24);
+    if (day < 30) return `${day} gün önce`;
+    const mo = Math.floor(day / 30);
+    if (mo < 12) return `${mo} ay önce`;
+    const yr = Math.floor(mo / 12);
+    return `${yr} yıl önce`;
+}
+
+function _fmtPct(rate) {
+    const n = Number(rate || 0) * 100;
+    return `${n.toFixed(1)}%`;
+}
+
+function _fmtNum(n) {
+    const v = Number(n || 0);
+    return v.toLocaleString('tr-TR');
+}
+
+async function _fetchStats(sourceId) {
+    const token = (typeof localStorage !== 'undefined')
+        ? localStorage.getItem('access_token') : null;
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const url = `${LCD_API_BASE}/api/data-sources/${encodeURIComponent(sourceId)}/cache-stats`;
+    const res = await fetch(url, { method: 'GET', headers });
+    const text = await res.text();
+    let data;
+    try {
+        data = JSON.parse(text);
+    } catch (_e) {
+        throw new Error(`HTTP ${res.status} — JSON parse hatası`);
+    }
+    if (!res.ok || data?.success === false) {
+        const msg = data?.detail || data?.message || `HTTP ${res.status}`;
+        throw new Error(msg);
+    }
+    return data;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Render parçaları
+// ─────────────────────────────────────────────────────────────
+
+function _renderLoading() {
+    return `
+      <div class="lcache-loading" role="status" aria-live="polite" aria-busy="true">
+        <i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
+        <span>Cache istatistikleri yükleniyor…</span>
+      </div>
+    `;
+}
+
+function _renderError(message) {
+    return `
+      <div class="lcache-error" role="alert" aria-live="assertive">
+        <i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i>
+        <div>
+          <strong>Cache istatistikleri yüklenemedi</strong>
+          <div class="lcache-error-msg">${_escape(message || 'Bilinmeyen hata')}</div>
+        </div>
+      </div>
+    `;
+}
+
+function _renderEmpty() {
+    return `
+      <div class="lcache-empty" role="status">
+        <i class="fa-solid fa-database" aria-hidden="true"></i>
+        <h3>Henüz öğrenilmiş sorgu yok</h3>
+        <p>Bu veri kaynağında <code>learned_db_queries</code> tablosu boş. Cache effectiveness ölçümü için önce kullanıcı/sentetik sorgular çalıştırılmalı.</p>
+      </div>
+    `;
+}
+
+function _renderMetricCards(summary) {
+    const total = _fmtNum(summary.total);
+    const hits = _fmtNum(summary.total_hits);
+    const pct = _fmtPct(summary.hit_rate);
+    const used = _fmtNum(summary.used_count);
+    return `
+      <div class="lcache-cards" role="group" aria-label="Cache özet metrikleri">
+        <div class="lcache-card" role="status" aria-label="Toplam öğrenilmiş sorgu sayısı">
+          <div class="lcache-card-icon"><i class="fa-solid fa-list" aria-hidden="true"></i></div>
+          <div class="lcache-card-body">
+            <div class="lcache-card-label">Toplam Sorgu</div>
+            <div class="lcache-card-value">${total}</div>
+            <div class="lcache-card-sub">${used} tanesi en az 1 kez kullanıldı</div>
+          </div>
+        </div>
+        <div class="lcache-card" role="status" aria-label="Toplam cache isabet sayısı">
+          <div class="lcache-card-icon"><i class="fa-solid fa-bolt" aria-hidden="true"></i></div>
+          <div class="lcache-card-body">
+            <div class="lcache-card-label">Toplam İsabet</div>
+            <div class="lcache-card-value">${hits}</div>
+            <div class="lcache-card-sub">SUM(hit_count)</div>
+          </div>
+        </div>
+        <div class="lcache-card" role="status" aria-label="Cache isabet oranı">
+          <div class="lcache-card-icon"><i class="fa-solid fa-chart-line" aria-hidden="true"></i></div>
+          <div class="lcache-card-body">
+            <div class="lcache-card-label">İsabet Oranı</div>
+            <div class="lcache-card-value">${pct}</div>
+            <div class="lcache-card-sub">kullanılan / toplam</div>
+          </div>
+        </div>
+      </div>
+    `;
+}
+
+function _renderTopRow(item, rank) {
+    const id = Number(item.id) || 0;
+    const q = _escape(item.question_text || '');
+    const sqlEsc = _escape(item.sql_preview || '');
+    const hit = _fmtNum(item.hit_count);
+    const last = _relativeTime(item.last_hit_at);
+    const lastTitle = item.last_hit_at ? _escape(item.last_hit_at) : 'Hiç isabet yok';
+    const sqlBtnId = `lcache-sql-${id}`;
+    const truncBadge = item.sql_truncated
+        ? '<span class="lcache-trunc-badge" aria-label="SQL kısaltıldı (200 chr)">trunc</span>'
+        : '';
+
+    return `
+      <div class="lcache-row" role="row">
+        <div class="lcache-cell lcache-rank" role="cell">${rank}</div>
+        <div class="lcache-cell lcache-q" role="cell"
+             data-tooltip="${q}" title="${q}">
+          <span class="lcache-q-text">${q || '<em>(boş)</em>'}</span>
+        </div>
+        <div class="lcache-cell lcache-hit" role="cell"
+             aria-label="${hit} isabet">
+          <i class="fa-solid fa-bolt" aria-hidden="true"></i> ${hit}
+        </div>
+        <div class="lcache-cell lcache-last" role="cell"
+             title="${lastTitle}" data-tooltip="${lastTitle}">${last}</div>
+        <div class="lcache-cell lcache-sql" role="cell">
+          <button type="button" class="lcache-sql-toggle"
+                  data-target="${sqlBtnId}"
+                  aria-expanded="false" aria-controls="${sqlBtnId}"
+                  aria-label="SQL önizlemesini göster/gizle"
+                  data-tooltip="SQL önizlemesini göster/gizle">
+            <i class="fa-solid fa-code" aria-hidden="true"></i>
+            <span>SQL</span> ${truncBadge}
+          </button>
+          <pre id="${sqlBtnId}" class="lcache-sql-pre" hidden
+               aria-label="SQL önizlemesi (max 200 karakter)">${sqlEsc}</pre>
+        </div>
+      </div>
+    `;
+}
+
+function _renderTopTable(top) {
+    if (!Array.isArray(top) || top.length === 0) {
+        return `
+          <div class="lcache-top-empty" role="status">
+            <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+            Henüz isabet alan bir sorgu yok.
+          </div>
+        `;
+    }
+    const rows = top.map((it, idx) => _renderTopRow(it, idx + 1)).join('');
+    return `
+      <div class="lcache-top" role="table" aria-label="En çok isabet alan 10 sorgu">
+        <div class="lcache-row lcache-head" role="row">
+          <div class="lcache-cell lcache-rank" role="columnheader">#</div>
+          <div class="lcache-cell lcache-q" role="columnheader">Soru</div>
+          <div class="lcache-cell lcache-hit" role="columnheader">İsabet</div>
+          <div class="lcache-cell lcache-last" role="columnheader">Son İsabet</div>
+          <div class="lcache-cell lcache-sql" role="columnheader">SQL</div>
+        </div>
+        ${rows}
+      </div>
+    `;
+}
+
+function _renderDashboard(data) {
+    const summary = data?.summary || { total: 0, total_hits: 0, used_count: 0, hit_rate: 0 };
+    const top = Array.isArray(data?.top) ? data.top : [];
+    if ((summary.total | 0) === 0) {
+        return _renderEmpty();
+    }
+    return `
+      <section class="lcache-dashboard" role="region" aria-label="Cache Hit Dashboard">
+        <header class="lcache-header">
+          <h2><i class="fa-solid fa-bolt" aria-hidden="true"></i> Cache Hit Dashboard</h2>
+          <button type="button" class="lcache-refresh"
+                  aria-label="Cache istatistiklerini yenile"
+                  data-tooltip="Yenile">
+            <i class="fa-solid fa-rotate" aria-hidden="true"></i>
+          </button>
+        </header>
+        ${_renderMetricCards(summary)}
+        <h3 class="lcache-top-title">
+          <i class="fa-solid fa-trophy" aria-hidden="true"></i>
+          En çok isabet alan 10 sorgu
+        </h3>
+        ${_renderTopTable(top)}
+      </section>
+    `;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Event bağlama
+// ─────────────────────────────────────────────────────────────
+
+function _bindEvents(rootEl, sourceId) {
+    // SQL toggle
+    rootEl.querySelectorAll('.lcache-sql-toggle').forEach((btn) => {
+        btn.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            const target = btn.getAttribute('data-target');
+            if (!target) return;
+            const pre = rootEl.querySelector(`#${CSS.escape(target)}`);
+            if (!pre) return;
+            const open = pre.hasAttribute('hidden') ? true : false;
+            if (open) {
+                pre.removeAttribute('hidden');
+                btn.setAttribute('aria-expanded', 'true');
+            } else {
+                pre.setAttribute('hidden', '');
+                btn.setAttribute('aria-expanded', 'false');
+            }
+        });
+    });
+    // Refresh
+    const refreshBtn = rootEl.querySelector('.lcache-refresh');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            mountLearningCacheDashboard(rootEl, sourceId).catch(() => { /* handled inside */ });
+        });
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Public API
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Mount the Learning Cache Dashboard into the given root element.
+ * @param {HTMLElement} rootEl - container element (yapay olarak innerHTML ile yazılır)
+ * @param {number|string} sourceId - data source id
+ * @returns {Promise<void>}
+ */
+async function mountLearningCacheDashboard(rootEl, sourceId) {
+    if (!rootEl || typeof rootEl.innerHTML !== 'string') {
+        throw new Error('mountLearningCacheDashboard: geçerli bir rootEl gerekli');
+    }
+    const sid = Number(sourceId);
+    if (!Number.isFinite(sid) || sid <= 0) {
+        rootEl.innerHTML = _renderError('Geçersiz source_id');
+        return;
+    }
+
+    rootEl.setAttribute('aria-busy', 'true');
+    rootEl.innerHTML = _renderLoading();
+
+    try {
+        const data = await _fetchStats(sid);
+        rootEl.innerHTML = _renderDashboard(data);
+        _bindEvents(rootEl, sid);
+    } catch (err) {
+        const msg = (err && err.message) ? err.message : 'Bilinmeyen hata';
+        rootEl.innerHTML = _renderError(msg);
+        _toast('error', `Cache istatistikleri yüklenemedi: ${msg}`);
+    } finally {
+        rootEl.setAttribute('aria-busy', 'false');
+    }
+}
+
+// v3.32.0 — Bundle uyumluluğu için window'a expose et (ES export bundle'ı kırıyor).
+if (typeof window !== "undefined") {
+    window.mountLearningCacheDashboard = mountLearningCacheDashboard;
+    window.LearningCacheDashboard = { mount: mountLearningCacheDashboard };
+}
+
+
+/* === assets/js/modules/admin_error_review.js === */
+/**
+ * VYRA v3.32.0 — Ajan-I MVP: Error Pattern Approval UI (admin)
+ * ============================================================
+ *
+ * self_heal_node "rewrite" kararlarını (LLM tarafından üretilen düzeltme
+ * SQL'leri) admin'in tek tek onayladığı/reddettiği basit panel.
+ *
+ * Backend (db_learning_api.py altına eklendi):
+ *   GET  /api/data-sources/admin/error-rewrites?status=pending&limit=50
+ *   POST /api/data-sources/admin/error-rewrites/{id}/review
+ *        body: {decision: 'approved'|'rejected', note?: string}
+ *
+ * HEBE UI standartları:
+ *   - alert/confirm/prompt YOK — window.showToast / inline error.
+ *   - Hex YOK — sınıflar design token kullanır.
+ *   - Tüm butonlarda aria-label var, ikon-only butonlar dahil.
+ *   - Pagination YOK (MVP: yalnız son 50).
+ *
+ * Kullanım:
+ *   import { mountErrorReview } from "./modules/admin_error_review.js";
+ *   mountErrorReview(document.querySelector("#adminErrorReviewRoot"));
+ *
+ * mountErrorReview idempotent — aynı root'a tekrar çağrılırsa içerik
+ * yenilenir, event listener çoğalmaz.
+ */
+
+const AER_API_BASE = "/api/data-sources/admin/error-rewrites";
+const MOUNT_FLAG = "__vyraErrorReviewMounted";
+
+const STATUS_LABELS = {
+  pending: "Bekliyor",
+  approved: "Onaylandı",
+  rejected: "Reddedildi",
+  all: "Hepsi",
+};
+
+const ERROR_CLASS_LABELS = {
+  syntax: "Sözdizimi",
+  missing_table: "Tablo yok",
+  amb_column: "Belirsiz kolon",
+  timeout: "Zaman aşımı",
+  empty: "Boş sonuç",
+  semantic: "Anlamsal",
+  permission: "Yetki",
+  unknown: "Bilinmiyor",
+};
+
+/** Auth headers (localStorage access_token — projede kullanılan kalıp). */
+function authHeaders() {
+  const tok = (typeof localStorage !== "undefined")
+    ? localStorage.getItem("access_token")
+    : null;
+  return tok ? { Authorization: "Bearer " + tok } : {};
+}
+
+/** XSS-safe text. */
+function esc(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** Toast wrapper — proje kuralı: window.showToast varsa kullan, yoksa sessiz. */
+function toast(message, type) {
+  if (typeof window !== "undefined" && typeof window.showToast === "function") {
+    try { window.showToast(message, type || "info"); } catch (_) { /* swallow */ }
+  }
+}
+
+/** ISO timestamp → kısa Türkçe görünüm. */
+function fmtDate(iso) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso);
+    return d.toLocaleString("tr-TR", {
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit",
+    });
+  } catch (_) {
+    return String(iso);
+  }
+}
+
+/** Skeleton DOM — root içine yapı kurar. */
+function buildSkeleton(root) {
+  root.classList.add("admin-error-review");
+  root.innerHTML = [
+    '<div class="aer-toolbar" role="toolbar" aria-label="Hata düzeltme filtreleri">',
+    '  <label class="aer-toolbar__label" for="aerStatusSel">Durum</label>',
+    '  <select id="aerStatusSel" class="aer-select" aria-label="Durum filtresi">',
+    '    <option value="pending" selected>Bekleyen</option>',
+    '    <option value="approved">Onaylandı</option>',
+    '    <option value="rejected">Reddedildi</option>',
+    '    <option value="all">Hepsi</option>',
+    '  </select>',
+    '  <button type="button" id="aerRefreshBtn" class="aer-btn aer-btn--ghost" ',
+    '          aria-label="Listeyi yenile">Yenile</button>',
+    '  <span id="aerCount" class="aer-count" aria-live="polite"></span>',
+    '</div>',
+    '<div id="aerLoading" class="aer-loading" hidden role="status" aria-live="polite">',
+    '  Yükleniyor…',
+    '</div>',
+    '<div id="aerError" class="aer-error" hidden role="alert"></div>',
+    '<div id="aerEmpty" class="aer-empty" hidden>',
+    '  Bu filtre için kayıt bulunamadı.',
+    '</div>',
+    '<ul id="aerList" class="aer-list" aria-label="Rewrite kayıtları"></ul>',
+  ].join("\n");
+}
+
+/** Tek satır (li) HTML — full SQL <details> içinde collapsed. */
+function renderRow(item) {
+  const id = Number(item.id) || 0;
+  const ec = String(item.error_class || "unknown");
+  const ecLabel = ERROR_CLASS_LABELS[ec] || ec;
+  const status = String(item.review_status || "pending");
+  const statusLabel = STATUS_LABELS[status] || status;
+  const isPending = status === "pending";
+
+  const reviewedInfo = item.reviewed_at
+    ? `<span class="aer-row__reviewed">İncelendi: ${esc(fmtDate(item.reviewed_at))}` +
+      (item.reviewed_by ? ` (kullanıcı #${esc(item.reviewed_by)})` : "") +
+      `</span>`
+    : "";
+  const noteInfo = item.review_note
+    ? `<div class="aer-row__note"><strong>Not:</strong> ${esc(item.review_note)}</div>`
+    : "";
+
+  const actions = isPending
+    ? [
+        '<div class="aer-row__actions" role="group" aria-label="Karar">',
+        `  <button type="button" class="aer-btn aer-btn--approve" `,
+        `          data-action="approve" data-id="${id}" `,
+        `          aria-label="Bu rewrite kaydını onayla">`,
+        '    <span aria-hidden="true">✓</span> Onayla',
+        '  </button>',
+        `  <button type="button" class="aer-btn aer-btn--reject" `,
+        `          data-action="reject-open" data-id="${id}" `,
+        `          aria-label="Bu rewrite kaydını reddet">`,
+        '    <span aria-hidden="true">✗</span> Reddet',
+        '  </button>',
+        '</div>',
+        `<div class="aer-row__reject-note" data-id="${id}" hidden>`,
+        `  <label class="aer-toolbar__label" for="aerNote-${id}">Reddetme notu (opsiyonel)</label>`,
+        `  <textarea id="aerNote-${id}" class="aer-textarea" maxlength="2048" `,
+        `            rows="2" aria-label="Reddetme notu"></textarea>`,
+        '  <div class="aer-row__reject-actions">',
+        `    <button type="button" class="aer-btn aer-btn--ghost" `,
+        `            data-action="reject-cancel" data-id="${id}" `,
+        '            aria-label="Reddetmeyi iptal et">İptal</button>',
+        `    <button type="button" class="aer-btn aer-btn--reject" `,
+        `            data-action="reject-confirm" data-id="${id}" `,
+        '            aria-label="Reddetmeyi onayla">Reddet</button>',
+        '  </div>',
+        '</div>',
+      ].join("\n")
+    : "";
+
+  return [
+    `<li class="aer-row aer-row--${esc(status)}" data-row-id="${id}">`,
+    '  <div class="aer-row__header">',
+    `    <span class="aer-chip aer-chip--${esc(ec)}" aria-label="Hata sınıfı: ${esc(ecLabel)}">`,
+    `      ${esc(ecLabel)}`,
+    '    </span>',
+    `    <span class="aer-chip aer-chip--status-${esc(status)}" aria-label="Durum: ${esc(statusLabel)}">`,
+    `      ${esc(statusLabel)}`,
+    '    </span>',
+    `    <span class="aer-row__id">#${id}</span>`,
+    `    <span class="aer-row__src">Kaynak: ${esc(item.source_id)}</span>`,
+    `    <span class="aer-row__when">Oluştu: ${esc(fmtDate(item.created_at))}</span>`,
+    '  </div>',
+    item.question
+      ? `<div class="aer-row__question"><strong>Soru:</strong> ${esc(item.question)}</div>`
+      : "",
+    item.error_message
+      ? `<div class="aer-row__errmsg"><strong>Hata:</strong> ${esc(item.error_message)}</div>`
+      : "",
+    '  <details class="aer-row__sql">',
+    '    <summary>Orijinal SQL</summary>',
+    `    <pre class="aer-pre"><code>${esc(item.original_sql || "")}</code></pre>`,
+    '  </details>',
+    '  <details class="aer-row__sql">',
+    '    <summary>Yeniden Üretilen SQL (LLM rewrite)</summary>',
+    `    <pre class="aer-pre"><code>${esc(item.rewritten_sql || "")}</code></pre>`,
+    '  </details>',
+    reviewedInfo ? `<div class="aer-row__meta">${reviewedInfo}</div>` : "",
+    noteInfo,
+    actions,
+    '</li>',
+  ].filter(Boolean).join("\n");
+}
+
+/** Liste render — items boş ise empty state göster. */
+function renderList(root, items) {
+  const listEl = root.querySelector("#aerList");
+  const emptyEl = root.querySelector("#aerEmpty");
+  const countEl = root.querySelector("#aerCount");
+  if (!listEl) return;
+  listEl.innerHTML = "";
+  const arr = Array.isArray(items) ? items : [];
+  if (countEl) countEl.textContent = `${arr.length} kayıt`;
+  if (!arr.length) {
+    if (emptyEl) emptyEl.hidden = false;
+    return;
+  }
+  if (emptyEl) emptyEl.hidden = true;
+  listEl.insertAdjacentHTML("beforeend", arr.map(renderRow).join("\n"));
+}
+
+/** Hata gösterimi (inline + toast). */
+function showError(root, message) {
+  const el = root.querySelector("#aerError");
+  if (el) {
+    if (message) {
+      el.textContent = message;
+      el.hidden = false;
+    } else {
+      el.textContent = "";
+      el.hidden = true;
+    }
+  }
+  if (message) toast(message, "error");
+}
+
+/** Loading toggle. */
+function setLoading(root, on) {
+  const el = root.querySelector("#aerLoading");
+  if (el) el.hidden = !on;
+}
+
+/** GET liste. */
+async function fetchList(root, statusFilter) {
+  showError(root, "");
+  setLoading(root, true);
+  try {
+    const url = `${AER_API_BASE}?status=${encodeURIComponent(statusFilter)}&limit=50`;
+    const res = await fetch(url, { headers: authHeaders() });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const json = await res.json();
+    const items = (json && json.items) || [];
+    renderList(root, items);
+  } catch (err) {
+    renderList(root, []);
+    showError(root, "Liste yüklenemedi: " + ((err && err.message) || err));
+  } finally {
+    setLoading(root, false);
+  }
+}
+
+/** POST review (approve/reject). */
+async function postReview(root, rewriteId, decision, note) {
+  try {
+    const res = await fetch(
+      `${AER_API_BASE}/${encodeURIComponent(rewriteId)}/review`,
+      {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ decision, note: note || null }),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    toast(
+      decision === "approved"
+        ? "Rewrite onaylandı."
+        : "Rewrite reddedildi.",
+      "success",
+    );
+    // Listeyi mevcut filtre ile yeniden çek
+    const sel = root.querySelector("#aerStatusSel");
+    const cur = (sel && sel.value) || "pending";
+    await fetchList(root, cur);
+  } catch (err) {
+    showError(root, "İşlem başarısız: " + ((err && err.message) || err));
+  }
+}
+
+/** Reddetme bölümünü aç/kapat. */
+function toggleRejectNote(root, rewriteId, open) {
+  const block = root.querySelector(
+    `.aer-row__reject-note[data-id="${CSS && CSS.escape ? CSS.escape(String(rewriteId)) : String(rewriteId)}"]`,
+  );
+  if (!block) return;
+  block.hidden = !open;
+  if (open) {
+    const ta = block.querySelector("textarea");
+    if (ta) {
+      try { ta.focus(); } catch (_) { /* ignore */ }
+    }
+  }
+}
+
+/** Tek root için click delegation — idempotent mount sayesinde bir kere. */
+function bindEvents(root) {
+  // Toolbar
+  const sel = root.querySelector("#aerStatusSel");
+  const refreshBtn = root.querySelector("#aerRefreshBtn");
+  if (sel) {
+    sel.addEventListener("change", () => fetchList(root, sel.value || "pending"));
+  }
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", () => {
+      const cur = (sel && sel.value) || "pending";
+      fetchList(root, cur);
+    });
+  }
+
+  // Liste click delegation
+  const listEl = root.querySelector("#aerList");
+  if (!listEl) return;
+  listEl.addEventListener("click", (ev) => {
+    const target = ev.target.closest("[data-action]");
+    if (!target) return;
+    const action = target.getAttribute("data-action");
+    const idAttr = target.getAttribute("data-id");
+    const rewriteId = Number(idAttr);
+    if (!Number.isFinite(rewriteId) || rewriteId <= 0) return;
+
+    if (action === "approve") {
+      // MVP: confirm yok (HEBE kuralı). Direkt POST.
+      postReview(root, rewriteId, "approved", null);
+      return;
+    }
+    if (action === "reject-open") {
+      toggleRejectNote(root, rewriteId, true);
+      return;
+    }
+    if (action === "reject-cancel") {
+      toggleRejectNote(root, rewriteId, false);
+      return;
+    }
+    if (action === "reject-confirm") {
+      const ta = root.querySelector(`#aerNote-${CSS && CSS.escape ? CSS.escape(String(rewriteId)) : String(rewriteId)}`);
+      const note = ta && ta.value ? ta.value.trim() : "";
+      postReview(root, rewriteId, "rejected", note);
+      return;
+    }
+  });
+}
+
+/**
+ * Public mount API.
+ *
+ * @param {HTMLElement} rootEl - container element (skeleton içine yazılacak).
+ * @returns {Promise<void>}
+ */
+async function mountErrorReview(rootEl) {
+  if (!rootEl || rootEl.nodeType !== 1) {
+    return; // sessiz no-op — yanlış tip
+  }
+  // Idempotent: aynı root'a iki kere mount edilirse skeleton tek defa kurulur,
+  // ama liste her çağrıda yenilenir.
+  if (!rootEl[MOUNT_FLAG]) {
+    buildSkeleton(rootEl);
+    bindEvents(rootEl);
+    Object.defineProperty(rootEl, MOUNT_FLAG, {
+      value: true, enumerable: false, configurable: false, writable: false,
+    });
+  }
+  const sel = rootEl.querySelector("#aerStatusSel");
+  const statusFilter = (sel && sel.value) || "pending";
+  await fetchList(rootEl, statusFilter);
+}
+
+// v3.32.0 — Bundle uyumluluğu için window'a expose et (ES export bundle'ı kırıyor).
+if (typeof window !== "undefined") {
+  window.mountErrorReview = mountErrorReview;
+  window.AdminErrorReview = { mountErrorReview };
+}
 
 
 /* === assets/js/branding_engine.js === */

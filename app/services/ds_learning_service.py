@@ -426,10 +426,13 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                             "to_schema": row[3],
                             "to_table": row[4],
                             "to_column": row[5],
-                            "constraint_name": row[6]
+                            "constraint_name": row[6],
+                            # Tek-column FK → fk_position daima 1
+                            "fk_position": 1,
                         })
 
                     # Composite FK'lar (multi-column) — ayrı sorgu
+                    # v3.32.0: fk_position = idx (generate_subscripts sırası)
                     cur.execute("""
                         SELECT
                             ns_from.nspname,
@@ -438,7 +441,8 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                             ns_to.nspname,
                             cl_to.relname,
                             att_to.attname,
-                            con.conname
+                            con.conname,
+                            idx AS fk_position
                         FROM pg_catalog.pg_constraint con
                         JOIN pg_catalog.pg_class cl_from     ON con.conrelid  = cl_from.oid
                         JOIN pg_catalog.pg_namespace ns_from ON cl_from.relnamespace = ns_from.oid
@@ -454,7 +458,7 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                         WHERE con.contype = 'f'
                           AND array_length(con.conkey, 1) > 1
                           AND ns_from.nspname NOT IN ('pg_catalog','information_schema')
-                        ORDER BY ns_from.nspname, cl_from.relname, con.conname
+                        ORDER BY ns_from.nspname, cl_from.relname, con.conname, idx
                     """)
                     for row in cur.fetchall():
                         relationships.append({
@@ -464,7 +468,8 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                             "to_schema": row[3],
                             "to_table": row[4],
                             "to_column": row[5],
-                            "constraint_name": row[6]
+                            "constraint_name": row[6],
+                            "fk_position": int(row[7]) if row[7] is not None else 1,
                         })
 
                 logger.info("[DSLearning] Bulunan FK ilişki sayısı: %d", len(relationships))
@@ -608,6 +613,8 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                 objects.append(obj_entry)
 
             # MSSQL FK İlişkileri
+            # v3.32.0: fk_position = fkc.constraint_column_id (composite FK
+            # column sırası — 1..N).
             cur.execute("""
                 SELECT
                     SCHEMA_NAME(fk.schema_id) AS from_schema,
@@ -616,11 +623,12 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                     SCHEMA_NAME(pk_tab.schema_id) AS to_schema,
                     OBJECT_NAME(fk.referenced_object_id) AS to_table,
                     COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) AS to_column,
-                    fk.name AS constraint_name
+                    fk.name AS constraint_name,
+                    fkc.constraint_column_id AS fk_position
                 FROM sys.foreign_keys fk
                 JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
                 JOIN sys.tables pk_tab ON fk.referenced_object_id = pk_tab.object_id
-                ORDER BY from_schema, from_table, constraint_name
+                ORDER BY from_schema, from_table, constraint_name, fkc.constraint_column_id
             """)
             for row in cur.fetchall():
                 fs = row["from_schema"] if isinstance(row, dict) else row[0]
@@ -630,10 +638,12 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                 tt = row["to_table"] if isinstance(row, dict) else row[4]
                 tc = row["to_column"] if isinstance(row, dict) else row[5]
                 cn = row["constraint_name"] if isinstance(row, dict) else row[6]
+                fp_raw = row["fk_position"] if isinstance(row, dict) else (row[7] if len(row) > 7 else 1)
                 relationships.append({
                     "from_schema": fs, "from_table": ft, "from_column": fc,
                     "to_schema": ts, "to_table": tt, "to_column": tc,
-                    "constraint_name": cn
+                    "constraint_name": cn,
+                    "fk_position": int(fp_raw) if fp_raw is not None else 1,
                 })
 
         elif db_dialect == "mysql":
@@ -692,6 +702,7 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                 objects.append(obj_entry)
 
             # MySQL FK İlişkileri
+            # v3.32.0: fk_position = kcu.ORDINAL_POSITION (composite FK sırası)
             cur.execute("""
                 SELECT
                     TABLE_SCHEMA AS from_schema,
@@ -700,11 +711,12 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                     REFERENCED_TABLE_SCHEMA AS to_schema,
                     REFERENCED_TABLE_NAME AS to_table,
                     REFERENCED_COLUMN_NAME AS to_column,
-                    CONSTRAINT_NAME AS constraint_name
+                    CONSTRAINT_NAME AS constraint_name,
+                    ORDINAL_POSITION AS fk_position
                 FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
                 WHERE TABLE_SCHEMA = %s
                   AND REFERENCED_TABLE_NAME IS NOT NULL
-                ORDER BY TABLE_NAME, CONSTRAINT_NAME
+                ORDER BY TABLE_NAME, CONSTRAINT_NAME, ORDINAL_POSITION
             """, (db_name,))
             for row in cur.fetchall():
                 fs = row.get("from_schema", "") if isinstance(row, dict) else row[0]
@@ -714,10 +726,12 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                 tt = row.get("to_table", "") if isinstance(row, dict) else row[4]
                 tc = row.get("to_column", "") if isinstance(row, dict) else row[5]
                 cn = row.get("constraint_name", "") if isinstance(row, dict) else row[6]
+                fp_raw = row.get("fk_position", 1) if isinstance(row, dict) else (row[7] if len(row) > 7 else 1)
                 relationships.append({
                     "from_schema": fs, "from_table": ft, "from_column": fc,
                     "to_schema": ts, "to_table": tt, "to_column": tc,
-                    "constraint_name": cn
+                    "constraint_name": cn,
+                    "fk_position": int(fp_raw) if fp_raw is not None else 1,
                 })
 
         elif db_dialect == "oracle":
@@ -884,6 +898,7 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                 objects.append(obj_entry)
 
             # Oracle FK İlişkileri
+            # v3.32.0: fk_position = cc.position (composite FK sırası 1..N)
             try:
                 cur.execute(f"""
                     SELECT
@@ -893,7 +908,8 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                         r.owner         AS to_schema,
                         r.table_name    AS to_table,
                         rc.column_name  AS to_column,
-                        c.constraint_name
+                        c.constraint_name,
+                        cc.position     AS fk_position
                     FROM all_constraints c
                     JOIN all_cons_columns cc ON c.constraint_name = cc.constraint_name AND c.owner = cc.owner
                     JOIN all_constraints r ON c.r_constraint_name = r.constraint_name AND c.r_owner = r.owner
@@ -904,6 +920,7 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                     ORDER BY c.table_name, c.constraint_name, cc.position
                 """)
                 for row in cur.fetchall():
+                    fp_raw = row[7] if len(row) > 7 else 1
                     relationships.append({
                         "from_schema": row[0],
                         "from_table": row[1],
@@ -911,7 +928,8 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                         "to_schema": row[3],
                         "to_table": row[4],
                         "to_column": row[5],
-                        "constraint_name": row[6]
+                        "constraint_name": row[6],
+                        "fk_position": int(fp_raw) if fp_raw is not None else 1,
                     })
                 logger.info("[DSLearning] Oracle FK ilişki sayısı: %d", len(relationships))
             except Exception as fk_err:
@@ -944,13 +962,17 @@ def detect_objects(source: dict, vyra_conn) -> dict:
             ))
 
         for rel in relationships:
+            # v3.32.0: fk_position 9. kolon olarak eklendi. Eski keşif
+            # kaynakları (ör. drift'te dialect probe) fk_position vermezse
+            # default 1 kullanılır — migration 038 ile de DB DEFAULT 1 garanti.
             vyra_cur.execute("""
                 INSERT INTO ds_db_relationships
-                    (source_id, from_schema, from_table, from_column, to_schema, to_table, to_column, constraint_name)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    (source_id, from_schema, from_table, from_column, to_schema, to_table, to_column, constraint_name, fk_position)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 source_id, rel["from_schema"], rel["from_table"], rel["from_column"],
-                rel["to_schema"], rel["to_table"], rel["to_column"], rel["constraint_name"]
+                rel["to_schema"], rel["to_table"], rel["to_column"], rel["constraint_name"],
+                int(rel.get("fk_position", 1) or 1),
             ))
 
         vyra_conn.commit()

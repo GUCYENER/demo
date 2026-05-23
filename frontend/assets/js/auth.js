@@ -48,3 +48,16 @@ function clearAuth() {
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
 }
+
+// v3.32.0: Canonical Authorization header helper.
+// query_builder.js (ve diğer auth'lu fetch çağrıları) `window.getAuthHeader()` bekliyor;
+// daha önce tanımlanmadığı için pre-execute QueryBuilder /api/query-state/preview çağrısı
+// header'sız gidiyor ve 401 dönüyordu.
+function getAuthHeader() {
+    const token = localStorage.getItem('access_token');
+    return token ? { 'Authorization': 'Bearer ' + token } : {};
+}
+
+if (typeof window !== 'undefined') {
+    window.getAuthHeader = getAuthHeader;
+}

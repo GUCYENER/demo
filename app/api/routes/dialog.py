@@ -38,6 +38,37 @@ router = APIRouter(prefix="/dialogs", tags=["dialogs"])
 
 
 # =============================================================================
+# SSE ADAPTIVE HEARTBEAT CONFIG (v3.32.0 — Smart-H)
+# =============================================================================
+# Pipeline aktif token üretirken interval=MIN; idle (execute_node beklenirken)
+# interval kademeli artar (MIN → MIN*FACTOR → ... → MAX cap). Her gerçek event
+# (token/cache_hit/sample_data_preview/size_prediction/clarification_v2/error/
+# run_summary vb. — heartbeat HARİÇ) idle sayacını sıfırlar.
+#
+# Default davranış: 1s → 1.5s → 2.25s → 3.375s → 5s (cap). MAX=5s ile uzun
+# execute (>5s) sırasında Nginx/proxy/AV idle timeout'larından korunur.
+# Env override: VYRA_SSE_HB_MIN, VYRA_SSE_HB_MAX, VYRA_SSE_HB_FACTOR.
+import os as _os_sse
+
+def _sse_float_env(name: str, default: float) -> float:
+    try:
+        return float(_os_sse.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+HEARTBEAT_MIN_INTERVAL: float = _sse_float_env("VYRA_SSE_HB_MIN", 1.0)
+HEARTBEAT_MAX_INTERVAL: float = _sse_float_env("VYRA_SSE_HB_MAX", 5.0)
+HEARTBEAT_BACKOFF_FACTOR: float = _sse_float_env("VYRA_SSE_HB_FACTOR", 1.5)
+# Sanity guard — yanlış env değerlerine karşı (örn. MIN > MAX)
+if HEARTBEAT_MIN_INTERVAL <= 0:
+    HEARTBEAT_MIN_INTERVAL = 1.0
+if HEARTBEAT_MAX_INTERVAL < HEARTBEAT_MIN_INTERVAL:
+    HEARTBEAT_MAX_INTERVAL = HEARTBEAT_MIN_INTERVAL
+if HEARTBEAT_BACKOFF_FACTOR < 1.0:
+    HEARTBEAT_BACKOFF_FACTOR = 1.5
+
+
+# =============================================================================
 # REQUEST / RESPONSE MODELS
 # =============================================================================
 
@@ -391,14 +422,20 @@ async def send_message_stream(
         SSE event stream generator.
 
         v3.14.5: Pipeline'ı arka plan thread'inde çalıştırır, ana generator
-        her HEARTBEAT_INTERVAL saniyede `:` (SSE comment frame) yayınlayarak
+        idle (pipeline sessiz) iken `:` (SSE comment frame) yayınlayarak
         Nginx/proxy/AV idle timeout'larını engeller — INCOMPLETE_CHUNKED_ENCODING
         hatasının kök nedeni budur.
+
+        v3.32.0 (Smart-H): Adaptive heartbeat — pipeline aktif token üretirken
+        interval=HEARTBEAT_MIN_INTERVAL (default 1s); idle (örn. uzun
+        execute_node) sırasında interval kademeli artar
+        (MIN * FACTOR ** idle_count, cap MAX). Her gerçek event idle sayacını
+        sıfırlar. Uzun execute (>5s) hâlâ MAX (default 5s) periyotla
+        heartbeat alır — proxy timeout korumalı.
         """
         import threading
         import queue as _queue
 
-        HEARTBEAT_INTERVAL = 15  # saniye — Nginx proxy_read_timeout (600s) ile uyumlu
         SENTINEL = object()
         q: "_queue.Queue" = _queue.Queue()
 
@@ -427,16 +464,30 @@ async def send_message_stream(
         producer = threading.Thread(target=_producer, daemon=True)
         producer.start()
 
+        # v3.32.0: Adaptive heartbeat state machine.
+        # idle_count = ardışık heartbeat (boş queue) sayısı; gerçek event'te 0'a reset.
+        idle_count = 0
+
         while True:
+            # Exponential backoff cap'li: MIN * FACTOR ** idle_count, en fazla MAX.
+            next_interval = min(
+                HEARTBEAT_MIN_INTERVAL * (HEARTBEAT_BACKOFF_FACTOR ** idle_count),
+                HEARTBEAT_MAX_INTERVAL,
+            )
             try:
-                event = q.get(timeout=HEARTBEAT_INTERVAL)
+                event = q.get(timeout=next_interval)
             except _queue.Empty:
-                # Pipeline sessiz — keep-alive comment frame (SSE spec: ':' ile başlayan satır comment)
-                yield ": keepalive\n\n"
+                # Pipeline sessiz — keep-alive comment frame (SSE spec: ':' ile başlayan satır comment).
+                # Heartbeat EventSource tarafından consume edilir ama JS event dispatch etmez.
+                yield ": heartbeat\n\n"
+                idle_count += 1
                 continue
 
             if event is SENTINEL:
                 break
+
+            # Gerçek event geldi — idle sayacını sıfırla (interval bir sonraki tur MIN'e döner).
+            idle_count = 0
 
             event_type = event.get("type", "token")
             event_data = event.get("data", "")

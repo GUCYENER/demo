@@ -610,7 +610,9 @@ def process_user_message_stream(
                         WHERE table_name = 'pending_db_queries'
                     )
                 """)
-                table_exists = _pq_cur.fetchone()[0]
+                _pq_row = _pq_cur.fetchone()
+                # RealDictCursor → dict, fallback tuple
+                table_exists = (_pq_row.get('exists') if isinstance(_pq_row, dict) else _pq_row[0]) if _pq_row else False
 
                 if table_exists:
                     short_text = (search_query[:77] + "...") if len(search_query) > 80 else search_query
@@ -621,7 +623,10 @@ def process_user_message_stream(
                         RETURNING id
                     """, (dialog_id, user_id, company_id or 1, search_query, short_text))
                     row = _pq_cur.fetchone()
-                    pending_query_id = row[0] if row else None
+                    if row:
+                        pending_query_id = row.get('id') if isinstance(row, dict) else row[0]
+                    else:
+                        pending_query_id = None
                     _pq_conn.commit()
 
                     if pending_query_id:

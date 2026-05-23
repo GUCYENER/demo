@@ -102,4 +102,16 @@
         getTokens,
         setTokens,
     };
+
+    // v3.32.0: Canonical Authorization header helper.
+    // query_builder.js (ve diğer bundle modülleri) `window.getAuthHeader()` bekliyor;
+    // daha önce hiçbir modül tanımlamıyordu → /api/query-state/preview gibi auth'lu
+    // çağrılar header'sız gidip 401 dönüyordu. api_client.js bundle'da olduğu için
+    // home.html'de bu helper artık her zaman tanımlı.
+    if (!window.getAuthHeader) {
+        window.getAuthHeader = function () {
+            const { access } = getTokens();
+            return access ? { Authorization: 'Bearer ' + access } : {};
+        };
+    }
 })();

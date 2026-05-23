@@ -1,0 +1,278 @@
+/* =====================================================
+   FK Loop — Progress bar + failure UX (v3.32.0 G2)
+   ----------------------------------------------------
+   - Tüm renkler tasarım tokenları üzerinden (hex sabit YOK)
+   - Token eşlemesi (brief → mevcut home.html token seti):
+       --blue      → --accent
+       --purple    → --accent-2
+       --bg-2      → --bg-surface
+       --bg-3      → --bg-chip
+       --border, --green, --red, --text-2, --text-3  zaten mevcut
+   - role="progressbar" + aria-valuenow/min/max JS tarafından set edilir
+   ===================================================== */
+
+/* ---------- Progress kart ---------- */
+.ds-dbloop-progress {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.ds-dbloop-progress-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    color: var(--text-2);
+}
+
+.ds-dbloop-progress-header strong {
+    color: var(--text-1);
+}
+
+/* ---------- Bar ---------- */
+.ds-dbloop-progress-bar {
+    height: 8px;
+    background: var(--bg-chip);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+}
+
+.ds-dbloop-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    transition: width 0.3s ease;
+    min-width: 0;
+}
+
+/* Indeterminate (running ama summary henüz yok) */
+.ds-dbloop-progress-bar.indeterminate .ds-dbloop-progress-fill {
+    width: 40% !important;
+    animation: dsDbLoopIndeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes dsDbLoopIndeterminate {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(250%); }
+}
+
+/* ---------- Stat satırı ---------- */
+.ds-dbloop-progress-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    font-size: 0.85rem;
+    color: var(--text-2);
+}
+
+.ds-dbloop-progress-stats .stat {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.ds-dbloop-progress-stats .stat-success { color: var(--green); }
+.ds-dbloop-progress-stats .stat-fail    { color: var(--red); }
+.ds-dbloop-progress-stats .stat-skip    { color: var(--text-3); }
+
+/* ---------- Done satırı ---------- */
+.ds-dbloop-progress.done {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.ds-dbloop-progress.done .ds-dbloop-progress-summary {
+    color: var(--text-2);
+    font-size: 0.9rem;
+    flex: 1 1 auto;
+}
+
+.ds-dbloop-progress.done .ds-dbloop-progress-summary strong {
+    color: var(--text-1);
+}
+
+.ds-link-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.25rem 0.6rem;
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.ds-link-btn:hover,
+.ds-link-btn:focus-visible {
+    background: var(--bg-chip);
+    border-color: var(--border-strong);
+}
+
+/* ---------- Done detay expander ---------- */
+.ds-dbloop-progress-details {
+    width: 100%;
+    margin-top: 0.4rem;
+    padding-top: 0.4rem;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.8rem;
+    font-size: 0.8rem;
+    color: var(--text-2);
+}
+
+.ds-dbloop-progress-details span strong { color: var(--text-1); }
+
+/* ---------- Error pill ---------- */
+.ds-dbloop-pill.ds-dbloop-error {
+    color: var(--red);
+}
+
+/* ---------- Empty state (FK yok) ---------- */
+.ds-dbloop-empty-state {
+    text-align: center;
+    padding: 1.5rem 1rem;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    background: var(--bg-surface);
+    color: var(--text-2);
+}
+
+.ds-dbloop-empty-state i {
+    font-size: 1.75rem;
+    color: var(--text-3);
+    margin-bottom: 0.5rem;
+    display: block;
+}
+
+.ds-dbloop-empty-state h3 {
+    margin: 0 0 0.3rem 0;
+    font-size: 1rem;
+    color: var(--text-1);
+}
+
+.ds-dbloop-empty-state p {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--text-2);
+}
+
+/* ---------- Failure satırı (G2.3) ---------- */
+.ds-dbloop-failrow-v2 {
+    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    border-radius: 8px;
+    padding: 0.6rem 0.85rem;
+    margin-bottom: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.ds-dbloop-failrow-v2 .fail-head {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.ds-dbloop-failrow-v2 .fail-kind {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    background: var(--red-dim);
+    color: var(--red);
+    border-radius: 6px;
+    padding: 0.1rem 0.45rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.ds-dbloop-failrow-v2 .fail-rel {
+    font-weight: 600;
+    color: var(--text-1);
+    font-size: 0.85rem;
+}
+
+.ds-dbloop-failrow-v2 .fail-arrow {
+    color: var(--text-3);
+}
+
+.ds-dbloop-failrow-v2 .fail-time {
+    margin-left: auto;
+    color: var(--text-3);
+    font-size: 0.72rem;
+}
+
+/* Hata mesajı — ellipsis + tooltip ile tam metin */
+.ds-dbloop-failrow-v2 .fail-msg {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--red);
+    font-size: 0.82rem;
+    min-width: 0;
+}
+
+.ds-dbloop-failrow-v2 .fail-msg-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.ds-dbloop-icon-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    border-radius: 6px;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    flex-shrink: 0;
+}
+
+.ds-dbloop-icon-btn:hover,
+.ds-dbloop-icon-btn:focus-visible {
+    background: var(--bg-chip);
+    border-color: var(--border-strong);
+    color: var(--text-1);
+}
+
+.ds-dbloop-failrow-v2 .fail-sql-wrap {
+    display: none;
+    margin-top: 0.25rem;
+}
+
+.ds-dbloop-failrow-v2.expanded .fail-sql-wrap {
+    display: block;
+}
+
+.ds-dbloop-failrow-v2 .fail-sql {
+    margin: 0;
+    padding: 0.5rem;
+    background: var(--bg-chip);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: auto;
+    max-height: 220px;
+    font-size: 0.75rem;
+    color: var(--text-1);
+    white-space: pre-wrap;
+}
