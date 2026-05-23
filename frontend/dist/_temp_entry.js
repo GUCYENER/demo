@@ -30858,28 +30858,6 @@ const DSEnrichmentModule = (() => {
         return fetch(url, { ...opts, headers });
     }
 
-    // v3.30.1: Sınırlı paralellik (concurrency pool).
-    // Onay endpoint'i bulk değil → sıralı await yerine N paralel worker.
-    // 100 onay senaryosu: 100×800ms (sıralı 80sn) → ~16sn (5'li paralel).
-    async function _runConcurrent(items, limit, worker) {
-        const results = new Array(items.length);
-        let idx = 0;
-        const poolSize = Math.min(limit, items.length);
-        const runners = Array.from({ length: poolSize }, async () => {
-            while (true) {
-                const i = idx++;
-                if (i >= items.length) return;
-                try {
-                    results[i] = await worker(items[i], i);
-                } catch (e) {
-                    results[i] = { error: e };
-                }
-            }
-        });
-        await Promise.all(runners);
-        return results;
-    }
-
     function _showToast(message, type) {
         if (typeof showToast === 'function') {
             showToast(message, type);
