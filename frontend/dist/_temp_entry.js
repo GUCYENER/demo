@@ -29045,55 +29045,139 @@ window.DSLearningModule = (function () {
     async function loadDbLoopStatus(sourceId) {
         const box = document.getElementById('dsDbLoopStatus');
         if (!box) return false;
+        // a11y: durum mesajlarını ekran okuyucu canlı bildirim alanı olarak işaretle
+        if (box.getAttribute('aria-live') !== 'polite') {
+            box.setAttribute('aria-live', 'polite');
+            box.setAttribute('aria-atomic', 'true');
+        }
         try {
             const res = await apiCall(`/${sourceId}/synthetic-status`);
             const job = res.job || { status: 'idle' };
             const status = job.status || 'idle';
             let html = '';
             if (status === 'running') {
-                html = `<div class="ds-dbloop-pill ds-dbloop-running"><i class="fa-solid fa-spinner fa-spin"></i> Çalışıyor (dialect: ${_escapeHtml(job.dialect || '?')})</div>`;
+                html = _renderDbLoopProgress(job, /*done*/ false);
             } else if (status === 'done') {
                 const s = job.summary || {};
-                const totalFail = (s.failed_execute || 0) + (s.failed_learn || 0);
-                const errors = Array.isArray(s.errors) ? s.errors : [];
-                let errBlock = '';
-                if (errors.length) {
-                    const items = errors.slice(0, 50).map(e => `<li>${_escapeHtml(String(e))}</li>`).join('');
-                    errBlock = `
-                        <details class="ds-dbloop-errdetails" style="margin-top:0.5rem;">
-                            <summary style="cursor:pointer; color:#dc2626;">
-                                ⚠️ Hata mesajları (${errors.length})
-                            </summary>
-                            <ul class="ds-dbloop-errlist" style="max-height:240px; overflow:auto; font-family:monospace; font-size:0.78rem;">
-                                ${items}
-                            </ul>
-                        </details>
+                // G2.2 — FK ilişkisi yoksa empty state
+                if ((s.total_fks ?? 0) === 0) {
+                    html = `
+                        <div class="ds-dbloop-empty-state" role="status">
+                            <i class="fa-solid fa-link-slash" aria-hidden="true"></i>
+                            <h3>FK ilişkisi bulunamadı</h3>
+                            <p>Bu veri kaynağında henüz FK tanımlı değil. "Veri Kaynakları" sayfasından kaynağı yeniden keşfedin veya FK çıkarımı (auto-inference) çalıştırın.</p>
+                        </div>
                     `;
+                } else {
+                    html = _renderDbLoopProgress(job, /*done*/ true);
                 }
-                html = `
-                    <div class="ds-dbloop-pill ds-dbloop-done"><i class="fa-solid fa-check"></i> Tamamlandı (${s.elapsed_ms || 0} ms)</div>
-                    <div class="ds-dbloop-stats">
-                        <span>FK: <strong>${s.total_fks || 0}</strong></span>
-                        <span>Denenen: <strong>${s.total_attempts || 0}</strong></span>
-                        <span>Başarılı: <strong style="color:#16a34a;">${s.success || 0}</strong></span>
-                        <span>Atlanan: <strong>${s.skipped_existing || 0}</strong></span>
-                        <span>Execute Hata: <strong style="color:#dc2626;">${s.failed_execute || 0}</strong></span>
-                        <span>Öğrenme Hata: <strong style="color:#dc2626;">${s.failed_learn || 0}</strong></span>
-                        <span>Toplam Hata: <strong style="color:#dc2626;">${totalFail}</strong></span>
-                    </div>
-                    ${errBlock}
-                `;
             } else if (status === 'error') {
-                html = `<div class="ds-dbloop-pill ds-dbloop-error"><i class="fa-solid fa-circle-exclamation"></i> Hata: ${_escapeHtml(job.error || 'bilinmeyen')}</div>`;
+                html = `<div class="ds-dbloop-pill ds-dbloop-error" role="alert"><i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i> Hata: ${_escapeHtml(job.error || 'bilinmeyen')}</div>`;
             } else {
                 html = `<div class="ds-dbloop-pill ds-dbloop-idle">Henüz çalıştırılmadı</div>`;
             }
             box.innerHTML = html;
+
+            // "Detaylar" expander davranışı
+            const detailsBtn = box.querySelector('#dsDbLoopDetailsBtn');
+            const detailsPanel = box.querySelector('#dsDbLoopDetailsPanel');
+            if (detailsBtn && detailsPanel) {
+                detailsBtn.addEventListener('click', () => {
+                    const open = detailsPanel.style.display !== 'none';
+                    detailsPanel.style.display = open ? 'none' : 'flex';
+                    detailsBtn.setAttribute('aria-expanded', String(!open));
+                });
+            }
             return status === 'done' || status === 'error';
         } catch (e) {
-            box.innerHTML = `<div class="ds-dbloop-pill ds-dbloop-error">Durum alınamadı</div>`;
+            box.innerHTML = `<div class="ds-dbloop-pill ds-dbloop-error" role="alert"><i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i> Durum alınamadı</div>`;
             return true;
         }
+    }
+
+    // v3.32.0 G2.1 — Progress bar render (running + done ortak)
+    function _renderDbLoopProgress(job, done) {
+        const s = job.summary || {};
+        const dialect = job.dialect || '?';
+        const total = Number(s.total_attempts ?? 0);
+        const success = Number(s.success ?? 0);
+        const skippedExisting = Number(s.skipped_existing ?? 0);
+        const skippedEmpty = Number(s.skipped_empty ?? 0);
+        const skippedRecent = Number(s.skipped_recent_failure ?? 0);
+        const skippedTotal = skippedExisting + skippedEmpty + skippedRecent;
+        const failExecute = Number(s.failed_execute ?? 0);
+        const failLearn = Number(s.failed_learn ?? 0);
+        const failed = failExecute + failLearn;
+        const junctionSuccess = Number(s.junction_success ?? 0);
+        const totalFks = Number(s.total_fks ?? 0);
+        const elapsedSec = s.elapsed_ms != null ? (Number(s.elapsed_ms) / 1000).toFixed(1) : null;
+
+        // running iken summary boş gelmiş olabilir → indeterminate
+        const hasSummary = Object.keys(s).length > 0 && total > 0;
+        const completed = success + failed;
+        const percent = hasSummary ? Math.max(0, Math.min(100, Math.round((completed / total) * 100))) : 0;
+        const barIndeterminate = !done && !hasSummary;
+
+        if (done) {
+            return `
+                <div class="ds-dbloop-progress done">
+                    <i class="fa-solid fa-circle-check" aria-hidden="true" style="color: var(--green);"></i>
+                    <span class="ds-dbloop-progress-summary">
+                        Tamamlandı: <strong>${success}</strong> başarılı,
+                        <strong>${skippedTotal}</strong> atlandı,
+                        <strong>${failed}</strong> hata
+                        ${elapsedSec != null ? `· ${elapsedSec}s` : ''}
+                        ${dialect && dialect !== '?' ? `· ${_escapeHtml(dialect)}` : ''}
+                    </span>
+                    <button type="button" class="ds-link-btn" id="dsDbLoopDetailsBtn"
+                            aria-label="Üretim detaylarını göster"
+                            data-tooltip="Junction / skip dağılımı"
+                            aria-expanded="false"
+                            aria-controls="dsDbLoopDetailsPanel">
+                        Detaylar
+                    </button>
+                    <div id="dsDbLoopDetailsPanel" class="ds-dbloop-progress-details" style="display:none;">
+                        <span>FK: <strong>${totalFks}</strong></span>
+                        <span>Denenen: <strong>${total}</strong></span>
+                        <span>Junction (N:M): <strong>${junctionSuccess}</strong></span>
+                        <span>Mevcut atlandı: <strong>${skippedExisting}</strong></span>
+                        <span>Boş tablo atlandı: <strong>${skippedEmpty}</strong></span>
+                        <span>Yakın hata atlandı: <strong>${skippedRecent}</strong></span>
+                        <span>Execute hata: <strong>${failExecute}</strong></span>
+                        <span>Öğrenme hata: <strong>${failLearn}</strong></span>
+                    </div>
+                </div>
+            `;
+        }
+
+        // RUNNING
+        const headLabel = hasSummary
+            ? `Sentetik üretim çalışıyor... <strong>${completed}/${total}</strong> deneme`
+            : `Başlatılıyor... (dialect: ${_escapeHtml(dialect)})`;
+        const ariaNow = barIndeterminate ? '' : `aria-valuenow="${percent}"`;
+        const barClass = barIndeterminate ? 'ds-dbloop-progress-bar indeterminate' : 'ds-dbloop-progress-bar';
+        const fillStyle = barIndeterminate ? '' : `style="width: ${percent}%"`;
+
+        return `
+            <div class="ds-dbloop-progress">
+                <div class="ds-dbloop-progress-header">
+                    <i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
+                    <span>${headLabel}</span>
+                </div>
+                <div class="${barClass}"
+                     role="progressbar"
+                     ${ariaNow}
+                     aria-valuemin="0" aria-valuemax="100"
+                     aria-label="FK Loop ilerleme${barIndeterminate ? ' (başlatılıyor)' : ''}">
+                    <div class="ds-dbloop-progress-fill" ${fillStyle}></div>
+                </div>
+                <div class="ds-dbloop-progress-stats">
+                    <span class="stat stat-success"><i class="fa-solid fa-circle-check" aria-hidden="true"></i> ${success} başarılı</span>
+                    <span class="stat stat-skip"><i class="fa-solid fa-circle-minus" aria-hidden="true"></i> ${skippedTotal} atlandı</span>
+                    <span class="stat stat-fail"><i class="fa-solid fa-circle-xmark" aria-hidden="true"></i> ${failed} hata</span>
+                </div>
+            </div>
+        `;
     }
 
     async function loadLearnedQueries(sourceId) {
@@ -29147,23 +29231,88 @@ window.DSLearningModule = (function () {
                 box.innerHTML = '<div class="ds-dbloop-empty">Hatalı deneme yok.</div>';
                 return;
             }
-            box.innerHTML = items.map(it => `
-                <div class="ds-dbloop-failrow" style="border:1px solid #fecaca; background:#fef2f2; padding:0.5rem 0.75rem; margin-bottom:0.5rem; border-radius:6px;">
-                    <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; margin-bottom:0.25rem;">
-                        <span class="ds-dbloop-badge" style="background:#dc2626; color:#fff;">${_escapeHtml(it.template_kind || '?')}</span>
-                        <span style="font-weight:600;">${_escapeHtml(it.from_table || '')}.${_escapeHtml(it.from_column || '')}</span>
-                        <span style="color:#6b7280;">→</span>
-                        <span style="font-weight:600;">${_escapeHtml(it.to_table || '')}.${_escapeHtml(it.to_column || '')}</span>
-                        <span style="margin-left:auto; color:#6b7280; font-size:0.75rem;">${_escapeHtml(it.executed_at || '')}</span>
+            // v3.32.0 G2.3 — accessible failure rows: ellipsis msg + tooltip + icon-only expand/copy buttons
+            box.innerHTML = items.map((it, idx) => {
+                const sqlId = `dsDbLoopFailSql_${idx}`;
+                const rawMsg = it.error_message || 'bilinmeyen hata';
+                const fromRel = `${it.from_table || ''}.${it.from_column || ''}`;
+                const toRel = `${it.to_table || ''}.${it.to_column || ''}`;
+                const renderedSql = it.rendered_sql || '';
+                return `
+                <div class="ds-dbloop-failrow-v2" data-idx="${idx}">
+                    <div class="fail-head">
+                        <span class="fail-kind">${_escapeHtml(it.template_kind || '?')}</span>
+                        <span class="fail-rel">${_escapeHtml(fromRel)}</span>
+                        <span class="fail-arrow" aria-hidden="true">→</span>
+                        <span class="fail-rel">${_escapeHtml(toRel)}</span>
+                        <span class="fail-time">${_escapeHtml(it.executed_at || '')}</span>
                     </div>
-                    <details>
-                        <summary style="cursor:pointer; color:#dc2626; font-size:0.85rem;">
-                            ❌ ${_escapeHtml((it.error_message || 'bilinmeyen hata').substring(0, 200))}
-                        </summary>
-                        <pre style="margin-top:0.5rem; padding:0.5rem; background:#fff; border:1px solid #e5e7eb; border-radius:4px; overflow:auto; max-height:200px; font-size:0.75rem;">${_escapeHtml(it.rendered_sql || '')}</pre>
-                    </details>
+                    <div class="fail-msg">
+                        <i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i>
+                        <span class="fail-msg-text" data-tooltip="${_escapeHtml(rawMsg)}" title="${_escapeHtml(rawMsg)}">${_escapeHtml(rawMsg)}</span>
+                        <button type="button"
+                                class="ds-dbloop-icon-btn ds-dbloop-fail-toggle"
+                                data-target="${sqlId}"
+                                aria-label="SQL'i göster/gizle"
+                                data-tooltip="Tam SQL'i göster/gizle"
+                                aria-expanded="false"
+                                aria-controls="${sqlId}">
+                            <i class="fa-solid fa-code" aria-hidden="true"></i>
+                        </button>
+                        <button type="button"
+                                class="ds-dbloop-icon-btn ds-dbloop-fail-copy"
+                                data-sql-target="${sqlId}"
+                                aria-label="Tam SQL'i panoya kopyala"
+                                data-tooltip="Tam SQL'i kopyala">
+                            <i class="fa-solid fa-copy" aria-hidden="true"></i>
+                        </button>
+                    </div>
+                    <div class="fail-sql-wrap">
+                        <pre id="${sqlId}" class="fail-sql">${_escapeHtml(renderedSql)}</pre>
+                    </div>
                 </div>
-            `).join('');
+            `;
+            }).join('');
+
+            // Expand/collapse handlers
+            box.querySelectorAll('.ds-dbloop-fail-toggle').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const row = btn.closest('.ds-dbloop-failrow-v2');
+                    if (!row) return;
+                    const isOpen = row.classList.toggle('expanded');
+                    btn.setAttribute('aria-expanded', String(isOpen));
+                });
+            });
+            // Copy handlers
+            box.querySelectorAll('.ds-dbloop-fail-copy').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const id = btn.getAttribute('data-sql-target');
+                    const pre = id ? document.getElementById(id) : null;
+                    const text = pre ? pre.textContent : '';
+                    if (!text) {
+                        toast('warning', 'Kopyalanacak SQL bulunamadı');
+                        return;
+                    }
+                    try {
+                        if (navigator.clipboard && navigator.clipboard.writeText) {
+                            await navigator.clipboard.writeText(text);
+                        } else {
+                            const ta = document.createElement('textarea');
+                            ta.value = text;
+                            ta.setAttribute('readonly', '');
+                            ta.style.position = 'fixed';
+                            ta.style.opacity = '0';
+                            document.body.appendChild(ta);
+                            ta.select();
+                            document.execCommand('copy');
+                            document.body.removeChild(ta);
+                        }
+                        toast('success', 'SQL kopyalandı');
+                    } catch (err) {
+                        toast('error', 'Kopyalama başarısız: ' + (err.message || err));
+                    }
+                });
+            });
         } catch (e) {
             box.innerHTML = `<div class="ds-dbloop-empty">Hatalar alınamadı: ${_escapeHtml(e.message || '')}</div>`;
         }
@@ -35674,6 +35823,717 @@ window.ThemePickerPopup = (function () {
         getState: function () { return Object.assign({}, _state); },
     };
 })();
+
+
+/* === assets/js/modules/learning_cache_dashboard.js === */
+/* -----------------------------------------------
+   VYRA — Learning Cache Hit Dashboard (Ajan-G)
+   v3.32.0
+
+   learned_db_queries cache effectiveness widget'ı.
+   - 3 metrik kart: Total Queries, Total Hits, Hit Rate %
+   - Top-10 most-hit query tablosu (ARIA + tooltip + SQL toggle)
+   - Empty / loading / error state'leri
+   - ARIA: role=status, aria-busy, role=table
+   - alert/confirm/prompt YASAK → window.showToast
+   - Hex sabit YOK → tüm renkler design token'lar üzerinden CSS sınıflarıyla
+------------------------------------------------ */
+
+const LCD_API_BASE = (typeof window !== 'undefined' && window.LCD_API_BASE_URL) || 'http://localhost:8002';
+
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+function _toast(type, message) {
+    if (typeof window === 'undefined') return;
+    if (window.VyraToast && typeof window.VyraToast[type] === 'function') {
+        window.VyraToast[type](message);
+        return;
+    }
+    if (typeof window.showToast === 'function') {
+        window.showToast(type, message);
+        return;
+    }
+    // Son çare: console — alert/confirm/prompt YASAK
+    console.log(`[learning-cache toast ${type}]`, message);
+}
+
+function _escape(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function _relativeTime(iso) {
+    if (!iso) return '—';
+    const then = new Date(iso);
+    if (Number.isNaN(then.getTime())) return '—';
+    const diffMs = Date.now() - then.getTime();
+    const sec = Math.floor(diffMs / 1000);
+    if (sec < 60) return `${sec} sn önce`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min} dk önce`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr} sa önce`;
+    const day = Math.floor(hr / 24);
+    if (day < 30) return `${day} gün önce`;
+    const mo = Math.floor(day / 30);
+    if (mo < 12) return `${mo} ay önce`;
+    const yr = Math.floor(mo / 12);
+    return `${yr} yıl önce`;
+}
+
+function _fmtPct(rate) {
+    const n = Number(rate || 0) * 100;
+    return `${n.toFixed(1)}%`;
+}
+
+function _fmtNum(n) {
+    const v = Number(n || 0);
+    return v.toLocaleString('tr-TR');
+}
+
+async function _fetchStats(sourceId) {
+    const token = (typeof localStorage !== 'undefined')
+        ? localStorage.getItem('access_token') : null;
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const url = `${LCD_API_BASE}/api/data-sources/${encodeURIComponent(sourceId)}/cache-stats`;
+    const res = await fetch(url, { method: 'GET', headers });
+    const text = await res.text();
+    let data;
+    try {
+        data = JSON.parse(text);
+    } catch (_e) {
+        throw new Error(`HTTP ${res.status} — JSON parse hatası`);
+    }
+    if (!res.ok || data?.success === false) {
+        const msg = data?.detail || data?.message || `HTTP ${res.status}`;
+        throw new Error(msg);
+    }
+    return data;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Render parçaları
+// ─────────────────────────────────────────────────────────────
+
+function _renderLoading() {
+    return `
+      <div class="lcache-loading" role="status" aria-live="polite" aria-busy="true">
+        <i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
+        <span>Cache istatistikleri yükleniyor…</span>
+      </div>
+    `;
+}
+
+function _renderError(message) {
+    return `
+      <div class="lcache-error" role="alert" aria-live="assertive">
+        <i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i>
+        <div>
+          <strong>Cache istatistikleri yüklenemedi</strong>
+          <div class="lcache-error-msg">${_escape(message || 'Bilinmeyen hata')}</div>
+        </div>
+      </div>
+    `;
+}
+
+function _renderEmpty() {
+    return `
+      <div class="lcache-empty" role="status">
+        <i class="fa-solid fa-database" aria-hidden="true"></i>
+        <h3>Henüz öğrenilmiş sorgu yok</h3>
+        <p>Bu veri kaynağında <code>learned_db_queries</code> tablosu boş. Cache effectiveness ölçümü için önce kullanıcı/sentetik sorgular çalıştırılmalı.</p>
+      </div>
+    `;
+}
+
+function _renderMetricCards(summary) {
+    const total = _fmtNum(summary.total);
+    const hits = _fmtNum(summary.total_hits);
+    const pct = _fmtPct(summary.hit_rate);
+    const used = _fmtNum(summary.used_count);
+    return `
+      <div class="lcache-cards" role="group" aria-label="Cache özet metrikleri">
+        <div class="lcache-card" role="status" aria-label="Toplam öğrenilmiş sorgu sayısı">
+          <div class="lcache-card-icon"><i class="fa-solid fa-list" aria-hidden="true"></i></div>
+          <div class="lcache-card-body">
+            <div class="lcache-card-label">Toplam Sorgu</div>
+            <div class="lcache-card-value">${total}</div>
+            <div class="lcache-card-sub">${used} tanesi en az 1 kez kullanıldı</div>
+          </div>
+        </div>
+        <div class="lcache-card" role="status" aria-label="Toplam cache isabet sayısı">
+          <div class="lcache-card-icon"><i class="fa-solid fa-bolt" aria-hidden="true"></i></div>
+          <div class="lcache-card-body">
+            <div class="lcache-card-label">Toplam İsabet</div>
+            <div class="lcache-card-value">${hits}</div>
+            <div class="lcache-card-sub">SUM(hit_count)</div>
+          </div>
+        </div>
+        <div class="lcache-card" role="status" aria-label="Cache isabet oranı">
+          <div class="lcache-card-icon"><i class="fa-solid fa-chart-line" aria-hidden="true"></i></div>
+          <div class="lcache-card-body">
+            <div class="lcache-card-label">İsabet Oranı</div>
+            <div class="lcache-card-value">${pct}</div>
+            <div class="lcache-card-sub">kullanılan / toplam</div>
+          </div>
+        </div>
+      </div>
+    `;
+}
+
+function _renderTopRow(item, rank) {
+    const id = Number(item.id) || 0;
+    const q = _escape(item.question_text || '');
+    const sqlEsc = _escape(item.sql_preview || '');
+    const hit = _fmtNum(item.hit_count);
+    const last = _relativeTime(item.last_hit_at);
+    const lastTitle = item.last_hit_at ? _escape(item.last_hit_at) : 'Hiç isabet yok';
+    const sqlBtnId = `lcache-sql-${id}`;
+    const truncBadge = item.sql_truncated
+        ? '<span class="lcache-trunc-badge" aria-label="SQL kısaltıldı (200 chr)">trunc</span>'
+        : '';
+
+    return `
+      <div class="lcache-row" role="row">
+        <div class="lcache-cell lcache-rank" role="cell">${rank}</div>
+        <div class="lcache-cell lcache-q" role="cell"
+             data-tooltip="${q}" title="${q}">
+          <span class="lcache-q-text">${q || '<em>(boş)</em>'}</span>
+        </div>
+        <div class="lcache-cell lcache-hit" role="cell"
+             aria-label="${hit} isabet">
+          <i class="fa-solid fa-bolt" aria-hidden="true"></i> ${hit}
+        </div>
+        <div class="lcache-cell lcache-last" role="cell"
+             title="${lastTitle}" data-tooltip="${lastTitle}">${last}</div>
+        <div class="lcache-cell lcache-sql" role="cell">
+          <button type="button" class="lcache-sql-toggle"
+                  data-target="${sqlBtnId}"
+                  aria-expanded="false" aria-controls="${sqlBtnId}"
+                  aria-label="SQL önizlemesini göster/gizle"
+                  data-tooltip="SQL önizlemesini göster/gizle">
+            <i class="fa-solid fa-code" aria-hidden="true"></i>
+            <span>SQL</span> ${truncBadge}
+          </button>
+          <pre id="${sqlBtnId}" class="lcache-sql-pre" hidden
+               aria-label="SQL önizlemesi (max 200 karakter)">${sqlEsc}</pre>
+        </div>
+      </div>
+    `;
+}
+
+function _renderTopTable(top) {
+    if (!Array.isArray(top) || top.length === 0) {
+        return `
+          <div class="lcache-top-empty" role="status">
+            <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+            Henüz isabet alan bir sorgu yok.
+          </div>
+        `;
+    }
+    const rows = top.map((it, idx) => _renderTopRow(it, idx + 1)).join('');
+    return `
+      <div class="lcache-top" role="table" aria-label="En çok isabet alan 10 sorgu">
+        <div class="lcache-row lcache-head" role="row">
+          <div class="lcache-cell lcache-rank" role="columnheader">#</div>
+          <div class="lcache-cell lcache-q" role="columnheader">Soru</div>
+          <div class="lcache-cell lcache-hit" role="columnheader">İsabet</div>
+          <div class="lcache-cell lcache-last" role="columnheader">Son İsabet</div>
+          <div class="lcache-cell lcache-sql" role="columnheader">SQL</div>
+        </div>
+        ${rows}
+      </div>
+    `;
+}
+
+function _renderDashboard(data) {
+    const summary = data?.summary || { total: 0, total_hits: 0, used_count: 0, hit_rate: 0 };
+    const top = Array.isArray(data?.top) ? data.top : [];
+    if ((summary.total | 0) === 0) {
+        return _renderEmpty();
+    }
+    return `
+      <section class="lcache-dashboard" role="region" aria-label="Cache Hit Dashboard">
+        <header class="lcache-header">
+          <h2><i class="fa-solid fa-bolt" aria-hidden="true"></i> Cache Hit Dashboard</h2>
+          <button type="button" class="lcache-refresh"
+                  aria-label="Cache istatistiklerini yenile"
+                  data-tooltip="Yenile">
+            <i class="fa-solid fa-rotate" aria-hidden="true"></i>
+          </button>
+        </header>
+        ${_renderMetricCards(summary)}
+        <h3 class="lcache-top-title">
+          <i class="fa-solid fa-trophy" aria-hidden="true"></i>
+          En çok isabet alan 10 sorgu
+        </h3>
+        ${_renderTopTable(top)}
+      </section>
+    `;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Event bağlama
+// ─────────────────────────────────────────────────────────────
+
+function _bindEvents(rootEl, sourceId) {
+    // SQL toggle
+    rootEl.querySelectorAll('.lcache-sql-toggle').forEach((btn) => {
+        btn.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            const target = btn.getAttribute('data-target');
+            if (!target) return;
+            const pre = rootEl.querySelector(`#${CSS.escape(target)}`);
+            if (!pre) return;
+            const open = pre.hasAttribute('hidden') ? true : false;
+            if (open) {
+                pre.removeAttribute('hidden');
+                btn.setAttribute('aria-expanded', 'true');
+            } else {
+                pre.setAttribute('hidden', '');
+                btn.setAttribute('aria-expanded', 'false');
+            }
+        });
+    });
+    // Refresh
+    const refreshBtn = rootEl.querySelector('.lcache-refresh');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            mountLearningCacheDashboard(rootEl, sourceId).catch(() => { /* handled inside */ });
+        });
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Public API
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Mount the Learning Cache Dashboard into the given root element.
+ * @param {HTMLElement} rootEl - container element (yapay olarak innerHTML ile yazılır)
+ * @param {number|string} sourceId - data source id
+ * @returns {Promise<void>}
+ */
+async function mountLearningCacheDashboard(rootEl, sourceId) {
+    if (!rootEl || typeof rootEl.innerHTML !== 'string') {
+        throw new Error('mountLearningCacheDashboard: geçerli bir rootEl gerekli');
+    }
+    const sid = Number(sourceId);
+    if (!Number.isFinite(sid) || sid <= 0) {
+        rootEl.innerHTML = _renderError('Geçersiz source_id');
+        return;
+    }
+
+    rootEl.setAttribute('aria-busy', 'true');
+    rootEl.innerHTML = _renderLoading();
+
+    try {
+        const data = await _fetchStats(sid);
+        rootEl.innerHTML = _renderDashboard(data);
+        _bindEvents(rootEl, sid);
+    } catch (err) {
+        const msg = (err && err.message) ? err.message : 'Bilinmeyen hata';
+        rootEl.innerHTML = _renderError(msg);
+        _toast('error', `Cache istatistikleri yüklenemedi: ${msg}`);
+    } finally {
+        rootEl.setAttribute('aria-busy', 'false');
+    }
+}
+
+// v3.32.0 — Bundle uyumluluğu için window'a expose et (ES export bundle'ı kırıyor).
+if (typeof window !== "undefined") {
+    window.mountLearningCacheDashboard = mountLearningCacheDashboard;
+    window.LearningCacheDashboard = { mount: mountLearningCacheDashboard };
+}
+
+
+/* === assets/js/modules/admin_error_review.js === */
+/**
+ * VYRA v3.32.0 — Ajan-I MVP: Error Pattern Approval UI (admin)
+ * ============================================================
+ *
+ * self_heal_node "rewrite" kararlarını (LLM tarafından üretilen düzeltme
+ * SQL'leri) admin'in tek tek onayladığı/reddettiği basit panel.
+ *
+ * Backend (db_learning_api.py altına eklendi):
+ *   GET  /api/data-sources/admin/error-rewrites?status=pending&limit=50
+ *   POST /api/data-sources/admin/error-rewrites/{id}/review
+ *        body: {decision: 'approved'|'rejected', note?: string}
+ *
+ * HEBE UI standartları:
+ *   - alert/confirm/prompt YOK — window.showToast / inline error.
+ *   - Hex YOK — sınıflar design token kullanır.
+ *   - Tüm butonlarda aria-label var, ikon-only butonlar dahil.
+ *   - Pagination YOK (MVP: yalnız son 50).
+ *
+ * Kullanım:
+ *   import { mountErrorReview } from "./modules/admin_error_review.js";
+ *   mountErrorReview(document.querySelector("#adminErrorReviewRoot"));
+ *
+ * mountErrorReview idempotent — aynı root'a tekrar çağrılırsa içerik
+ * yenilenir, event listener çoğalmaz.
+ */
+
+const AER_API_BASE = "/api/data-sources/admin/error-rewrites";
+const MOUNT_FLAG = "__vyraErrorReviewMounted";
+
+const STATUS_LABELS = {
+  pending: "Bekliyor",
+  approved: "Onaylandı",
+  rejected: "Reddedildi",
+  all: "Hepsi",
+};
+
+const ERROR_CLASS_LABELS = {
+  syntax: "Sözdizimi",
+  missing_table: "Tablo yok",
+  amb_column: "Belirsiz kolon",
+  timeout: "Zaman aşımı",
+  empty: "Boş sonuç",
+  semantic: "Anlamsal",
+  permission: "Yetki",
+  unknown: "Bilinmiyor",
+};
+
+/** Auth headers (localStorage access_token — projede kullanılan kalıp). */
+function authHeaders() {
+  const tok = (typeof localStorage !== "undefined")
+    ? localStorage.getItem("access_token")
+    : null;
+  return tok ? { Authorization: "Bearer " + tok } : {};
+}
+
+/** XSS-safe text. */
+function esc(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** Toast wrapper — proje kuralı: window.showToast varsa kullan, yoksa sessiz. */
+function toast(message, type) {
+  if (typeof window !== "undefined" && typeof window.showToast === "function") {
+    try { window.showToast(message, type || "info"); } catch (_) { /* swallow */ }
+  }
+}
+
+/** ISO timestamp → kısa Türkçe görünüm. */
+function fmtDate(iso) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso);
+    return d.toLocaleString("tr-TR", {
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit",
+    });
+  } catch (_) {
+    return String(iso);
+  }
+}
+
+/** Skeleton DOM — root içine yapı kurar. */
+function buildSkeleton(root) {
+  root.classList.add("admin-error-review");
+  root.innerHTML = [
+    '<div class="aer-toolbar" role="toolbar" aria-label="Hata düzeltme filtreleri">',
+    '  <label class="aer-toolbar__label" for="aerStatusSel">Durum</label>',
+    '  <select id="aerStatusSel" class="aer-select" aria-label="Durum filtresi">',
+    '    <option value="pending" selected>Bekleyen</option>',
+    '    <option value="approved">Onaylandı</option>',
+    '    <option value="rejected">Reddedildi</option>',
+    '    <option value="all">Hepsi</option>',
+    '  </select>',
+    '  <button type="button" id="aerRefreshBtn" class="aer-btn aer-btn--ghost" ',
+    '          aria-label="Listeyi yenile">Yenile</button>',
+    '  <span id="aerCount" class="aer-count" aria-live="polite"></span>',
+    '</div>',
+    '<div id="aerLoading" class="aer-loading" hidden role="status" aria-live="polite">',
+    '  Yükleniyor…',
+    '</div>',
+    '<div id="aerError" class="aer-error" hidden role="alert"></div>',
+    '<div id="aerEmpty" class="aer-empty" hidden>',
+    '  Bu filtre için kayıt bulunamadı.',
+    '</div>',
+    '<ul id="aerList" class="aer-list" aria-label="Rewrite kayıtları"></ul>',
+  ].join("\n");
+}
+
+/** Tek satır (li) HTML — full SQL <details> içinde collapsed. */
+function renderRow(item) {
+  const id = Number(item.id) || 0;
+  const ec = String(item.error_class || "unknown");
+  const ecLabel = ERROR_CLASS_LABELS[ec] || ec;
+  const status = String(item.review_status || "pending");
+  const statusLabel = STATUS_LABELS[status] || status;
+  const isPending = status === "pending";
+
+  const reviewedInfo = item.reviewed_at
+    ? `<span class="aer-row__reviewed">İncelendi: ${esc(fmtDate(item.reviewed_at))}` +
+      (item.reviewed_by ? ` (kullanıcı #${esc(item.reviewed_by)})` : "") +
+      `</span>`
+    : "";
+  const noteInfo = item.review_note
+    ? `<div class="aer-row__note"><strong>Not:</strong> ${esc(item.review_note)}</div>`
+    : "";
+
+  const actions = isPending
+    ? [
+        '<div class="aer-row__actions" role="group" aria-label="Karar">',
+        `  <button type="button" class="aer-btn aer-btn--approve" `,
+        `          data-action="approve" data-id="${id}" `,
+        `          aria-label="Bu rewrite kaydını onayla">`,
+        '    <span aria-hidden="true">✓</span> Onayla',
+        '  </button>',
+        `  <button type="button" class="aer-btn aer-btn--reject" `,
+        `          data-action="reject-open" data-id="${id}" `,
+        `          aria-label="Bu rewrite kaydını reddet">`,
+        '    <span aria-hidden="true">✗</span> Reddet',
+        '  </button>',
+        '</div>',
+        `<div class="aer-row__reject-note" data-id="${id}" hidden>`,
+        `  <label class="aer-toolbar__label" for="aerNote-${id}">Reddetme notu (opsiyonel)</label>`,
+        `  <textarea id="aerNote-${id}" class="aer-textarea" maxlength="2048" `,
+        `            rows="2" aria-label="Reddetme notu"></textarea>`,
+        '  <div class="aer-row__reject-actions">',
+        `    <button type="button" class="aer-btn aer-btn--ghost" `,
+        `            data-action="reject-cancel" data-id="${id}" `,
+        '            aria-label="Reddetmeyi iptal et">İptal</button>',
+        `    <button type="button" class="aer-btn aer-btn--reject" `,
+        `            data-action="reject-confirm" data-id="${id}" `,
+        '            aria-label="Reddetmeyi onayla">Reddet</button>',
+        '  </div>',
+        '</div>',
+      ].join("\n")
+    : "";
+
+  return [
+    `<li class="aer-row aer-row--${esc(status)}" data-row-id="${id}">`,
+    '  <div class="aer-row__header">',
+    `    <span class="aer-chip aer-chip--${esc(ec)}" aria-label="Hata sınıfı: ${esc(ecLabel)}">`,
+    `      ${esc(ecLabel)}`,
+    '    </span>',
+    `    <span class="aer-chip aer-chip--status-${esc(status)}" aria-label="Durum: ${esc(statusLabel)}">`,
+    `      ${esc(statusLabel)}`,
+    '    </span>',
+    `    <span class="aer-row__id">#${id}</span>`,
+    `    <span class="aer-row__src">Kaynak: ${esc(item.source_id)}</span>`,
+    `    <span class="aer-row__when">Oluştu: ${esc(fmtDate(item.created_at))}</span>`,
+    '  </div>',
+    item.question
+      ? `<div class="aer-row__question"><strong>Soru:</strong> ${esc(item.question)}</div>`
+      : "",
+    item.error_message
+      ? `<div class="aer-row__errmsg"><strong>Hata:</strong> ${esc(item.error_message)}</div>`
+      : "",
+    '  <details class="aer-row__sql">',
+    '    <summary>Orijinal SQL</summary>',
+    `    <pre class="aer-pre"><code>${esc(item.original_sql || "")}</code></pre>`,
+    '  </details>',
+    '  <details class="aer-row__sql">',
+    '    <summary>Yeniden Üretilen SQL (LLM rewrite)</summary>',
+    `    <pre class="aer-pre"><code>${esc(item.rewritten_sql || "")}</code></pre>`,
+    '  </details>',
+    reviewedInfo ? `<div class="aer-row__meta">${reviewedInfo}</div>` : "",
+    noteInfo,
+    actions,
+    '</li>',
+  ].filter(Boolean).join("\n");
+}
+
+/** Liste render — items boş ise empty state göster. */
+function renderList(root, items) {
+  const listEl = root.querySelector("#aerList");
+  const emptyEl = root.querySelector("#aerEmpty");
+  const countEl = root.querySelector("#aerCount");
+  if (!listEl) return;
+  listEl.innerHTML = "";
+  const arr = Array.isArray(items) ? items : [];
+  if (countEl) countEl.textContent = `${arr.length} kayıt`;
+  if (!arr.length) {
+    if (emptyEl) emptyEl.hidden = false;
+    return;
+  }
+  if (emptyEl) emptyEl.hidden = true;
+  listEl.insertAdjacentHTML("beforeend", arr.map(renderRow).join("\n"));
+}
+
+/** Hata gösterimi (inline + toast). */
+function showError(root, message) {
+  const el = root.querySelector("#aerError");
+  if (el) {
+    if (message) {
+      el.textContent = message;
+      el.hidden = false;
+    } else {
+      el.textContent = "";
+      el.hidden = true;
+    }
+  }
+  if (message) toast(message, "error");
+}
+
+/** Loading toggle. */
+function setLoading(root, on) {
+  const el = root.querySelector("#aerLoading");
+  if (el) el.hidden = !on;
+}
+
+/** GET liste. */
+async function fetchList(root, statusFilter) {
+  showError(root, "");
+  setLoading(root, true);
+  try {
+    const url = `${AER_API_BASE}?status=${encodeURIComponent(statusFilter)}&limit=50`;
+    const res = await fetch(url, { headers: authHeaders() });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const json = await res.json();
+    const items = (json && json.items) || [];
+    renderList(root, items);
+  } catch (err) {
+    renderList(root, []);
+    showError(root, "Liste yüklenemedi: " + ((err && err.message) || err));
+  } finally {
+    setLoading(root, false);
+  }
+}
+
+/** POST review (approve/reject). */
+async function postReview(root, rewriteId, decision, note) {
+  try {
+    const res = await fetch(
+      `${AER_API_BASE}/${encodeURIComponent(rewriteId)}/review`,
+      {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ decision, note: note || null }),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    toast(
+      decision === "approved"
+        ? "Rewrite onaylandı."
+        : "Rewrite reddedildi.",
+      "success",
+    );
+    // Listeyi mevcut filtre ile yeniden çek
+    const sel = root.querySelector("#aerStatusSel");
+    const cur = (sel && sel.value) || "pending";
+    await fetchList(root, cur);
+  } catch (err) {
+    showError(root, "İşlem başarısız: " + ((err && err.message) || err));
+  }
+}
+
+/** Reddetme bölümünü aç/kapat. */
+function toggleRejectNote(root, rewriteId, open) {
+  const block = root.querySelector(
+    `.aer-row__reject-note[data-id="${CSS && CSS.escape ? CSS.escape(String(rewriteId)) : String(rewriteId)}"]`,
+  );
+  if (!block) return;
+  block.hidden = !open;
+  if (open) {
+    const ta = block.querySelector("textarea");
+    if (ta) {
+      try { ta.focus(); } catch (_) { /* ignore */ }
+    }
+  }
+}
+
+/** Tek root için click delegation — idempotent mount sayesinde bir kere. */
+function bindEvents(root) {
+  // Toolbar
+  const sel = root.querySelector("#aerStatusSel");
+  const refreshBtn = root.querySelector("#aerRefreshBtn");
+  if (sel) {
+    sel.addEventListener("change", () => fetchList(root, sel.value || "pending"));
+  }
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", () => {
+      const cur = (sel && sel.value) || "pending";
+      fetchList(root, cur);
+    });
+  }
+
+  // Liste click delegation
+  const listEl = root.querySelector("#aerList");
+  if (!listEl) return;
+  listEl.addEventListener("click", (ev) => {
+    const target = ev.target.closest("[data-action]");
+    if (!target) return;
+    const action = target.getAttribute("data-action");
+    const idAttr = target.getAttribute("data-id");
+    const rewriteId = Number(idAttr);
+    if (!Number.isFinite(rewriteId) || rewriteId <= 0) return;
+
+    if (action === "approve") {
+      // MVP: confirm yok (HEBE kuralı). Direkt POST.
+      postReview(root, rewriteId, "approved", null);
+      return;
+    }
+    if (action === "reject-open") {
+      toggleRejectNote(root, rewriteId, true);
+      return;
+    }
+    if (action === "reject-cancel") {
+      toggleRejectNote(root, rewriteId, false);
+      return;
+    }
+    if (action === "reject-confirm") {
+      const ta = root.querySelector(`#aerNote-${CSS && CSS.escape ? CSS.escape(String(rewriteId)) : String(rewriteId)}`);
+      const note = ta && ta.value ? ta.value.trim() : "";
+      postReview(root, rewriteId, "rejected", note);
+      return;
+    }
+  });
+}
+
+/**
+ * Public mount API.
+ *
+ * @param {HTMLElement} rootEl - container element (skeleton içine yazılacak).
+ * @returns {Promise<void>}
+ */
+async function mountErrorReview(rootEl) {
+  if (!rootEl || rootEl.nodeType !== 1) {
+    return; // sessiz no-op — yanlış tip
+  }
+  // Idempotent: aynı root'a iki kere mount edilirse skeleton tek defa kurulur,
+  // ama liste her çağrıda yenilenir.
+  if (!rootEl[MOUNT_FLAG]) {
+    buildSkeleton(rootEl);
+    bindEvents(rootEl);
+    Object.defineProperty(rootEl, MOUNT_FLAG, {
+      value: true, enumerable: false, configurable: false, writable: false,
+    });
+  }
+  const sel = rootEl.querySelector("#aerStatusSel");
+  const statusFilter = (sel && sel.value) || "pending";
+  await fetchList(rootEl, statusFilter);
+}
+
+// v3.32.0 — Bundle uyumluluğu için window'a expose et (ES export bundle'ı kırıyor).
+if (typeof window !== "undefined") {
+  window.mountErrorReview = mountErrorReview;
+  window.AdminErrorReview = { mountErrorReview };
+}
 
 
 /* === assets/js/branding_engine.js === */

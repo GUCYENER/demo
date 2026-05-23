@@ -57,6 +57,8 @@ const CSS_FILES = [
     'assets/css/modules/fk_inference.css',          // v3.29.9 — FK inference observability + deploy banner
     'assets/css/modules/_db_smart_wizard.css',      // v3.30.0 P20 — AST editor chips/list/DnD/modal
     'assets/css/modules/ui_tooltip.css',            // v3.32.0 — Global modern tooltip utility (data-tt)
+    'assets/css/modules/_db_loop.css',              // v3.32.0 G2 — FK Loop progress bar + failure UX
+    'assets/css/modules/_learning_cache.css',       // v3.32.0 Ajan-G — Cache hit dashboard widget
 ];
 
 const JS_FILES = [
@@ -142,6 +144,8 @@ const JS_FILES = [
     'assets/js/modules/db_smart_filter_modal.js',        // v3.30.0 P20 — Filter spec modal (DbSmartFilterModal.open)
     'assets/js/modules/db_smart_ast_editor.js',          // v3.30.0 P20 — AST editor core (DnD + a11y), Agent A
     'assets/js/modules/db_smart_wizard.js',              // v3.30.0 — Akıllı Veri Keşfi Wizard
+    'assets/js/modules/learning_cache_dashboard.js',     // v3.32.0 Ajan-G — Cache hit dashboard widget
+    'assets/js/modules/admin_error_review.js',           // v3.32.0 Ajan-I — Error pattern approval UI
     'assets/js/branding_engine.js',
 ];
 
