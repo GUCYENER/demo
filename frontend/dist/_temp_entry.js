@@ -30677,30 +30677,30 @@ const DSEnrichmentModule = (() => {
         }
 
         try {
-            // v3.30.1: 5'li paralel pool (sıralı await yerine).
-            // backend bulk endpoint olmadığı için tek-tek POST gerekiyor; concurrency
-            // limiti server'ı korur, browser HTTP/1.1 host limiti zaten ~6.
-            const results = await _runConcurrent(approvableIds, 5, async (objectId) => {
-                const enrichmentId = objectToEnrichMap[objectId];
-                try {
-                    const res = await _authFetch(
-                        `/api/data-sources/${_currentSourceId}/enrichment-approve/${enrichmentId}`,
-                        {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({})
-                        }
-                    );
-                    const data = await res.json();
-                    return { objectId, enrichmentId, success: data.success };
-                } catch (err) {
-                    console.error("[DSEnrich] Onay hatası id:", objectId, err);
-                    return { objectId, enrichmentId, success: false };
+            // v3.31.0: Tek POST -> backend bulk endpoint.
+            // Per-item SAVEPOINT, partial success (stop_on_error=false), 5 worker
+            // post-commit paralel schema_record. ~5x daha hizli + transactional.
+            const enrichmentIds = approvableIds.map(oid => objectToEnrichMap[oid]);
+            const res = await _authFetch(
+                `/api/data-sources/${_currentSourceId}/enrichment-approve-bulk`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        enrichment_ids: enrichmentIds,
+                        stop_on_error: false,
+                        max_parallel: 5
+                    })
                 }
-            });
+            );
+            const data = await res.json();
 
-            const successObjectIds = results.filter(r => r && r.success).map(r => String(r.objectId));
-            
+            // approved_ids -> objectId map'i tersle
+            const approvedEnrichSet = new Set((data.approved_ids || []).map(String));
+            const successObjectIds = approvableIds.filter(
+                oid => approvedEnrichSet.has(String(objectToEnrichMap[oid]))
+            ).map(String);
+
             if (successObjectIds.length > 0) {
                 // Başarılı olanları is_approved = true yap
                 _pendingData.forEach(p => {
@@ -30708,23 +30708,31 @@ const DSEnrichmentModule = (() => {
                         p.is_approved = true;
                     }
                 });
-                
+
                 // Seçilenler listesinden kaldır
                 successObjectIds.forEach(id => _selectedIds.delete(id));
-                
+
                 // UI Güncelle
                 applyFilterAndRender();
                 setTimeout(() => _updateStatsAfterApprove(), 350);
-                
-                _showToast(`${successObjectIds.length} tablo onaylandı`, 'success');
+
+                // Toast — bulk endpoint mesajini kullan veya kendimiz uret
+                let msg = data.message || `${successObjectIds.length} tablo onaylandi`;
+                if (data.schema_record_warnings && data.schema_record_warnings.length > 0) {
+                    console.warn('[DSEnrich] Schema record warnings:', data.schema_record_warnings);
+                }
+                _showToast(msg, data.failed > 0 ? 'warning' : 'success');
             } else {
-                _showToast('Toplu onay başarısız', 'error');
+                _showToast(data.message || 'Toplu onay basarisiz', 'error');
+                if (data.errors && data.errors.length > 0) {
+                    console.error('[DSEnrich] Bulk approve errors:', data.errors);
+                }
             }
         } catch (err) {
             console.error('[DSEnrich] Toplu onay hatası:', err);
             _showToast('Onay sırasında hata oluştu', 'error');
         } finally {
-            if(btn) btn.disabled=false; 
+            if(btn) btn.disabled=false;
             applyFilterAndRender(); // update button state via render
         }
     }
@@ -30761,41 +30769,43 @@ const DSEnrichmentModule = (() => {
         } catch (e) { /* kontrol başarısız, devam et */ }
 
         try {
-            let successCount = 0;
-            let failCount = 0;
+            // v3.31.0: Tek POST -> backend bulk endpoint (transactional + paralel)
+            const enrichmentIds = toApprove.map(x => x.enrichment_id);
+            const res = await _authFetch(
+                `/api/data-sources/${_currentSourceId}/enrichment-approve-bulk`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        enrichment_ids: enrichmentIds,
+                        stop_on_error: false,
+                        max_parallel: 5
+                    })
+                }
+            );
+            const data = await res.json();
 
-            // v3.30.1: 5'li paralel pool — sıralı await yerine ~5x hız
-            await _runConcurrent(toApprove, 5, async (item) => {
-                try {
-                    const res = await _authFetch(
-                        `/api/data-sources/${_currentSourceId}/enrichment-approve/${item.enrichment_id}`,
-                        {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({})
-                        }
-                    );
-                    const data = await res.json();
-                    if (data.success) {
-                        item.is_approved = true;
-                        successCount++;
-                    } else {
-                        failCount++;
-                    }
-                } catch (e) {
-                    failCount++;
+            const approvedSet = new Set((data.approved_ids || []).map(String));
+            // Frontend state'i guncelle
+            toApprove.forEach(item => {
+                if (approvedSet.has(String(item.enrichment_id))) {
+                    item.is_approved = true;
                 }
             });
 
-            if (successCount > 0) {
-                const msg = failCount > 0
-                    ? `${successCount} tablo onaylandı, ${failCount} başarısız`
-                    : `${successCount} tablo onaylandı`;
-                _showToast(msg, 'success');
+            if (data.approved > 0) {
+                _showToast(data.message || `${data.approved} tablo onaylandi`,
+                           data.failed > 0 ? 'warning' : 'success');
                 _updateStatsAfterApprove();
                 applyFilterAndRender();
+                if (data.schema_record_warnings && data.schema_record_warnings.length > 0) {
+                    console.warn('[DSEnrich] Schema record warnings:', data.schema_record_warnings);
+                }
             } else {
-                _showToast('Toplu onay başarısız', 'error');
+                _showToast(data.message || 'Toplu onay basarisiz', 'error');
+                if (data.errors && data.errors.length > 0) {
+                    console.error('[DSEnrich] Bulk approve errors:', data.errors);
+                }
             }
         } catch (err) {
             console.error('[DSEnrich] Tümünü onayla hatası:', err);

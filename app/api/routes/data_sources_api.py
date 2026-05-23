@@ -1512,6 +1512,239 @@ def approve_enrichment(
         return {"success": False, "message": "Onay işlemi sırasında beklenmeyen bir hata oluştu."}
 
 
+# ==========================================================================
+# v3.31.0 (Faz 1) — Bulk approve endpoint
+# ==========================================================================
+# Plan: .agents/plans/2026-05-23_1430_bulk_enrichment_endpoints_v1.md
+#
+# Tasarim:
+#   1) ARES validation: enrichment_ids hepsi source_id'ye ait mi (cross-source)
+#   2) check_running_job preflight
+#   3) Tek connection icinde per-item SAVEPOINT loop -> UPDATE ds_table_enrichments
+#      - stop_on_error=False (default): partial success; basarisizlar
+#        ROLLBACK TO SAVEPOINT ile temizlenir, basarililar outer COMMIT'te kalir
+#      - stop_on_error=True: ilk hatada outer ROLLBACK -> hicbir kayit degismez
+#   4) Outer COMMIT
+#   5) Post-commit: ThreadPoolExecutor(max_workers=max_parallel) ile
+#      schema_record + embedding paralel uretilir. Her thread kendi
+#      connection'unu acar. Hatalar 'schema_record_warnings'a duser
+#      (ana onay zaten commit edilmis durumda, geri alinmaz).
+#
+# Notlar:
+#   - approve_enrichment service func'i kendi commit'ini yapiyor -> bu
+#     endpoint'te kullanilamaz (SAVEPOINT'leri bozardi). UPDATE inline.
+#   - Faz 2'de schema_record uretimi fastapi.BackgroundTasks'a tasinacak
+#     (response sirasinda blocking olmasin).
+# ==========================================================================
+
+class EnrichmentApproveBulkRequest(BaseModel):
+    enrichment_ids: List[int]
+    stop_on_error: bool = False
+    max_parallel: int = 5  # 1..10 clamp; embedding ThreadPool worker sayisi
+
+
+@router.post("/{source_id}/enrichment-approve-bulk")
+def approve_enrichment_bulk(
+    source_id: int,
+    body: EnrichmentApproveBulkRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    v3.31.0: Toplu enrichment onay endpoint'i.
+    Per-item SAVEPOINT + post-commit paralel schema_record uretimi.
+    """
+    if not body.enrichment_ids:
+        return {"success": False, "message": "Onaylanacak enrichment_id yok.", "code": "empty"}
+
+    # max_parallel server-side clamp (kullanici 1000 gondermesin)
+    max_parallel = max(1, min(10, body.max_parallel or 5))
+    enrichment_ids = list(dict.fromkeys(body.enrichment_ids))  # dedupe, order korunur
+    user_id = current_user.get("id")
+
+    approved_ids: List[int] = []
+    failed: List[Dict[str, Any]] = []
+    schema_warnings: List[Dict[str, Any]] = []
+
+    try:
+        from app.services import ds_learning_service
+        from app.core.db import get_db_context_scoped
+
+        with get_db_context_scoped(source_id) as conn:
+            # 1) Calisan is kontrolu
+            running_check = ds_learning_service.check_running_job(conn, source_id)
+            if running_check["has_running"]:
+                rj = running_check["job"]
+                return {
+                    "success": False,
+                    "code": "running_job",
+                    "message": f"Bu kaynak icin calisan bir is var ({rj['job_type']}). Tamamlanmasini bekleyin.",
+                    "total": len(enrichment_ids), "approved": 0, "failed": 0,
+                    "errors": [], "schema_record_warnings": []
+                }
+
+            cur = conn.cursor()
+
+            # 2) ARES: enrichment_ids hepsi bu source_id'ye ait mi?
+            cur.execute("""
+                SELECT id FROM ds_table_enrichments
+                WHERE source_id = %s AND id = ANY(%s)
+            """, (source_id, enrichment_ids))
+            rows = cur.fetchall()
+            valid_set = set()
+            for r in rows:
+                rid = r["id"] if hasattr(r, "keys") else r[0]
+                valid_set.add(rid)
+            invalid_ids = [i for i in enrichment_ids if i not in valid_set]
+            if invalid_ids:
+                logger.warning(
+                    "[DataSources] Bulk approve: cross-source/unknown eid'ler reddedildi "
+                    "user=%s source=%s ids=%s", user_id, source_id, invalid_ids[:10]
+                )
+                return {
+                    "success": False,
+                    "code": "cross_source_or_unknown",
+                    "message": (
+                        f"Bu kaynakta bulunmayan {len(invalid_ids)} enrichment_id var. "
+                        "Onay reddedildi."
+                    ),
+                    "invalid_ids": invalid_ids[:50],
+                    "total": len(enrichment_ids), "approved": 0,
+                    "failed": len(invalid_ids), "errors": [], "schema_record_warnings": []
+                }
+
+            # 3) Per-item SAVEPOINT loop — UPDATE only
+            for eid in enrichment_ids:
+                sp_name = f"sp_appr_{eid}"
+                try:
+                    cur.execute(f"SAVEPOINT {sp_name}")
+                    cur.execute("""
+                        UPDATE ds_table_enrichments
+                        SET admin_approved = TRUE,
+                            approved_by = %s,
+                            approved_at = NOW(),
+                            updated_at = NOW()
+                        WHERE id = %s AND source_id = %s
+                    """, (user_id, eid, source_id))
+                    if cur.rowcount == 0:
+                        # Row vanished or filtered out (race) — savepoint geri al
+                        cur.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+                        failed.append({"enrichment_id": eid, "reason": "row_not_found"})
+                        if body.stop_on_error:
+                            conn.rollback()
+                            return {
+                                "success": False, "code": "stopped",
+                                "total": len(enrichment_ids),
+                                "approved": 0, "failed": len(failed),
+                                "errors": failed, "schema_record_warnings": [],
+                                "message": f"stop_on_error: enrichment #{eid} bulunamadi"
+                            }
+                        continue
+                    cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+                    approved_ids.append(eid)
+                except Exception as item_err:
+                    # Item-level rollback
+                    try:
+                        cur.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+                    except Exception:
+                        pass
+                    logger.error(
+                        "[DataSources] Bulk approve item hata eid=%s: %s",
+                        eid, type(item_err).__name__
+                    )
+                    failed.append({
+                        "enrichment_id": eid,
+                        "reason": type(item_err).__name__
+                    })
+                    if body.stop_on_error:
+                        conn.rollback()
+                        return {
+                            "success": False, "code": "stopped",
+                            "total": len(enrichment_ids),
+                            "approved": 0, "failed": len(failed),
+                            "errors": failed, "schema_record_warnings": [],
+                            "message": (
+                                f"stop_on_error: enrichment #{eid} "
+                                f"({type(item_err).__name__})"
+                            )
+                        }
+
+            # 4) Outer COMMIT — basarili olanlar kalici
+            conn.commit()
+
+        # 5) Post-commit paralel schema_record uretimi (her thread kendi conn'u)
+        if approved_ids:
+            schema_warnings = _generate_schema_records_parallel(
+                source_id, approved_ids, max_parallel
+            )
+
+        success_flag = len(approved_ids) > 0
+        msg_parts = [f"{len(approved_ids)} tablo onaylandi"]
+        if failed:
+            msg_parts.append(f"{len(failed)} basarisiz")
+        if schema_warnings:
+            msg_parts.append(f"{len(schema_warnings)} embedding warning")
+        return {
+            "success": success_flag,
+            "total": len(enrichment_ids),
+            "approved": len(approved_ids),
+            "failed": len(failed),
+            "approved_ids": approved_ids,
+            "errors": failed,
+            "schema_record_warnings": schema_warnings,
+            "message": ", ".join(msg_parts)
+        }
+
+    except Exception as e:
+        logger.error(
+            "[DataSources] Bulk approve beklenmeyen hata: %s — %s",
+            type(e).__name__, str(e)[:200]
+        )
+        return {
+            "success": False, "code": "unexpected",
+            "message": "Toplu onay sirasinda beklenmeyen hata olustu.",
+            "total": len(enrichment_ids),
+            "approved": len(approved_ids), "failed": len(failed),
+            "errors": failed, "schema_record_warnings": schema_warnings
+        }
+
+
+def _generate_schema_records_parallel(source_id: int, enrichment_ids: List[int],
+                                       max_workers: int) -> List[Dict[str, Any]]:
+    """
+    v3.31.0: Onaylanan enrichment'lar icin schema_record + embedding'i
+    paralel uretir. Her worker kendi DB connection'unu acar.
+
+    Schema record/embedding hatalari critical degil; warning olarak
+    raporlanir, approve UPDATE'i etkilemez (zaten commit edilmis).
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from app.core.db import get_db_context_scoped
+
+    warnings: List[Dict[str, Any]] = []
+
+    def _worker(eid: int) -> Optional[Dict[str, Any]]:
+        try:
+            with get_db_context_scoped(source_id) as w_conn:
+                _generate_schema_record_for_enrichment(w_conn, source_id, eid)
+            return None  # success
+        except Exception as e:
+            logger.warning(
+                "[DSEnrich] Bulk schema_record warn eid=%s: %s",
+                eid, str(e)[:200]
+            )
+            return {"enrichment_id": eid, "reason": str(e)[:200]}
+
+    # ThreadPool — embedding HTTP latency'sini paralel topla
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_worker, eid): eid for eid in enrichment_ids}
+        for fut in as_completed(futures):
+            w = fut.result()
+            if w is not None:
+                warnings.append(w)
+
+    return warnings
+
+
 def _generate_schema_record_for_enrichment(conn, source_id: int, enrichment_id: int):
     """
     v3.9.0: Admin onayı sonrası otomatik schema_record ve embedding oluşturur.
