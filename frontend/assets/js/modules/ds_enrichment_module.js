@@ -527,7 +527,6 @@ const DSEnrichmentModule = (() => {
         const _cntPendingDisc  = _pendingData.filter(x => !x.enrichment_id && !_discoveringIds.has(String(x.id))).length;
         const _cntDiscovering  = _pendingData.filter(x => _discoveringIds.has(String(x.id)) && !x.enrichment_id).length;
         const _cntPendingAppr  = _pendingData.filter(x => x.enrichment_id && !x.is_approved).length;
-        const _pillStyle = (active, base, accent) => `padding:5px 10px; border-radius:6px; border:1px solid ${active ? accent : 'rgba(255,255,255,0.15)'}; background:${active ? base : 'transparent'}; color:${active ? accent : '#aaa'}; cursor:pointer; font-size:0.82rem; font-weight:600; white-space:nowrap; transition:all 0.2s;`;
 
         body.innerHTML = `
             <div class="ds-enrich-filter-bar" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; flex-wrap:wrap; gap:10px; flex-shrink:0;">
@@ -559,20 +558,23 @@ const DSEnrichmentModule = (() => {
                         Onaylıları Göster
                     </label>
                     <div role="group" aria-label="Durum filtresi" style="display:inline-flex; gap:6px;">
-                        <button onclick="DSEnrichmentModule.setStatusFilter('pending_disc')"
-                                style="${_pillStyle(_statusFilter==='pending_disc', 'rgba(167,139,250,0.2)', '#a78bfa')}"
+                        <button type="button" class="ds-status-pill" data-active="${_statusFilter==='pending_disc'}"
+                                style="--pill-accent:#a78bfa; --pill-base:rgba(167,139,250,0.2);"
+                                onclick="DSEnrichmentModule.setStatusFilter('pending_disc')"
                                 title="Henüz keşfedilmemiş tablolar (tüm sayfalar)">
-                            <i class="fa-solid fa-hourglass-half" style="margin-right:4px;"></i>Keşif Bekleyenler (${_cntPendingDisc})
+                            <i class="fa-solid fa-hourglass-half"></i>Keşif Bekleyenler (${_cntPendingDisc})
                         </button>
-                        <button onclick="DSEnrichmentModule.setStatusFilter('discovering')"
-                                style="${_pillStyle(_statusFilter==='discovering', 'rgba(96,165,250,0.2)', '#60a5fa')}"
+                        <button type="button" class="ds-status-pill" data-active="${_statusFilter==='discovering'}"
+                                style="--pill-accent:#60a5fa; --pill-base:rgba(96,165,250,0.2);"
+                                onclick="DSEnrichmentModule.setStatusFilter('discovering')"
                                 title="Keşif isteği atılmış, sonuç bekleyen tablolar (tüm sayfalar)">
-                            <i class="fa-solid fa-spinner" style="margin-right:4px;"></i>Devam Edenler (${_cntDiscovering})
+                            <i class="fa-solid fa-spinner"></i>Devam Edenler (${_cntDiscovering})
                         </button>
-                        <button onclick="DSEnrichmentModule.setStatusFilter('pending_appr')"
-                                style="${_pillStyle(_statusFilter==='pending_appr', 'rgba(245,158,11,0.2)', '#f59e0b')}"
+                        <button type="button" class="ds-status-pill" data-active="${_statusFilter==='pending_appr'}"
+                                style="--pill-accent:#f59e0b; --pill-base:rgba(245,158,11,0.2);"
+                                onclick="DSEnrichmentModule.setStatusFilter('pending_appr')"
                                 title="Keşfedilmiş ama onaylanmamış tablolar (tüm sayfalar)">
-                            <i class="fa-solid fa-clock" style="margin-right:4px;"></i>Onay Bekleyenler (${_cntPendingAppr})
+                            <i class="fa-solid fa-clock"></i>Onay Bekleyenler (${_cntPendingAppr})
                         </button>
                     </div>
                 </div>

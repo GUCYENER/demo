@@ -472,3 +472,39 @@
     margin-bottom: 0.5rem;
     color: var(--accent-primary, #6c63ff);
 }
+
+/* ============================================
+   v3.31.0 (R003) — Status filter pill buttons
+   ============================================
+   Üç pill (pending_disc / discovering / pending_appr) — active state
+   data-active="true" attribute ile, renkler per-button accent/base
+   inline custom property olarak (--pill-accent, --pill-base).
+*/
+.ds-status-pill {
+    padding: 5px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: transparent;
+    color: #aaa;
+    cursor: pointer;
+    font-size: 0.82rem;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: all 0.2s;
+}
+.ds-status-pill:hover {
+    color: var(--pill-accent, #ddd);
+    border-color: var(--pill-accent, rgba(255, 255, 255, 0.35));
+}
+.ds-status-pill:focus-visible {
+    outline: 2px solid var(--pill-accent, #6c63ff);
+    outline-offset: 2px;
+}
+.ds-status-pill[data-active="true"] {
+    background: var(--pill-base, rgba(108, 99, 255, 0.2));
+    border-color: var(--pill-accent, #6c63ff);
+    color: var(--pill-accent, #6c63ff);
+}
+.ds-status-pill > i {
+    margin-right: 4px;
+}
