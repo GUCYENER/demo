@@ -1,11 +1,19 @@
 ---
 plan_id: fk_loop_v3320_improvements
 created: 2026-05-23
+completed: 2026-05-23
 branch: hira
-status: in_progress
+status: completed
 version_target: v3.32.0
 council_mod: 3
 hebe_gate_required: true
+commits:
+  - f5856ef  # fix(v3.32.0 FK-LOOP): A/B/C/D first batch
+  - b97e9b8  # feat(v3.32.0 ATHENA E+F+H): smart search backend
+  - f3e23b6  # feat(v3.32.0 ATHENA G+I): admin learning widgets
+  - c713f1e  # feat(v3.32.0 ATHENA J): Fernet rotation MVP
+  - 00861ff  # chore(v3.32.0): alembic merge + bundle rebuild
+last_commit: 00861ff
 ---
 
 # FK Loop İyileştirmeleri — v3.32.0
