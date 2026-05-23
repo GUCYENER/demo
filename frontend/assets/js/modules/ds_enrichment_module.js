@@ -45,6 +45,11 @@ const DSEnrichmentModule = (() => {
     let _runningJob = null;  // { type: 'discover_all'|'approve_all'|'enrich_selected'|..., started_at }
     let _runningJobPollTimer = null;
     let _runningJobPollInterval = 3000;  // 3s, exponential backoff on error
+    // v3.32.0 TYCHE O3 fix: bulkApprove/bulkApproveAll backend'de ds_discovery_jobs satırı
+    // OLUŞTURMUYOR (sync endpoint); _runningJob null kalıyor; 4 buton ayrı disabled state
+    // tutuyor — user dsBulkApproveBtn'ye basıp dsApproveAllBtn'ye de basarak 2 paralel
+    // POST atebiliyordu. Bu flag tüm bulk approve butonlarını single-flight'a zorlar.
+    let _bulkApproveInFlight = false;
 
     // v3.32.0 ATHENA Y2 fix: aria-label fallback for [data-tt] tooltips.
     // CSS ::after content is NOT announced reliably by screen readers (NVDA partial,
@@ -214,6 +219,10 @@ const DSEnrichmentModule = (() => {
                 _runningJob = null;
                 return;
             }
+            // v3.32.0 TYCHE O1 fix: !res.ok (401/500 vb.) data.has_running'i okumadan
+            // hata olarak handle et — eski kod 500'de silently _runningJob=null yapıyor,
+            // spurious refreshData() + stop-poll tetikliyordu.
+            if (!res.ok) throw new Error('http_' + res.status);
             const data = await res.json();
             // Backend hata bildirdiyse (success:false) — _runningJob state'ini DEĞİŞTİRME
             // (gate'i kazara açmamak için). Backoff ile devam.
@@ -223,7 +232,8 @@ const DSEnrichmentModule = (() => {
                 return;
             }
             const wasRunning = _runningJob !== null;
-            if (data.has_running) {
+            const nowRunning = !!data.has_running;
+            if (nowRunning) {
                 _runningJob = {
                     type: (data.job && data.job.job_type) || 'unknown',
                     started_at: data.job && data.job.started_at
@@ -238,13 +248,16 @@ const DSEnrichmentModule = (() => {
                     return;
                 }
             }
-            // UI re-render trigger — kullanıcı şu an bir input doldurmuyorsa
-            const activeEl = document.activeElement;
-            if (!activeEl || activeEl.tagName !== 'INPUT') {
-                applyFilterAndRender();
+            // v3.32.0 TYCHE Y2 fix: re-render SADECE state transition'da
+            // (idle iken 3s'de bir tüm panel re-render scroll/focus'u bozuyordu).
+            if (wasRunning !== nowRunning) {
+                const activeEl = document.activeElement;
+                if (!activeEl || activeEl.tagName !== 'INPUT') {
+                    applyFilterAndRender();
+                }
             }
         } catch (e) {
-            // Network/parse hata — exponential backoff up to 30s, _runningJob state'i bozma.
+            // Network/parse/HTTP hata — exponential backoff up to 30s, _runningJob bozma.
             _runningJobPollInterval = Math.min(_runningJobPollInterval * 2, 30000);
         }
         _runningJobPollTimer = setTimeout(_pollRunningJob, _runningJobPollInterval);
@@ -659,17 +672,21 @@ const DSEnrichmentModule = (() => {
         // v3.32.0: Running job aktifse tüm bulk butonlar disable + tooltip override
         const _jobBusy = _runningJob !== null;
         const _jobBusyTip = _runningJobTooltip('discover_all');  // tüm 4 buton aynı job-busy mesajını gösterir
-        const _ttDiscoverAll  = _jobBusy ? _jobBusyTip : (_pendingData.length === 0
+        // v3.32.0 TYCHE O3 fix: bulkApprove tek POST in-flight kilidi — tüm bulk butonlar
+        const _inFlightTip = _bulkApproveInFlight ? 'Önceki onay isteği işleniyor — bekleyin' : null;
+        const _busyTip = _inFlightTip || _jobBusyTip;
+        const _busy = _jobBusy || _bulkApproveInFlight;
+        const _ttDiscoverAll  = _busy ? _busyTip : (_pendingData.length === 0
             ? 'Tablolar yükleniyor...'
             : (_btnDiscoverAllDis ? `${_scopeLabel.charAt(0).toUpperCase()+_scopeLabel.slice(1)} tablolarda keşfedilmemiş kayıt yok` : `${_btnUndiscoveredCount} ${_scopeLabel} tabloyu keşfet`));
-        const _ttDiscoverSel  = _jobBusy ? _jobBusyTip : ((_btnSelUndiscovered === 0 && _selectedIds.size > 0) ? 'Seçili tablolar zaten keşfedilmiş' : 'Seçili keşfedilmemiş tabloları keşfet');
-        const _ttApproveSel   = _jobBusy ? _jobBusyTip : (_btnApproveSelDis ? (_btnSelUndiscovered > 0 ? 'Seçili tablolar henüz keşfedilmemiş, önce keşfedin' : 'Onaylanacak seçili tablo yok') : 'Seçili keşfedilmiş tabloları onayla');
-        const _ttApproveAll   = _jobBusy ? _jobBusyTip : (_btnApproveAllDis ? (_btnUndiscoveredCount > 0 ? `Önce ${_scopeLabel} tabloları keşfedin` : 'Onaylanacak tablo yok') : `${_btnAllApprovable} ${_scopeLabel} keşfedilmiş tabloyu onayla`);
-        // v3.32.0: Job-busy kilit — gating
-        const _gateDiscoverAll = _btnDiscoverAllDis || _jobBusy;
-        const _gateDiscoverSel = _btnDiscoverSelDis || _jobBusy;
-        const _gateApproveSel  = _btnApproveSelDis  || _jobBusy;
-        const _gateApproveAll  = _btnApproveAllDis  || _jobBusy;
+        const _ttDiscoverSel  = _busy ? _busyTip : ((_btnSelUndiscovered === 0 && _selectedIds.size > 0) ? 'Seçili tablolar zaten keşfedilmiş' : 'Seçili keşfedilmemiş tabloları keşfet');
+        const _ttApproveSel   = _busy ? _busyTip : (_btnApproveSelDis ? (_btnSelUndiscovered > 0 ? 'Seçili tablolar henüz keşfedilmemiş, önce keşfedin' : 'Onaylanacak seçili tablo yok') : 'Seçili keşfedilmiş tabloları onayla');
+        const _ttApproveAll   = _busy ? _busyTip : (_btnApproveAllDis ? (_btnUndiscoveredCount > 0 ? `Önce ${_scopeLabel} tabloları keşfedin` : 'Onaylanacak tablo yok') : `${_btnAllApprovable} ${_scopeLabel} keşfedilmiş tabloyu onayla`);
+        // v3.32.0: Job-busy + in-flight bulk approve kilit — gating
+        const _gateDiscoverAll = _btnDiscoverAllDis || _busy;
+        const _gateDiscoverSel = _btnDiscoverSelDis || _busy;
+        const _gateApproveSel  = _btnApproveSelDis  || _busy;
+        const _gateApproveAll  = _btnApproveAllDis  || _busy;
 
         // Schema dropdown için unique listesi oluştur
         const uniqueSchemas = [...new Set(_pendingData.map(x => x.schema_name).filter(Boolean))].sort();
@@ -1099,6 +1116,10 @@ const DSEnrichmentModule = (() => {
         const body = document.getElementById('dsEnrichBody');
         if(body) body.innerHTML = `<div class="ds-enrich-loading"><i class="fa-solid fa-spinner fa-spin"></i><p>Yükleniyor...</p></div>`;
         _loadData();
+        // v3.32.0 TYCHE K1 fix: Timer leak — refreshData() _pollRunningJob job-completion
+        // transition'da çağrılıyor; eski _pollingTimer clear edilmezse her job sonrası
+        // bir 10s polling timer stack'leniyor (N job sonrası N paralel _loadDataSilently).
+        if (_pollingTimer) clearInterval(_pollingTimer);
         _pollingTimer = setInterval(_loadDataSilently, 10000);
     }
 
@@ -1274,6 +1295,8 @@ const DSEnrichmentModule = (() => {
     }
 
     async function bulkApprove() {
+        // v3.32.0 TYCHE O3 fix: single-flight gate (4 bulk butonu için ortak)
+        if (_bulkApproveInFlight) return;
         const checkedBoxes = Array.from(_selectedIds);
         if (checkedBoxes.length === 0) return;
 
@@ -1283,6 +1306,8 @@ const DSEnrichmentModule = (() => {
             btn.disabled = true;
             btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Onaylanıyor...';
         }
+        _bulkApproveInFlight = true;
+        applyFilterAndRender();  // diğer 3 bulk buton'a gate uygulanır
 
         // v3.31.0 (R002): Frontend preflight kaldirildi. Backend bulk endpoint
         // check_running_job'i kendisi yapip code:"running_job" donuyor.
@@ -1344,8 +1369,10 @@ const DSEnrichmentModule = (() => {
 
                 // Toast — bulk endpoint mesajini kullan veya kendimiz uret
                 let msg = data.message || `${successObjectIds.length} tablo onaylandi`;
-                if (data.schema_record_warnings && data.schema_record_warnings.length > 0) {
-                    console.warn('[DSEnrich] Schema record warnings:', data.schema_record_warnings);
+                // v3.32.0 TYCHE O2 fix: schema_record_warnings (sync) -> schema_record_pending (bool).
+                // Backend message zaten "embedding arka planda isleniyor" suffix'i ekliyor.
+                if (data.schema_record_pending) {
+                    console.info('[DSEnrich] Embedding/schema_record üretimi arka planda işleniyor');
                 }
                 _showToast(msg, data.failed > 0 ? 'warning' : 'success');
             } else {
@@ -1359,6 +1386,7 @@ const DSEnrichmentModule = (() => {
             _showToast('Onay sırasında hata oluştu', 'error');
         } finally {
             if(btn) btn.disabled=false;
+            _bulkApproveInFlight = false;  // v3.32.0 TYCHE O3 fix: clear single-flight
             applyFilterAndRender(); // update button state via render
         }
     }
@@ -1368,6 +1396,8 @@ const DSEnrichmentModule = (() => {
     // ============================================
 
     async function bulkApproveAll() {
+        // v3.32.0 TYCHE O3 fix: single-flight gate (bulkApprove ile ortak)
+        if (_bulkApproveInFlight) return;
         // v3.30.1: Filter-aware — _filteredData üzerinden çalışır.
         // Kullanıcı schema/arama/status ile sınırladıysa yalnızca o kapsamı onaylar.
         const toApprove = _filteredData.filter(x => x.enrichment_id && !x.is_approved);
@@ -1382,6 +1412,8 @@ const DSEnrichmentModule = (() => {
             btn.disabled = true;
             btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Onaylanıyor...';
         }
+        _bulkApproveInFlight = true;
+        applyFilterAndRender();  // v3.32.0 TYCHE O3: diğer bulk butonlarına gate
 
         // v3.31.0 (R002): Frontend preflight kaldirildi. Backend bulk endpoint
         // check_running_job'i kendisi yapip code:"running_job" donuyor.
@@ -1416,8 +1448,9 @@ const DSEnrichmentModule = (() => {
                            data.failed > 0 ? 'warning' : 'success');
                 _updateStatsAfterApprove();
                 applyFilterAndRender();
-                if (data.schema_record_warnings && data.schema_record_warnings.length > 0) {
-                    console.warn('[DSEnrich] Schema record warnings:', data.schema_record_warnings);
+                // v3.32.0 TYCHE O2 fix: schema_record_warnings -> schema_record_pending
+                if (data.schema_record_pending) {
+                    console.info('[DSEnrich] Embedding/schema_record üretimi arka planda işleniyor');
                 }
             } else {
                 _showToast(data.message || 'Toplu onay basarisiz', 'error');
@@ -1433,6 +1466,8 @@ const DSEnrichmentModule = (() => {
                 btn.disabled = false;
                 btn.innerHTML = '<i class="fa-solid fa-check-circle mr-2"></i> Tümünü Onayla';
             }
+            _bulkApproveInFlight = false;  // v3.32.0 TYCHE O3 fix: clear single-flight
+            applyFilterAndRender();
         }
     }
 

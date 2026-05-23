@@ -7,6 +7,16 @@
     position: relative;
 }
 
+/* v3.32.0 TYCHE D2 fix: bazı browser'lar disabled element üzerinde pointer event'leri
+   swallow eder — ::after :hover hiç tetiklenmez, "İş devam ediyor" tooltip görünmez.
+   Disabled button/input için pointer-events:auto override (click HTML disabled
+   attribute tarafından zaten engelleniyor; bu sadece hover/focus etkinleştirir). */
+[data-tt]:disabled,
+[data-tt][disabled],
+[data-tt][aria-disabled="true"] {
+    pointer-events: auto;
+}
+
 [data-tt]:hover::after,
 [data-tt]:focus-visible::after {
     content: attr(data-tt);

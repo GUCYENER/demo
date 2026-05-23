@@ -1596,7 +1596,12 @@ def approve_enrichment_bulk(
     ds_schema_record_warnings tablosuna INSERT edilir (mig 043).
     """
     if not body.enrichment_ids:
-        return {"success": False, "message": "Onaylanacak enrichment_id yok.", "code": "empty"}
+        # v3.32.0 TYCHE Y1 fix: response contract — diğer 6 branch'a uyumlu hale getirdi
+        return {
+            "success": False, "message": "Onaylanacak enrichment_id yok.", "code": "empty",
+            "total": 0, "approved": 0, "failed": 0, "approved_ids": [],
+            "errors": [], "schema_record_pending": False
+        }
 
     # max_parallel server-side clamp.
     # Pool guard: maxconn=15. Outer conn release sonrasi N worker conn acilir; 3 user x 5 = 15.
