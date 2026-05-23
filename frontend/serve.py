@@ -7,12 +7,19 @@ Statik asset'ler için akıllı cache yönetimi:
 - HTML dosyaları: no-cache (her zaman güncel)
 
 v2.30.1: No-cache → Smart cache (development + performance)
+v3.32.0: Port-busy temiz hata (WinError 10048) — TIME_WAIT reuse + clear message.
 """
 import http.server
 import socketserver
 import sys
 
 PORT = 5500
+
+
+class ReusableTCPServer(socketserver.TCPServer):
+    """v3.32.0: SO_REUSEADDR ayarı TIME_WAIT durumundaki socket'i tekrar bind edilebilir kılar.
+    Bu, dev döngüde sık sık stop/start yapıldığında WinError 10048'i azaltır."""
+    allow_reuse_address = True
 
 # Cache süreleri (saniye)
 CACHE_LONG = 3600     # 1 saat — versiyonlu dosyalar (?v=)
@@ -49,11 +56,23 @@ class SmartCacheHandler(http.server.SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    with socketserver.TCPServer(("", PORT), SmartCacheHandler) as httpd:
-        print(f"[VYRA Frontend] http://localhost:{PORT}")
-        print(f"  Smart cache: HTML=no-cache | JS/CSS={CACHE_SHORT}s | ?v=={CACHE_LONG}s")
-        try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            print("\nKapatılıyor...")
-            sys.exit(0)
+    try:
+        with ReusableTCPServer(("", PORT), SmartCacheHandler) as httpd:
+            print(f"[VYRA Frontend] http://localhost:{PORT}")
+            print(f"  Smart cache: HTML=no-cache | JS/CSS={CACHE_SHORT}s | ?v=={CACHE_LONG}s")
+            try:
+                httpd.serve_forever()
+            except KeyboardInterrupt:
+                print("\nKapatılıyor...")
+                sys.exit(0)
+    except OSError as e:
+        # WinError 10048 / EADDRINUSE — port zaten başka bir process'te
+        if getattr(e, "winerror", None) == 10048 or e.errno in (48, 98):
+            print(f"[VYRA Frontend] HATA: Port {PORT} zaten kullanımda.")
+            print(f"  Çözüm:")
+            print(f"    1) .\\stop.ps1  (mevcut servisleri durdur)")
+            print(f"    2) Veya Windows: netstat -ano | findstr :{PORT}  -> taskkill /PID <pid> /F")
+            print(f"    3) Sonra: .\\start.ps1")
+            sys.exit(2)
+        # Diğer OS hataları — orijinal traceback'i koru
+        raise

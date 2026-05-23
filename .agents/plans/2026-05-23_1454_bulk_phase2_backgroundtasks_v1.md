@@ -17,6 +17,19 @@ closure_note: |
   /enrichment-approve-bulk artık fastapi.BackgroundTasks kullanıyor; response shape
   schema_record_pending (bool). Worker pool max_parallel clamp=3 korundu (pool guard).
   Failures ds_schema_record_warnings tablosuna INSERT ediliyor; ASLA raise yok.
+follow_up_scope_out: |
+  ARES O1 (Council Gate v3.32.0) — admin warning panel endpoint v3.32.0
+  scope dışı (henüz endpoint yok). Yazı tarafı (BG worker) her zaman company_id
+  set ediyor; tehlikeli olan READ tarafı.
+
+  GELECEK SPRINT (admin warning panel endpoint eklendiğinde) MUTLAK:
+    - Endpoint `get_db_context_scoped_company(company_id)` kullanmalı (or
+      eşdeğer apply_company_scope çağrısı). Aksi halde mig 043'teki
+      PERMISSIVE empty-string fallback unscoped read leak yaratır.
+    - SELECT'lerde WHERE company_id = current_user.company_id explicit guard
+      (defense-in-depth; RLS yanına eklenmelidir).
+    - Endpoint açılırken bu plana ve REFACTOR_BACKLOG R007 (idx_schema_warn_enrich)
+      maddesine de bakılmalı — aynı sprint içinde index eklenmeli.
 ---
 
 ## Context (Neden bu sprint?)
