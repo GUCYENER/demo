@@ -29556,6 +29556,11 @@ const DSEnrichmentModule = (() => {
     let _discoveringIds = new Set();   // v3.30.1: keşif istek atılan, henüz enrichment_id gelmeyen object_id'ler
     let _filterSchema = '';
 
+    // v3.32.0: Concurrent operation state — backend check_running_job ile sync
+    let _runningJob = null;  // { type: 'discover_all'|'approve_all'|'enrich_selected'|..., started_at }
+    let _runningJobPollTimer = null;
+    let _runningJobPollInterval = 3000;  // 3s, exponential backoff on error
+
     // ============================================
     // Panel Aç/Kapat
     // ============================================
@@ -29583,10 +29588,13 @@ const DSEnrichmentModule = (() => {
         // Verileri yükle
         _loadData();
         _pollingTimer = setInterval(_loadDataSilently, 10000);
+        // v3.32.0: Concurrent operation gate — paralel poll
+        _startRunningJobPoll();
     }
 
     function closePanel() {
         if (_pollingTimer) clearInterval(_pollingTimer);
+        _stopRunningJobPoll();
         const overlay = document.getElementById('dsEnrichOverlay');
         if (overlay) {
             overlay.classList.remove('active');
@@ -29622,7 +29630,7 @@ const DSEnrichmentModule = (() => {
                         <i class="fa-solid fa-tags"></i>
                         <span>Tablo Etiketleme & Onay Paneli</span>
                     </div>
-                    <button class="ds-enrich-close" id="dsEnrichCloseBtn" title="Kapat (ESC)">
+                    <button class="ds-enrich-close" id="dsEnrichCloseBtn" data-tt="Kapat (ESC)">
                         <i class="fa-solid fa-xmark"></i>
                     </button>
                 </div>
@@ -29657,6 +29665,80 @@ const DSEnrichmentModule = (() => {
             }
         };
         document.addEventListener('keydown', escHandler);
+    }
+
+    // ============================================
+    // v3.32.0: Running Job State Machine — backend check_running_job ile sync
+    // ============================================
+
+    async function _pollRunningJob() {
+        if (!_currentSourceId) {
+            _stopRunningJobPoll();
+            return;
+        }
+        try {
+            const res = await _authFetch(
+                `/api/data-sources/${_currentSourceId}/check-running-job`
+            );
+            const data = await res.json();
+            const wasRunning = _runningJob !== null;
+            if (data.has_running) {
+                _runningJob = {
+                    type: (data.job && data.job.job_type) || 'unknown',
+                    started_at: data.job && data.job.started_at
+                };
+                _runningJobPollInterval = 3000;  // reset on success
+            } else {
+                _runningJob = null;
+                if (wasRunning) {
+                    // Job bitti — UI refresh
+                    refreshData();
+                    _stopRunningJobPoll();
+                    return;
+                }
+            }
+            // UI re-render trigger — kullanıcı şu an bir input doldurmuyorsa
+            const activeEl = document.activeElement;
+            if (!activeEl || activeEl.tagName !== 'INPUT') {
+                applyFilterAndRender();
+            }
+        } catch (e) {
+            // Exponential backoff up to 30s
+            _runningJobPollInterval = Math.min(_runningJobPollInterval * 2, 30000);
+        }
+        _runningJobPollTimer = setTimeout(_pollRunningJob, _runningJobPollInterval);
+    }
+
+    function _startRunningJobPoll() {
+        if (_runningJobPollTimer) return;
+        _runningJobPollInterval = 3000;
+        _pollRunningJob();
+    }
+
+    function _stopRunningJobPoll() {
+        if (_runningJobPollTimer) {
+            clearTimeout(_runningJobPollTimer);
+            _runningJobPollTimer = null;
+        }
+    }
+
+    function _runningJobTooltip(buttonType) {
+        if (!_runningJob) {
+            switch (buttonType) {
+                case 'discover_all': return 'Henüz keşfedilmemiş tüm tabloları sırayla keşfet';
+                case 'discover_sel': return 'Seçili tabloları keşfet';
+                case 'approve_sel': return 'Seçili tabloları toplu onayla';
+                case 'approve_all': return 'Tüm sayfa-dışı onay bekleyenleri toplu onayla';
+            }
+            return '';
+        }
+        const t = _runningJob.type;
+        const jobTypeLabel = (t === 'discovery' || t === 'partial_discovery' || t === 'discover_all' || t === 'enrich_selected')
+            ? 'Keşif devam ediyor'
+            : (t === 'approve' || t === 'approve_all' || t === 'approve_bulk')
+                ? 'Onay devam ediyor'
+                : 'İş devam ediyor';
+        return `${jobTypeLabel} — bu işlem için bekleyin`;
     }
 
     // ============================================
@@ -29776,7 +29858,7 @@ const DSEnrichmentModule = (() => {
         const unprocessed = stats.unprocessed || 0;
 
         bar.innerHTML = `
-            <div class="ds-enrich-stat" title="Henüz LLM tarafından incelenmeyen tablo sayısı">
+            <div class="ds-enrich-stat" data-tt="Henüz LLM tarafından incelenmeyen tablo sayısı">
                 <span class="ds-enrich-stat-num" style="color: #a78bfa;">${unprocessed}</span>
                 <span class="ds-enrich-stat-label">LLM Bekleyen</span>
             </div>
@@ -29935,7 +30017,7 @@ const DSEnrichmentModule = (() => {
                 const schemaName = item.schema_name || '';
                 const tableName = item.table_name || '';
                 const isChecked = _selectedIds.has(item.id.toString()) ? 'checked' : '';
-                const approvedAttr = item.is_approved ? 'disabled title="Zaten onaylandı"' : '';
+                const approvedAttr = item.is_approved ? 'disabled data-tt="Zaten onaylandı"' : '';
                 const rowOpacity = item.is_approved ? 'opacity: 0.7;' : '';
                 const rowHighlight = (item.enrichment_id && !item.is_approved) ? 'background:rgba(245,158,11,0.05);border-left:3px solid rgba(245,158,11,0.4);' : '';
 
@@ -29944,10 +30026,10 @@ const DSEnrichmentModule = (() => {
                         <td style="text-align: center;">
                             <input type="checkbox" class="ds-bulk-chk ${item.is_approved ? '' : 'cursor-pointer'}" value="${item.id}" ${isChecked} ${approvedAttr} onchange="DSEnrichmentModule.toggleCheckbox(this)">
                         </td>
-                        <td class="ds-schema-cell" title="${_escapeHtml(schemaName)}" style="font-size:0.82rem;color:#9ca3af;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                        <td class="ds-schema-cell" data-tt="${_escapeHtml(schemaName)}" style="font-size:0.82rem;color:#9ca3af;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
                             ${_escapeHtml(schemaName)}
                         </td>
-                        <td class="ds-table-name-cell" title="${_escapeHtml(tableName)}">
+                        <td class="ds-table-name-cell" data-tt="${_escapeHtml(tableName)}">
                             <strong>${_escapeHtml(tableName)}</strong>
                         </td>
                         <td>
@@ -29962,7 +30044,7 @@ const DSEnrichmentModule = (() => {
                                 ${(item.enrichment_score || 0).toFixed(2)}
                             </span>
                         </td>
-                        <td class="ds-desc-cell" title="${_escapeHtml(item.description_tr || '(Açıklama yok)')}">
+                        <td class="ds-desc-cell" data-tt-multiline data-tt="${_escapeHtml(item.description_tr || '(Açıklama yok)')}">
                             ${_escapeHtml((item.description_tr || '').substring(0, 60))}${(item.description_tr || '').length > 60 ? '...' : ''}
                         </td>
                         <td class="ds-action-cell">
@@ -29973,15 +30055,15 @@ const DSEnrichmentModule = (() => {
                                     : `<span class="ds-status-badge ds-status-pending-disc"><i class="fa-solid fa-hourglass-half"></i> Keşif Bekliyor</span>`
                                 ) : (!item.is_approved ? `
                                 <span class="ds-status-badge ds-status-pending-appr"><i class="fa-solid fa-clock"></i> Onay Bekliyor</span>
-                                <button class="ds-enrich-btn approve" onclick="DSEnrichmentModule.quickApprove(${item.id})" title="Direkt onayla" style="background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);">
+                                <button class="ds-enrich-btn approve" onclick="DSEnrichmentModule.quickApprove(${item.id})" data-tt="Direkt onayla" style="background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);">
                                     <i class="fa-solid fa-check"></i>
                                 </button>
                                 ` : '<span class="ds-status-badge ds-status-approved"><i class="fa-solid fa-check-double"></i> Onaylı</span>')}
                                 ${item.enrichment_id ? `
-                                <button class="ds-enrich-btn edit" onclick="DSEnrichmentModule.toggleEdit(${item.id})" title="Düzenle">
+                                <button class="ds-enrich-btn edit" onclick="DSEnrichmentModule.toggleEdit(${item.id})" data-tt="Düzenle">
                                     <i class="fa-solid fa-pen"></i>
                                 </button>
-                                <button class="ds-enrich-btn columns" onclick="DSEnrichmentModule.showColumns(${item.enrichment_id})" title="Sütunları göster">
+                                <button class="ds-enrich-btn columns" onclick="DSEnrichmentModule.showColumns(${item.enrichment_id})" data-tt="Sütunları göster">
                                     <i class="fa-solid fa-table-columns"></i>
                                 </button>
                                 ` : ''}
@@ -30024,12 +30106,20 @@ const DSEnrichmentModule = (() => {
         const _btnApproveAllDis     = _btnAllApprovable === 0;
         // Tooltip metinleri
         const _scopeLabel = _isFiltered ? 'filtrelenmiş' : 'tüm';
-        const _ttDiscoverAll  = _pendingData.length === 0
+        // v3.32.0: Running job aktifse tüm bulk butonlar disable + tooltip override
+        const _jobBusy = _runningJob !== null;
+        const _jobBusyTip = _runningJobTooltip('discover_all');  // tüm 4 buton aynı job-busy mesajını gösterir
+        const _ttDiscoverAll  = _jobBusy ? _jobBusyTip : (_pendingData.length === 0
             ? 'Tablolar yükleniyor...'
-            : (_btnDiscoverAllDis ? `${_scopeLabel.charAt(0).toUpperCase()+_scopeLabel.slice(1)} tablolarda keşfedilmemiş kayıt yok` : `${_btnUndiscoveredCount} ${_scopeLabel} tabloyu keşfet`);
-        const _ttDiscoverSel  = (_btnSelUndiscovered === 0 && _selectedIds.size > 0) ? 'Seçili tablolar zaten keşfedilmiş' : 'Seçili keşfedilmemiş tabloları keşfet';
-        const _ttApproveSel   = _btnApproveSelDis ? (_btnSelUndiscovered > 0 ? 'Seçili tablolar henüz keşfedilmemiş, önce keşfedin' : 'Onaylanacak seçili tablo yok') : 'Seçili keşfedilmiş tabloları onayla';
-        const _ttApproveAll   = _btnApproveAllDis ? (_btnUndiscoveredCount > 0 ? `Önce ${_scopeLabel} tabloları keşfedin` : 'Onaylanacak tablo yok') : `${_btnAllApprovable} ${_scopeLabel} keşfedilmiş tabloyu onayla`;
+            : (_btnDiscoverAllDis ? `${_scopeLabel.charAt(0).toUpperCase()+_scopeLabel.slice(1)} tablolarda keşfedilmemiş kayıt yok` : `${_btnUndiscoveredCount} ${_scopeLabel} tabloyu keşfet`));
+        const _ttDiscoverSel  = _jobBusy ? _jobBusyTip : ((_btnSelUndiscovered === 0 && _selectedIds.size > 0) ? 'Seçili tablolar zaten keşfedilmiş' : 'Seçili keşfedilmemiş tabloları keşfet');
+        const _ttApproveSel   = _jobBusy ? _jobBusyTip : (_btnApproveSelDis ? (_btnSelUndiscovered > 0 ? 'Seçili tablolar henüz keşfedilmemiş, önce keşfedin' : 'Onaylanacak seçili tablo yok') : 'Seçili keşfedilmiş tabloları onayla');
+        const _ttApproveAll   = _jobBusy ? _jobBusyTip : (_btnApproveAllDis ? (_btnUndiscoveredCount > 0 ? `Önce ${_scopeLabel} tabloları keşfedin` : 'Onaylanacak tablo yok') : `${_btnAllApprovable} ${_scopeLabel} keşfedilmiş tabloyu onayla`);
+        // v3.32.0: Job-busy kilit — gating
+        const _gateDiscoverAll = _btnDiscoverAllDis || _jobBusy;
+        const _gateDiscoverSel = _btnDiscoverSelDis || _jobBusy;
+        const _gateApproveSel  = _btnApproveSelDis  || _jobBusy;
+        const _gateApproveAll  = _btnApproveAllDis  || _jobBusy;
 
         // Schema dropdown için unique listesi oluştur
         const uniqueSchemas = [...new Set(_pendingData.map(x => x.schema_name).filter(Boolean))].sort();
@@ -30046,7 +30136,7 @@ const DSEnrichmentModule = (() => {
         body.innerHTML = `
             <div class="ds-enrich-filter-bar" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; flex-wrap:wrap; gap:10px; flex-shrink:0;">
                 <div style="flex:1; max-width:1200px; display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
-                    <button onclick="DSEnrichmentModule.refreshData()" style="padding:8px 14px; border-radius:6px; border:none; background:rgba(255,255,255,0.1); color:#fff; cursor:pointer;" title="Verileri Yenile">
+                    <button onclick="DSEnrichmentModule.refreshData()" style="padding:8px 14px; border-radius:6px; border:none; background:rgba(255,255,255,0.1); color:#fff; cursor:pointer;" data-tt="Verileri Yenile">
                         <i class="fa-solid fa-sync"></i>
                     </button>
                     <select id="dsSchemaFilter" onchange="DSEnrichmentModule.filterBySchema(this.value)"
@@ -30059,7 +30149,7 @@ const DSEnrichmentModule = (() => {
                             style="width:100%; padding:8px 36px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.2); color:#fff; outline:none;"
                             oninput="DSEnrichmentModule.filterTables(this.value)" autocomplete="off">
                         <button type="button" id="dsSearchClearBtn" onclick="DSEnrichmentModule.clearSearch()"
-                            title="Aramayı temizle"
+                            data-tt="Aramayı temizle"
                             style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:transparent; border:none; color:#888; cursor:pointer; padding:4px 6px; border-radius:4px; display:${_searchQuery ? 'inline-flex' : 'none'}; align-items:center; justify-content:center;">
                             <i class="fa-solid fa-xmark"></i>
                         </button>
@@ -30076,46 +30166,46 @@ const DSEnrichmentModule = (() => {
                         <button type="button" class="ds-status-pill" data-active="${_statusFilter==='pending_disc'}"
                                 style="--pill-accent:#a78bfa; --pill-base:rgba(167,139,250,0.2);"
                                 onclick="DSEnrichmentModule.setStatusFilter('pending_disc')"
-                                title="Henüz keşfedilmemiş tablolar (tüm sayfalar)">
+                                data-tt="Henüz keşfedilmemiş tablolar (tüm sayfalar)">
                             <i class="fa-solid fa-hourglass-half"></i>Keşif Bekleyenler (${_cntPendingDisc})
                         </button>
                         <button type="button" class="ds-status-pill" data-active="${_statusFilter==='discovering'}"
                                 style="--pill-accent:#60a5fa; --pill-base:rgba(96,165,250,0.2);"
                                 onclick="DSEnrichmentModule.setStatusFilter('discovering')"
-                                title="Keşif isteği atılmış, sonuç bekleyen tablolar (tüm sayfalar)">
+                                data-tt="Keşif isteği atılmış, sonuç bekleyen tablolar (tüm sayfalar)">
                             <i class="fa-solid fa-spinner"></i>Devam Edenler (${_cntDiscovering})
                         </button>
                         <button type="button" class="ds-status-pill" data-active="${_statusFilter==='pending_appr'}"
                                 style="--pill-accent:#f59e0b; --pill-base:rgba(245,158,11,0.2);"
                                 onclick="DSEnrichmentModule.setStatusFilter('pending_appr')"
-                                title="Keşfedilmiş ama onaylanmamış tablolar (tüm sayfalar)">
+                                data-tt="Keşfedilmiş ama onaylanmamış tablolar (tüm sayfalar)">
                             <i class="fa-solid fa-clock"></i>Onay Bekleyenler (${_cntPendingAppr})
                         </button>
                     </div>
                 </div>
                 <div style="display:flex; align-items:center; gap:10px;">
                     <button id="dsBulkDiscoverAllBtn" onclick="DSEnrichmentModule.discoverAll()"
-                            ${_btnDiscoverAllDis ? 'disabled' : ''}
-                            style="padding:8px 16px; border-radius:6px; border:none; background:#7c3aed; color:#fff; cursor:${_btnDiscoverAllDis ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_btnDiscoverAllDis ? '0.45' : '1'}; transition: all 0.2s;"
-                            title="${_ttDiscoverAll}">
+                            ${_gateDiscoverAll ? 'disabled' : ''}
+                            style="padding:8px 16px; border-radius:6px; border:none; background:#7c3aed; color:#fff; cursor:${_gateDiscoverAll ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_gateDiscoverAll ? '0.45' : '1'}; transition: all 0.2s;"
+                            data-tt="${_ttDiscoverAll}">
                         <i class="fa-solid fa-magnifying-glass mr-2"></i> Tümünü Keşfet
                     </button>
                     <button id="dsBulkDiscoverBtn" onclick="DSEnrichmentModule.bulkDiscover()"
-                            ${_btnDiscoverSelDis ? 'disabled' : ''}
-                            style="padding:8px 16px; border-radius:6px; border:none; background:#a78bfa; color:#fff; cursor:${_btnDiscoverSelDis ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_btnDiscoverSelDis ? '0.45' : '1'}; transition: all 0.2s;"
-                            title="${_ttDiscoverSel}">
+                            ${_gateDiscoverSel ? 'disabled' : ''}
+                            style="padding:8px 16px; border-radius:6px; border:none; background:#a78bfa; color:#fff; cursor:${_gateDiscoverSel ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_gateDiscoverSel ? '0.45' : '1'}; transition: all 0.2s;"
+                            data-tt="${_ttDiscoverSel}">
                         <i class="fa-solid fa-robot mr-2"></i> Seçilenleri Keşfet (<span id="dsBulkDiscoverCount">${_btnSelUndiscovered}</span>)
                     </button>
                     <button id="dsBulkApproveBtn" onclick="DSEnrichmentModule.bulkApprove()"
-                            ${_btnApproveSelDis ? 'disabled' : ''}
-                            style="padding:8px 16px; border-radius:6px; border:none; background:var(--primary-color, #4f46e5); color:#fff; cursor:${_btnApproveSelDis ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_btnApproveSelDis ? '0.45' : '1'}; transition: all 0.2s;"
-                            title="${_ttApproveSel}">
+                            ${_gateApproveSel ? 'disabled' : ''}
+                            style="padding:8px 16px; border-radius:6px; border:none; background:var(--primary-color, #4f46e5); color:#fff; cursor:${_gateApproveSel ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_gateApproveSel ? '0.45' : '1'}; transition: all 0.2s;"
+                            data-tt="${_ttApproveSel}">
                         <i class="fa-solid fa-check-double mr-2"></i> Seçilenleri Onayla (<span id="dsBulkApproveCount">${_btnSelApprovable}</span>)
                     </button>
                     <button id="dsApproveAllBtn" onclick="DSEnrichmentModule.bulkApproveAll()"
-                            ${_btnApproveAllDis ? 'disabled' : ''}
-                            style="padding:8px 16px; border-radius:6px; border:none; background:#059669; color:#fff; cursor:${_btnApproveAllDis ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_btnApproveAllDis ? '0.45' : '1'}; transition: all 0.2s;"
-                            title="${_ttApproveAll}">
+                            ${_gateApproveAll ? 'disabled' : ''}
+                            style="padding:8px 16px; border-radius:6px; border:none; background:#059669; color:#fff; cursor:${_gateApproveAll ? 'not-allowed' : 'pointer'}; font-weight:600; opacity:${_gateApproveAll ? '0.45' : '1'}; transition: all 0.2s;"
+                            data-tt="${_ttApproveAll}">
                         <i class="fa-solid fa-check-circle mr-2"></i> Tümünü Onayla
                     </button>
                 </div>
@@ -30136,7 +30226,7 @@ const DSEnrichmentModule = (() => {
                     <thead style="position:sticky; top:0; z-index:10; background:var(--bg-card, #1a1e29); box-shadow:0 2px 5px rgba(0,0,0,0.2);">
                         <tr>
                             <th style="width:40px; text-align:center;">
-                                <input type="checkbox" id="dsSelectAllChk" ${isAllSelected ? "checked" : ""} onchange="DSEnrichmentModule.toggleAllBulk(this.checked)" class="cursor-pointer" title="Tüm filtrelenmiş kayıtları seç (sayfa dışı dahil)" style="width:16px; height:16px; cursor:pointer; accent-color:var(--primary-color, #4f46e5); display:inline-block; visibility:visible; opacity:1;">
+                                <input type="checkbox" id="dsSelectAllChk" ${isAllSelected ? "checked" : ""} onchange="DSEnrichmentModule.toggleAllBulk(this.checked)" class="cursor-pointer" data-tt="Tüm filtrelenmiş kayıtları seç (sayfa dışı dahil)" style="width:16px; height:16px; cursor:pointer; accent-color:var(--primary-color, #4f46e5); display:inline-block; visibility:visible; opacity:1;">
                             </th>
                             <th>Schema</th>
                             <th>Tablo</th>

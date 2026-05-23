@@ -1,0 +1,50 @@
+/* v3.32.0: Global modern tooltip utility
+   Usage: <element data-tt="hint text">
+   For long text wrap: <element data-tt-multiline data-tt="...">
+   Replaces native `title=""` browser tooltips. */
+
+[data-tt] {
+    position: relative;
+}
+
+[data-tt]:hover::after,
+[data-tt]:focus-visible::after {
+    content: attr(data-tt);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    padding: 6px 10px;
+    background: rgba(17, 24, 39, 0.96);
+    color: #e5e7eb;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    white-space: nowrap;
+    max-width: 320px;
+    pointer-events: none;
+    opacity: 0;
+    animation: tt-fade-in 120ms ease-out 250ms forwards;
+}
+
+[data-tt][data-tt-multiline]:hover::after,
+[data-tt][data-tt-multiline]:focus-visible::after {
+    white-space: normal;
+    width: 280px;
+}
+
+@keyframes tt-fade-in {
+    from { opacity: 0; transform: translateX(-50%) translateY(2px); }
+    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    [data-tt]:hover::after,
+    [data-tt]:focus-visible::after {
+        animation: none;
+        opacity: 1;
+    }
+}

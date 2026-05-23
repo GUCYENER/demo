@@ -56,6 +56,7 @@ const CSS_FILES = [
     'assets/css/modules/signal_weight_tuner.css',   // v3.29.8 L3 — multi_signal_rank weight tuner UI
     'assets/css/modules/fk_inference.css',          // v3.29.9 — FK inference observability + deploy banner
     'assets/css/modules/_db_smart_wizard.css',      // v3.30.0 P20 — AST editor chips/list/DnD/modal
+    'assets/css/modules/ui_tooltip.css',            // v3.32.0 — Global modern tooltip utility (data-tt)
 ];
 
 const JS_FILES = [
