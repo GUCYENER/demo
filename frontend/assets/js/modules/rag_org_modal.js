@@ -15,11 +15,8 @@ window.RAGOrgModal = {
         if (!token) return;
 
         try {
-            const response = await fetch(`${this.API_BASE}/organizations`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (!response.ok) throw new Error('Org yüklenemedi');
-            const data = await response.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch('/organizations');
             this.orgs = (data.organizations || []).filter(o => o.is_active);
 
             // SessionStorage'dan önceki seçimi yükle (varsa)

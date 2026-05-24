@@ -216,38 +216,24 @@
 
         const card = _renderSkeleton(parentEl, hint);
 
-        const token = (typeof window !== 'undefined' && window.localStorage)
-            ? window.localStorage.getItem('access_token')
-            : null;
-
         const params = new URLSearchParams({
             table: hint.table,
             limit: '5',
         });
         if (hint.schema) params.append('schema', hint.schema);
 
-        const url = `${ENDPOINT_BASE}/${encodeURIComponent(hint.source_id)}/samples?${params.toString()}`;
-
-        fetch(url, {
-            method: 'GET',
-            headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-        })
-            .then(async (res) => {
-                if (res.status === 404) {
-                    const body = await res.json().catch(() => ({}));
-                    _renderEmpty(card, hint, body.detail);
-                    return null;
-                }
-                if (!res.ok) {
-                    throw new Error(`HTTP ${res.status}`);
-                }
-                return res.json();
-            })
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+        // 404 grace path: vyraFetch throw eder, err.status===404 + err.data.detail.
+        const path = `/data-sources/${encodeURIComponent(hint.source_id)}/samples?${params.toString()}`;
+        window.vyraFetch(path)
             .then((data) => {
-                if (!data) return;
                 _renderData(card, hint, data);
             })
             .catch((err) => {
+                if (err && err.status === 404) {
+                    _renderEmpty(card, hint, (err.data && err.data.detail) || undefined);
+                    return;
+                }
                 console.warn('[SampleDataPreview] fetch hatası:', err && err.message);
                 _renderEmpty(card, hint, 'Örnek veri yüklenemedi.');
             });

@@ -8,21 +8,11 @@
 (function () {
     "use strict";
 
-    const API_BASE = (window.API_BASE_URL || "http://localhost:8002") + "/api";
-
-    function getToken() {
-        return localStorage.getItem("access_token") || "";
-    }
-
+    // v3.34.0: vyraFetch delegate — eski apiRequest Response döndürüyordu,
+    // şimdi parsed JSON döndürür ve non-2xx'te throw eder. Tüm callsiteler
+    // adapte edildi (try/catch dış blokta zaten vardı).
     function apiRequest(method, path, body) {
-        return fetch(`${API_BASE}${path}`, {
-            method,
-            headers: {
-                "Authorization": `Bearer ${getToken()}`,
-                "Content-Type": "application/json",
-            },
-            body: body ? JSON.stringify(body) : undefined,
-        });
+        return window.vyraFetch(path, { method, body: body || null });
     }
 
     // ------------------------------------------------------------------
@@ -37,11 +27,8 @@
     // ------------------------------------------------------------------
     async function loadOrgs() {
         try {
-            const resp = await apiRequest("GET", "/organizations");
-            if (resp.ok) {
-                const data = await resp.json();
-                orgs = data.organizations || data.items || (Array.isArray(data) ? data : []);
-            }
+            const data = await apiRequest("GET", "/organizations");
+            orgs = data.organizations || data.items || (Array.isArray(data) ? data : []);
         } catch (e) {
             console.error("[Widget] Orgs yüklenemedi:", e);
         }
@@ -66,8 +53,7 @@
     // ------------------------------------------------------------------
     async function loadOptions() {
         try {
-            const resp = await apiRequest("GET", "/widget/options");
-            if (resp.ok) widgetOptions = await resp.json();
+            widgetOptions = await apiRequest("GET", "/widget/options");
         } catch {}
     }
 
@@ -112,9 +98,7 @@
         try {
             let keysUrl = "/widget/keys";
             if (companyId) keysUrl += `?company_id=${companyId}`;
-            const resp = await apiRequest("GET", keysUrl);
-            if (!resp.ok) throw new Error("Yüklenemedi");
-            keys = await resp.json();
+            keys = await apiRequest("GET", keysUrl);
         } catch (e) {
             tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--red);padding:24px">
                 Anahtarlar yüklenemedi: ${e.message}
@@ -251,18 +235,11 @@
         if (saveBtn) { saveBtn.disabled = true; saveBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Oluşturuluyor...'; }
 
         try {
-            const resp = await apiRequest("POST", "/widget/keys", {
+            const data = await apiRequest("POST", "/widget/keys", {
                 name, org_id: orgId, allowed_domains: allowedDomains, is_active: isActive,
                 prompt_id: promptId, llm_config_id: llmConfigId, use_rag: useRag,
                 company_id: companyIdVal ? parseInt(companyIdVal) : null,
             });
-
-            if (!resp.ok) {
-                const err = await resp.json().catch(() => ({}));
-                throw new Error(err.detail || "Oluşturulamadı");
-            }
-
-            const data = await resp.json();
             closeNewKeyModal();
             showCreatedModal(data);
             await loadKeys();
@@ -321,10 +298,9 @@
     // ------------------------------------------------------------------
     async function toggleKey(keyId, currentlyActive) {
         try {
-            const resp = await apiRequest("PUT", `/widget/keys/${keyId}`, {
+            await apiRequest("PUT", `/widget/keys/${keyId}`, {
                 is_active: !currentlyActive,
             });
-            if (!resp.ok) throw new Error("Güncellenemedi");
             showToast(`Anahtar ${!currentlyActive ? "aktifleştirildi" : "pasifleştirildi"}`, "success");
             await loadKeys();
         } catch (e) {
@@ -344,8 +320,7 @@
             cancelText: 'İptal',
             onConfirm: async () => {
                 try {
-                    const resp = await apiRequest("DELETE", `/widget/keys/${keyId}`);
-                    if (!resp.ok) throw new Error("Silinemedi");
+                    await apiRequest("DELETE", `/widget/keys/${keyId}`);
                     showToast("Anahtar silindi", "success");
                     await loadKeys();
                 } catch (e) {

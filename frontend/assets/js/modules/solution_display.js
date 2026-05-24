@@ -454,36 +454,26 @@ window.SolutionDisplayModule = (function () {
         }
 
         try {
-            const response = await fetch('/api/feedback', {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            await window.vyraFetch('/feedback', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({
+                body: {
                     feedback_type: feedbackType,
                     ticket_id: currentTicketId,
                     chunk_ids: currentChunkIds,
                     query_text: currentQuery
-                })
+                }
             });
-
-            if (response.ok) {
-                feedbackSent = true;
-                renderFeedbackButtons(); // Teşekkür mesajı göster
-
-                // Toast bildirim
-                if (typeof VyraToast !== 'undefined') {
-                    VyraToast.success('Geri bildiriminiz kaydedildi. Teşekkürler!');
-                }
-            } else {
-                console.error('Feedback gönderme hatası:', response.status);
-                if (typeof VyraToast !== 'undefined') {
-                    VyraToast.error('Geri bildirim kaydedilemedi.');
-                }
+            feedbackSent = true;
+            renderFeedbackButtons(); // Teşekkür mesajı göster
+            if (typeof VyraToast !== 'undefined') {
+                VyraToast.success('Geri bildiriminiz kaydedildi. Teşekkürler!');
             }
         } catch (error) {
             console.error('Feedback gönderme hatası:', error);
+            if (typeof VyraToast !== 'undefined') {
+                VyraToast.error('Geri bildirim kaydedilemedi.');
+            }
         }
     }
 
@@ -861,15 +851,10 @@ window.SolutionDisplayModule = (function () {
         }
 
         try {
-            const response = await fetch(`/api/tickets/${currentTicketId}/ai-evaluate`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                }
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch(`/tickets/${currentTicketId}/ai-evaluate`, {
+                method: 'POST'
             });
-
-            const data = await response.json();
 
             if (data.success) {
                 // Çözümü göster
@@ -935,19 +920,14 @@ window.SolutionDisplayModule = (function () {
         }
 
         try {
-            const response = await fetch(`/api/tickets/${currentTicketId}/select`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch(`/tickets/${currentTicketId}/select`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({
+                body: {
                     selected_chunk_text: selected.chunk_text,
                     selected_file_name: selected.file_name
-                })
+                }
             });
-
-            const data = await response.json();
 
             if (data.success) {
                 // Çözümü göster

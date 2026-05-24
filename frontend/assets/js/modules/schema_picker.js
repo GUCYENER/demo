@@ -145,11 +145,8 @@
             // Mevcut endpoint: GET /api/data-sources/{id}/discovered-schemas (sadece schemas+counts).
             // Detay için ds_db_objects'a dayanan generic list endpoint olmadığından
             // /api/data-sources/{id}/objects (varsayılan path). Yoksa boş.
-            const r = await fetch(`${API_BASE}/data-sources/${sourceId}/objects?limit=500`, {
-                credentials: 'include',
-            });
-            if (!r.ok) throw new Error(`HTTP ${r.status}`);
-            const data = await r.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch(`/data-sources/${sourceId}/objects?limit=500`);
             availableTables = (data.objects || data.tables || []).map(o => ({
                 schema: o.schema_name || o.schema || '',
                 table: o.object_name || o.table_name || o.name,
