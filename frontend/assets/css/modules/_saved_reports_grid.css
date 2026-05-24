@@ -61,6 +61,13 @@
     flex-wrap: wrap;
 }
 
+.srg-search-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    min-width: 220px;
+}
+
 .srg-search {
     background: var(--bg-3);
     color: var(--text-1);
@@ -68,9 +75,66 @@
     border-radius: 8px;
     padding: 8px 12px;
     font-size: 0.9rem;
-    min-width: 220px;
+    width: 100%;
+    min-width: 0;
     outline: none;
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.srg-search-wrap.is-filled .srg-search {
+    /* clear ikonuna yer aç */
+    padding-right: 32px;
+}
+
+/* native search clear (X) ikonunu gizle — kendi butonumuzu kullanıyoruz */
+.srg-search::-webkit-search-cancel-button,
+.srg-search::-webkit-search-decoration {
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.srg-search-clear {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: 50%;
+    color: var(--text-2);
+    font-size: 1.05rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.srg-search-clear[hidden] {
+    /* opacity 0 zaten; hidden attr ile fully out */
+    display: none;
+}
+
+.srg-search-wrap.is-filled .srg-search-clear {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.srg-search-clear:hover {
+    color: var(--text-1);
+    background: var(--bg-2);
+}
+
+.srg-search-clear:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+    color: var(--text-1);
 }
 
 .srg-search::placeholder {
@@ -168,7 +232,7 @@
     .srg-grid {
         grid-template-columns: 1fr;
     }
-    .srg-search {
+    .srg-search-wrap {
         min-width: 0;
         flex: 1 1 auto;
     }

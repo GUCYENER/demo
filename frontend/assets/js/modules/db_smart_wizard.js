@@ -155,6 +155,13 @@
                 opt.textContent = _t('wizard.empty.sources');
                 sel.appendChild(opt);
             }
+            // v3.34.2 — Koşullu görünürlük: >1 source varsa select göster (regresyon fix)
+            if (sel.options.length > 1) {
+                sel.hidden = false;
+                sel.removeAttribute('hidden');
+            } else {
+                sel.hidden = true;
+            }
         } catch (e) {
             console.warn('[db_smart_wizard] _loadSources failed:', e);
         }
@@ -172,7 +179,9 @@
             return;
         }
         _state.sourceId = parseInt(sourceId, 10);
-        const initialQ = (document.getElementById('dswSearchQ') || {}).value || '';
+        // v3.34.0 — Step 1 sadeleştirildi: dswSearchQ input artık DOM'da yok.
+        // Picker kendi içinde arama yapıyor; initialQuery boş geçilir.
+        const initialQ = '';
         window.DbSmartPicker.open({
             sourceId: _state.sourceId,
             initialQuery: initialQ,

@@ -1091,3 +1091,95 @@
         border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     }
 }
+
+/* ============================================================
+   v3.34.0 — Wizard Step 1 sadeleştirme: "Ara" butonu + açıklayıcı paragraf
+   Scope: yalnız step 1 (dswStep0). Picker stilleri (.dsw-picker-*) etkilenmez.
+   ============================================================ */
+.dsw-ara-block {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    padding: 32px 24px;
+    min-height: 160px;
+    border: 1px dashed rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.015);
+    margin-bottom: 16px;
+    text-align: center;
+}
+.dsw-ara-desc {
+    margin: 0;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    font-size: 14px;
+    line-height: 1.55;
+    max-width: 520px;
+}
+.dsw-ara-desc strong {
+    color: var(--vyra-fg-primary, #e6e8eb);
+    font-weight: 600;
+}
+.dsw-ara-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 28px;
+    min-height: 44px;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.2;
+    color: #fff;
+    background: linear-gradient(135deg, #4f8cff 0%, #6366f1 100%);
+    border: 0;
+    border-radius: 12px;
+    cursor: pointer;
+    box-shadow: 0 6px 18px rgba(79, 140, 255, 0.32);
+    transition: transform 0.1s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+.dsw-ara-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(79, 140, 255, 0.45);
+}
+.dsw-ara-btn:active:not(:disabled) { transform: translateY(0); }
+.dsw-ara-btn:focus-visible {
+    outline: 2px solid #4f8cff;
+    outline-offset: 3px;
+}
+.dsw-ara-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+.dsw-ara-btn svg {
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+}
+.dsw-ara-btn-label {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+}
+
+/* Modal kapsamında da aynı görünüm (modal içindeki step 1 için override yok, parent stiller miras) */
+.dsw-modal-dialog .dsw-in-modal .dsw-ara-block {
+    background: rgba(255, 255, 255, 0.02);
+    border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* ============================================================
+   v3.34.2 — Wizard Step 1 source select (koşullu görünürlük)
+   Yalnız >1 source varsa görünür; tek source veya 0 source'ta gizli.
+   ============================================================ */
+.dsw-ara-source-select {
+    min-width: 220px;
+    max-width: 360px;
+    margin: 0 auto;
+}
+.dsw-ara-source-select[hidden] {
+    display: none !important;
+}
