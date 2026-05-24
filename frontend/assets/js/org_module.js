@@ -38,14 +38,9 @@
                 params.append('company_id', compSel.value);
             }
 
-            const response = await fetch(`${API_BASE}/organizations?${params}`, {
-                headers: { "Authorization": `Bearer ${token}` }
-            });
-
-            if (!response.ok) throw new Error("Organizasyonlar yüklenemedi");
-
-            const data = await response.json();
-            orgs = data.organizations || [];
+            // v3.34.0: vyraFetch — Auth + JSON parse + friendly error helper'da.
+            const data = await window.vyraFetch(`/organizations?${params}`);
+            orgs = (data && data.organizations) || [];
 
             renderOrganizations();
             renderPagination(data.total, data.page, data.per_page);
@@ -137,13 +132,9 @@
     }
 
     async function openEditModal(orgId) {
-        const token = localStorage.getItem("access_token");
         try {
-            const response = await fetch(`${API_BASE}/organizations/${orgId}`, {
-                headers: { "Authorization": `Bearer ${token}` }
-            });
-            if (!response.ok) throw new Error("Org yüklenemedi");
-            const org = await response.json();
+            // v3.34.0: vyraFetch — Auth/JSON parse/friendly error helper'da.
+            const org = await window.vyraFetch(`/organizations/${orgId}`);
             editingOrgId = orgId;
             showOrgModal("Organizasyon Düzenle", org);
         } catch (error) {
@@ -216,7 +207,6 @@
 
     async function saveOrg(event) {
         event.preventDefault();
-        const token = localStorage.getItem("access_token");
 
         const payload = {
             org_name: document.getElementById("modalOrgName").value.trim(),
@@ -235,22 +225,11 @@
         }
 
         try {
-            const url = editingOrgId ? `${API_BASE}/organizations/${editingOrgId}` : `${API_BASE}/organizations`;
+            // v3.34.0: vyraFetch — body objesi JSON.stringify edilir;
+            // auth + friendly error contract merkezi.
+            const path = editingOrgId ? `/organizations/${editingOrgId}` : '/organizations';
             const method = editingOrgId ? "PUT" : "POST";
-
-            const response = await fetch(url, {
-                method,
-                headers: {
-                    "Authorization": `Bearer ${token}`,
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify(payload)
-            });
-
-            if (!response.ok) {
-                const err = await response.json();
-                throw new Error(err.detail || "Kayıt başarısız");
-            }
+            await window.vyraFetch(path, { method, body: payload });
 
             showToast(editingOrgId ? "Organizasyon güncellendi" : "Organizasyon oluşturuldu", "success");
             closeModal();
@@ -273,18 +252,11 @@
             confirmText: 'Sil',
             cancelText: 'İptal',
             onConfirm: async () => {
-                const token = localStorage.getItem("access_token");
                 try {
-                    const response = await fetch(`${API_BASE}/organizations/${orgId}`, {
-                        method: "DELETE",
-                        headers: { "Authorization": `Bearer ${token}` }
-                    });
-
-                    if (!response.ok) throw new Error("Silme başarısız");
-
+                    // v3.34.0: vyraFetch — DELETE + Auth merkezi.
+                    await window.vyraFetch(`/organizations/${orgId}`, { method: 'DELETE' });
                     showToast("Organizasyon silindi", "success");
                     loadOrganizations();
-
                 } catch (error) {
                     showToast(error.message, "error");
                 }
@@ -366,12 +338,9 @@
         if (!select) return;
 
         try {
-            const token = localStorage.getItem('access_token') || '';
-            const res = await fetch(`${API_BASE}/companies`, {
-                headers: { 'Authorization': 'Bearer ' + token }
-            });
-            if (!res.ok) return;
-            const companies = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const companies = await window.vyraFetch('/companies');
+            if (!Array.isArray(companies)) return;
 
             select.innerHTML = '<option value="">Tüm Firmalar</option>';
             companies.forEach(c => {

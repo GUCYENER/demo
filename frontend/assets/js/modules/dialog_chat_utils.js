@@ -795,10 +795,17 @@ window.DialogChatUtils = (function () {
     function renderReportTemplates(templates, message, onSelect) {
         const id = 'rptmpl_' + Date.now();
 
-        window[id + '_pick'] = function(hint) {
-            if (typeof onSelect === 'function') onSelect(hint);
-            const card = document.getElementById(id);
-            if (card) card.remove();
+        // v3.33.0: Callback artık full template objesini alır (sadece hint değil) —
+        // çağıran taraf seçilen şablonun başlığını user-side message bubble olarak
+        // diyaloğa basabilsin (önceden kullanıcı seçimi sessizdi).
+        window[id + '_pick'] = function(idx) {
+            try {
+                const picked = (templates && templates[idx]) || null;
+                if (picked && typeof onSelect === 'function') onSelect(picked);
+            } finally {
+                const card = document.getElementById(id);
+                if (card) card.remove();
+            }
         };
 
         let html = `<div class="db-template-card" id="${id}">`;
@@ -811,8 +818,7 @@ window.DialogChatUtils = (function () {
         templates.forEach((t, i) => {
             const title = escapeHtml(t.title || `Seçenek ${i + 1}`);
             const desc = escapeHtml(t.description || '');
-            const hint = escapeHtml(t.hint || t.title || '');
-            html += `<button class="db-template-btn" onclick="window['${id}_pick']('${hint}')">`;
+            html += `<button class="db-template-btn" onclick="window['${id}_pick'](${i})">`;
             html += `<div class="db-template-btn-title">${title}</div>`;
             if (desc) html += `<div class="db-template-btn-desc">${desc}</div>`;
             html += `</button>`;
@@ -925,6 +931,62 @@ window.DialogChatUtils = (function () {
     }
 
     /**
+     * v3.33.0 — Basit SQL formatter (gösterim için indentation).
+     *
+     * Strateji: Major keyword'lerden önce newline (+ ana cümlede sıfır indent,
+     * JOIN/ON/AND/OR'da 2 boşluk indent). Tam bir parser değil — string-literal
+     * içindeki keyword'lere dokunmaz (regex sonra string-aware split).
+     *
+     * Ham SQL `Kopyala` butonu için korunur; yalnızca <pre> içeriği formatlanır.
+     */
+    function _formatSqlForDisplay(rawSql) {
+        if (!rawSql || typeof rawSql !== 'string') return '';
+        // Tek satıra indir (mevcut whitespace'i normalize et)
+        let sql = rawSql.replace(/\s+/g, ' ').trim();
+
+        // String literal'ları placeholder'la (parantez sayımı bozulmasın)
+        const literals = [];
+        sql = sql.replace(/'([^']|'')*'/g, (m) => {
+            literals.push(m);
+            return `__VYRA_STR_${literals.length - 1}__`;
+        });
+
+        // Major top-level keyword'lerden önce çift newline yerine tek newline.
+        const TOP = [
+            'SELECT', 'FROM', 'WHERE', 'GROUP BY', 'HAVING', 'ORDER BY',
+            'LIMIT', 'OFFSET', 'FETCH FIRST', 'UNION ALL', 'UNION',
+            'INTERSECT', 'EXCEPT', 'WITH'
+        ];
+        for (const kw of TOP) {
+            const re = new RegExp('\\s+' + kw.replace(/ /g, '\\s+') + '\\b', 'gi');
+            sql = sql.replace(re, '\n' + kw);
+        }
+        // JOIN/ON/AND/OR — 2 boşluk indent (top-level kelimelerin devamı)
+        const SUB = [
+            'LEFT OUTER JOIN', 'RIGHT OUTER JOIN', 'FULL OUTER JOIN',
+            'LEFT JOIN', 'RIGHT JOIN', 'FULL JOIN', 'INNER JOIN',
+            'CROSS JOIN', 'JOIN', 'ON', 'AND', 'OR'
+        ];
+        for (const kw of SUB) {
+            const re = new RegExp('\\s+' + kw.replace(/ /g, '\\s+') + '\\b', 'gi');
+            sql = sql.replace(re, '\n  ' + kw);
+        }
+
+        // SELECT içindeki virgülleri yeni satır + 2 boşluk indent (kolon listesi okunsun)
+        // Yalnızca ilk SELECT bloğu (FROM'a kadar) için uygula — alt sorgularda zaten
+        // boşluklar görünür ölçüde, regex maliyetini sınırla.
+        sql = sql.replace(/^SELECT\s+([\s\S]*?)(\nFROM\b)/i, (m, cols, fromKw) => {
+            const formatted = cols.split(',').map(c => c.trim()).join(',\n  ');
+            return 'SELECT\n  ' + formatted + fromKw;
+        });
+
+        // Placeholder'ları geri koy
+        sql = sql.replace(/__VYRA_STR_(\d+)__/g, (_, i) => literals[parseInt(i, 10)] || '');
+
+        return sql;
+    }
+
+    /**
      * SQL içeriğini tam ekran modal'da gösterir.
      * @param {string} sql - Gösterilecek SQL metni
      */
@@ -935,7 +997,9 @@ window.DialogChatUtils = (function () {
         const modal = document.createElement('div');
         modal.id = 'vyra-sql-modal';
 
-        const escapedSql = escapeHtml(sql || '');
+        // v3.33.0: pretty-print yalnızca görüntü için; kopyalama ham SQL'i kullanır.
+        const prettySql = _formatSqlForDisplay(sql || '');
+        const escapedSql = escapeHtml(prettySql);
 
         modal.innerHTML =
             `<div class="vyra-sql-modal-overlay" id="vyra-sql-overlay">` +

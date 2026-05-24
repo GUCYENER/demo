@@ -44,19 +44,13 @@
 
     let _initialized = false;
 
+    // v3.34.0: vyraFetch delegate — Auth + JSON + friendly error helper'da.
     function _api(path, options = {}) {
-        const opts = Object.assign({ credentials: 'include' }, options);
-        opts.headers = Object.assign(
-            { 'Content-Type': 'application/json' },
-            options.headers || {},
-        );
-        return fetch(`/api/admin/signal-weights${path}`, opts).then(async (r) => {
-            if (!r.ok) {
-                const txt = await r.text().catch(() => '');
-                throw new Error(`HTTP ${r.status}: ${txt.slice(0, 200)}`);
-            }
-            return r.json();
-        });
+        const opts = { method: options.method || 'GET' };
+        if (options.body !== undefined && options.body !== null) {
+            opts.body = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
+        }
+        return window.vyraFetch(`/admin/signal-weights${path}`, opts);
     }
 
     function _toast(msg, kind = 'success') {

@@ -22,11 +22,8 @@ window.ThemeCatalogModule = (function () {
     /* --- Companies yükle --- */
     async function loadCompanies() {
         try {
-            const res = await fetch(API_BASE + '/api/companies/', {
-                headers: { 'Authorization': 'Bearer ' + getToken() }
-            });
-            if (!res.ok) return;
-            companies = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            companies = await window.vyraFetch('/companies/');
             // İlk firmayı otomatik seç
             if (companies.length > 0 && !selectedCompanyId) {
                 selectedCompanyId = companies[0].id;
@@ -44,11 +41,8 @@ window.ThemeCatalogModule = (function () {
             return;
         }
         try {
-            const res = await fetch(API_BASE + '/api/themes/company/' + selectedCompanyId, {
-                headers: { 'Authorization': 'Bearer ' + getToken() }
-            });
-            if (!res.ok) { companyAssignments = []; defaultThemeId = null; return; }
-            companyAssignments = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            companyAssignments = await window.vyraFetch('/themes/company/' + selectedCompanyId);
             var def = companyAssignments.find(function (a) { return a.is_default; });
             defaultThemeId = def ? def.id : null;
         } catch (err) {
@@ -93,18 +87,15 @@ window.ThemeCatalogModule = (function () {
         grid.innerHTML = '<div class="tc-loading"><i class="fa-solid fa-spinner fa-spin"></i> Temalar yükleniyor...</div>';
 
         try {
-            var url = API_BASE + '/api/themes/';
+            var path = '/themes/';
             if (selectedCompanyId) {
-                url += '?company_id=' + selectedCompanyId;
+                path += '?company_id=' + selectedCompanyId;
             } else {
-                url += '?include_custom=true';
+                path += '?include_custom=true';
             }
 
-            var res = await fetch(url, {
-                headers: { 'Authorization': 'Bearer ' + getToken() }
-            });
-            if (!res.ok) throw new Error('Tema listesi alınamadı');
-            themes = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            themes = await window.vyraFetch(path);
 
             themes = themes.map(function (t) {
                 if (typeof t.preview_colors === 'string') {
@@ -230,29 +221,21 @@ window.ThemeCatalogModule = (function () {
                 assignedIds.push(themeId);
             }
 
-            var res = await fetch(API_BASE + '/api/themes/assign', {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            await window.vyraFetch('/themes/assign', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': 'Bearer ' + getToken()
-                },
-                body: JSON.stringify({
+                body: {
                     company_id: selectedCompanyId,
                     theme_ids: assignedIds,
                     default_theme_id: themeId
-                })
+                }
             });
-
-            if (!res.ok) {
-                var errData = await res.json().catch(function () { return {}; });
-                throw new Error(errData.detail || 'Atama başarısız');
-            }
 
             // Tema detayını (CSS variables dahil) API'den al
-            var themeDetail = await fetch(API_BASE + '/api/themes/' + themeId, {
-                headers: { 'Authorization': 'Bearer ' + getToken() }
-            });
-            var themeData = themeDetail.ok ? await themeDetail.json() : null;
+            var themeData = null;
+            try {
+                themeData = await window.vyraFetch('/themes/' + themeId);
+            } catch (_) { /* detail eksik kalabilir — branding fallback'i devreye girer */ }
 
             // BrandingEngine cache güncelle — tema anında uygulanır
             if (window.BrandingEngine && themeData) {

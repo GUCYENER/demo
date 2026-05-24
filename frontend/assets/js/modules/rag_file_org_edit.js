@@ -28,18 +28,10 @@ window.RAGFileOrgEdit = {
         if (!this.orgs || this.orgs.length === 0) {
             console.warn('[RAGUpload] this.orgs boş — fallback API fetch başlatılıyor...');
             try {
-                const token = localStorage.getItem('access_token');
-                const response = await fetch(`${this.API_BASE}/organizations`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (response.ok) {
-                    const data = await response.json();
-                    this.orgs = (data.organizations || []).filter(o => o.is_active);
-                    console.log('[RAGUpload] Fallback org fetch başarılı:', this.orgs.length, 'org yüklendi');
-                } else {
-                    console.error('[RAGUpload] Fallback org fetch başarısız:', response.status);
-                    this.orgs = [];
-                }
+                // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                const data = await window.vyraFetch(`/organizations`);
+                this.orgs = (data.organizations || []).filter(o => o.is_active);
+                console.log('[RAGUpload] Fallback org fetch başarılı:', this.orgs.length, 'org yüklendi');
             } catch (err) {
                 console.error('[RAGUpload] Fallback org fetch hatası:', err);
                 this.orgs = [];
@@ -241,20 +233,11 @@ window.RAGFileOrgEdit = {
         }
 
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${this.API_BASE}/rag/files/${this.fileOrgEditId}/organizations`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            await window.vyraFetch(`/rag/files/${this.fileOrgEditId}/organizations`, {
                 method: 'PATCH',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ org_ids: this.fileOrgEditSelectedIds })
+                body: { org_ids: this.fileOrgEditSelectedIds }
             });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || 'Güncelleme hatası');
-            }
 
             this.showToast('Org grupları güncellendi', 'success');
             this.closeFileOrgModal();

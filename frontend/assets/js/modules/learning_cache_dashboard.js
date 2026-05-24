@@ -11,7 +11,7 @@
    - Hex sabit YOK → tüm renkler design token'lar üzerinden CSS sınıflarıyla
 ------------------------------------------------ */
 
-const LCD_API_BASE = (typeof window !== 'undefined' && window.LCD_API_BASE_URL) || 'http://localhost:8002';
+// v3.34.0: vyraFetch /api + API_BASE_URL prefix'ini kendi ekliyor — base sabiti kaldırıldı.
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -71,23 +71,11 @@ function _fmtNum(n) {
 }
 
 async function _fetchStats(sourceId) {
-    const token = (typeof localStorage !== 'undefined')
-        ? localStorage.getItem('access_token') : null;
-    const headers = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-
-    const url = `${LCD_API_BASE}/api/data-sources/${encodeURIComponent(sourceId)}/cache-stats`;
-    const res = await fetch(url, { method: 'GET', headers });
-    const text = await res.text();
-    let data;
-    try {
-        data = JSON.parse(text);
-    } catch (_e) {
-        throw new Error(`HTTP ${res.status} — JSON parse hatası`);
-    }
-    if (!res.ok || data?.success === false) {
-        const msg = data?.detail || data?.message || `HTTP ${res.status}`;
-        throw new Error(msg);
+    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+    const path = `/data-sources/${encodeURIComponent(sourceId)}/cache-stats`;
+    const data = await window.vyraFetch(path);
+    if (data?.success === false) {
+        throw new Error(data?.detail || data?.message || 'Sunucu hata bildirdi');
     }
     return data;
 }

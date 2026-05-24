@@ -447,9 +447,12 @@
 }
 
 /* Close button — daha hafif, hover'da accent glow */
-.dsw-modal-close {
+.dsw-modal-dialog > .dsw-modal-close {
+    position: absolute;
     top: 14px;
     right: 14px;
+    left: auto;
+    bottom: auto;
     width: 36px;
     height: 36px;
     line-height: 32px;
@@ -457,6 +460,7 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
     background: rgba(255, 255, 255, 0.02);
     border-radius: 10px;
+    z-index: 5;
     transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 .dsw-modal-close:hover {
@@ -722,5 +726,368 @@
     .dsw-modal-dialog .dsw-in-modal .dsw-foot { padding: 12px 16px; }
     .dsw-modal-dialog .dsw-in-modal .dsw-search-row {
         grid-template-columns: 1fr;
+    }
+}
+
+/* ============================================================
+   v3.34.0 — "Tablo Seç" icon button (replaces 'Tablo Ara')
+   ============================================================ */
+.dsw-modal-dialog .dsw-in-modal .dsw-btn.dsw-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 0 16px;
+    min-height: 40px;
+    border-radius: 10px;
+}
+.dsw-modal-dialog .dsw-in-modal .dsw-btn.dsw-icon-btn svg {
+    flex: 0 0 auto;
+}
+.dsw-modal-dialog .dsw-in-modal .dsw-btn.dsw-icon-btn .dsw-icon-btn-label {
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+/* ============================================================
+   v3.34.0 — Tablo Seçici Alt-Modal (DbSmartPicker)
+   ============================================================ */
+.dsw-picker-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1100;   /* wizard modal'ın üstünde */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.dsw-picker-modal.hidden { display: none; }
+.dsw-picker-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+}
+.dsw-picker-dialog {
+    position: relative;
+    width: min(1080px, 95vw);
+    height: min(720px, 90vh);
+    background:
+        radial-gradient(900px 500px at -10% -20%, rgba(79, 140, 255, 0.07), transparent 60%),
+        var(--vyra-bg-elevated, #14161a);
+    color: var(--vyra-fg-primary, #e6e8eb);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, .6);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.dsw-picker-close {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    left: auto;
+    width: 36px;
+    height: 36px;
+    line-height: 32px;
+    font-size: 22px;
+    text-align: center;
+    cursor: pointer;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    z-index: 5;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.dsw-picker-close:hover {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.35);
+    color: #ef4444;
+}
+.dsw-picker-header {
+    padding: 22px 56px 16px 28px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.dsw-picker-header h3 {
+    margin: 0 0 6px 0;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.dsw-picker-header h3::before {
+    content: '';
+    display: inline-block;
+    width: 6px; height: 22px;
+    border-radius: 3px;
+    background: linear-gradient(180deg, #4f8cff 0%, #ec4899 100%);
+}
+.dsw-picker-sub {
+    margin: 0;
+    font-size: 13px;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    line-height: 1.5;
+}
+.dsw-picker-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 4fr) minmax(0, 6fr);
+    gap: 0;
+}
+.dsw-picker-pane {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    padding: 16px 20px;
+}
+.dsw-picker-left {
+    border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+.dsw-picker-search {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+.dsw-picker-search .dsw-input {
+    flex: 1 1 auto;
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--vyra-fg-primary, #e6e8eb);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 14px;
+    min-height: 40px;
+}
+.dsw-picker-search .dsw-input:focus {
+    outline: none;
+    background: rgba(79, 140, 255, 0.04);
+    border-color: #4f8cff;
+}
+.dsw-picker-count {
+    font-size: 12px;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    white-space: nowrap;
+}
+.dsw-picker-list,
+.dsw-picker-fk-list {
+    flex: 1 1 auto;
+    overflow: auto;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.015);
+    padding: 6px;
+}
+.dsw-picker-empty {
+    padding: 20px;
+    text-align: center;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    font-size: 13px;
+}
+.dsw-picker-row,
+.dsw-picker-fk-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.12s ease;
+}
+.dsw-picker-row:hover,
+.dsw-picker-fk-row:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+.dsw-picker-row.is-checked,
+.dsw-picker-fk-row.is-checked {
+    background: rgba(79, 140, 255, 0.10);
+}
+.dsw-picker-row.is-primary {
+    background: rgba(79, 140, 255, 0.18);
+    box-shadow: inset 3px 0 0 0 #4f8cff;
+}
+.dsw-picker-cb,
+.dsw-picker-fk-cb {
+    margin-top: 3px;
+    width: 16px; height: 16px;
+    accent-color: #4f8cff;
+    cursor: pointer;
+    flex: 0 0 auto;
+}
+.dsw-picker-row-main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+.dsw-picker-row-title {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--vyra-fg-primary, #e6e8eb);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.dsw-picker-row-meta {
+    font-size: 12px;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.dsw-picker-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    font-size: 10px;
+    font-style: normal;
+    font-weight: 700;
+    color: #4f8cff;
+    background: rgba(79, 140, 255, 0.18);
+    border-radius: 4px;
+    letter-spacing: 0.04em;
+}
+.dsw-picker-right-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+.dsw-picker-right-head h4 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--vyra-fg-primary, #e6e8eb);
+}
+.dsw-picker-hint {
+    font-size: 12px;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+}
+.dsw-picker-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 24px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(0, 0, 0, 0.15);
+}
+.dsw-picker-summary {
+    font-size: 13px;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+}
+.dsw-picker-actions {
+    display: flex;
+    gap: 8px;
+}
+.dsw-picker-actions .dsw-btn,
+.dsw-picker-actions .dsw-btn-ghost {
+    min-height: 38px;
+    padding: 0 16px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--vyra-fg-primary, #e6e8eb);
+    transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.dsw-picker-actions .dsw-btn-ghost:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.07);
+}
+.dsw-picker-actions .dsw-btn {
+    background: linear-gradient(135deg, #4f8cff 0%, #6366f1 100%);
+    color: #fff;
+    border-color: transparent;
+    box-shadow: 0 4px 14px rgba(79, 140, 255, 0.35);
+}
+.dsw-picker-actions .dsw-btn:disabled {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    box-shadow: none;
+    cursor: not-allowed;
+}
+.dsw-picker-actions .dsw-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(79, 140, 255, 0.45);
+}
+
+/* Wizard step 1'de seçim sonrası özet kart */
+.dsw-selected-summary {
+    border: 1px solid rgba(79, 140, 255, 0.35);
+    background: rgba(79, 140, 255, 0.08);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 8px;
+}
+.dsw-selected-summary h4 {
+    margin: 0 0 8px 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: #4f8cff;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.dsw-selected-summary ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.dsw-selected-summary li {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    font-size: 12px;
+    color: var(--vyra-fg-primary, #e6e8eb);
+}
+.dsw-selected-summary li.is-primary {
+    background: rgba(79, 140, 255, 0.18);
+    border-color: rgba(79, 140, 255, 0.45);
+    color: #fff;
+    font-weight: 500;
+}
+.dsw-selected-summary .dsw-selected-edit {
+    margin-top: 10px;
+    font-size: 12px;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: var(--vyra-fg-primary, #e6e8eb);
+    padding: 4px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+}
+.dsw-selected-summary .dsw-selected-edit:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+@media (max-width: 768px) {
+    .dsw-picker-dialog {
+        width: 100vw; height: 100vh;
+        border-radius: 0;
+    }
+    .dsw-picker-body {
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr 1fr;
+    }
+    .dsw-picker-left {
+        border-right: none;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     }
 }

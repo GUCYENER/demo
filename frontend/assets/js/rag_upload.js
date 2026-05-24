@@ -415,14 +415,13 @@ const RAGUpload = {
             }
 
             try {
-                const token = localStorage.getItem('access_token');
-                // v3.4.4: Tüm dosya listesi yerine sadece processing dosyaları sorgula
-                const resp = await fetch(`${self.API_BASE}/rag/files?page=1&per_page=10&status=processing`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (!resp.ok) return;
-
-                const data = await resp.json();
+                // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                let data;
+                try {
+                    data = await window.vyraFetch('/rag/files?page=1&per_page=10&status=processing');
+                } catch (_) {
+                    return;
+                }
                 const files = data.files || [];
 
                 // Yüklenen dosyalar arasında hâlâ processing olan var mı?
@@ -492,13 +491,14 @@ const RAGUpload = {
         if (!container) return;
 
         try {
-            const token = localStorage.getItem('access_token');
-            const resp = await fetch(`${this.API_BASE}/rag/enhancement-impact?limit=5`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (!resp.ok) { container.innerHTML = ''; return; }
-
-            const data = await resp.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            let data;
+            try {
+                data = await window.vyraFetch('/rag/enhancement-impact?limit=5');
+            } catch (_) {
+                container.innerHTML = '';
+                return;
+            }
             const summary = data.summary || {};
             const items = data.items || [];
 
@@ -713,11 +713,13 @@ const RAGUpload = {
      */
     async loadMaturityThreshold() {
         try {
-            const res = await fetch(`${this.API_BASE}/system/maturity-threshold`, {
-                headers: { 'Authorization': `Bearer ${localStorage.getItem('access_token')}` }
-            });
-            if (!res.ok) return;
-            const data = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            let data;
+            try {
+                data = await window.vyraFetch('/system/maturity-threshold');
+            } catch (_) {
+                return;
+            }
             const threshold = data.threshold ?? 80;
 
             // Slider ve label güncelle
@@ -739,16 +741,12 @@ const RAGUpload = {
      */
     async saveMaturityThreshold(value) {
         try {
-            const res = await fetch(`${this.API_BASE}/system/maturity-threshold?threshold=${value}`, {
-                method: 'PUT',
-                headers: { 'Authorization': `Bearer ${localStorage.getItem('access_token')}` }
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            await window.vyraFetch(`/system/maturity-threshold?threshold=${value}`, {
+                method: 'PUT'
             });
-            if (res.ok) {
-                window._maturityEnhanceThreshold = value;
-                this.showToast(`İyileştirme eşik değeri ${value} olarak güncellendi.`, 'success');
-            } else {
-                this.showToast('Eşik değeri kaydedilemedi.', 'error');
-            }
+            window._maturityEnhanceThreshold = value;
+            this.showToast(`İyileştirme eşik değeri ${value} olarak güncellendi.`, 'success');
         } catch (err) {
             console.error('[RAGUpload] Threshold kayıt hatası:', err);
             this.showToast('Eşik değeri kaydedilemedi.', 'error');
@@ -761,14 +759,11 @@ const RAGUpload = {
         if (!select) return;
 
         try {
-            const token = localStorage.getItem('access_token') || '';
-            const headers = { 'Authorization': 'Bearer ' + token };
-
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
             // Kullanıcı bilgisini al (is_admin, company_id)
             let userProfile = null;
             try {
-                const meRes = await fetch(this.API_BASE + '/users/me', { headers });
-                if (meRes.ok) userProfile = await meRes.json();
+                userProfile = await window.vyraFetch('/users/me');
             } catch (e) {
                 console.warn('[RAGUpload] Kullanıcı profili alınamadı:', e);
             }
@@ -777,9 +772,12 @@ const RAGUpload = {
             const userCompanyId = userProfile ? userProfile.company_id : null;
 
             // Firma listesini yükle
-            const res = await fetch(this.API_BASE + '/companies', { headers });
-            if (!res.ok) return;
-            const companies = await res.json();
+            let companies;
+            try {
+                companies = await window.vyraFetch('/companies');
+            } catch (_) {
+                return;
+            }
 
             if (isAdmin) {
                 // Admin: Firma seçimi zorunlu, tüm firmalar listelenir
@@ -893,18 +891,14 @@ const RAGUpload = {
                 return;
             }
 
-            const token = localStorage.getItem('access_token') || '';
-            const res = await fetch(
-                this.API_BASE.replace('/api', '') + '/api/data-sources?company_id=' + companyId,
-                { headers: { 'Authorization': 'Bearer ' + token } }
-            );
-
-            if (!res.ok) {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            let sources;
+            try {
+                sources = await window.vyraFetch('/data-sources?company_id=' + companyId);
+            } catch (_) {
                 select.innerHTML = '<option value="manual_file">📄 Manuel Dosya Ekleme</option>';
                 return;
             }
-
-            const sources = await res.json();
             select.innerHTML = '<option value="manual_file">📄 Manuel Dosya Ekleme</option>';
 
             const TYPE_EMOJI = { 'database': '🗄', 'file_server': '🖥', 'ftp': '🔀', 'sharepoint': '🟦', 'manual_file': '📄' };
@@ -949,14 +943,9 @@ const RAGUpload = {
             const [sourceType, sourceId] = val.split(':');
             
             try {
-                const token = localStorage.getItem('access_token') || '';
-                const res = await fetch(
-                    this.API_BASE.replace('/api', '') + '/api/data-sources/' + sourceId + '/enrichment-approved',
-                    { headers: { 'Authorization': 'Bearer ' + token } }
-                );
-                
-                const data = await res.json();
-                
+                // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                const data = await window.vyraFetch('/data-sources/' + sourceId + '/enrichment-approved');
+
                 if (wrap) {
                     if (data.success && data.approved && data.approved.length > 0) {
                         RAGUpload._approvedTablesFull = data.approved;

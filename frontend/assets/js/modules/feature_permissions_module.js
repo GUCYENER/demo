@@ -13,8 +13,9 @@
 (function () {
     'use strict';
 
-    const API_BASE = '/api/feature-permissions';
-    const SUBJECTS_API = '/api/data-sources/permissions/subjects';
+    // v3.34.0: vyraFetch /api prefix'i kendi ekliyor — burada sadece path tutuyoruz.
+    const API_BASE = '/feature-permissions';
+    const SUBJECTS_API = '/data-sources/permissions/subjects';
     // v3.30.0: aki_kesif (Akıllı Veri Keşfi / DB Smart Wizard) eklendi
     const FEATURE_KEYS = ['kb', 'db', 'llm', 'aki_kesif'];
     const FEATURE_LABELS = {
@@ -33,19 +34,9 @@
     let _adminSubjects = null;       // users + orgs
     let _adminState = null;          // editing state per feature
 
-    function _authHeaders() {
-        const token = localStorage.getItem('access_token') || '';
-        return { 'Authorization': 'Bearer ' + token };
-    }
-
-    async function _fetchJson(url, opts = {}) {
-        const headers = Object.assign({}, _authHeaders(), opts.headers || {});
-        const res = await fetch(url, Object.assign({}, opts, { headers }));
-        if (!res.ok) {
-            const text = await res.text().catch(() => '');
-            throw new Error(`${res.status}: ${text || res.statusText}`);
-        }
-        return res.json();
+    // v3.34.0: vyraFetch delegate — Auth + JSON + friendly error helper'da.
+    async function _fetchJson(path, opts = {}) {
+        return window.vyraFetch(path, opts);
     }
 
     // ============================================
@@ -383,12 +374,11 @@
                 const st = _adminState[fk];
                 await _fetchJson(`${API_BASE}/${fk}`, {
                     method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
+                    body: {
                         user_allow_ids: Array.from(st.user_allow_ids),
                         user_deny_ids:  Array.from(st.user_deny_ids),
                         org_allow_ids:  Array.from(st.org_allow_ids),
-                    }),
+                    },
                 });
             }
             if (typeof window.showToast === 'function') {

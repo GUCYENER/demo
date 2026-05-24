@@ -161,6 +161,7 @@
         const seq = ++state.seq;
 
         try {
+            // raw fetch: AbortController/stale-render guard — vyraFetch not applicable.
             const res = await fetch(`${ENDPOINT}?hours=${encodeURIComponent(hours)}`, {
                 headers: _authHeaders(),
                 signal: controller.signal,

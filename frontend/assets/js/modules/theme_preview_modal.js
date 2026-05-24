@@ -90,11 +90,8 @@ window.ThemePreviewModal = (function () {
     /* --- Tema CSS variables'ı API'den al --- */
     async function fetchThemeFull(themeId) {
         try {
-            var res = await fetch(API_BASE + '/api/themes/' + themeId, {
-                headers: { 'Authorization': 'Bearer ' + getToken() }
-            });
-            if (!res.ok) return null;
-            return await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            return await window.vyraFetch('/themes/' + themeId);
         } catch (err) {
             console.error('[ThemePreview] Tema detayı alınamadı:', err);
             return null;

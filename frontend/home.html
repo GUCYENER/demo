@@ -825,7 +825,10 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
           <div class="dsw-search-row">
             <input type="text" id="dswSearchQ" class="dsw-input" placeholder="Doğal dil ile arayın..." aria-label="Arama metni" />
             <select id="dswSourceSelect" class="dsw-input" aria-label="Veri kaynağı"></select>
-            <button id="dswSearchBtn" class="dsw-btn" type="button">Tablo Ara</button>
+            <button id="dswSearchBtn" class="dsw-btn dsw-icon-btn" type="button" aria-label="Tablo seçici aç" title="Tablo seçici aç">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <span class="dsw-icon-btn-label">Tablo Seç</span>
+            </button>
           </div>
           <div class="dsw-results" id="dswResults" role="listbox" aria-label="Tablo arama sonuçları" aria-live="polite" aria-busy="false"></div>
         </div>
@@ -849,6 +852,41 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
         <button id="dswPrevBtn" class="dsw-btn-ghost" type="button" disabled aria-label="Önceki adım">← Geri</button>
         <span class="dsw-progress" id="dswProgress" aria-live="polite">Adım 1 / 5</span>
         <button id="dswNextBtn" class="dsw-btn" type="button" aria-label="Sonraki adım">İleri →</button>
+      </div>
+    </div>
+
+    <!-- v3.34.0 — Tablo seçici alt-modal (DbSmartPicker.open ile açılır) -->
+    <div id="dbSmartPickerModal" class="dsw-picker-modal hidden" role="dialog" aria-modal="true" aria-labelledby="dswPickerTitle" hidden>
+      <div class="dsw-picker-overlay" data-role="overlay"></div>
+      <div class="dsw-picker-dialog" role="document">
+        <button type="button" class="dsw-picker-close" data-action="cancel" aria-label="Kapat (Esc)" title="Kapat (Esc)">×</button>
+        <header class="dsw-picker-header">
+          <h3 id="dswPickerTitle">Tablo Seç</h3>
+          <p class="dsw-picker-sub">Listelenen tablolardan birini ana tablo olarak seçin; sağda FK ilişkili tabloları join adayı olarak işaretleyebilirsiniz.</p>
+        </header>
+        <div class="dsw-picker-body">
+          <section class="dsw-picker-pane dsw-picker-left" aria-label="Tablolar">
+            <div class="dsw-picker-search">
+              <input type="text" id="dswPickerSearch" class="dsw-input" placeholder="Tablo adı ara… (Türkçe destekli)" aria-label="Tablo arama" autocomplete="off" />
+              <span class="dsw-picker-count" id="dswPickerCount" aria-live="polite"></span>
+            </div>
+            <div class="dsw-picker-list" id="dswPickerList" role="listbox" aria-label="Yetkili tablolar" aria-busy="false"></div>
+          </section>
+          <section class="dsw-picker-pane dsw-picker-right" aria-label="FK ilişkili tablolar">
+            <header class="dsw-picker-right-head">
+              <h4>İlgili Tablolar (FK)</h4>
+              <span class="dsw-picker-hint" id="dswPickerFkHint">Önce sol panelden bir tablo seçin.</span>
+            </header>
+            <div class="dsw-picker-fk-list" id="dswPickerFkList" aria-busy="false"></div>
+          </section>
+        </div>
+        <footer class="dsw-picker-foot">
+          <span class="dsw-picker-summary" id="dswPickerSummary" aria-live="polite">Seçim yok</span>
+          <div class="dsw-picker-actions">
+            <button type="button" class="dsw-btn-ghost" data-action="cancel">İptal</button>
+            <button type="button" class="dsw-btn" id="dswPickerConfirm" data-action="confirm" disabled>Seç ve Kapat</button>
+          </div>
+        </footer>
       </div>
     </div>
 

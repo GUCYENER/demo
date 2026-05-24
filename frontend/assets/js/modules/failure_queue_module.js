@@ -23,11 +23,6 @@
     return (root || document).querySelector(sel);
   }
 
-  function authHeaders() {
-    const t = localStorage.getItem("access_token");
-    return t ? { Authorization: "Bearer " + t } : {};
-  }
-
   function setLoading(on) {
     const root = $(state.rootSel);
     if (!root) return;
@@ -51,9 +46,8 @@
 
   async function loadSources() {
     try {
-      const res = await fetch("/api/data-sources", { headers: authHeaders() });
-      if (!res.ok) throw new Error("data-sources HTTP " + res.status);
-      const j = await res.json();
+      // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+      const j = await window.vyraFetch("/data-sources");
       const list = (j && j.items) || j || [];
       const sel = $(state.rootSel).querySelector("#fqSourceSel");
       sel.innerHTML = "";
@@ -77,12 +71,11 @@
     setError("");
     setLoading(true);
     try {
-      const url =
-        `/api/data-sources/${state.sourceId}/failure-queue` +
+      const path =
+        `/data-sources/${state.sourceId}/failure-queue` +
         `?min_recurrence=${state.minRecur}&limit=50`;
-      const res = await fetch(url, { headers: authHeaders() });
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      const j = await res.json();
+      // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+      const j = await window.vyraFetch(path);
       state.rows = (j && j.items) || j.failures || [];
       renderTable();
     } catch (e) {
@@ -135,15 +128,11 @@
 
   async function approveFailure(failureId) {
     try {
-      const res = await fetch(
-        `/api/data-sources/${state.sourceId}/failures/${failureId}/approve`,
-        {
-          method: "POST",
-          headers: { ...authHeaders(), "Content-Type": "application/json" },
-          body: JSON.stringify({}),
-        },
+      // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+      await window.vyraFetch(
+        `/data-sources/${state.sourceId}/failures/${failureId}/approve`,
+        { method: "POST", body: {} },
       );
-      if (!res.ok) throw new Error("HTTP " + res.status);
       await loadFailures();
     } catch (e) {
       setError("Onay başarısız: " + (e.message || e));
@@ -152,11 +141,11 @@
 
   async function dismissFailure(failureId) {
     try {
-      const res = await fetch(
-        `/api/data-sources/${state.sourceId}/failures/${failureId}`,
-        { method: "DELETE", headers: authHeaders() },
+      // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+      await window.vyraFetch(
+        `/data-sources/${state.sourceId}/failures/${failureId}`,
+        { method: "DELETE" },
       );
-      if (!res.ok) throw new Error("HTTP " + res.status);
       await loadFailures();
     } catch (e) {
       setError("Reddetme başarısız: " + (e.message || e));

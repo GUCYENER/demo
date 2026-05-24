@@ -75,6 +75,41 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.34.0 (2026-05-24) - vyraFetch helper + Frontend HTTP migrasyonu + MemPalace Freshness Gate
+> **Defansif HTTP katmanı + workflow housekeeping:** Tüm modüllerde tutarlı Türkçe hata kontratı (502/503/504, network failure, 401/403), MemPalace freshness gate ile bağlam çürümesi önlendi.
+
+**FAZ G1-G2 — vyraFetch helper + login.js:**
+- 🌐 **`api_client.js` (HERMES+ATHENA):** `window.vyraFetch(path, {method, body, auth})` public alias eklendi. Tek satırlık `VYRA_API.request` delegasyonu — auto Bearer auth, JSON stringify, `/api` prefix. Türkçe friendly error contract: 502/503/504 "Backend yanıt vermiyor", network failure "Sunucuya bağlanılamadı (Nginx down)", 401 "Oturum sona erdi", 403 "Yetkiniz yok". Thrown Error nesnesi `.status`/`.data` taşır.
+- 🔐 **`login_branding.js`:** Tüm raw `fetch` çağrıları vyraFetch'e migre + a11y iyileştirme (aria-label, focus management).
+
+**FAZ G3-G5 — Modül migrasyonu (~30 dosya):**
+- 🔄 **G3 ana modüller:** `admin_error_review.js`, `agentic_observability.js`, `agentic_observability_faz6.js`, `agentic_query_consumer.js`, `company_module.js`, `data_sources_module.js`, `db_smart_ast_editor.js`, `db_smart_picker.js`, `db_smart_wizard.js`, `db_source_selector.js`, `dialog_ticket.js`, `rag_upload.js`, `websocket_client.js`.
+- 🔄 **G4 core modüller:** `dialog_chat.js` (15 site migre, 4 raw kept: SSE `/messages/stream` ×2, blob `downloadFile`/DB export ×2 — `// v3.34.0: raw fetch — ...` yorumlu), `query_builder.js` (2× `/query-state/preview`).
+- 🔄 **G5 batch 1-3:** 11 yan modül + `document_enhancer` + `ds_enrichment` + 15 yan modül.
+- 📋 **Raw fetch retention kriterleri:** SSE (`text/event-stream` body.getReader), blob download, FormData upload, AbortController/signal.
+
+**FAZ MemPalace Freshness Gate:**
+- 🧠 **`mcp_servers.py` (CRAZYMEMPLC):** `mine_project()` HEAD-hash short-circuit eklendi — wing'in son mine edilmiş commit SHA'sı current HEAD ile eşitse mine atlanır (~5ms no-op vs full mine). State: `~/.mempalace/state/<wing>_last_mined_commit.txt`. `force=True` ile zorla yeniden mine. `MINE_TIMEOUT`: 300→600s (büyük wing'lerde full mine fallback için).
+- 📜 **`vyrazeus.md`:** §2/§3.1/§8'e BAŞLA freshness gate + 🧠 MemPalace raporu (drawer delta, mine doğrulama, wing izolasyonu) eklendi.
+
+**v3.33.1 fix bundle (içerikte birleşti):**
+- 🐛 **Rapor şablonu prompt iyileştirmesi:** Tag suffix → prefix + "ZORUNLU ANALİZ YAKLAŞIMI" (deep_think_service.py).
+- 🐛 **Display SQL:** Backend whitelist tabanlı `_inline_params_into_sql` — preview response'a `display_sql` eklendi (query_state_api.py).
+- 🐛 **`_resolve_source_info` refactor:** `Optional[Dict]` → `{ok, data|reason}` (no_company_scope/not_found/cross_tenant/lookup_error) — multi-tenant RLS tanılaması.
+- 🐛 **DB-Only ranker pick:** `extract_all_tables_from_sql` ile multi-table JOIN handling.
+
+**Bug fix'leri:**
+- 🐛 **Tablo Seç alt-modal 422:** Picker limit cap 100→500 (eligibility endpoint).
+- 🐛 **Wizard tablo arama empty:** Eligibility SQL yorumunda bare `%` literal → `%%` escape.
+
+**Plan & Archive housekeeping:**
+- 📋 **Plan tamamlandı:** `2026-05-24_1500_vyra_fetch_helper_and_memplace_freshness_v1.md` → archive/v3.34.
+- 📋 **mempalace_refresh_guard.md:** completed → archive/v3.34.
+- 🗄️ **Master plan kapanışı:** `agentic_sql_copilot_master_plan.md` + `Test_Senaryolari.md` + `poseidon_discovery_comment_audit.md` → archive/v3.30/agentic_master/ (Faz 0-6 grep ile kod-seviyesinde doğrulandı).
+
+**Build:**
+- 🔨 Bundle rebuild: JS 856KB (1676→856, 49% küçüldü), CSS 410KB (640→410, 36%). 58 HTTP isteği → 3.
+
 ### 🆕 v3.33.0 (2026-05-23) - Akıllı Veri Keşfi: Saved Reports Grid + Modal Wizard + SaaS Polish
 > **Multi-agent ZEUS workflow:** Plan + 4 disjoint brief (A/B/C/D); Agent C (filter modal) cancelled — modal zaten mevcut. Ajan-A ZEUS takeover (3 ajan malware-refuse).
 
@@ -3817,8 +3852,8 @@ netstat -an | findstr "5005"
 
 **Geliştirici:** Yasın Fazlıoğlu  
 **E-posta:** yasin.fazlioglu@consultant.turkcell.com.tr  
-**Versiyon:** 3.33.0 (Akıllı Veri Keşfi — saved-reports card grid + modal wizard wrapper + SaaS modern dialog (glass-morphism, gradient stepper) + i18n loader auto-bootstrap fix + RLS-aware /sources & duplicate/delete endpoints + admin company_id NULL data-fix)  
-**Önceki:** 3.32.0 (Faz 2 perf — /enrichment-approve-bulk artık fastapi.BackgroundTasks ile post-response schema_record + composite index `(source_id,id)` CONCURRENTLY + ds_schema_record_warnings PERMISSIVE RLS tablosu (mig 043); UX paketi — global `[data-tt]` modern dark tooltip utility (ui_tooltip.css) native `title=` yerine + `_runningJob` state machine: 3s poll + exponential backoff (30s tavan), 4 bulk action butonu state-aware concurrent gate)
+**Versiyon:** 3.34.0 (vyraFetch helper + Frontend HTTP migrasyonu — `window.vyraFetch` public alias, ~30 modülde tutarlı Türkçe hata kontratı (502/503/504, network failure, 401/403); MemPalace freshness gate — HEAD-hash short-circuit + MINE_TIMEOUT 600s; v3.33.1 fix bundle: rapor şablonu prompt, display SQL, multi-tenant RLS tanılaması, picker limit cap 500, wizard tablo arama % escape; archive housekeeping (v3.30 agentic_master + v3.34 paketi))  
+**Önceki:** 3.33.0 (Akıllı Veri Keşfi — saved-reports card grid + modal wizard wrapper + SaaS modern dialog (glass-morphism, gradient stepper) + i18n loader auto-bootstrap fix + RLS-aware /sources & duplicate/delete endpoints + admin company_id NULL data-fix)
 
 ---
 

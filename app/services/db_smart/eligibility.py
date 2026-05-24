@@ -157,12 +157,28 @@ def search_domains(
                 te.description_tr,
                 te.category,
                 te.enrichment_score,
-                -- Lexical match flag (kolonun adına dokunmadan)
-                -- ESCAPE '\\' → kullanıcı term'indeki %/_ literal eşleşir, wildcard değil.
-                CASE WHEN LOWER(o.object_name) LIKE %s ESCAPE '\' THEN 1 ELSE 0 END AS m_obj,
-                CASE WHEN LOWER(COALESCE(te.business_name_tr,'')) LIKE %s ESCAPE '\' THEN 1 ELSE 0 END AS m_bizname,
-                CASE WHEN LOWER(COALESCE(te.description_tr,''))   LIKE %s ESCAPE '\' THEN 1 ELSE 0 END AS m_desc,
-                CASE WHEN LOWER(COALESCE(te.category,''))         LIKE %s ESCAPE '\' THEN 1 ELSE 0 END AS m_cat
+                -- Lexical match flag (kolonun adina dokunmadan).
+                -- ESCAPE '\\' -> kullanici term'indeki yuzde/altcizgi literal
+                -- eslesir, wildcard degil.
+                -- ARES UYARI: psycopg2 SQL string'inde yorum satirlarini da
+                -- parametre marker tarayicidan gecirir. Ciplak yuzde isareti
+                -- ('s' veya '(' takip etmeyen) `IndexError: tuple index out of
+                -- range` firlatir; endpoint try/except items=[] ile yutar ve
+                -- frontend "Eslesen tablo bulunamadi" gosterir. Bu nedenle
+                -- yorumda literal yuzde KULLANILMAZ.
+                -- TRANSLATE() ile kolon tarafini da TR -> ASCII normalize et;
+                -- Python tarafi _normalize_tr ile esitlenir. Bu olmadan
+                -- LIKE 'musteri' -> 'müşteri' ICERIKLI business_name_tr/description_tr
+                -- ile eslesemez ve ASCII tablo adlari haric kullanici hicbir
+                -- Turkce zenginlestirme metnine ulasamaz.
+                CASE WHEN TRANSLATE(LOWER(o.object_name),
+                        'şğüöçıİ', 'sgúocii') LIKE %s ESCAPE '\' THEN 1 ELSE 0 END AS m_obj,
+                CASE WHEN TRANSLATE(LOWER(COALESCE(te.business_name_tr,'')),
+                        'şğüöçıİ', 'sgúocii') LIKE %s ESCAPE '\' THEN 1 ELSE 0 END AS m_bizname,
+                CASE WHEN TRANSLATE(LOWER(COALESCE(te.description_tr,'')),
+                        'şğüöçıİ', 'sgúocii') LIKE %s ESCAPE '\' THEN 1 ELSE 0 END AS m_desc,
+                CASE WHEN TRANSLATE(LOWER(COALESCE(te.category,'')),
+                        'şğüöçıİ', 'sgúocii') LIKE %s ESCAPE '\' THEN 1 ELSE 0 END AS m_cat
             FROM ds_db_objects o
             LEFT JOIN ds_table_enrichments te
               ON te.source_id = o.source_id

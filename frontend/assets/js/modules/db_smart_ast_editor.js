@@ -62,6 +62,7 @@
     }
 
     // ---- Default fetchJson (Bearer auth — wizard pattern mirrored) ----
+    // raw fetch: AbortController signal (patch/explain debounce cancellation) — vyraFetch not applicable.
     function _defaultFetchJson(url, opts) {
         opts = opts || {};
         var token = (window.localStorage && localStorage.getItem('access_token')) || '';

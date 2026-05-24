@@ -24,7 +24,8 @@
  * yenilenir, event listener çoğalmaz.
  */
 
-const AER_API_BASE = "/api/data-sources/admin/error-rewrites";
+// v3.34.0: vyraFetch /api prefix'i kendi ekliyor — burada sadece path tutuyoruz.
+const AER_API_BASE = "/data-sources/admin/error-rewrites";
 const MOUNT_FLAG = "__vyraErrorReviewMounted";
 
 const STATUS_LABELS = {
@@ -237,12 +238,9 @@ async function fetchList(root, statusFilter) {
   showError(root, "");
   setLoading(root, true);
   try {
+    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
     const url = `${AER_API_BASE}?status=${encodeURIComponent(statusFilter)}&limit=50`;
-    const res = await fetch(url, { headers: authHeaders() });
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
-    }
-    const json = await res.json();
+    const json = await window.vyraFetch(url);
     const items = (json && json.items) || [];
     renderList(root, items);
   } catch (err) {
@@ -256,17 +254,14 @@ async function fetchList(root, statusFilter) {
 /** POST review (approve/reject). */
 async function postReview(root, rewriteId, decision, note) {
   try {
-    const res = await fetch(
+    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+    await window.vyraFetch(
       `${AER_API_BASE}/${encodeURIComponent(rewriteId)}/review`,
       {
         method: "POST",
-        headers: { ...authHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ decision, note: note || null }),
+        body: { decision, note: note || null },
       },
     );
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
-    }
     toast(
       decision === "approved"
         ? "Rewrite onaylandı."

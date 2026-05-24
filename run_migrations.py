@@ -7,6 +7,7 @@ call upgrade() to collect SQL, then execute it inside a transaction.
 import os
 import sys
 import importlib.util
+import time
 import traceback
 import types
 import re
@@ -101,7 +102,26 @@ try:
     w("psycopg2 imported")
 
     # Pending migration files in order
+    # NOT: 006-022 normalde Alembic ile uygulanır; bu script DB 005'te
+    # kaldıysa (fresh install / dump-only restore) bunları da yakalar.
     pending_files = [
+        "006_v3140_async_golden_sql.py",
+        "007_v3200_rls_discovery_tables.py",
+        "008_v3200_rls_remove_legacy.py",
+        "009_v3210_column_embeddings.py",
+        "010_v3210_lr_tsvector.py",
+        "011_v3210_ivfflat_to_hnsw.py",
+        "012_v3220_business_glossary.py",
+        "013_v3230_user_preferences.py",
+        "014_v3230_few_shot_examples.py",
+        "015_v3240_catboost_tables.py",
+        "016_v3250_pipeline_events.py",
+        "017_v3260_rls_tenant_tables.py",
+        "018_v3260_size_observations.py",
+        "019_v3260_metric_definitions.py",
+        "020_v3260_query_decisions.py",
+        "021_v3270_db_learning_loop.py",
+        "022_v3270_synonym_suggestions.py",
         "023_v3290_relationship_cardinality.py",
         "024_v3290_business_glossary_v2.py",
         "025_v3290_code_value_dictionary.py",
@@ -115,7 +135,27 @@ try:
         "033_v3300_metric_library_seed.py",
     ]
 
-    conn = psycopg2.connect(**DB)
+    # Retry connect while PG is in startup/recovery — Docker/CI ortamlarında PG
+    # container'ı up olduktan birkaç saniye sonra WAL replay'i bitirir; bu süre
+    # boyunca "the database system is starting up" döner.
+    _MAX_WAIT_S = int(_g("DB_STARTUP_WAIT_S", "90"))
+    _INTERVAL_S = 5
+    _deadline = time.monotonic() + _MAX_WAIT_S
+    _attempt = 0
+    while True:
+        _attempt += 1
+        try:
+            conn = psycopg2.connect(**DB)
+            break
+        except psycopg2.OperationalError as e:
+            msg = str(e).lower()
+            transient = ("starting up" in msg
+                         or "shutting down" in msg
+                         or "in recovery" in msg)
+            if not transient or time.monotonic() >= _deadline:
+                raise
+            w(f"PG not ready (attempt {_attempt}); retrying in {_INTERVAL_S}s — {e.__class__.__name__}: {str(e).strip()}")
+            time.sleep(_INTERVAL_S)
     conn.autocommit = False
     cur = conn.cursor()
 

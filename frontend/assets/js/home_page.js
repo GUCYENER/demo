@@ -34,19 +34,16 @@
     // v3.15.4: Versiyon mismatch kontrolü — backend yeni APP_VERSION ile ayağa
     // kalkmışsa /api/auth/me 401 + detail="version_mismatch" döner. Bu durumda
     // localStorage temizlenir ve login'e yönlendirilir.
+    // v3.34.0: vyraFetch — error.status + error.data.detail üzerinden 401 ve
+    // version_mismatch tespiti yapılır. Network hatasında error.status undefined
+    // olur ve kullanıcı oturumda kalır (eski davranış parity).
     (async function verifyTokenWithServer() {
         try {
-            const apiBase = window.API_BASE_URL || 'http://localhost:8002';
-            const res = await fetch(`${apiBase}/api/auth/me`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (res.status === 401) {
-                let detail = '';
-                try {
-                    const body = await res.json();
-                    detail = (body && body.detail) || '';
-                } catch (_) { /* parse hatası önemsiz */ }
-
+            await window.vyraFetch('/auth/me');
+            // 200 → token geçerli, no-op
+        } catch (e) {
+            if (e && e.status === 401) {
+                const detail = (e.data && (e.data.detail || e.data.message)) || '';
                 const isVersionMismatch = detail === 'version_mismatch';
                 if (isVersionMismatch) {
                     console.warn('[NGSSAI] Sürüm güncellendi (version_mismatch), yeniden giriş gerekli.');
@@ -58,9 +55,10 @@
                 localStorage.removeItem('refresh_token');
                 localStorage.removeItem('session_start_time');
                 window.location.href = 'login.html';
+                return;
             }
-        } catch (e) {
-            // Ağ hatası → kullanıcıyı zorla atma; mevcut oturumla devam etsin.
+            // Ağ hatası (status undefined) veya 5xx → kullanıcıyı zorla atma;
+            // mevcut oturumla devam etsin (eski davranış parity).
             console.warn('[NGSSAI] /auth/me doğrulaması ağ hatası:', e && e.message);
         }
     })();

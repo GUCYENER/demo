@@ -12,8 +12,6 @@ window.RAGFileList = {
      */
     async loadFiles() {
         try {
-            const token = localStorage.getItem('access_token');
-
             const params = new URLSearchParams({
                 page: this.filesCurrentPage,
                 per_page: this.filesPerPage
@@ -28,17 +26,8 @@ window.RAGFileList = {
                 params.append('company_id', compSel.value);
             }
 
-            const response = await fetch(`${this.API_BASE}/rag/files?${params}`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-
-            if (!response.ok) {
-                throw new Error('Dosya listesi alınamadı');
-            }
-
-            const data = await response.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch(`/rag/files?${params}`);
             this.files = data.files || [];
             this.filesTotalCount = data.total || 0;
 
@@ -133,26 +122,16 @@ window.RAGFileList = {
      */
     async loadStats() {
         try {
-            const token = localStorage.getItem('access_token');
-            let statsUrl = `${this.API_BASE}/rag/stats`;
+            let path = `/rag/stats`;
 
             // Firma bazlı filtreleme
             const compSel = document.getElementById('ragCompanySelect');
             if (compSel && compSel.value) {
-                statsUrl += `?company_id=${compSel.value}`;
+                path += `?company_id=${compSel.value}`;
             }
 
-            const response = await fetch(statsUrl, {
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-
-            if (!response.ok) {
-                throw new Error('İstatistikler alınamadı');
-            }
-
-            const stats = await response.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const stats = await window.vyraFetch(path);
             this.updateStatsUI(stats);
 
         } catch (error) {
@@ -172,20 +151,8 @@ window.RAGFileList = {
         btn.innerHTML = '<i class="fas fa-sync-alt"></i> Yenileniyor...';
 
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${this.API_BASE}/rag/rebuild`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || 'Rebuild hatası');
-            }
-
-            const result = await response.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const result = await window.vyraFetch(`/rag/rebuild`, { method: 'POST' });
 
             if (result.success) {
                 this.showToast(
@@ -229,18 +196,8 @@ window.RAGFileList = {
             cancelText: 'İptal',
             onConfirm: async () => {
                 try {
-                    const token = localStorage.getItem('access_token');
-                    const response = await fetch(`${this.API_BASE}/rag/files/${fileId}`, {
-                        method: 'DELETE',
-                        headers: {
-                            'Authorization': `Bearer ${token}`
-                        }
-                    });
-
-                    if (!response.ok) {
-                        const error = await response.json();
-                        throw new Error(error.detail || 'Silme hatası');
-                    }
+                    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                    await window.vyraFetch(`/rag/files/${fileId}`, { method: 'DELETE' });
 
                     this.showToast(`"${fileName}" silindi`, 'success');
                     if (window.NgssNotification) {
@@ -405,6 +362,7 @@ window.RAGFileList = {
         try {
             console.log('[RAGUpload] Dosya açılıyor:', url);
 
+            // raw fetch: blob download (response.blob()) — vyraFetch not applicable
             const response = await fetch(url, {
                 headers: {
                     'Authorization': `Bearer ${token}`
@@ -575,18 +533,8 @@ window.RAGFileList = {
         }
 
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${this.API_BASE}/rag/retry-file/${fileId}`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || 'Yeniden işleme hatası');
-            }
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            await window.vyraFetch(`/rag/retry-file/${fileId}`, { method: 'POST' });
 
             this.showToast(`"${fileName}" yeniden işleniyor...`, 'success');
             if (window.NgssNotification) {

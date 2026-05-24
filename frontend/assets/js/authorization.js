@@ -27,33 +27,21 @@
         }
 
         try {
-            const url = new URL(`${API_BASE}/users/list`);
-            if (pendingOnly) url.searchParams.set("pending_only", "true");
-            if (usersSearchTerm) url.searchParams.set("search", usersSearchTerm);
-            url.searchParams.set("page", usersCurrentPage);
-            url.searchParams.set("per_page", usersPerPage);
-
-            // Firma bazlı filtreleme
+            // v3.34.0: vyraFetch — query params'i path'e ekliyoruz; helper
+            // Authorization + JSON parse + friendly error contract'ı sağlar.
+            const params = new URLSearchParams();
+            if (pendingOnly) params.set("pending_only", "true");
+            if (usersSearchTerm) params.set("search", usersSearchTerm);
+            params.set("page", usersCurrentPage);
+            params.set("per_page", usersPerPage);
             const compSel = document.getElementById('authCompanySelect');
             if (compSel && compSel.value) {
-                url.searchParams.set("company_id", compSel.value);
+                params.set("company_id", compSel.value);
             }
+            const path = `/users/list?${params.toString()}`;
+            console.log("[Authorization] Kullanıcılar yükleniyor...", path);
 
-            console.log("[Authorization] Kullanıcılar yükleniyor...", url.toString());
-
-            const response = await fetch(url, {
-                headers: { "Authorization": `Bearer ${token}` }
-            });
-
-            console.log("[Authorization] Response status:", response.status);
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                console.error("[Authorization] Error response:", errorText);
-                throw new Error("Kullanıcılar yüklenemedi");
-            }
-
-            const data = await response.json();
+            const data = await window.vyraFetch(path);
             console.log("[Authorization] Loaded users:", data);
 
             usersTotalCount = data.total || 0;
@@ -130,16 +118,10 @@
     }
 
     async function loadOrgs() {
-        const token = localStorage.getItem("access_token");
-        if (!token) return;
-
         try {
-            const response = await fetch(`${API_BASE}/organizations`, {
-                headers: { "Authorization": `Bearer ${token}` }
-            });
-            if (!response.ok) throw new Error("Org yüklenemedi");
-            const data = await response.json();
-            orgs = data.organizations || [];
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch('/organizations');
+            orgs = (data && data.organizations) || [];
             console.log("[Authorization] Loaded orgs:", orgs);
         } catch (error) {
             console.error("[Authorization] Org load error:", error);
@@ -153,12 +135,9 @@
         if (!select) return;
 
         try {
-            const token = localStorage.getItem('access_token') || '';
-            const res = await fetch(`${API_BASE}/companies`, {
-                headers: { 'Authorization': 'Bearer ' + token }
-            });
-            if (!res.ok) return;
-            const companies = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const companies = await window.vyraFetch('/companies');
+            if (!Array.isArray(companies)) return;
 
             select.innerHTML = '<option value="">Tüm Firmalar</option>';
             companies.forEach(c => {
@@ -188,19 +167,10 @@
     }
 
     async function loadRoles() {
-        const token = localStorage.getItem("access_token");
-        if (!token) return;
-
         try {
-            const response = await fetch(`${API_BASE}/users/roles`, {
-                headers: { "Authorization": `Bearer ${token}` }
-            });
-
-            if (!response.ok) throw new Error("Roller yüklenemedi");
-
-            const data = await response.json();
-            roles = data.roles;
-
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch('/users/roles');
+            roles = (data && data.roles) || [];
         } catch (error) {
             console.error("[Authorization] Roles error:", error);
         }
@@ -564,22 +534,11 @@
 
         // Backend API çağrısı - veritabanına kaydet
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${API_BASE}/users/${orgModalUserId}/organizations`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const result = await window.vyraFetch(`/users/${orgModalUserId}/organizations`, {
                 method: 'PATCH',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ org_ids: orgModalSelectedIds })
+                body: { org_ids: orgModalSelectedIds }
             });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || 'Güncelleme hatası');
-            }
-
-            const result = await response.json();
             console.log('[confirmOrgSelection] API result:', result);
 
             // Row'daki badge'ları güncelle
@@ -630,7 +589,6 @@
     }
 
     async function handleApprove(userId) {
-        const token = localStorage.getItem("access_token");
         const row = document.querySelector(`tr[data-user-id="${userId}"]`);
         const roleSelect = row?.querySelector(".role-select");
         const roleId = parseInt(roleSelect?.value || 2);
@@ -649,21 +607,16 @@
         }
 
         try {
-            const response = await fetch(`${API_BASE}/users/approve`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            await window.vyraFetch('/users/approve', {
                 method: "POST",
-                headers: {
-                    "Authorization": `Bearer ${token}`,
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
+                body: {
                     user_id: parseInt(userId),
                     role_id: roleId,
                     is_admin: isAdmin,
                     org_ids: orgIds
-                })
+                }
             });
-
-            if (!response.ok) throw new Error("Onaylama başarısız");
 
             showToast("Kullanıcı onaylandı", "success");
             loadUsers(document.getElementById("filterPendingOnly")?.checked);
@@ -681,19 +634,12 @@
             confirmText: 'Reddet',
             cancelText: 'İptal',
             onConfirm: async () => {
-                const token = localStorage.getItem("access_token");
-
                 try {
-                    const response = await fetch(`${API_BASE}/users/reject`, {
+                    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                    await window.vyraFetch('/users/reject', {
                         method: "POST",
-                        headers: {
-                            "Authorization": `Bearer ${token}`,
-                            "Content-Type": "application/json"
-                        },
-                        body: JSON.stringify({ user_id: parseInt(userId) })
+                        body: { user_id: parseInt(userId) }
                     });
-
-                    if (!response.ok) throw new Error("Reddetme başarısız");
 
                     showToast("Kullanıcı reddedildi", "success");
                     loadUsers(document.getElementById("filterPendingOnly")?.checked);
@@ -765,20 +711,10 @@
             confirmClass: isCurrentlyActive ? "danger" : "success",
             onConfirm: async () => {
                 try {
-                    const response = await fetch(`${API_BASE}/users/${userId}/toggle-active`, {
-                        method: "PUT",
-                        headers: {
-                            "Authorization": `Bearer ${token}`,
-                            "Content-Type": "application/json"
-                        }
+                    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                    const data = await window.vyraFetch(`/users/${userId}/toggle-active`, {
+                        method: "PUT"
                     });
-
-                    if (!response.ok) {
-                        const err = await response.json();
-                        throw new Error(err.detail || "İşlem başarısız");
-                    }
-
-                    const data = await response.json();
                     showToast(data.message, "success");
                     loadUsers(document.getElementById("filterPendingOnly")?.checked);
 
@@ -796,13 +732,8 @@
         if (!token) return;
 
         try {
-            const response = await fetch(`${API_BASE}/users/me`, {
-                headers: { "Authorization": `Bearer ${token}` }
-            });
-
-            if (!response.ok) throw new Error("Profil yüklenemedi");
-
-            const profile = await response.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const profile = await window.vyraFetch('/users/me');
             renderProfile(profile);
 
         } catch (error) {
@@ -873,24 +804,16 @@
     }
 
     async function uploadAvatar(file) {
-        const token = localStorage.getItem("access_token");
-
         const reader = new FileReader();
         reader.onload = async (e) => {
             const base64 = e.target.result;
 
             try {
-                const response = await fetch(`${API_BASE}/users/me/avatar`, {
+                // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                await window.vyraFetch('/users/me/avatar', {
                     method: "PUT",
-                    headers: {
-                        "Authorization": `Bearer ${token}`,
-                        "Content-Type": "application/json"
-                    },
-                    body: JSON.stringify({ avatar: base64 })
+                    body: { avatar: base64 }
                 });
-
-                if (!response.ok) throw new Error("Avatar yüklenemedi");
-
                 showToast("Avatar güncellendi", "success");
                 loadProfile();
 
@@ -903,8 +826,6 @@
     }
 
     async function saveProfile() {
-        const token = localStorage.getItem("access_token");
-
         const payload = {
             full_name: document.getElementById("profileEditFullName").value.trim(),
             email: document.getElementById("profileEditEmail").value.trim(),
@@ -917,20 +838,11 @@
         }
 
         try {
-            const response = await fetch(`${API_BASE}/users/me`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            await window.vyraFetch('/users/me', {
                 method: "PUT",
-                headers: {
-                    "Authorization": `Bearer ${token}`,
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify(payload)
+                body: payload
             });
-
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.detail || "Güncelleme başarısız");
-            }
-
             showToast("Profil güncellendi", "success");
             loadProfile();
 
@@ -941,8 +853,6 @@
     }
 
     async function changePassword() {
-        const token = localStorage.getItem("access_token");
-
         const currentPassword = document.getElementById("currentPassword").value;
         const newPassword = document.getElementById("newPassword").value;
         const newPasswordConfirm = document.getElementById("newPasswordConfirm").value;
@@ -963,23 +873,14 @@
         }
 
         try {
-            const response = await fetch(`${API_BASE}/users/me/change-password`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            await window.vyraFetch('/users/me/change-password', {
                 method: "POST",
-                headers: {
-                    "Authorization": `Bearer ${token}`,
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
+                body: {
                     current_password: currentPassword,
                     new_password: newPassword
-                })
+                }
             });
-
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.detail || "Şifre değiştirme başarısız");
-            }
-
             showToast("Şifre değiştirildi", "success");
 
             // Clear fields

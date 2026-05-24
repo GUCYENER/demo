@@ -33,11 +33,8 @@ window.CompanyModule = (function () {
 
     async function fetchCompanies() {
         try {
-            const res = await fetch(API_BASE + '/api/companies/', {
-                headers: authHeaders()
-            });
-            if (!res.ok) throw new Error('Firma listesi alınamadı');
-            companies = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            companies = await window.vyraFetch('/companies/');
             return companies;
         } catch (err) {
             console.error('[CompanyModule] fetch error:', err);
@@ -46,40 +43,22 @@ window.CompanyModule = (function () {
     }
 
     async function saveCompany(data) {
-        const url = editingId
-            ? API_BASE + '/api/companies/' + editingId
-            : API_BASE + '/api/companies/';
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+        const path = editingId ? '/companies/' + editingId : '/companies/';
         const method = editingId ? 'PUT' : 'POST';
-
-        const res = await fetch(url, {
-            method: method,
-            headers: authHeaders(),
-            body: JSON.stringify(data)
-        });
-
-        if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.detail || 'Kaydetme hatası');
-        }
-        return await res.json();
+        return await window.vyraFetch(path, { method, body: data });
     }
 
     async function deleteCompany(id) {
-        const res = await fetch(API_BASE + '/api/companies/' + id, {
-            method: 'DELETE',
-            headers: authHeaders()
-        });
-        if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.detail || 'Silme hatası');
-        }
-        return await res.json();
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+        return await window.vyraFetch('/companies/' + id, { method: 'DELETE' });
     }
 
     async function uploadLogo(companyId, file) {
         const formData = new FormData();
         formData.append('file', file);
 
+        // raw fetch: multipart/FormData — vyraFetch not applicable.
         const res = await fetch(API_BASE + '/api/companies/' + companyId + '/logo', {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + getToken() },
@@ -99,11 +78,8 @@ window.CompanyModule = (function () {
 
     async function fetchThemesFull() {
         try {
-            const res = await fetch(API_BASE + '/api/themes/full', {
-                headers: authHeaders()
-            });
-            if (!res.ok) return [];
-            themesList = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            themesList = await window.vyraFetch('/themes/full');
             return themesList;
         } catch (err) {
             console.warn('[CompanyModule] Tema listesi alınamadı:', err);
@@ -114,11 +90,8 @@ window.CompanyModule = (function () {
     async function fetchAssignedThemes(companyId) {
         if (!companyId) return [];
         try {
-            const res = await fetch(API_BASE + '/api/themes/company/' + companyId, {
-                headers: authHeaders()
-            });
-            if (!res.ok) return [];
-            return await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            return await window.vyraFetch('/themes/company/' + companyId);
         } catch (err) {
             console.warn('[CompanyModule] Atanmış temalar alınamadı:', err);
             return [];
@@ -278,13 +251,11 @@ window.CompanyModule = (function () {
             suggestBtn.onclick = async function() {
                 var color = c1Input ? c1Input.value : '#06B6D4';
                 try {
-                    var res = await fetch(API_BASE + '/api/themes/suggest', {
+                    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                    var data = await window.vyraFetch('/themes/suggest', {
                         method: 'POST',
-                        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ color: color })
+                        body: { color: color }
                     });
-                    if (!res.ok) throw new Error('Öneri alınamadı');
-                    var data = await res.json();
                     renderSuggestions(data.suggestions || []);
                 } catch (err) {
                     console.error('[CompanyModule] Öneri hatası:', err);
@@ -304,15 +275,11 @@ window.CompanyModule = (function () {
                     return;
                 }
                 try {
-                    var res = await fetch(API_BASE + '/api/themes/', {
+                    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                    await window.vyraFetch('/themes/', {
                         method: 'POST',
-                        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ name: name, color1: color1, color2: color2, company_id: editingId })
+                        body: { name: name, color1: color1, color2: color2, company_id: editingId }
                     });
-                    if (!res.ok) {
-                        var err = await res.json().catch(function() { return {}; });
-                        throw new Error(err.detail || 'Tema oluşturulamadı');
-                    }
                     if (window.VyraToast) VyraToast.success('Tema oluşturuldu: ' + name);
                     // Listeyi yenile
                     themesList = [];
@@ -375,9 +342,9 @@ window.CompanyModule = (function () {
 
         select.innerHTML = '<option value="">Yükleniyor...</option>';
         try {
-            const res = await fetch(API_BASE + '/api/address/provinces');
-            if (!res.ok) throw new Error('İl listesi alınamadı');
-            const data = (await res.json())
+            // v3.34.0: vyraFetch — public endpoint (auth:false).
+            const raw = await window.vyraFetch('/address/provinces', { auth: false });
+            const data = raw
                 .map(p => ({ value: p.name, label: p.name, id: p.id }))
                 .sort((a, b) => a.label.localeCompare(b.label, 'tr'));
             addressCache.provinces = data;
@@ -420,9 +387,9 @@ window.CompanyModule = (function () {
         select.disabled = true;
 
         try {
-            const res = await fetch(API_BASE + '/api/address/districts/' + province.id);
-            if (!res.ok) throw new Error('İlçe listesi alınamadı');
-            const districts = (await res.json())
+            // v3.34.0: vyraFetch — public endpoint (auth:false).
+            const raw = await window.vyraFetch('/address/districts/' + province.id, { auth: false });
+            const districts = raw
                 .map(d => ({ value: d.name, label: d.name, id: d.id }))
                 .sort((a, b) => a.label.localeCompare(b.label, 'tr'));
             addressCache.districts[province.id] = districts;
@@ -463,9 +430,9 @@ window.CompanyModule = (function () {
         select.disabled = true;
 
         try {
-            const res = await fetch(API_BASE + '/api/address/neighborhoods/' + district.id);
-            if (!res.ok) throw new Error('Mahalle listesi alınamadı');
-            const neighborhoods = (await res.json())
+            // v3.34.0: vyraFetch — public endpoint (auth:false).
+            const raw = await window.vyraFetch('/address/neighborhoods/' + district.id, { auth: false });
+            const neighborhoods = raw
                 .map(n => ({ value: n.name, label: n.name }))
                 .sort((a, b) => a.label.localeCompare(b.label, 'tr'));
             addressCache.neighborhoods[cacheKey] = neighborhoods;
@@ -717,18 +684,15 @@ window.CompanyModule = (function () {
                 var themeIds = Array.from(assignedThemeIds);
                 var defaultId = selectedDefaultThemeId || (themeIds.length > 0 ? themeIds[0] : null);
                 try {
-                    var assignRes = await fetch(API_BASE + '/api/themes/assign', {
+                    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                    await window.vyraFetch('/themes/assign', {
                         method: 'POST',
-                        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
+                        body: {
                             company_id: savedCompanyId,
                             theme_ids: themeIds,
                             default_theme_id: defaultId
-                        })
+                        }
                     });
-                    if (!assignRes.ok) {
-                        throw new Error('HTTP ' + assignRes.status);
-                    }
 
                     // v2.60.0: Tema değişikliğini anlık yansıt
                     if (window.BrandingEngine && defaultId) {

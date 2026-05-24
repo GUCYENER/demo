@@ -277,20 +277,20 @@
         };
 
         try {
-            const apiBase = (window.VYRA_API_BASE || '');
-            const resp = await fetch(`${apiBase}/api/query-state/preview`, {
-                method: 'POST',
-                credentials: 'include',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(window.getAuthHeader ? window.getAuthHeader() : {}),
-                },
-                body: JSON.stringify(body),
-            });
-            const data = await resp.json().catch(() => ({}));
+            // v3.34.0: vyraFetch — auth header + JSON parse + Türkçe error mesajı helper'dan
+            let data;
+            try {
+                data = await window.vyraFetch('/query-state/preview', { method: 'POST', body });
+            } catch (httpErr) {
+                statusEl.removeAttribute('aria-busy');
+                const fallback = (httpErr && httpErr.data && (httpErr.data.detail || (httpErr.data.warnings || []).join('; '))) || (httpErr && httpErr.message) || 'Bilinmeyen hata';
+                statusEl.textContent = `Hata: ${fallback}`;
+                statusEl.classList.add('qb-status-error');
+                return;
+            }
             statusEl.removeAttribute('aria-busy');
 
-            if (!resp.ok || !data.valid) {
+            if (!data.valid) {
                 const errs = (data.warnings || [data.detail || 'Bilinmeyen hata']).join('; ');
                 statusEl.textContent = `Hata: ${errs}`;
                 statusEl.classList.add('qb-status-error');
@@ -300,10 +300,15 @@
             statusEl.textContent = data.warnings && data.warnings.length
                 ? `Uyarılar: ${data.warnings.join('; ')}`
                 : 'SQL hazır.';
-            sqlBox.textContent = data.sql || '';
+            // v3.33.0: display_sql tercih (backend `%s` placeholder'ları
+            // _inline_literal whitelist'iyle güvenli inline etti). display_sql
+            // None ise (güvensiz tip) ham sql fallback'i basılır.
+            sqlBox.textContent = data.display_sql || data.sql || '';
             _announce(root, 'SQL üretildi');
 
-            // v3.32.0: SQL'i state'e cache'le ve action butonlarını aktif et
+            // v3.32.0: SQL'i state'e cache'le ve action butonlarını aktif et.
+            // NOT: execute path backend'de inline ediyor, bu yüzden state.lastSql
+            // hâlâ ham `%s`'li sürüm — execute body re-build ediliyor zaten.
             state.lastSql = data.sql || '';
             state.lastParams = data.params || [];
             _enableActionButtons(root, !!state.lastSql);
@@ -402,24 +407,19 @@
         resultMeta.textContent = '';
 
         try {
-            const apiBase = (window.VYRA_API_BASE || '');
-            const resp = await fetch(`${apiBase}/api/query-state/preview`, {
-                method: 'POST',
-                credentials: 'include',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(window.getAuthHeader ? window.getAuthHeader() : {}),
-                },
-                body: JSON.stringify(body),
-            });
-            const data = await resp.json().catch(() => ({}));
-            statusEl.removeAttribute('aria-busy');
-
-            if (!resp.ok) {
+            // v3.34.0: vyraFetch — execute=true preview ucu
+            let data;
+            try {
+                data = await window.vyraFetch('/query-state/preview', { method: 'POST', body });
+            } catch (httpErr) {
+                statusEl.removeAttribute('aria-busy');
                 statusEl.classList.add('qb-status-error');
-                statusEl.textContent = `HTTP ${resp.status}: ${(data && (data.detail || data.execute_error)) || 'Hata'}`;
+                const detail = (httpErr && httpErr.data && (httpErr.data.detail || httpErr.data.execute_error)) || (httpErr && httpErr.message) || 'Hata';
+                const stat = httpErr && httpErr.status ? `HTTP ${httpErr.status}: ` : '';
+                statusEl.textContent = `${stat}${detail}`;
                 return;
             }
+            statusEl.removeAttribute('aria-busy');
             if (data.success === false) {
                 resultSection.removeAttribute('hidden');
                 resultMeta.textContent = '⚠ Çalıştırma hatası';

@@ -1,24 +1,30 @@
 # VYRA Refactor Backlog
 
-Last updated: 2026-05-23 (R011–R015 eklendi — ATHENA UX audit v3.32.0 Council Gate; v3.33.0 hedefi)
+Last updated: 2026-05-24 (v3.34.0 KAP 11 audit — R016/R017 added; P0 escalation: query_builder_api IDOR)
 
-| ID   | Priority | Scope       | Risk | Effort | Title                                              | File(s)                                         | Status     | Notes                                          |
-|------|----------|-------------|------|--------|----------------------------------------------------|-------------------------------------------------|------------|------------------------------------------------|
-| R001 | P2       | single-file | low  | S      | Extract `_authFetch` helper — auth header DRY      | frontend/assets/js/modules/ds_enrichment_module.js | done       | Commit e14f0ca — 13 call site DRY |
-| R002 | P2       | single-file | low  | XS     | Extract `_guardNoRunningJob` — preflight DRY       | frontend/assets/js/modules/ds_enrichment_module.js | done       | v3.31.0 bulk endpoint preflight'i absorbe etti; 3 frontend preflight kaldirildi (extraction yerine eliminate). Commit: bu sprint |
-| R003 | P2       | single-file | low  | S      | Move pill inline-styles to CSS class `.ds-status-pill` | frontend/assets/js/modules/ds_enrichment_module.js | done       | Commit b5afc17 — CSS class + a11y bonus |
-| R004 | P3       | single-file | low  | XS     | `_runConcurrent` worker return-type inconsistency  | frontend/assets/js/modules/ds_enrichment_module.js | wontfix    | bulkApprove + bulkApproveAll v3.31.0'da bulk endpoint'e gecti -> _runConcurrent callsite kalmadi. Helper utility olarak korundu (plan kararı), inconsistency moot |
-| R005 | P1       | single-file | medium | S    | RLS USING clause order drift from mig 017 canonical pattern | migrations/versions/043_v3320_bulk_phase2.py | open | H1 — HEPHAESTUS audit; v3.33.0 RLS-strict sprint hedefi |
-| R006 | P1       | cross-file  | medium | M    | Missing explicit `WITH CHECK` clause on `FOR ALL` policy (mig 043) | migrations/versions/043_v3320_bulk_phase2.py, app/core/db.py | open | H2 — HEPHAESTUS audit; `apply_company_scope` silent-fail risk; v3.33.0 RLS-strict sprint hedefi |
-| R007 | P2       | single-file | low  | S      | No index on `ds_schema_record_warnings.enrichment_id` FK-equivalent | migrations/versions/043_v3320_bulk_phase2.py | open | M1 — HEPHAESTUS audit; seq-scan on per-enrichment admin filter; add with admin warning panel endpoint |
-| R008 | P3       | cross-file  | low  | XS     | Index naming inconsistency: `idx_ds_table_enrich_*` vs convention `idx_table_enrich_*` | migrations/versions/043_v3320_bulk_phase2.py, migrations/versions/004_ds_enrichment_tables.py | open | M2 — HEPHAESTUS audit; ALTER INDEX non-breaking rename |
-| R009 | P3       | cross-file  | low  | XS     | `detail TEXT` uncapped at DB layer — only app-layer cap enforced | migrations/versions/043_v3320_bulk_phase2.py, app/api/routes/data_sources_api.py | open | L1 — HEPHAESTUS audit; VARCHAR(1000) or CHECK constraint |
-| R010 | P3       | single-file | low  | XS     | BackgroundTasks SIGTERM loss — operational runbook note missing | app/api/routes/data_sources_api.py | open | L2 — HEPHAESTUS audit; approve UPDATE already committed, only embedding gap; DOC-only fix |
-| R011 | P1       | cross-file  | medium | M    | Tooltip clipping in table cells — portal or fixed-position variant needed | frontend/assets/css/modules/ui_tooltip.css, frontend/assets/css/modules/ds_enrichment.css, frontend/assets/js/modules/ds_enrichment_module.js | open | Y1 — ATHENA audit; `::after` clipped by ancestor overflow:hidden; JS portal helper needed; v3.33.0 |
-| R012 | P2       | single-file | low  | S      | Tooltip vertical auto-flip missing — hard-pinned `bottom` clips near viewport top | frontend/assets/css/modules/ui_tooltip.css | open | O2 — ATHENA audit; `bottom: calc(100% + 6px)` only; can share R011 JS helper; v3.33.0 |
-| R013 | P3       | cross-file  | low  | XS     | `[disabled]` checkbox missing `cursor: not-allowed` — UX consistency gap | frontend/assets/css/modules/ui_tooltip.css, frontend/assets/js/modules/ds_enrichment_module.js | open | O3 — ATHENA audit; bulk buttons OK (inline cursor), `.ds-bulk-chk[disabled]` uncovered; global CSS fix |
-| R014 | P3       | single-file | low  | M      | `_runningJobPoll` unconditional re-render — state-unchanged renders on every 3s tick | frontend/assets/js/modules/ds_enrichment_module.js | open | D3 — ATHENA audit; `applyFilterAndRender()` line 244 called regardless of state change; state-hash guard needed |
-| R015 | P3       | single-file | low  | XS     | Dark surface token drift — tooltip bg hard-coded, not using `--tt-bg` CSS variable | frontend/assets/css/modules/ui_tooltip.css | open | D3 — ATHENA audit; `rgba(17,24,39,0.96)` at line 19 should be `var(--tt-bg)`; align with `--bg-card` token pattern |
+> **BAŞLA Gate Tetikleyici (vyrazeus.md §3.7):** `Status: open` AND
+> (`Priority: P1` AND `Target <= current_version`) OR (`Risk: critical`)
+> OR (`Priority: P1` AND `Created` 14+ gün önce) → oturum başında karar şart.
+
+| ID   | Priority | Scope       | Risk | Effort | Target  | Created    | Title                                              | File(s)                                         | Status     | Notes                                          |
+|------|----------|-------------|------|--------|---------|------------|----------------------------------------------------|-------------------------------------------------|------------|------------------------------------------------|
+| R001 | P2       | single-file | low  | S      | v3.31.0 | 2026-04-15 | Extract `_authFetch` helper — auth header DRY      | frontend/assets/js/modules/ds_enrichment_module.js | done       | Commit e14f0ca — 13 call site DRY |
+| R002 | P2       | single-file | low  | XS     | v3.31.0 | 2026-04-15 | Extract `_guardNoRunningJob` — preflight DRY       | frontend/assets/js/modules/ds_enrichment_module.js | done       | v3.31.0 bulk endpoint preflight'i absorbe etti; 3 frontend preflight kaldirildi (extraction yerine eliminate). Commit: bu sprint |
+| R003 | P2       | single-file | low  | S      | v3.31.0 | 2026-04-15 | Move pill inline-styles to CSS class `.ds-status-pill` | frontend/assets/js/modules/ds_enrichment_module.js | done       | Commit b5afc17 — CSS class + a11y bonus |
+| R004 | P3       | single-file | low  | XS     | —       | 2026-04-15 | `_runConcurrent` worker return-type inconsistency  | frontend/assets/js/modules/ds_enrichment_module.js | wontfix    | bulkApprove + bulkApproveAll v3.31.0'da bulk endpoint'e gecti -> _runConcurrent callsite kalmadi. Helper utility olarak korundu (plan kararı), inconsistency moot |
+| R005 | P1       | single-file | medium | S    | v3.33.0 | 2026-05-10 | RLS USING clause order drift from mig 017 canonical pattern | migrations/versions/043_v3320_bulk_phase2.py | done       | mig 044 — canonical USING order restored + IS NULL branch added (drop+create) |
+| R006 | P1       | cross-file  | medium | M    | v3.33.0 | 2026-05-10 | Missing explicit `WITH CHECK` clause on `FOR ALL` policy (mig 043) | migrations/versions/043_v3320_bulk_phase2.py, app/core/db.py, app/api/routes/data_sources_api.py | done       | mig 044 strict WITH CHECK; `apply_company_scope` fail-loud; BG warning INSERT scope'lu; non-superuser RLS test 4/4 PASS |
+| R007 | P2       | single-file | low  | S      | v3.35.0 | 2026-05-10 | No index on `ds_schema_record_warnings.enrichment_id` FK-equivalent | migrations/versions/043_v3320_bulk_phase2.py | open | M1 — HEPHAESTUS audit; seq-scan on per-enrichment admin filter; add with admin warning panel endpoint |
+| R008 | P3       | cross-file  | low  | XS     | v3.35.0 | 2026-05-10 | Index naming inconsistency: `idx_ds_table_enrich_*` vs convention `idx_table_enrich_*` | migrations/versions/043_v3320_bulk_phase2.py, migrations/versions/004_ds_enrichment_tables.py | open | M2 — HEPHAESTUS audit; ALTER INDEX non-breaking rename |
+| R009 | P3       | cross-file  | low  | XS     | v3.35.0 | 2026-05-10 | `detail TEXT` uncapped at DB layer — only app-layer cap enforced | migrations/versions/043_v3320_bulk_phase2.py, app/api/routes/data_sources_api.py | open | L1 — HEPHAESTUS audit; VARCHAR(1000) or CHECK constraint |
+| R010 | P3       | single-file | low  | XS     | v3.35.0 | 2026-05-10 | BackgroundTasks SIGTERM loss — operational runbook note missing | app/api/routes/data_sources_api.py | open | L2 — HEPHAESTUS audit; approve UPDATE already committed, only embedding gap; DOC-only fix |
+| R011 | P1       | cross-file  | medium | M    | v3.33.0 | 2026-05-20 | Tooltip clipping in table cells — portal or fixed-position variant needed | frontend/assets/css/modules/ui_tooltip.css, frontend/assets/js/modules/ui_tooltip.js, frontend/assets/js/modules/ds_enrichment_module.js, frontend/build.mjs | done       | Yeni `ui_tooltip.js` portal helper (data-tt-portal); 3 clipped hücreye (schema/table/desc) bağlandı; bundle.mjs'e eklendi |
+| R012 | P2       | single-file | low  | S      | v3.33.0 | 2026-05-20 | Tooltip vertical auto-flip missing — hard-pinned `bottom` clips near viewport top | frontend/assets/js/modules/ui_tooltip.js | done       | Portal helper auto-flip içeriyor (top<8px → alt; viewport içine clamp) |
+| R013 | P3       | cross-file  | low  | XS     | v3.35.0 | 2026-05-20 | `[disabled]` checkbox missing `cursor: not-allowed` — UX consistency gap | frontend/assets/css/modules/ui_tooltip.css, frontend/assets/js/modules/ds_enrichment_module.js | open | O3 — ATHENA audit; bulk buttons OK (inline cursor), `.ds-bulk-chk[disabled]` uncovered; global CSS fix |
+| R014 | P3       | single-file | low  | M      | v3.35.0 | 2026-05-20 | `_runningJobPoll` unconditional re-render — state-unchanged renders on every 3s tick | frontend/assets/js/modules/ds_enrichment_module.js | open | D3 — ATHENA audit; `applyFilterAndRender()` line 244 called regardless of state change; state-hash guard needed |
+| R015 | P3       | single-file | low  | XS     | v3.33.0 | 2026-05-20 | Dark surface token drift — tooltip bg hard-coded, not using `--tt-bg` CSS variable | frontend/assets/css/modules/ui_tooltip.css | done       | Bonus — R011/R012 ile aynı sprintte: `:root` tokens (`--tt-bg/--tt-color/--tt-border`) + literal'ler `var()`'a taşındı |
+| R016 | P2       | repo-wide   | low  | L      | v3.35.0 | 2026-05-24 | vyraFetch SSE/blob variant missing — 4 raw fetch calls anchored in dialog_chat.js | frontend/assets/js/modules/dialog_chat.js, frontend/assets/js/api_client.js | open | v3.34.0 migration bıraktı; SSE×2 (lines 551, 1433) + blob×2 (lines 2656, 2988); intentional at time of migration; refactor unblocked only when vyraFetch gains SSE-stream + blob-download variant |
+| R017 | P2       | repo-wide   | low  | M      | v3.35.0 | 2026-05-24 | try/catch + vyraFetch boilerplate repeated across 28 modules — no shared error-display utility | frontend/assets/js/modules/* (28 files), frontend/assets/js/api_client.js | open | 96 try/catch blocks wrapping vyraFetch calls; catch bodies vary (showError, showToast, console.error); a shared `vyraFetchUI(path, opts, { onError })` wrapper or a module-private `_handleApiError()` convention would halve boilerplate; low risk given vyraFetch already centralises HTTP errors |
 
 ---
 
@@ -330,3 +336,51 @@ Store `_lastPollHash` on module scope. In `_pollRunningJob`, after updating `_ru
 **Tests:** No automated tests. Visual check that tooltip background is unchanged after the substitution.
 
 **Dependencies:** none.
+
+---
+
+## v3.34.0 vyraFetch migration — KAP 11 audit findings (2026-05-24)
+
+### R016 — vyraFetch SSE/blob variant missing — 4 raw fetch calls remain in dialog_chat.js
+
+**Files:**
+- `frontend/assets/js/modules/dialog_chat.js:551` — SSE stream (send message, main flow)
+- `frontend/assets/js/modules/dialog_chat.js:1433` — SSE stream (re-send / edit-message path)
+- `frontend/assets/js/modules/dialog_chat.js:2656` — blob download (`downloadFile` helper)
+- `frontend/assets/js/modules/dialog_chat.js:2988` — blob export (xlsx/docx/pdf via `_exportDbResult`)
+
+**Why tracked:** All four are intentionally excluded from v3.34.0 vyraFetch migration (annotated `// v3.34.0: raw fetch — ...`). vyraFetch currently returns parsed JSON only (`dönüş: parse edilmiş JSON objesi` — api_client.js:13). SSE calls require `response.body.getReader()` and blob calls require `response.blob()`, neither of which vyraFetch exposes.
+
+**Why not P1:** The comments document the exclusion reason precisely. These are not DRY violations — each call site is structurally distinct. The refactor is only meaningful if vyraFetch gains variant support.
+
+**Suggested approach when ready:** Extend `window.vyraFetch` with two opt-in return modes controlled by opts:
+- `{ responseType: 'stream' }` — returns the raw `Response` object (caller handles `body.getReader()`); auth header + error-building still applied.
+- `{ responseType: 'blob' }` — returns `Response.blob()` directly; auth + non-2xx error handling still applied.
+This preserves the default JSON path and requires no call-site changes for existing consumers.
+
+**Tests:** Unit tests for the two new response modes against mock fetch; assert auth header injected; assert non-2xx throws friendly error.
+
+**Dependencies:** none — purely additive to api_client.js.
+
+---
+
+### R017 — try/catch + vyraFetch boilerplate repeated across 28 JS modules
+
+**Files:** 28 modules under `frontend/assets/js/modules/` (see count below); `frontend/assets/js/api_client.js`
+
+**Evidence (sampling):**
+- `admin_error_review.js:240-251` and `admin_error_review.js:255-277` — two nearly identical try/catch blocks: call `vyraFetch`, on success call a render helper, on catch call `showError(root, "... " + err.message)`.
+- `company_module.js:35-42` — try/catch around vyraFetch; catch logs to console only.
+- Pattern count: 96 `catch(err)` / `catch(e)` blocks across 28 files that also contain vyraFetch calls.
+
+**Why now:** vyraFetch already provides friendly Türkçe error messages in `err.message` (api_client.js:14-36). The majority of catch blocks do one of three things: (a) call `showToast(err.message, 'error')`, (b) call `showError(root, prefix + err.message)`, or (c) `console.error(label, err)`. The wrapping structure is identical — only the display sink differs. This is a DRY smell that will compound as more modules are added.
+
+**Suggested approach:** Two non-exclusive options:
+1. `vyraFetchUI(path, opts, { onError, onSuccess, loadingEl })` — a thin wrapper in `api_client.js` that handles try/catch, loading-state toggle, and delegates to caller-supplied `onError` / `onSuccess` callbacks. Callers that need fine-grained control use raw `vyraFetch` directly.
+2. Convention: establish a module-private `_handleApiError(err, context)` pattern (one function per module) that centralises the showToast/showError dispatch. Each module defines it once and all catch blocks call it — reduces per-block duplication without requiring a shared dependency.
+
+Option 1 is cleaner long-term; option 2 is lower risk for the existing 28 modules.
+
+**Tests:** Unit test for `vyraFetchUI` wrapper: assert onError called with err on throw, assert onSuccess called with data on resolve, assert loadingEl hidden/shown correctly.
+
+**Dependencies:** none — additive; existing direct `vyraFetch` callers need not change.

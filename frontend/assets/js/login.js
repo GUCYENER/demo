@@ -99,11 +99,10 @@
 
         async function tryLoad() {
             try {
-                const response = await fetch(`${API_BASE}/api/auth/ldap-domains`);
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-                const data = await response.json();
-                if (data.domains && data.domains.length > 0) {
+                // v3.34.0: vyraFetch — non-JSON proxy hatalarında bile friendly Türkçe mesaj
+                // fırlatır, polling akışı try/catch ile bunu zaten yutuyor.
+                const data = await window.vyraFetch('/auth/ldap-domains', { auth: false });
+                if (data && data.domains && data.domains.length > 0) {
                     // Mevcut LDAP seçeneklerini temizle (Lokal seçeneği kalsın)
                     domainSelect.querySelectorAll('option[data-ldap]').forEach(o => o.remove());
 
@@ -168,19 +167,13 @@
         if (domain) loginBody.domain = domain;
 
         try {
-            const response = await fetch(`${API_BASE}/api/auth/login`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify(loginBody)
+            // v3.34.0: vyraFetch — friendly Türkçe error contract'ı (502/503/504 ve
+            // network failure dahil) helper içinde merkezi olarak halledilir.
+            const data = await window.vyraFetch('/auth/login', {
+                method: 'POST',
+                body: loginBody,
+                auth: false,
             });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                throw new Error(data.detail || "Giriş başarısız");
-            }
 
             // Store tokens
             localStorage.setItem("access_token", data.access_token);
@@ -200,12 +193,8 @@
 
         } catch (error) {
             console.error("[Login] Error:", error);
-            // Ağ hatası için Türkçe mesaj
-            let errorMessage = error.message;
-            if (error.message === "Failed to fetch" || error.name === "TypeError") {
-                errorMessage = "Sunucuya bağlanılamadı. Backend servisi çalışıyor mu?";
-            }
-            showError("login-error", errorMessage);
+            // vyraFetch zaten Türkçe mesaj üretiyor — error.message doğrudan kullanılabilir.
+            showError("login-error", error.message || "Giriş başarısız");
         } finally {
             submitBtn.classList.remove("loading");
             submitBtn.disabled = false;
@@ -286,25 +275,18 @@
         submitBtn.disabled = true;
 
         try {
-            const response = await fetch(`${API_BASE}/api/auth/register`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
+            // v3.34.0: vyraFetch — friendly Türkçe error contract'ı merkezi.
+            await window.vyraFetch('/auth/register', {
+                method: 'POST',
+                body: {
                     full_name: fullname,
                     username: username,
                     email: email,
                     phone: phone,
-                    password: password
-                })
+                    password: password,
+                },
+                auth: false,
             });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                throw new Error(data.detail || "Kayıt başarısız");
-            }
 
             // Success
             showSuccess("register-success", "Kayıt başarılı! Giriş sayfasına yönlendiriliyorsunuz...");
@@ -320,12 +302,8 @@
 
         } catch (error) {
             console.error("[Register] Error:", error);
-            // Ağ hatası için Türkçe mesaj
-            let errorMessage = error.message;
-            if (error.message === "Failed to fetch" || error.name === "TypeError") {
-                errorMessage = "Sunucuya bağlanılamadı. Backend servisi çalışıyor mu?";
-            }
-            showError("register-error", errorMessage);
+            // vyraFetch zaten Türkçe mesaj üretiyor.
+            showError("register-error", error.message || "Kayıt başarısız");
         } finally {
             submitBtn.classList.remove("loading");
             submitBtn.disabled = false;
@@ -336,13 +314,10 @@
     async function loadVersion() {
         const versionEl = document.getElementById("app-version");
         try {
-            const response = await fetch(`${API_BASE}/api/health`);
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            const data = await response.json();
+            // v3.34.0: vyraFetch — non-fatal, hata durumunda catch zaten yutuyor.
+            const data = await window.vyraFetch('/health', { auth: false });
 
-            if (versionEl && data.version) {
+            if (versionEl && data && data.version) {
                 versionEl.textContent = `v${data.version}`;
             }
         } catch (error) {
@@ -386,24 +361,17 @@
 
         const token = localStorage.getItem("access_token");
         if (token) {
-            // Verify token is still valid
-            fetch(`${API_BASE}/api/auth/me`, {
-                headers: {
-                    "Authorization": `Bearer ${token}`
-                }
-            })
-                .then(async response => {
-                    if (response.ok) {
-                        window.location.href = "home.html";
-                        return;
-                    }
-                    // v3.15.4: 401 + version_mismatch → kullanıcıyı bilgilendir
-                    if (response.status === 401) {
-                        let detail = '';
-                        try {
-                            const body = await response.json();
-                            detail = (body && body.detail) || '';
-                        } catch (_) { /* parse hatası önemsiz */ }
+            // v3.34.0: vyraFetch (auth:true default) Authorization header'ı
+            // localStorage'dan otomatik okur. Başarılıysa home.html'e yönlendir;
+            // 401 + version_mismatch ise kullanıcıya friendly mesaj göster.
+            window.vyraFetch('/auth/me')
+                .then(() => {
+                    window.location.href = "home.html";
+                })
+                .catch((error) => {
+                    // Token invalid veya başka hata — login sayfasında kal.
+                    if (error && error.status === 401) {
+                        const detail = (error.data && error.data.detail) || '';
                         localStorage.removeItem("access_token");
                         localStorage.removeItem("refresh_token");
                         localStorage.removeItem("session_start_time");
@@ -413,12 +381,11 @@
                                 "Sürüm güncellendi. Lütfen yeniden giriş yapın."
                             );
                         }
+                    } else {
+                        // Diğer hatalar (network, 5xx) — sessizce token'ı temizle.
+                        localStorage.removeItem("access_token");
+                        localStorage.removeItem("refresh_token");
                     }
-                })
-                .catch(() => {
-                    // Token invalid, stay on login page
-                    localStorage.removeItem("access_token");
-                    localStorage.removeItem("refresh_token");
                 });
         }
     }
@@ -482,7 +449,10 @@
 
         async function checkVideoExists() {
             try {
-                // Cache-busting timestamp ile HEAD request
+                // NOTE (v3.34.0): vyraFetch JSON yanıtı bekler; bu HEAD probe'unun
+                // gövdesi yoktur (binary video kaynağına HEAD atıyoruz). Bu yüzden
+                // burada raw fetch'i bilinçli olarak koruyoruz — friendly error
+                // contract'a gerek yok, polling akışı zaten boolean dönüyor.
                 const timestamp = Date.now();
                 const response = await fetch(`${API_BASE}/api/assets/login_video?t=${timestamp}`, {
                     method: 'HEAD'

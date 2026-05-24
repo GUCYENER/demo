@@ -8,8 +8,8 @@
 window.OrgPermissionsModule = (function () {
     'use strict';
 
-    const API_BASE = window.API_BASE_URL || 'http://localhost:8002';
-    const ENDPOINT = `${API_BASE}/api/domain-org-permissions`;
+    // v3.34.0: vyraFetch /api + API_BASE_URL prefix'ini kendi ekliyor — burada sadece path tutuyoruz.
+    const ENDPOINT = `/domain-org-permissions`;
 
     // Düzenleme modu state
     let editingId = null;
@@ -27,16 +27,10 @@ window.OrgPermissionsModule = (function () {
     async function load(companyId) {
         _currentCompanyId = companyId || null;
         try {
-            const token = localStorage.getItem('access_token');
-            let url = ENDPOINT;
-            if (companyId) url += `?company_id=${companyId}`;
-            const resp = await fetch(url, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-
-            const data = await resp.json();
+            let path = ENDPOINT;
+            if (companyId) path += `?company_id=${companyId}`;
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch(path);
             renderTable(data);
         } catch (err) {
             console.error('[OrgPermissions] Load error:', err);
@@ -238,9 +232,8 @@ window.OrgPermissionsModule = (function () {
         if (addBtn) { addBtn.disabled = true; }
 
         try {
-            const token = localStorage.getItem('access_token');
             const isUpdate = editingId !== null;
-            const url = isUpdate ? `${ENDPOINT}/${editingId}` : ENDPOINT;
+            const path = isUpdate ? `${ENDPOINT}/${editingId}` : ENDPOINT;
             const method = isUpdate ? 'PUT' : 'POST';
 
             const payload = { domain, org_code: orgCode, description };
@@ -248,19 +241,8 @@ window.OrgPermissionsModule = (function () {
                 payload.company_id = _currentCompanyId;
             }
 
-            const resp = await fetch(url, {
-                method,
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`,
-                },
-                body: JSON.stringify(payload),
-            });
-
-            if (!resp.ok) {
-                const err = await resp.json().catch(() => ({}));
-                throw new Error(err.detail || `HTTP ${resp.status}`);
-            }
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            await window.vyraFetch(path, { method, body: payload });
 
             cancelEdit(); // Formu temizle ve normal moda dön
             showToast(
@@ -287,15 +269,8 @@ window.OrgPermissionsModule = (function () {
             cancelText: 'İptal',
             onConfirm: async () => {
                 try {
-                    const token = localStorage.getItem('access_token');
-                    const resp = await fetch(`${ENDPOINT}/${id}`, {
-                        method: 'DELETE',
-                        headers: { 'Authorization': `Bearer ${token}` },
-                    });
-
-                    if (!resp.ok && resp.status !== 204) {
-                        throw new Error(`HTTP ${resp.status}`);
-                    }
+                    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                    await window.vyraFetch(`${ENDPOINT}/${id}`, { method: 'DELETE' });
 
                     // Eğer silinen satır düzenleniyorsa iptal et
                     if (editingId === String(id)) cancelEdit();

@@ -3,12 +3,18 @@ plan_id: mempalace_refresh_guard
 title: MemPalace boot-time freshness guard
 created: 2026-05-23
 branch: hira
-status: in_progress
-version_target: n/a
+status: completed
+version_target: v3.34.0
 council_mod: 1
 hebe_gate_required: false
 owner_agent: CRAZYMEMPLC
 trigger: every BAŞLA routine until acknowledged-fresh
+completed_at: 2026-05-24
+completion_notes: |
+  v3.34.0 paketi içinde freshness gate gerçeklendi:
+  - vyrazeus.md §2/§3.1/§8 (2aead30): BAŞLA freshness gate + 🧠 MemPalace raporu
+  - mcp_servers.py: mine_project HEAD-hash short-circuit + MINE_TIMEOUT 600s
+    (idempotent re-mine, .mempalace/state/<wing>_last_mined_commit.txt)
 ---
 
 ## Context (Neden bu değişiklik?)

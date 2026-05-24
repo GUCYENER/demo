@@ -1,7 +1,21 @@
 /* v3.32.0: Global modern tooltip utility
    Usage: <element data-tt="hint text">
    For long text wrap: <element data-tt-multiline data-tt="...">
-   Replaces native `title=""` browser tooltips. */
+   Replaces native `title=""` browser tooltips.
+
+   v3.33.0 (R011/R012/R015):
+   - Portal varyantı `[data-tt-portal]` eklendi (bkz. ui_tooltip.js).
+     `overflow:hidden`/scroll'lı container içinde clipping olmasın diye
+     `<body>`'ye render edilir + viewport auto-flip.
+   - Tooltip arka plan rengi `--tt-bg` CSS değişkenine taşındı (token drift fix).
+*/
+
+:root {
+    /* R015 — tooltip arka plan tokenı (önce hard-coded rgba(17,24,39,0.96)) */
+    --tt-bg: rgba(17, 24, 39, 0.96);
+    --tt-color: #e5e7eb;
+    --tt-border: rgba(255, 255, 255, 0.08);
+}
 
 [data-tt] {
     position: relative;
@@ -26,12 +40,12 @@
     transform: translateX(-50%);
     z-index: 1000;
     padding: 6px 10px;
-    background: rgba(17, 24, 39, 0.96);
-    color: #e5e7eb;
+    background: var(--tt-bg);
+    color: var(--tt-color);
     font-size: 0.75rem;
     line-height: 1.4;
     border-radius: 6px;
-    border: 1px solid rgba(255,255,255,0.08);
+    border: 1px solid var(--tt-border);
     box-shadow: 0 4px 12px rgba(0,0,0,0.3);
     /* v3.32.0 ATHENA O1 fix: nowrap + max-width:320 çatışıyordu — 320px üstü
        string'ler viewport'tan taşıyordu. overflow:hidden + ellipsis ile cap. */
@@ -58,6 +72,52 @@
 @media (prefers-reduced-motion: reduce) {
     [data-tt]:hover::after,
     [data-tt]:focus-visible::after {
+        animation: none;
+        opacity: 1;
+    }
+}
+
+/* ============================================================
+   v3.33.0 R011 — Portal tooltip (JS rendered, body-mounted)
+   ----------------------------------------------------------
+   `[data-tt-portal]` elementlerine ui_tooltip.js bağlanır.
+   Portal `<div class="tt-portal">` `<body>` altına eklenir; position:fixed
+   ile viewport koordinatlarına yerleştirilir. Auto-flip ve clamp JS'te.
+   ============================================================ */
+.tt-portal {
+    position: fixed;
+    z-index: 2000; /* modal/overlay üstünde */
+    padding: 6px 10px;
+    background: var(--tt-bg);
+    color: var(--tt-color);
+    font-size: 0.75rem;
+    line-height: 1.4;
+    border-radius: 6px;
+    border: 1px solid var(--tt-border);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    max-width: 320px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+    opacity: 0;
+    animation: tt-portal-fade-in 120ms ease-out 200ms forwards;
+}
+
+.tt-portal--multiline {
+    white-space: normal;
+    width: 280px;
+    overflow: visible;
+    text-overflow: clip;
+}
+
+@keyframes tt-portal-fade-in {
+    from { opacity: 0; transform: translateY(2px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tt-portal {
         animation: none;
         opacity: 1;
     }

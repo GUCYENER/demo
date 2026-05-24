@@ -9,18 +9,17 @@ window.SystemManagerModule = (function () {
     const API_BASE_URL = window.API_BASE_URL || 'http://localhost:8002';
 
     // --- VERSİYON ---
+    // v3.34.0: vyraFetch — non-fatal; helper'ın friendly mesajı catch'te yutulur,
+    // version el atomicpath ise dolduralur. Auth gerekmez (/health public).
     async function loadAppVersion() {
         try {
-            const response = await fetch(`${API_BASE_URL}/api/health`);
-            if (response.ok) {
-                const data = await response.json();
-                const versionEl = document.getElementById('appVersion');
-                if (versionEl && data.version) {
-                    versionEl.textContent = `v${data.version}`;
-                }
+            const data = await window.vyraFetch('/health', { auth: false });
+            const versionEl = document.getElementById('appVersion');
+            if (versionEl && data && data.version) {
+                versionEl.textContent = `v${data.version}`;
             }
         } catch (err) {
-            console.warn('[NGSSAI] Versiyon yüklenemedi:', err);
+            console.warn('[NGSSAI] Versiyon yüklenemedi:', err && err.message);
         }
     }
 
@@ -277,17 +276,15 @@ window.SystemManagerModule = (function () {
     }
 
     // --- SİDEBAR PROFİL ---
+    // v3.34.0: vyraFetch — Authorization header otomatik; non-fatal hata
+    // catch'te yutulur (sidebar boşta kalır, app crash etmez).
     async function loadSidebarProfile() {
         try {
             const token = localStorage.getItem('access_token');
             if (!token) return;
 
-            const response = await fetch(`${API_BASE_URL}/api/users/me`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-
-            if (response.ok) {
-                const user = await response.json();
+            const user = await window.vyraFetch('/users/me');
+            if (user) {
 
                 const fullName = user.full_name || user.username || 'Kullanıcı';
                 const nameEl = document.getElementById('sidebarUserName');

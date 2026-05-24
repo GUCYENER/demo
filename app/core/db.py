@@ -306,13 +306,20 @@ def apply_company_scope(cur, company_id: Optional[int] = None, *, bypass: bool =
         return
     if company_id is None:
         return  # PERMISSIVE policy nedeniyle güvenli; strict policy'ye geçince hata atılmalı
+    # R006 (v3.33.0): company_id verildiyse set_config başarısız olursa fail-loud.
+    # Önceki `except: pass`, mig 044 strict WITH CHECK ile birlikte sessiz veri
+    # kaybına yol açıyordu (setting set edilmemiş → INSERT reject → exception
+    # yutulduğu için caller hiç görmüyordu). Artık RuntimeError raise eder.
     try:
         cur.execute(
             "SELECT set_config('app.current_company_id', %s, true)",
             (str(int(company_id)),),
         )
-    except Exception:
-        pass  # SAVEPOINT-style — kritik değil, app-layer filter zaten var
+    except Exception as e:
+        raise RuntimeError(
+            f"apply_company_scope: set_config failed for company_id={company_id} "
+            f"({type(e).__name__}: {e})"
+        ) from e
 
 
 # ===========================================================

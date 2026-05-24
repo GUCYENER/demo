@@ -694,21 +694,11 @@
         if (finalSolutionBox) finalSolutionBox.classList.add('hidden');
 
         try {
-            const response = await fetch(`${window.API_BASE_URL || 'http://localhost:8002'}/api/tickets/from-chat-async`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch('/tickets/from-chat-async', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({ query })
+                body: { query }
             });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || 'İstek başarısız');
-            }
-
-            const data = await response.json();
             console.log('[NGSSAI-WS] Görev oluşturuldu:', data.task_id);
 
             // Callback'i kaydet
@@ -750,21 +740,11 @@
         if (ragSelectionBox) ragSelectionBox.classList.add('hidden');
 
         try {
-            const response = await fetch(`${window.API_BASE_URL || 'http://localhost:8002'}/api/tickets/search`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch('/tickets/search', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({ query })
+                body: { query }
             });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || 'Arama başarısız');
-            }
-
-            const data = await response.json();
             console.log('[NGSSAI-WS] RAG araması tamamlandı:', data.results?.length, 'sonuç');
 
             if (loadingBox) loadingBox.classList.add('hidden');
@@ -788,25 +768,15 @@
         }
 
         try {
-            const response = await fetch(`${window.API_BASE_URL || 'http://localhost:8002'}/api/tickets/create-from-selection`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch('/tickets/create-from-selection', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({
+                body: {
                     query: query,
                     selected_chunk_text: chunkText,
                     selected_file_name: fileName
-                })
+                }
             });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || 'Ticket oluşturulamadı');
-            }
-
-            const data = await response.json();
             console.log('[NGSSAI-WS] Ticket oluşturuldu:', data.id);
 
             return data;
@@ -840,21 +810,11 @@
                 requestBody.ticket_id = ticketId;
             }
 
-            const response = await fetch(`${window.API_BASE_URL || 'http://localhost:8002'}/api/tickets/evaluate-with-llm`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch('/tickets/evaluate-with-llm', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify(requestBody)
+                body: requestBody
             });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || 'LLM değerlendirmesi başarısız');
-            }
-
-            const data = await response.json();
             console.log('[NGSSAI-WS] LLM değerlendirmesi tamamlandı', ticketId ? `(Ticket #${ticketId}'e kaydedildi)` : '');
 
             return data;

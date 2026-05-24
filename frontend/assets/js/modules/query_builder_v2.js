@@ -86,17 +86,16 @@
         }
     }
 
-    async function _fetchJson(url, options = {}) {
-        const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-        const token = (window.apiClient && window.apiClient.getToken && window.apiClient.getToken())
-            || localStorage.getItem('access_token');
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-        const resp = await fetch(url, { ...options, headers });
-        if (!resp.ok) {
-            const text = await resp.text().catch(() => '');
-            throw new Error(`HTTP ${resp.status}: ${text.slice(0, 200)}`);
+    // v3.34.0: vyraFetch delegate — Auth + JSON + friendly error helper'da.
+    // path '/api/...' geçilebilir (auto-strip), body JS objesi olmalı (JSON.stringify YOK).
+    async function _fetchJson(path, options = {}) {
+        const p = path.startsWith('/api/') ? path.slice(4) : path;
+        const opts = { method: options.method || 'GET' };
+        if (options.body !== undefined && options.body !== null) {
+            // Geri uyum: zaten stringify edilmiş body gelirse parse et
+            opts.body = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
         }
-        return resp.json();
+        return window.vyraFetch(p, opts);
     }
 
     // ───────────────────────── state ─────────────────────────

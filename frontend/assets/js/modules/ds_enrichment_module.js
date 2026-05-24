@@ -209,21 +209,25 @@ const DSEnrichmentModule = (() => {
             return;
         }
         try {
-            const res = await _authFetch(
-                `/api/data-sources/${_currentSourceId}/check-running-job`
-            );
-            // v3.32.0 ARES Y1-recur fix: 403 -> ACL reddi (yanlış kaynak), poll'u durdur.
-            // 404 -> kaynak silinmiş, poll'u durdur.
-            if (res.status === 403 || res.status === 404) {
-                _stopRunningJobPoll();
-                _runningJob = null;
-                return;
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            let data;
+            try {
+                data = await _authFetch(
+                    `/api/data-sources/${_currentSourceId}/check-running-job`
+                );
+            } catch (httpErr) {
+                // v3.32.0 ARES Y1-recur fix: 403 -> ACL reddi (yanlış kaynak), poll'u durdur.
+                // 404 -> kaynak silinmiş, poll'u durdur.
+                if (httpErr && (httpErr.status === 403 || httpErr.status === 404)) {
+                    _stopRunningJobPoll();
+                    _runningJob = null;
+                    return;
+                }
+                // v3.32.0 TYCHE O1 fix: !res.ok (401/500 vb.) data.has_running'i okumadan
+                // hata olarak handle et — eski kod 500'de silently _runningJob=null yapıyor,
+                // spurious refreshData() + stop-poll tetikliyordu.
+                throw httpErr;
             }
-            // v3.32.0 TYCHE O1 fix: !res.ok (401/500 vb.) data.has_running'i okumadan
-            // hata olarak handle et — eski kod 500'de silently _runningJob=null yapıyor,
-            // spurious refreshData() + stop-poll tetikliyordu.
-            if (!res.ok) throw new Error('http_' + res.status);
-            const data = await res.json();
             // Backend hata bildirdiyse (success:false) — _runningJob state'ini DEĞİŞTİRME
             // (gate'i kazara açmamak için). Backoff ile devam.
             if (data && data.success === false) {
@@ -310,14 +314,11 @@ const DSEnrichmentModule = (() => {
 
     async function _loadData() {
         try {
-            const [statsRes, allRes] = await Promise.all([
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const [stats, allData] = await Promise.all([
                 _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`),
                 _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-all`)
             ]);
-
-            if (!statsRes.ok || !allRes.ok) throw new Error(`Sunucu hatası (HTTP ${statsRes.ok ? allRes.status : statsRes.status})`);
-            const stats = await statsRes.json();
-            const allData = await allRes.json();
 
             _pendingData = (allData.tables || []).map(x => {
                 return {
@@ -349,12 +350,11 @@ const DSEnrichmentModule = (() => {
         if (!_currentSourceId || _isPolling) return;
         _isPolling = true;
         try {
-            const [statsRes, allRes] = await Promise.all([
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const [stats, allData] = await Promise.all([
                 _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`),
                 _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-all`)
             ]);
-            const stats = await statsRes.json();
-            const allData = await allRes.json();
             const newPending = (allData.tables || []).map(x => ({
                 ...x, id: x.object_id, is_approved: !!x.admin_approved
             }));
@@ -589,10 +589,10 @@ const DSEnrichmentModule = (() => {
                         <td style="text-align: center;">
                             <input type="checkbox" class="ds-bulk-chk ${item.is_approved ? '' : 'cursor-pointer'}" value="${item.id}" ${isChecked} ${approvedAttr} onchange="DSEnrichmentModule.toggleCheckbox(this)">
                         </td>
-                        <td class="ds-schema-cell" data-tt="${_escapeHtml(schemaName)}" style="font-size:0.82rem;color:#9ca3af;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                        <td class="ds-schema-cell" data-tt-portal data-tt="${_escapeHtml(schemaName)}" style="font-size:0.82rem;color:#9ca3af;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
                             ${_escapeHtml(schemaName)}
                         </td>
-                        <td class="ds-table-name-cell" data-tt="${_escapeHtml(tableName)}">
+                        <td class="ds-table-name-cell" data-tt-portal data-tt="${_escapeHtml(tableName)}">
                             <strong>${_escapeHtml(tableName)}</strong>
                         </td>
                         <td>
@@ -607,7 +607,7 @@ const DSEnrichmentModule = (() => {
                                 ${(item.enrichment_score || 0).toFixed(2)}
                             </span>
                         </td>
-                        <td class="ds-desc-cell" data-tt-multiline data-tt="${_escapeHtml(item.description_tr || '(Açıklama yok)')}">
+                        <td class="ds-desc-cell" data-tt-portal data-tt-multiline data-tt="${_escapeHtml(item.description_tr || '(Açıklama yok)')}">
                             ${_escapeHtml((item.description_tr || '').substring(0, 60))}${(item.description_tr || '').length > 60 ? '...' : ''}
                         </td>
                         <td class="ds-action-cell">
@@ -854,7 +854,8 @@ const DSEnrichmentModule = (() => {
         // donuyor; aynisi bulk endpoint'inde de mevcut. UX: data.message toast'a
         // backend'den geliyor.
         try {
-            const res = await _authFetch(
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await _authFetch(
                 `/api/data-sources/${_currentSourceId}/enrichment-approve/${enrichmentId}`,
                 {
                     method: 'POST',
@@ -862,7 +863,6 @@ const DSEnrichmentModule = (() => {
                     body: JSON.stringify({})
                 }
             );
-            const data = await res.json();
 
             if (data.success) {
                 const existing = _pendingData.find(p => p.id === objectId);
@@ -964,7 +964,8 @@ const DSEnrichmentModule = (() => {
         const notes = document.getElementById('dsEditNotes')?.value?.trim() || null;
 
         try {
-            const res = await _authFetch(
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await _authFetch(
                 `/api/data-sources/${_currentSourceId}/enrichment-approve/${realEnrichmentId}`,
                 {
                     method: 'POST',
@@ -975,7 +976,6 @@ const DSEnrichmentModule = (() => {
                     })
                 }
             );
-            const data = await res.json();
 
             if (data.success) {
                 const existing = _pendingData.find(p => p.id === objectId);
@@ -1019,15 +1019,15 @@ const DSEnrichmentModule = (() => {
                 _showToast('Bu tablo henüz keşfedilmedi', 'warning');
                 return;
             }
-            const res = await _authFetch(`/api/data-sources/enrichment/${enrichmentId}/columns`);
-
-            if (!res.ok) {
-                console.error('[DSEnrich] Sütun API hatası:', res.status, res.statusText);
-                _showToast(`Sütun verisi alınamadı (HTTP ${res.status})`, 'error');
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            let data;
+            try {
+                data = await _authFetch(`/api/data-sources/enrichment/${enrichmentId}/columns`);
+            } catch (httpErr) {
+                console.error('[DSEnrich] Sütun API hatası:', httpErr.status, httpErr.message);
+                _showToast(`Sütun verisi alınamadı (HTTP ${httpErr.status || '?'})`, 'error');
                 return;
             }
-
-            const data = await res.json();
             console.log('[DSEnrich] showColumns enrichmentId=', enrichmentId, 'response=', data);
 
             if (!data.success || !data.columns || data.columns.length === 0) {
@@ -1225,12 +1225,12 @@ const DSEnrichmentModule = (() => {
         }
 
         try {
-            const res = await _authFetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await _authFetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ object_ids: toDiscover })
             });
-            const data = await res.json();
             if (data.success) {
                 _showToast(data.message || `${toDiscover.length} tablo için arkada keşif başlatıldı. Birazdan liste yeşillenecek.`, 'success');
                 // v3.14.0: Seçili satırların İŞLEM kolonunu "Devam Ediyor" olarak güncelle
@@ -1268,12 +1268,12 @@ const DSEnrichmentModule = (() => {
         }
 
         try {
-            const res = await _authFetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await _authFetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ object_ids: unprocessed })
             });
-            const data = await res.json();
             if (data.success) {
                 _showToast(data.message || `${unprocessed.length} tablo için keşif başlatıldı. Liste otomatik güncellenecek.`, 'success');
                 // v3.14.0: Tüm satırların İŞLEM kolonunu "Devam Ediyor" olarak güncelle
@@ -1332,7 +1332,8 @@ const DSEnrichmentModule = (() => {
             // Per-item SAVEPOINT, partial success (stop_on_error=false), 5 worker
             // post-commit paralel schema_record. ~5x daha hizli + transactional.
             const enrichmentIds = approvableIds.map(oid => objectToEnrichMap[oid]);
-            const res = await _authFetch(
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await _authFetch(
                 `/api/data-sources/${_currentSourceId}/enrichment-approve-bulk`,
                 {
                     method: 'POST',
@@ -1344,7 +1345,6 @@ const DSEnrichmentModule = (() => {
                     })
                 }
             );
-            const data = await res.json();
 
             // approved_ids -> objectId map'i tersle
             const approvedEnrichSet = new Set((data.approved_ids || []).map(String));
@@ -1421,7 +1421,8 @@ const DSEnrichmentModule = (() => {
         try {
             // v3.31.0: Tek POST -> backend bulk endpoint (transactional + paralel)
             const enrichmentIds = toApprove.map(x => x.enrichment_id);
-            const res = await _authFetch(
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await _authFetch(
                 `/api/data-sources/${_currentSourceId}/enrichment-approve-bulk`,
                 {
                     method: 'POST',
@@ -1433,7 +1434,6 @@ const DSEnrichmentModule = (() => {
                     })
                 }
             );
-            const data = await res.json();
 
             const approvedSet = new Set((data.approved_ids || []).map(String));
             // Frontend state'i guncelle
@@ -1476,8 +1476,8 @@ const DSEnrichmentModule = (() => {
     // ============================================
 
     function _updateStatsAfterApprove() {
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
         _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`)
-            .then(r => r.json())
             .then(stats => _renderStats(stats))
             .catch(() => {});
 
@@ -1520,17 +1520,22 @@ const DSEnrichmentModule = (() => {
         });
     }
 
-    // v3.31.0 (R001): Auth header injection helper.
-    // Tüm modül-içi fetch çağrıları bunu kullanır — token okuma + Bearer header
-    // tek noktada. Caller method/body/content-type sorumluluğunda; biz sadece
-    // Authorization header'ı enjekte ederiz.
+    // v3.34.0: vyraFetch helper delegasyonu.
+    // Eski _authFetch (R001) bir Response döndürüyordu; vyraFetch parse edilmiş
+    // JSON datayı döndürür ve non-2xx'te Error fırlatır (.status, .data, .message).
+    // path: '/api/...' biçiminde verilebilir — vyraFetch zaten '/api' prefix'i
+    // ekler, bu yüzden '/api/' prefix'ini stripleriz. body opsiyonel objedir.
     async function _authFetch(url, opts = {}) {
-        const token = localStorage.getItem('access_token');
-        const headers = {
-            ...(opts.headers || {}),
-            'Authorization': `Bearer ${token}`
-        };
-        return fetch(url, { ...opts, headers });
+        const path = url.startsWith('/api/') ? url.slice(4) : url;
+        const callOpts = { method: opts.method || 'GET' };
+        if (opts.body) {
+            try {
+                callOpts.body = typeof opts.body === 'string' ? JSON.parse(opts.body) : opts.body;
+            } catch (_e) {
+                callOpts.body = opts.body;
+            }
+        }
+        return window.vyraFetch(path, callOpts);
     }
 
     function _showToast(message, type) {

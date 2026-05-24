@@ -766,7 +766,7 @@ body::before {
 
       <div id="tab-login" class="tab-content active">
 
-        <div class="fc-error" id="loginError">
+        <div class="fc-error" id="loginError" role="alert" aria-live="assertive">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
           <span id="loginErrorText"></span>
         </div>
@@ -820,12 +820,12 @@ body::before {
 
       <div id="tab-register" class="tab-content">
 
-        <div class="fc-error" id="regError">
+        <div class="fc-error" id="regError" role="alert" aria-live="assertive">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
           <span id="regErrorText"></span>
         </div>
 
-        <div class="fc-success" id="regSuccess">
+        <div class="fc-success" id="regSuccess" role="status" aria-live="polite">
           <span id="regSuccessText"></span>
         </div>
 

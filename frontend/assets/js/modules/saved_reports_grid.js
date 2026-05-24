@@ -389,17 +389,8 @@
         const params = new URLSearchParams();
         params.set('limit', '24');
         if (q) params.set('q', q);
-        const url = API_BASE + '/saved-reports?' + params.toString();
-        const res = await fetch(url, { headers: _authHeaders() });
-        if (!res.ok) {
-            let detail = 'HTTP ' + res.status;
-            try {
-                const data = await res.json();
-                if (data && data.detail) detail = data.detail;
-            } catch (_) { /* noop */ }
-            throw new Error(detail);
-        }
-        const data = await res.json();
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+        const data = await window.vyraFetch('/saved-reports?' + params.toString());
         return Array.isArray(data && data.items) ? data.items : [];
     }
 

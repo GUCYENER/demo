@@ -391,36 +391,24 @@
         }
 
         try {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
             // 1) yeni session
-            const sessRes = await fetch(API_BASE + '/sessions', {
-                method: 'POST',
-                headers: _authHeaders(),
-                body: JSON.stringify({}),
-            });
-            if (!sessRes.ok) throw new Error('Session oluşturulamadı (HTTP ' + sessRes.status + ')');
-            const sess = await sessRes.json();
+            const sess = await window.vyraFetch('/sessions', { method: 'POST', body: {} });
             const uid = sess.session_uid || sess.uid || sess.id;
             if (!uid) throw new Error('Session UID alınamadı');
 
             // 2) execute wizard_state
             const wizardState = _report.wizard_state || {};
-            const execRes = await fetch(API_BASE + '/sessions/' + encodeURIComponent(uid) + '/execute', {
-                method: 'POST',
-                headers: _authHeaders(),
-                body: JSON.stringify(wizardState),
-            });
-            if (!execRes.ok) {
-                let detail = 'HTTP ' + execRes.status;
-                try { const j = await execRes.json(); if (j && j.detail) detail = j.detail; } catch (_) { /* noop */ }
-                throw new Error('Çalıştırma başarısız: ' + detail);
-            }
-            const result = await execRes.json();
+            const result = await window.vyraFetch(
+                '/sessions/' + encodeURIComponent(uid) + '/execute',
+                { method: 'POST', body: wizardState }
+            );
 
             // 3) mark-run (best-effort)
-            fetch(API_BASE + '/saved-reports/' + encodeURIComponent(_reportId) + '/mark-run', {
-                method: 'POST',
-                headers: _authHeaders(),
-            }).catch(() => { /* noop */ });
+            window.vyraFetch(
+                '/saved-reports/' + encodeURIComponent(_reportId) + '/mark-run',
+                { method: 'POST' }
+            ).catch(() => { /* noop */ });
 
             // render result
             if (resultMount) _renderRunResult(resultMount, result);
@@ -496,19 +484,11 @@
     // ─── Duplicate (inline rename mini-modal) ───
     function _onDuplicate() {
         _openRenameMini((newName) => {
-            fetch(API_BASE + '/saved-reports/' + encodeURIComponent(_reportId) + '/duplicate', {
-                method: 'POST',
-                headers: _authHeaders(),
-                body: JSON.stringify({ name: newName }),
-            })
-                .then((res) => {
-                    if (!res.ok) {
-                        return res.json().catch(() => ({})).then((j) => {
-                            throw new Error((j && j.detail) || ('HTTP ' + res.status));
-                        });
-                    }
-                    return res.json();
-                })
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            window.vyraFetch(
+                '/saved-reports/' + encodeURIComponent(_reportId) + '/duplicate',
+                { method: 'POST', body: { name: newName } }
+            )
                 .then((data) => {
                     const newId = (data && (data.report_id || data.id)) || null;
                     _toast('Rapor kopyalandı', 'success');
@@ -592,19 +572,11 @@
 
     // ─── Share ───
     function _onShare() {
-        fetch(API_BASE + '/saved-reports/' + encodeURIComponent(_reportId) + '/share', {
-            method: 'POST',
-            headers: _authHeaders(),
-            body: JSON.stringify({ ttl_hours: 168 }),
-        })
-            .then((res) => {
-                if (!res.ok) {
-                    return res.json().catch(() => ({})).then((j) => {
-                        throw new Error((j && j.detail) || ('HTTP ' + res.status));
-                    });
-                }
-                return res.json();
-            })
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+        window.vyraFetch(
+            '/saved-reports/' + encodeURIComponent(_reportId) + '/share',
+            { method: 'POST', body: { ttl_hours: 168 } }
+        )
             .then((data) => {
                 const token = data && data.share_token;
                 if (!token) throw new Error('Share token alınamadı');
@@ -634,16 +606,12 @@
             cancelText: 'İptal',
             danger: true,
             onConfirm: () => {
-                fetch(API_BASE + '/saved-reports/' + encodeURIComponent(_reportId), {
-                    method: 'DELETE',
-                    headers: _authHeaders(),
-                })
-                    .then((res) => {
-                        if (!res.ok) {
-                            return res.json().catch(() => ({})).then((j) => {
-                                throw new Error((j && j.detail) || ('HTTP ' + res.status));
-                            });
-                        }
+                // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                window.vyraFetch(
+                    '/saved-reports/' + encodeURIComponent(_reportId),
+                    { method: 'DELETE' }
+                )
+                    .then(() => {
                         _toast('Rapor silindi', 'success');
                         const deletedId = _reportId;
                         close();
@@ -719,13 +687,8 @@
 
     // ─── Fetch detail ───
     async function _fetchDetail(id) {
-        const res = await fetch(API_BASE + '/saved-reports/' + encodeURIComponent(id), { headers: _authHeaders() });
-        if (!res.ok) {
-            let detail = 'HTTP ' + res.status;
-            try { const j = await res.json(); if (j && j.detail) detail = j.detail; } catch (_) { /* noop */ }
-            throw new Error(detail);
-        }
-        return await res.json();
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+        return await window.vyraFetch('/saved-reports/' + encodeURIComponent(id));
     }
 
     // ─── Public ───

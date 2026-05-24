@@ -98,12 +98,8 @@ window.ThemePickerPopup = (function () {
                 return;
             }
 
-            var res = await fetch(API_BASE + '/api/themes/company/' + companyId, {
-                headers: authHeaders()
-            });
-
-            if (!res.ok) throw new Error('Tema listesi alınamadı');
-            var themes = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            var themes = await window.vyraFetch('/themes/company/' + companyId);
 
             if (!themes.length) {
                 grid.innerHTML = '<div class="tp-empty">Bu firma için tanımlı tema yok</div>';

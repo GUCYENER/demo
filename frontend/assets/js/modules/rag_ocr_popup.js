@@ -95,8 +95,8 @@
         popupOverlay.classList.add('visible');
 
         try {
-            const resp = await fetch(`${API_BASE}/api/rag/images/${imageId}/ocr`);
-            const data = await resp.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch(`/rag/images/${imageId}/ocr`);
 
             loading.style.display = 'none';
 
@@ -164,10 +164,13 @@
      */
     async function _prefetchOcrTooltip(wrapper, imageId) {
         try {
-            const resp = await fetch(`${API_BASE}/api/rag/images/${imageId}/ocr`);
-            if (!resp.ok) return;
-
-            const data = await resp.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            let data;
+            try {
+                data = await window.vyraFetch(`/rag/images/${imageId}/ocr`);
+            } catch (_e) {
+                return;
+            }
             if (data.has_text && data.ocr_text) {
                 // Tooltip'i body'ye ekle (overflow:hidden sorununu aş)
                 const tooltip = document.createElement('div');

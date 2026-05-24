@@ -168,19 +168,30 @@ def _inline_params_into_sql(sql: str, params: List[Any], dialect: str) -> Option
     return "".join(out_parts)
 
 
-def _resolve_source_info(source_id: int, company_id: Optional[int]) -> Optional[Dict[str, Any]]:
+def _resolve_source_info(source_id: int, company_id: Optional[int]) -> Dict[str, Any]:
     """data_sources tablosundan SafeSQLExecutor.execute() için gereken
-    connection dict'i çeker. company_id RLS scope'u uygulanır → cross-tenant
-    IDOR engellenir. company_id None ise hiçbir kayıt dönmemeli (defensive).
+    connection dict'i çeker. company_id ile tenant scope uygulanır → cross-tenant
+    IDOR engellenir.
+
+    v3.33.0 — Önceden `Optional[Dict]` dönüyordu; None tüm fail modlarını
+    silikleştiriyor, "Veri kaynağına erişim yok" mesajı caller'da hangi senaryo
+    olduğunu (eksik company_id, kayıt yok, cross-tenant) ayırt ettiremiyordu.
+    Şimdi `{"ok": bool, "data"|"reason"}` döner — caller actionable mesaj basabilir.
+    Reason kodları LOG'a düşer ama user'a sızdırılmaz (information leak guard).
     """
     if not company_id:
-        # Tenant scope yoksa source connection'a erişim verilmez.
-        return None
+        logger.warning(
+            "[query_state] source lookup: current_user.company_id boş — "
+            "JWT'deki user'ın users.company_id=NULL olabilir (source=%s)",
+            source_id,
+        )
+        return {"ok": False, "reason": "no_company_scope"}
     try:
         with get_db_context() as conn:
             with conn.cursor() as cur:
-                # RLS GUC'u set et — data_sources tablosu company_id policy'sine sahipse
-                # bu satır cross-tenant satır leak'ini engeller.
+                # data_sources tablosunda RLS policy yok (mig 002 vd. enable etmemiş);
+                # tenant isolation TEK olarak `AND company_id = %s` filtresine bağlı.
+                # apply_company_scope diğer pipeline'larla GUC tutarlılığı için yine de set edilir.
                 apply_company_scope(cur, company_id=company_id)
                 cur.execute(
                     """
@@ -194,12 +205,30 @@ def _resolve_source_info(source_id: int, company_id: Optional[int]) -> Optional[
                 )
                 row = cur.fetchone()
                 if not row:
-                    return None
+                    # Diagnostik: source gerçekten yok mu, yoksa farklı bir
+                    # company'ye mi ait? Cross-tenant case için log + 403 anlamlı.
+                    cur.execute(
+                        "SELECT company_id FROM data_sources WHERE id = %s",
+                        (source_id,),
+                    )
+                    other = cur.fetchone()
+                    if other is None:
+                        logger.warning(
+                            "[query_state] source_id=%s DB'de hiç yok",
+                            source_id,
+                        )
+                        return {"ok": False, "reason": "not_found"}
+                    logger.warning(
+                        "[query_state] source_id=%s farklı tenant'a ait "
+                        "(source.company_id=%s, user.company_id=%s) — cross-tenant reddi",
+                        source_id, other[0], company_id,
+                    )
+                    return {"ok": False, "reason": "cross_tenant"}
                 cols = [d[0] for d in cur.description]
-                return dict(zip(cols, row))
+                return {"ok": True, "data": dict(zip(cols, row))}
     except Exception as e:
-        logger.warning("[query_state] source lookup failed for %s: %s", source_id, e)
-        return None
+        logger.warning("[query_state] source lookup exception (source=%s): %s", source_id, e)
+        return {"ok": False, "reason": "lookup_error"}
 
 
 def _resolve_dialect(source_id: Optional[int], requested: Optional[str]) -> str:
@@ -256,10 +285,20 @@ def preview_query_state(
             "warnings": result.get("warnings", []),
         }
 
+    # v3.33.0: display_sql — kullanıcıya gösterilecek "%s" placeholder'sız sürüm.
+    # Önceden frontend ham `sql`'i basıyordu → ekranda `WHERE "DURUM" = %s` görünüyor,
+    # kullanıcı için anlamsız. Backend tarafında _inline_literal whitelist'i ile
+    # güvenli inline yapıyoruz (aynı helper execute path'inde de kullanılıyor).
+    # Güvensiz tip (bytes vs.) varsa display_sql None döner; frontend ham sql'i
+    # fallback olarak kullanır.
+    _params_for_display = result.get("params") or []
+    _display_sql = _inline_params_into_sql(result["sql"], _params_for_display, dialect)
+
     response: Dict[str, Any] = {
         "valid": True,
         "sql": result["sql"],
-        "params": result.get("params", []),
+        "display_sql": _display_sql,  # inline param sürümü (None → frontend sql'e düşer)
+        "params": _params_for_display,
         "dialect": dialect,
         "warnings": list(result.get("warnings", [])),
         "executed": False,
@@ -270,15 +309,36 @@ def preview_query_state(
         # Tenant scope: current_user.company_id ile data_sources'tan çekiyoruz.
         # Tenant mismatch veya kayıt yok → 404 değil 403 benzeri generic mesaj
         # (information leak'i azaltır).
-        source = _resolve_source_info(
+        source_resolution = _resolve_source_info(
             int(req.source_id),
             company_id=current_user.get("company_id"),
         )
-        if not source:
+        if not source_resolution.get("ok"):
+            # v3.33.0: reason-aware user-facing mesaj (security: detay sızdırma)
+            _reason_msg = {
+                "no_company_scope": (
+                    "Kullanıcınız bir şirkete bağlı değil — yöneticinizle iletişime geçin."
+                ),
+                "not_found": (
+                    "Seçili veri kaynağı bulunamadı (silinmiş olabilir). "
+                    "Sol panelden başka bir kaynak seçip yeniden deneyin."
+                ),
+                "cross_tenant": (
+                    "Bu veri kaynağına erişim yetkiniz yok."
+                ),
+                "lookup_error": (
+                    "Veri kaynağı bilgisi okunamadı (geçici sorun). "
+                    "Birkaç saniye sonra tekrar deneyin."
+                ),
+            }.get(
+                source_resolution.get("reason", ""),
+                "Veri kaynağına erişim yok veya bulunamadı",
+            )
             response["executed"] = True
             response["success"] = False
-            response["execute_error"] = "Veri kaynağına erişim yok veya bulunamadı"
+            response["execute_error"] = _reason_msg
             return response
+        source = source_resolution["data"]
 
         inlined_sql = _inline_params_into_sql(
             result["sql"], result.get("params") or [], dialect
