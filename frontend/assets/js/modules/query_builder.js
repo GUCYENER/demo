@@ -449,10 +449,26 @@
         }
     }
 
+    // v3.34.1 BUG-5: form değişince lastSql'i geçersiz say (stale-state guard).
+    // Delegated listener `open()` mount sonrasında root'a takılıyor; bu helper
+    // hem state'i temizler hem action butonlarını disable eder hem de UX uyarısı basar.
+    function _invalidateLastSql(state, root, reason) {
+        if (!state.lastSql) return; // zaten geçersiz — tekrar mesaj basma
+        state.lastSql = '';
+        state.lastParams = [];
+        _enableActionButtons(root, false);
+        const statusEl = root.querySelector('.qb-status');
+        if (statusEl) {
+            statusEl.classList.remove('qb-status-error');
+            statusEl.textContent = reason || 'Form değişti — SQL\'i yeniden önizleyin.';
+        }
+        _announce(root, 'Form değişti, SQL geçersiz; yeniden önizleyin');
+    }
+
     function _sendSqlToChat(state, root) {
         const statusEl = root.querySelector('.qb-status');
         if (!state.lastSql) {
-            statusEl.textContent = 'Önce "SQL Önizle" tıklayın.';
+            statusEl.textContent = 'Önce "SQL Önizle" tıklayın (form değişmişse yeniden).';
             return;
         }
         const inp = document.getElementById('dialogInput');
@@ -735,6 +751,46 @@
         opts.parentEl.appendChild(root);
         _activeRoot = root;
         _renderSelected(state, root);
+
+        // v3.34.1 BUG-5: stale-state invalidation — WHERE/ORDER/LIMIT/SELECT
+        // değişimleri lastSql'i geçersiz kılar. Delegated listener: yeni
+        // eklenen filter row'ları da otomatik kapsar (re-bind gerekmez).
+        // Sadece form alanlarını dinle; SQL output / sonuç kutusu hariç.
+        const _isFormControl = (el) => {
+            if (!el || !el.classList) return false;
+            return el.classList.contains('qb-filter-col')
+                || el.classList.contains('qb-filter-op')
+                || el.classList.contains('qb-filter-val')
+                || el.classList.contains('qb-order-col')
+                || el.classList.contains('qb-order-dir')
+                || el.classList.contains('qb-limit');
+        };
+        const _onFormMutate = (e) => {
+            if (_isFormControl(e.target)) _invalidateLastSql(state, root);
+        };
+        root.addEventListener('input', _onFormMutate);
+        root.addEventListener('change', _onFormMutate);
+        // SELECT kolon ekle/çıkar + filtre ekle/çıkar click delegasyonu.
+        // (Reorder klavye ile yapılıyor — keydown ayrıca yakalanır.)
+        root.addEventListener('click', (e) => {
+            const t = e.target;
+            if (!t || !t.classList) return;
+            if (t.classList.contains('qb-col-chip')
+                || t.classList.contains('qb-selected-remove')
+                || t.classList.contains('qb-add-filter')
+                || t.classList.contains('qb-filter-remove')) {
+                _invalidateLastSql(state, root);
+            }
+        });
+        // Seçili kolon listesinde ArrowUp/ArrowDown → reorder.
+        root.addEventListener('keydown', (e) => {
+            const t = e.target;
+            if (!t || !t.classList) return;
+            if (!t.classList.contains('qb-selected-handle')) return;
+            if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                _invalidateLastSql(state, root);
+            }
+        });
 
         // Global keyboard: Esc → close
         const escHandler = (e) => {

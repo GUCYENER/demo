@@ -390,7 +390,11 @@
         params.set('limit', '24');
         if (q) params.set('q', q);
         // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
-        const data = await window.vyraFetch('/saved-reports?' + params.toString());
+        // v3.34.1 BUG-4.2: Endpoint backend'de `/api/db-smart/saved-reports`
+        // altında mount edildi (db_smart_api router prefix). vyraFetch zaten
+        // `/api` ekliyor → burada `/db-smart/saved-reports` kullanılmalı.
+        // Önceki `/saved-reports` 404 dönüyordu.
+        const data = await window.vyraFetch('/db-smart/saved-reports?' + params.toString());
         return Array.isArray(data && data.items) ? data.items : [];
     }
 

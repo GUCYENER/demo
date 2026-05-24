@@ -37,6 +37,14 @@ class Token(BaseModel):
     token_type: str = "bearer"
 
 
+class RefreshRequest(BaseModel):
+    """v3.34.1 BUG-4.3: /auth/refresh JSON body schema.
+    Önceden endpoint `refresh_token: str` bare param idi → FastAPI bunu query
+    param olarak yorumluyor, frontend ise JSON body gönderiyordu → 422
+    Unprocessable Entity. Pydantic model ile body parse edilir."""
+    refresh_token: str = Field(..., min_length=10)
+
+
 class TokenPayload(BaseModel):
     sub: str
     exp: int
@@ -632,9 +640,13 @@ def _assign_user_org(user_id: int, org_code: str) -> None:
 
 @router.post("/refresh", response_model=Token)
 @limiter.limit(RATE_LIMITS["refresh"])
-def refresh_token(request: Request, response: Response, refresh_token: str):
-    """Refresh token ile yeni access token alır."""
-    payload = decode_token(refresh_token)
+def refresh_token(request: Request, response: Response, payload_in: RefreshRequest):
+    """Refresh token ile yeni access token alır.
+
+    v3.34.1 BUG-4.3: Body parametresi `RefreshRequest` modeline taşındı; bare
+    `str` parametresi FastAPI tarafından query parametresi sayılıp 422 üretiyordu.
+    """
+    payload = decode_token(payload_in.refresh_token)
 
     if payload.type != "refresh":
         raise HTTPException(

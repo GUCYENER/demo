@@ -1815,7 +1815,20 @@ def _generate_schema_records_background(source_id: int,
         (mig 043 — PERMISSIVE company-RLS).
       - Bu fonksiyon ASLA raise etmez (response zaten gönderildi).
       - reason = type(e).__name__ (sanitized, client-safe).
-      - detail = str(e)[:500] (server-side; admin endpoint'ten görünür).
+      - detail = str(e)[:500] (server-side; admin endpoint'ten görünür;
+        mig 045 ile DB layer CHECK char_length <= 1000 — defense in depth).
+
+    Operational note (R010, v3.34.1):
+      FastAPI BackgroundTasks SIGTERM-safe değildir. uvicorn restart
+      bulk approve sonrası ~30s içinde yapılırsa in-flight worker'lar
+      yarıda kesilebilir:
+        - Approve UPDATE zaten commit'lenmiş → kullanıcı state'i güvende.
+        - Eksik kalan ds_schema_record_warnings satırları ve embedding'ler
+          admin warning panelinde "beklenenden az entry" olarak görünür.
+      Remediation: manuel re-index endpoint'i (TODO — sonraki sprint).
+      Symptom triage: admin panel warning count < beklenen ise uvicorn
+      systemd uptime + son bulk-approve timestamp karşılaştırılır
+      (`journalctl -u vyra-backend --since "30 minutes ago"`).
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from app.core.db import get_db_context_scoped, apply_company_scope, get_db_context

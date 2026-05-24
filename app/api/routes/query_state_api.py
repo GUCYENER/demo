@@ -218,16 +218,30 @@ def _resolve_source_info(source_id: int, company_id: Optional[int]) -> Dict[str,
                             source_id,
                         )
                         return {"ok": False, "reason": "not_found"}
+                    # v3.34.1 BUG-4.1: RealDictCursor → row dict; `other[0]`
+                    # KeyError fırlatıp dış except'e düşüyor, cross_tenant
+                    # senaryosu lookup_error gibi görünüyordu.
+                    _other_co = (
+                        other.get("company_id") if isinstance(other, dict)
+                        else other[0]
+                    )
                     logger.warning(
                         "[query_state] source_id=%s farklı tenant'a ait "
                         "(source.company_id=%s, user.company_id=%s) — cross-tenant reddi",
-                        source_id, other[0], company_id,
+                        source_id, _other_co, company_id,
                     )
                     return {"ok": False, "reason": "cross_tenant"}
                 cols = [d[0] for d in cur.description]
                 return {"ok": True, "data": dict(zip(cols, row))}
     except Exception as e:
-        logger.warning("[query_state] source lookup exception (source=%s): %s", source_id, e)
+        # v3.34.1 BUG-4.1: exc_info=True — önceden traceback yutuluyordu,
+        # operator "lookup_error" mesajını görüp root cause'u (apply_company_scope
+        # set_config fail, RealDictCursor cur.description tutarsızlığı vb.)
+        # tespit edemiyordu. Reason mapping korunur; sadece log zenginleştirildi.
+        logger.warning(
+            "[query_state] source lookup exception (source=%s): %s",
+            source_id, e, exc_info=True,
+        )
         return {"ok": False, "reason": "lookup_error"}
 
 

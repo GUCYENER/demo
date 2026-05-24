@@ -2104,7 +2104,21 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 log_warning(f"DB-Only Entity Resolution hatası: {er_err}", "deep_think")
 
             # ML + Entity Resolution sonuçlarını birleştir
-            combined_matched = list(set(ml_matched_tables + entity_matched_tables))
+            # v3.34.1 BUG-1 FIX — `list(set(...))` ordering destroy ediyordu;
+            # `pruned_tables` ise `all_tables` alfabetik sırasını koruyor → "Aday
+            # Tablo" fallback'i (pruned_tables[0]) alfabetik olarak en başta
+            # gelen tabloyu (ABONELIKLER) seçiyordu, ML/entity relevansını değil.
+            # Preset path SQL parse fail edince (CTE/subquery LLM çıktısı) bu
+            # fallback devreye giriyor ve her soruda ABONELIKLER geliyordu.
+            # Order-preserving dedup: ML sıralaması (score desc) önce, sonra
+            # entity matches — böylece fallback en relevant tabloya düşer.
+            combined_matched = []
+            _seen_lower = set()
+            for _m in list(ml_matched_tables) + list(entity_matched_tables):
+                _key = (_m or "").strip().lower()
+                if _key and _key not in _seen_lower:
+                    _seen_lower.add(_key)
+                    combined_matched.append(_m)
 
             # v3.28.9: Follow-up modunda önceki SQL'in FROM tablosunu çıpa olarak
             # combined_matched'e MUTLAKA enjekte et. Aksi halde yeni sorudaki entity
@@ -2413,23 +2427,48 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                     _preview_schema = _only.get("schema")
                 elif not _sql_tables:
                     # SQL parse edilemedi → eski davranış (ranker pick) ile fallback.
+                    # v3.34.1 BUG-1 FIX — `pruned_tables[0]` alfabetik sırayı
+                    # koruduğu için her zaman "ABONELIKLER"'i seçiyordu (regresyon).
+                    # Doğru davranış: `combined_matched` ML/entity priority sırasını
+                    # koruduğundan ilk elemanını alıp `pruned_tables` içinde
+                    # eşleştirilmiş dict'i bulmak; böylece schema/name de doğru
+                    # gelir ve relevance preserved kalır.
                     _pt = locals().get("pruned_tables")
-                    if isinstance(_pt, list) and _pt:
+                    _cm = locals().get("combined_matched")
+                    if isinstance(_cm, list) and _cm and isinstance(_pt, list) and _pt:
+                        # combined_matched: "schema.table" veya "table" (lower-cased
+                        # değil — resolve_entities/search_db_knowledge ham döner).
+                        _pt_index = {}
+                        for _row in _pt:
+                            if not isinstance(_row, dict):
+                                continue
+                            _tn = (_row.get("name") or _row.get("table_name") or _row.get("table") or "").lower()
+                            _sn = (_row.get("schema") or _row.get("schema_name") or "").lower()
+                            if _tn:
+                                _pt_index[_tn] = _row  # bare-name lookup
+                                if _sn:
+                                    _pt_index[f"{_sn}.{_tn}"] = _row
+                        for _cand in _cm:
+                            if not isinstance(_cand, str):
+                                continue
+                            _key = _cand.strip().lower()
+                            _row = _pt_index.get(_key)
+                            if not _row and "." in _key:
+                                _row = _pt_index.get(_key.split(".", 1)[1])
+                            if _row:
+                                _preview_table = (
+                                    _row.get("table_name") or _row.get("name") or _row.get("table")
+                                )
+                                _preview_schema = _row.get("schema") or _row.get("schema_name")
+                                break
+                    # Son çare: ML/entity boşsa pruned ilk eleman (eski davranış)
+                    if not _preview_table and isinstance(_pt, list) and _pt:
                         _first = _pt[0]
                         if isinstance(_first, dict):
                             _preview_table = (
                                 _first.get("table_name") or _first.get("name") or _first.get("table")
                             )
                             _preview_schema = _first.get("schema") or _first.get("schema_name")
-                    if not _preview_table:
-                        _cm = locals().get("combined_matched")
-                        if isinstance(_cm, list) and _cm:
-                            _first2 = _cm[0]
-                            if isinstance(_first2, dict):
-                                _preview_table = (
-                                    _first2.get("table_name") or _first2.get("name") or _first2.get("table")
-                                )
-                                _preview_schema = _first2.get("schema") or _first2.get("schema_name")
                 # len >= 2 → preview emit edilmez (multi-table JOIN)
                 if _preview_table and source and source.get("id"):
                     yield {"type": "selected_table_for_preview", "data": {
@@ -3506,9 +3545,16 @@ def _generate_followup_suggestions(query: str, db_data: list, schema_ctx: dict, 
                     if (t.get("name") or "").lower() == related_table:
                         bname = t.get("admin_label_tr") or t.get("business_name_tr") or related_table
                         break
+                # v3.34.1 BUG-1 FIX — FK önerilerinde `query` field'i önceki
+                # tablo (tbl_label) ile prefix'lenirse backend yine onu primary
+                # seçer ve "Aday Tablo" eski tabloyu (örn. ABONELIKLER) gösterir
+                # — kullanıcı yan tabloyu (örn. Kampanyalar) bekler. Çözüm:
+                # FK-target tabloyu doğrudan SORGU GÖVDESİNİN BAŞINA al; önceki
+                # tablo yalnız JOIN context'inde kalsın.
+                _anchor_table_q = tbl_label or query
                 suggestions.append({
                     "text": f"🔗 {_tbl_text_pref}{bname} detayıyla birleştir",
-                    "query": f"{_tbl_query_pref}{bname} tablosu ile JOIN yaparak detay ekle"
+                    "query": f"{bname} tablosundan veriyi {_anchor_table_q} ile JOIN yaparak detayları getir"
                 })
                 if len(suggestions) >= 5:
                     break
@@ -3567,9 +3613,13 @@ def _generate_followup_suggestions(query: str, db_data: list, schema_ctx: dict, 
                         "2) 'Dönen veri kolonları' aggregate alias olabilir (örn. 'problem_kayit_sayisi') — "
                         "bunları KULLANMA. Yalnızca aşağıdaki GERÇEK TABLO KOLONLARI listesinden "
                         "kolon adı seç.\n"
-                        "3) Tablo adı ve kolon adı GERÇEK olmalı, uydurma — listede yoksa kullanma.\n\n"
+                        "3) Tablo adı ve kolon adı GERÇEK olmalı, uydurma — listede yoksa kullanma.\n"
+                        "4) v3.34.1 BUG-1: Bir önerinin `text` alanında hangi tablodan bahsediyorsan "
+                        "`query` alanı da AYNI tablo adı ile BAŞLAMALI (ör: 'KAMPANYALAR tablosunda ...'). "
+                        "Çünkü backend `query`'nin başındaki tabloyu primary 'Aday Tablo' olarak seçer; "
+                        "text/query farklı tabloya işaret ederse kullanıcı yanlış preview görür.\n\n"
                         "YANIT FORMATI — JSON array:\n"
-                        '[{"text":"📋 Kısa buton etiketi (tablo + gerçek kolon, max 8 kelime)","query":"Doğal dilde Türkçe sorgu metni — tablo adıyla"},...]\n'
+                        '[{"text":"📋 Kısa buton etiketi (tablo + gerçek kolon, max 8 kelime)","query":"<TABLO_ADI> tablosunda ... (doğal dilde Türkçe sorgu)"},...]\n'
                         "Sadece JSON döndür."
                     ),
                 },
