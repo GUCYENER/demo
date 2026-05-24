@@ -939,6 +939,44 @@ window.NgssNotification = NgssNotification;
 
 /* === assets/js/api_client.js === */
 // frontend/assets/js/api_client.js
+//
+// =============================================================================
+// vyraFetch helper (v3.34.0)
+// -----------------------------------------------------------------------------
+// Public alias: `window.vyraFetch(path, { method, body, auth })`
+//   - path:    string, API_BASE_URL'e relative ("/auth/login" gibi)
+//   - method:  "GET" | "POST" | ... (default "GET")
+//   - body:    JS object → JSON.stringify (default null)
+//   - auth:    boolean — true ise Authorization: Bearer <access_token> ekler
+//              (default true). Login/register gibi public uçlar için false.
+//
+// Dönüş: parse edilmiş JSON objesi.
+//
+// Hata kontratı (Türkçe — kullanıcıya doğrudan gösterilebilir):
+//   - Ağ hatası (TypeError / "Failed to fetch") →
+//       "Sunucuya bağlanılamadı. Proxy (Nginx) çalışmıyor olabilir
+//        veya ağ bağlantınızı kontrol edin."
+//   - 502/503/504 (proxy / backend down, HTML response) →
+//       "Backend servisi yanıt vermiyor (HTTP {status}). Lütfen sistem yöneticinize bildirin."
+//   - Diğer non-JSON 5xx →
+//       "Sunucu hatası ({status}). Lütfen tekrar deneyin."
+//   - Non-JSON 4xx →
+//       "İstek reddedildi ({status})."
+//   - 401 (JSON body yoksa veya detail boşsa) →
+//       "Oturum sona erdi. Lütfen yeniden giriş yapın."
+//   - 403 (JSON body yoksa veya detail boşsa) →
+//       "Bu işlem için yetkiniz yok."
+//   - JSON body varsa: data.detail veya data.message tercih edilir.
+//
+// Thrown Error nesnesi şu propertyleri taşır:
+//   .message  — Türkçe friendly mesaj
+//   .status   — HTTP status code (network failure'da undefined)
+//   .data     — parse edilmiş response body (varsa) veya { raw: text }
+//
+// Geriye dönük uyumluluk: `window.VYRA_API.request(...)` aynı imzayı korur,
+// başka modüller (query_builder.js vb.) bu çağrı yolunu kullanmaya devam eder.
+// =============================================================================
+
 (function () {
     console.log("[NGSSAI] api_client.js loaded");
 
@@ -957,6 +995,38 @@ window.NgssNotification = NgssNotification;
         if (refresh) localStorage.setItem("refresh_token", refresh);
     }
 
+    // ---- Friendly Turkish error builder ----
+    function buildFriendlyMessage(status, isJson, data) {
+        // 401 fast path
+        if (status === 401) {
+            const detail = data && (data.detail || data.message);
+            return detail || "Oturum sona erdi. Lütfen yeniden giriş yapın.";
+        }
+        // 403 fast path
+        if (status === 403) {
+            const detail = data && (data.detail || data.message);
+            return detail || "Bu işlem için yetkiniz yok.";
+        }
+        // JSON-formatlı hata: backend mesajını kullan
+        if (isJson && data && (data.detail || data.message)) {
+            return data.detail || data.message;
+        }
+        // 502/503/504 — proxy/backend down (genellikle HTML body)
+        if (status === 502 || status === 503 || status === 504) {
+            return `Backend servisi yanıt vermiyor (HTTP ${status}). Lütfen sistem yöneticinize bildirin.`;
+        }
+        // Diğer 5xx (non-JSON)
+        if (status >= 500 && status < 600) {
+            return `Sunucu hatası (${status}). Lütfen tekrar deneyin.`;
+        }
+        // Non-JSON 4xx
+        if (status >= 400 && status < 500) {
+            return `İstek reddedildi (${status}).`;
+        }
+        // Fallback
+        return `API error (${status})`;
+    }
+
     async function request(path, { method = "GET", body = null, auth = true } = {}) {
         const url = `${API_BASE_URL}${path}`;
         const headers = {
@@ -972,25 +1042,46 @@ window.NgssNotification = NgssNotification;
 
         console.log("[NGSSAI] API request:", method, url);
 
-        const res = await fetch(url, {
-            method,
-            headers,
-            credentials: 'include',
-            body: body ? JSON.stringify(body) : null,
-        });
+        // ---- Outer fetch try/catch: ağ hatasını yakala ----
+        let res;
+        try {
+            res = await fetch(url, {
+                method,
+                headers,
+                credentials: 'include',
+                body: body ? JSON.stringify(body) : null,
+            });
+        } catch (netErr) {
+            // TypeError = network failure / "Failed to fetch" (Nginx down, DNS, vb.)
+            const friendly = "Sunucuya bağlanılamadı. Proxy (Nginx) çalışmıyor olabilir veya ağ bağlantınızı kontrol edin.";
+            const err = new Error(friendly);
+            err.status = undefined;
+            err.data = null;
+            err.cause = netErr;
+            console.error("[NGSSAI] API network error:", netErr);
+            throw err;
+        }
 
         const text = await res.text();
+        const contentType = (res.headers.get("content-type") || "").toLowerCase();
+        const looksJson = contentType.includes("application/json");
+
         let data = null;
+        let parsedAsJson = false;
         try {
-            data = text ? JSON.parse(text) : null;
+            if (text) {
+                data = JSON.parse(text);
+                parsedAsJson = true;
+            }
         } catch {
+            // Parse başarısız — HTML/text response (Nginx 502 vb.)
             data = { raw: text };
+            parsedAsJson = false;
         }
 
         if (!res.ok) {
-            const msg =
-                (data && (data.detail || data.message)) ||
-                `API error (${res.status})`;
+            const isJson = parsedAsJson && looksJson !== false;
+            const msg = buildFriendlyMessage(res.status, parsedAsJson, parsedAsJson ? data : null);
             const err = new Error(msg);
             err.status = res.status;
             err.data = data;
@@ -1001,10 +1092,30 @@ window.NgssNotification = NgssNotification;
         return data;
     }
 
-    async function login(phone, password) {
+    /**
+     * Login helper.
+     *
+     * v3.34.0: Yeni imza — opts objesi (gerçek backend kontratı):
+     *   login({ username, password, domain })  → POST /auth/login
+     *
+     * Eski imza (geri uyum için korunur — DEPRECATED):
+     *   login(phone, password)  → POST /auth/login { phone, password }
+     *   Bu imza eski telefon-tabanlı login için kullanılıyordu. Yeni kod
+     *   `{username, password, domain}` formunu kullanmalıdır.
+     */
+    async function login(phoneOrOpts, maybePassword) {
+        let body;
+        if (typeof phoneOrOpts === "string") {
+            // Legacy path — DEPRECATED
+            console.warn("[VYRA_API] login(phone, password) DEPRECATED — use login({username, password, domain})");
+            body = { phone: phoneOrOpts, password: maybePassword };
+        } else {
+            // Modern path — { username, password, domain }
+            body = phoneOrOpts || {};
+        }
         const data = await request("/auth/login", {
             method: "POST",
-            body: { phone, password },
+            body,
             auth: false,
         });
         setTokens(data.access_token, data.refresh_token);
@@ -1041,6 +1152,14 @@ window.NgssNotification = NgssNotification;
         refreshToken,
         getTokens,
         setTokens,
+    };
+
+    // v3.34.0: Public defensive fetch alias.
+    // Tek satırlık delegasyon — VYRA_API.request'in tüm error contract'ını miras alır.
+    // Yeni modüller doğrudan window.vyraFetch(...) çağırmalı; legacy modüller
+    // VYRA_API.request'i kullanmaya devam edebilir (her ikisi de aynı kod yolu).
+    window.vyraFetch = function (path, opts) {
+        return window.VYRA_API.request(path, opts);
     };
 
     // v3.32.0: Canonical Authorization header helper.
@@ -1754,21 +1873,11 @@ window.NgssNotification = NgssNotification;
         if (finalSolutionBox) finalSolutionBox.classList.add('hidden');
 
         try {
-            const response = await fetch(`${window.API_BASE_URL || 'http://localhost:8002'}/api/tickets/from-chat-async`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch('/tickets/from-chat-async', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({ query })
+                body: { query }
             });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || 'İstek başarısız');
-            }
-
-            const data = await response.json();
             console.log('[NGSSAI-WS] Görev oluşturuldu:', data.task_id);
 
             // Callback'i kaydet
@@ -1810,21 +1919,11 @@ window.NgssNotification = NgssNotification;
         if (ragSelectionBox) ragSelectionBox.classList.add('hidden');
 
         try {
-            const response = await fetch(`${window.API_BASE_URL || 'http://localhost:8002'}/api/tickets/search`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch('/tickets/search', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({ query })
+                body: { query }
             });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || 'Arama başarısız');
-            }
-
-            const data = await response.json();
             console.log('[NGSSAI-WS] RAG araması tamamlandı:', data.results?.length, 'sonuç');
 
             if (loadingBox) loadingBox.classList.add('hidden');
@@ -1848,25 +1947,15 @@ window.NgssNotification = NgssNotification;
         }
 
         try {
-            const response = await fetch(`${window.API_BASE_URL || 'http://localhost:8002'}/api/tickets/create-from-selection`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch('/tickets/create-from-selection', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({
+                body: {
                     query: query,
                     selected_chunk_text: chunkText,
                     selected_file_name: fileName
-                })
+                }
             });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || 'Ticket oluşturulamadı');
-            }
-
-            const data = await response.json();
             console.log('[NGSSAI-WS] Ticket oluşturuldu:', data.id);
 
             return data;
@@ -1900,21 +1989,11 @@ window.NgssNotification = NgssNotification;
                 requestBody.ticket_id = ticketId;
             }
 
-            const response = await fetch(`${window.API_BASE_URL || 'http://localhost:8002'}/api/tickets/evaluate-with-llm`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch('/tickets/evaluate-with-llm', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify(requestBody)
+                body: requestBody
             });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || 'LLM değerlendirmesi başarısız');
-            }
-
-            const data = await response.json();
             console.log('[NGSSAI-WS] LLM değerlendirmesi tamamlandı', ticketId ? `(Ticket #${ticketId}'e kaydedildi)` : '');
 
             return data;
@@ -3641,12 +3720,13 @@ window.ParamTabsModule = (function () {
                       && getComputedStyle(companiesTab).display !== "none";
 
         try {
-            const token = localStorage.getItem('access_token') || '';
-            const res = await fetch(API_BASE + '/api/companies/', {
-                headers: { 'Authorization': 'Bearer ' + token }
-            });
-            if (!res.ok) return;
-            const companies = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            let companies;
+            try {
+                companies = await window.vyraFetch('/companies/');
+            } catch (_e) {
+                return;
+            }
 
             if (isAdmin) {
                 // Admin: dropdown göster, span gizle
@@ -3718,14 +3798,14 @@ if (document.readyState === 'loading') {
  */
 async function populateCompanySelect(selectEl, selectedId) {
     if (!selectEl) return;
-    const API_BASE = window.API_BASE_URL || '';
     try {
-        const token = localStorage.getItem('access_token') || '';
-        const res = await fetch(API_BASE + '/api/companies/', {
-            headers: { 'Authorization': 'Bearer ' + token }
-        });
-        if (!res.ok) return;
-        const companies = await res.json();
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+        let companies;
+        try {
+            companies = await window.vyraFetch('/companies/');
+        } catch (_e) {
+            return;
+        }
         selectEl.innerHTML = '<option value="">Firma seçin...</option>';
         companies.forEach(c => {
             const opt = document.createElement('option');
@@ -4198,36 +4278,26 @@ window.SolutionDisplayModule = (function () {
         }
 
         try {
-            const response = await fetch('/api/feedback', {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            await window.vyraFetch('/feedback', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({
+                body: {
                     feedback_type: feedbackType,
                     ticket_id: currentTicketId,
                     chunk_ids: currentChunkIds,
                     query_text: currentQuery
-                })
+                }
             });
-
-            if (response.ok) {
-                feedbackSent = true;
-                renderFeedbackButtons(); // Teşekkür mesajı göster
-
-                // Toast bildirim
-                if (typeof VyraToast !== 'undefined') {
-                    VyraToast.success('Geri bildiriminiz kaydedildi. Teşekkürler!');
-                }
-            } else {
-                console.error('Feedback gönderme hatası:', response.status);
-                if (typeof VyraToast !== 'undefined') {
-                    VyraToast.error('Geri bildirim kaydedilemedi.');
-                }
+            feedbackSent = true;
+            renderFeedbackButtons(); // Teşekkür mesajı göster
+            if (typeof VyraToast !== 'undefined') {
+                VyraToast.success('Geri bildiriminiz kaydedildi. Teşekkürler!');
             }
         } catch (error) {
             console.error('Feedback gönderme hatası:', error);
+            if (typeof VyraToast !== 'undefined') {
+                VyraToast.error('Geri bildirim kaydedilemedi.');
+            }
         }
     }
 
@@ -4605,15 +4675,10 @@ window.SolutionDisplayModule = (function () {
         }
 
         try {
-            const response = await fetch(`/api/tickets/${currentTicketId}/ai-evaluate`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                }
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch(`/tickets/${currentTicketId}/ai-evaluate`, {
+                method: 'POST'
             });
-
-            const data = await response.json();
 
             if (data.success) {
                 // Çözümü göster
@@ -4679,19 +4744,14 @@ window.SolutionDisplayModule = (function () {
         }
 
         try {
-            const response = await fetch(`/api/tickets/${currentTicketId}/select`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch(`/tickets/${currentTicketId}/select`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({
+                body: {
                     selected_chunk_text: selected.chunk_text,
                     selected_file_name: selected.file_name
-                })
+                }
             });
-
-            const data = await response.json();
 
             if (data.success) {
                 // Çözümü göster
@@ -4779,8 +4839,7 @@ if (document.readyState === 'loading') {
 window.MLTrainingModule = (function () {
     'use strict';
 
-    // API Base URL (Backend - Port 8002)
-    const API_BASE = window.API_BASE_URL || 'http://localhost:8002';
+    // v3.34.0: vyraFetch /api + API_BASE_URL prefix'ini kendi ekliyor — base sabiti kaldırıldı.
 
     // State
     let isTraining = false;
@@ -4842,22 +4901,10 @@ window.MLTrainingModule = (function () {
     // API Calls
     // ============================================
 
+    // v3.34.0: vyraFetch delegate — Auth + JSON + friendly error helper'da.
+    // Not: vyraFetch non-2xx'te throw eder; callsite'lardaki try/catch zaten bunu yakalıyor.
     async function apiCall(endpoint, method = 'GET', body = null) {
-        const token = localStorage.getItem('access_token');
-        const options = {
-            method,
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-            }
-        };
-
-        if (body) {
-            options.body = JSON.stringify(body);
-        }
-
-        const response = await fetch(`${API_BASE}/api/system${endpoint}`, options);
-        return response.json();
+        return window.vyraFetch(`/system${endpoint}`, { method, body });
     }
 
     // ============================================
@@ -8598,17 +8645,22 @@ window.DialogTicketModule = (function () {
         modal.classList.remove('hidden');
 
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${API_BASE}/dialogs/${currentDialogId}/generate-ticket-summary`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-
-            if (response.ok) {
-                const data = await response.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            let data;
+            try {
+                data = await window.vyraFetch(`/dialogs/${currentDialogId}/generate-ticket-summary`, {
+                    method: 'POST'
+                });
+            } catch (vfErr) {
+                summaryText.innerHTML = `
+                    <div class="ticket-error">
+                        <i class="fa-solid fa-exclamation-triangle"></i>
+                        <span>Çağrı metni oluşturulamadı. Lütfen tekrar deneyin.</span>
+                    </div>
+                `;
+                return;
+            }
+            {
                 const rawSummary = data.summary || '';
 
                 // v2.49.0: Konu ve Sorun Tanımı'nı parse et
@@ -8655,13 +8707,6 @@ window.DialogTicketModule = (function () {
                             </div>
                             <div class="ticket-field-value ticket-sorun">${escapeHtml(sorunTanimi).replace(/\n/g, '<br>')}</div>
                         </div>
-                    </div>
-                `;
-            } else {
-                summaryText.innerHTML = `
-                    <div class="ticket-error">
-                        <i class="fa-solid fa-exclamation-triangle"></i>
-                        <span>Çağrı metni oluşturulamadı. Lütfen tekrar deneyin.</span>
                     </div>
                 `;
             }
@@ -8734,26 +8779,13 @@ window.DialogTicketModule = (function () {
             if (parent?.showTypingIndicator) parent.showTypingIndicator();
 
             try {
-                const token = localStorage.getItem('access_token');
-                const response = await fetch(`${API_BASE}/dialogs/${currentDialogId}/ask-corpix`, {
+                // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                const data = await window.vyraFetch(`/dialogs/${currentDialogId}/ask-corpix`, {
                     method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ query: query })
+                    body: { query: query }
                 });
-
                 if (parent?.hideTypingIndicator) parent.hideTypingIndicator();
-
-                if (response.ok) {
-                    const data = await response.json();
-                    if (parent?.addAssistantMessage) parent.addAssistantMessage(data);
-                } else {
-                    const errorData = await response.json().catch(() => ({}));
-                    console.error('[DialogChat] LLM hatası:', errorData);
-                    if (parent?.addSystemMessage) parent.addSystemMessage('❌ LLM yanıt veremedi.');
-                }
+                if (parent?.addAssistantMessage) parent.addAssistantMessage(data);
             } catch (error) {
                 if (parent?.hideTypingIndicator) parent.hideTypingIndicator();
                 console.error('[DialogChat] LLM bağlantı hatası:', error);
@@ -8774,45 +8806,34 @@ window.DialogTicketModule = (function () {
         const parent = getParent();
 
         try {
-            const token = localStorage.getItem('access_token');
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
             let currentDialogId = parent?._getDialogId?.();
 
             // Dialog yoksa oluştur
             if (!currentDialogId) {
-                const dialogRes = await fetch(`${API_BASE}/dialogs`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ title: null })
-                });
-                if (dialogRes.ok) {
-                    const dialog = await dialogRes.json();
+                try {
+                    const dialog = await window.vyraFetch('/dialogs', {
+                        method: 'POST',
+                        body: { title: null }
+                    });
                     currentDialogId = dialog.id;
                     if (parent?._setDialogId) parent._setDialogId(dialog.id);
-                }
+                } catch (_) { /* dialog oluşturulamadıysa LLM çağrısı zaten patlayacak */ }
             }
 
             // LLM API'ye gönder (eski ask-corpix endpoint’i)
             const startTime = performance.now();
-            const response = await fetch(`${API_BASE}/dialogs/${currentDialogId}/ask-corpix`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ query: content })
-            });
-
-            if (parent?.hideTypingIndicator) parent.hideTypingIndicator();
-            const responseTime = ((performance.now() - startTime) / 1000).toFixed(2);
-
-            if (response.ok) {
-                const data = await response.json();
+            try {
+                const data = await window.vyraFetch(`/dialogs/${currentDialogId}/ask-corpix`, {
+                    method: 'POST',
+                    body: { query: content }
+                });
+                if (parent?.hideTypingIndicator) parent.hideTypingIndicator();
+                const responseTime = ((performance.now() - startTime) / 1000).toFixed(2);
                 if (parent?.addAssistantMessage) parent.addAssistantMessage(data, null, true, responseTime);
-            } else {
-                const errorData = await response.json().catch(() => ({}));
+            } catch (vfErr) {
+                if (parent?.hideTypingIndicator) parent.hideTypingIndicator();
+                const errorData = (vfErr && vfErr.data) || {};
                 console.error('[DialogChat] LLM hatası:', errorData);
 
                 // VPN hatası kontrolü
@@ -9068,14 +9089,8 @@ window.DialogTicketModule = (function () {
 
         loadPromise = (async () => {
             try {
-                const token = localStorage.getItem('access_token');
-                const res = await fetch(`${API_BASE}/data-sources/`, {
-                    headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-                });
-                if (!res.ok) {
-                    throw new Error(`HTTP ${res.status}`);
-                }
-                const data = await res.json();
+                // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                const data = await window.vyraFetch('/data-sources/');
                 sources = Array.isArray(data) ? data : [];
                 lastError = null;
 
@@ -9363,38 +9378,24 @@ window.DialogTicketModule = (function () {
 
         const card = _renderSkeleton(parentEl, hint);
 
-        const token = (typeof window !== 'undefined' && window.localStorage)
-            ? window.localStorage.getItem('access_token')
-            : null;
-
         const params = new URLSearchParams({
             table: hint.table,
             limit: '5',
         });
         if (hint.schema) params.append('schema', hint.schema);
 
-        const url = `${ENDPOINT_BASE}/${encodeURIComponent(hint.source_id)}/samples?${params.toString()}`;
-
-        fetch(url, {
-            method: 'GET',
-            headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-        })
-            .then(async (res) => {
-                if (res.status === 404) {
-                    const body = await res.json().catch(() => ({}));
-                    _renderEmpty(card, hint, body.detail);
-                    return null;
-                }
-                if (!res.ok) {
-                    throw new Error(`HTTP ${res.status}`);
-                }
-                return res.json();
-            })
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+        // 404 grace path: vyraFetch throw eder, err.status===404 + err.data.detail.
+        const path = `/data-sources/${encodeURIComponent(hint.source_id)}/samples?${params.toString()}`;
+        window.vyraFetch(path)
             .then((data) => {
-                if (!data) return;
                 _renderData(card, hint, data);
             })
             .catch((err) => {
+                if (err && err.status === 404) {
+                    _renderEmpty(card, hint, (err.data && err.data.detail) || undefined);
+                    return;
+                }
                 console.warn('[SampleDataPreview] fetch hatası:', err && err.message);
                 _renderEmpty(card, hint, 'Örnek veri yüklenemedi.');
             });
@@ -9684,20 +9685,20 @@ window.DialogTicketModule = (function () {
         };
 
         try {
-            const apiBase = (window.VYRA_API_BASE || '');
-            const resp = await fetch(`${apiBase}/api/query-state/preview`, {
-                method: 'POST',
-                credentials: 'include',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(window.getAuthHeader ? window.getAuthHeader() : {}),
-                },
-                body: JSON.stringify(body),
-            });
-            const data = await resp.json().catch(() => ({}));
+            // v3.34.0: vyraFetch — auth header + JSON parse + Türkçe error mesajı helper'dan
+            let data;
+            try {
+                data = await window.vyraFetch('/query-state/preview', { method: 'POST', body });
+            } catch (httpErr) {
+                statusEl.removeAttribute('aria-busy');
+                const fallback = (httpErr && httpErr.data && (httpErr.data.detail || (httpErr.data.warnings || []).join('; '))) || (httpErr && httpErr.message) || 'Bilinmeyen hata';
+                statusEl.textContent = `Hata: ${fallback}`;
+                statusEl.classList.add('qb-status-error');
+                return;
+            }
             statusEl.removeAttribute('aria-busy');
 
-            if (!resp.ok || !data.valid) {
+            if (!data.valid) {
                 const errs = (data.warnings || [data.detail || 'Bilinmeyen hata']).join('; ');
                 statusEl.textContent = `Hata: ${errs}`;
                 statusEl.classList.add('qb-status-error');
@@ -9814,24 +9815,19 @@ window.DialogTicketModule = (function () {
         resultMeta.textContent = '';
 
         try {
-            const apiBase = (window.VYRA_API_BASE || '');
-            const resp = await fetch(`${apiBase}/api/query-state/preview`, {
-                method: 'POST',
-                credentials: 'include',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(window.getAuthHeader ? window.getAuthHeader() : {}),
-                },
-                body: JSON.stringify(body),
-            });
-            const data = await resp.json().catch(() => ({}));
-            statusEl.removeAttribute('aria-busy');
-
-            if (!resp.ok) {
+            // v3.34.0: vyraFetch — execute=true preview ucu
+            let data;
+            try {
+                data = await window.vyraFetch('/query-state/preview', { method: 'POST', body });
+            } catch (httpErr) {
+                statusEl.removeAttribute('aria-busy');
                 statusEl.classList.add('qb-status-error');
-                statusEl.textContent = `HTTP ${resp.status}: ${(data && (data.detail || data.execute_error)) || 'Hata'}`;
+                const detail = (httpErr && httpErr.data && (httpErr.data.detail || httpErr.data.execute_error)) || (httpErr && httpErr.message) || 'Hata';
+                const stat = httpErr && httpErr.status ? `HTTP ${httpErr.status}: ` : '';
+                statusEl.textContent = `${stat}${detail}`;
                 return;
             }
+            statusEl.removeAttribute('aria-busy');
             if (data.success === false) {
                 resultSection.removeAttribute('hidden');
                 resultMeta.textContent = '⚠ Çalıştırma hatası';
@@ -10528,17 +10524,16 @@ window.DialogTicketModule = (function () {
         }
     }
 
-    async function _fetchJson(url, options = {}) {
-        const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-        const token = (window.apiClient && window.apiClient.getToken && window.apiClient.getToken())
-            || localStorage.getItem('access_token');
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-        const resp = await fetch(url, { ...options, headers });
-        if (!resp.ok) {
-            const text = await resp.text().catch(() => '');
-            throw new Error(`HTTP ${resp.status}: ${text.slice(0, 200)}`);
+    // v3.34.0: vyraFetch delegate — Auth + JSON + friendly error helper'da.
+    // path '/api/...' geçilebilir (auto-strip), body JS objesi olmalı (JSON.stringify YOK).
+    async function _fetchJson(path, options = {}) {
+        const p = path.startsWith('/api/') ? path.slice(4) : path;
+        const opts = { method: options.method || 'GET' };
+        if (options.body !== undefined && options.body !== null) {
+            // Geri uyum: zaten stringify edilmiş body gelirse parse et
+            opts.body = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
         }
-        return resp.json();
+        return window.vyraFetch(p, opts);
     }
 
     // ───────────────────────── state ─────────────────────────
@@ -11638,14 +11633,9 @@ window.DialogChatModule = (function () {
             }
 
             // 1️⃣ Aktif dialog'u kontrol et (F5/refresh durumlarında devam için)
-            const checkResponse = await fetch(`${API_BASE}/dialogs/active`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-
-            if (checkResponse.ok) {
-                const existingDialog = await checkResponse.json();
-
-                if (existingDialog.id) {
+            try {
+                const existingDialog = await window.vyraFetch('/dialogs/active');
+                if (existingDialog && existingDialog.id) {
                     // 2️⃣ v2.25.1: Aktif dialog varsa DEVAM ET (Strict Mode kaldırıldı)
                     console.log(`[DialogChat] Aktif dialog #${existingDialog.id} bulundu, devam ediliyor...`);
                     currentDialogId = existingDialog.id;
@@ -11654,6 +11644,8 @@ window.DialogChatModule = (function () {
                     await loadDialogById(existingDialog.id);
                     return;
                 }
+            } catch (_e) {
+                // Aktif dialog bulunmazsa (404 vb.) yeni dialog akışına düş
             }
 
             // 3️⃣ Aktif dialog yoksa yeni oluştur
@@ -11673,18 +11665,11 @@ window.DialogChatModule = (function () {
      */
     async function createInitialDialogBackground() {
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${API_BASE}/dialogs`, {
+            const dialog = await window.vyraFetch('/dialogs', {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ title: null })
+                body: { title: null }
             });
-
-            if (response.ok) {
-                const dialog = await response.json();
+            if (dialog && dialog.id) {
                 currentDialogId = dialog.id;
                 console.log(`[DialogChat] Yeni dialog #${dialog.id} oluşturuldu`);
             }
@@ -11715,44 +11700,34 @@ window.DialogChatModule = (function () {
 
     async function startNewDialog() {
         try {
-            const token = localStorage.getItem('access_token');
-
             // v3.15.1: Önce devam eden uzun DB sorgularını iptal et — sistemi yormayalım.
             // Fire-and-forget: hata olsa bile yeni dialog açma işlemini bloklamasın.
             if (activeJobs.size > 0 && currentDialogId) {
                 console.log(`[DialogChat] ${activeJobs.size} aktif DB sorgu iptal ediliyor...`);
                 const jobsToCancel = Array.from(activeJobs);
                 activeJobs.clear();
-                const cancelHeaders = token ? { 'Authorization': `Bearer ${token}` } : {};
                 jobsToCancel.forEach((jId) => {
-                    fetch(`${API_BASE}/dialogs/${currentDialogId}/jobs/${encodeURIComponent(jId)}/cancel`, {
-                        method: 'POST',
-                        headers: cancelHeaders,
-                    }).catch(() => { /* sessiz başarısızlık — registry'de yoksa zaten bitmiştir */ });
+                    window.vyraFetch(
+                        `/dialogs/${currentDialogId}/jobs/${encodeURIComponent(jId)}/cancel`,
+                        { method: 'POST' }
+                    ).catch(() => { /* sessiz başarısızlık — registry'de yoksa zaten bitmiştir */ });
                 });
             }
 
             // v2.25.1: Önce mevcut aktif dialog'u kapat
             if (currentDialogId) {
                 console.log(`[DialogChat] Mevcut dialog #${currentDialogId} kapatılıyor (Yeni Sohbet)...`);
-                await fetch(`${API_BASE}/dialogs/${currentDialogId}/close`, {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
+                try {
+                    await window.vyraFetch(`/dialogs/${currentDialogId}/close`, { method: 'POST' });
+                } catch (_e) { /* zaten kapalı olabilir */ }
             }
 
             // Yeni dialog oluştur
-            const response = await fetch(`${API_BASE}/dialogs`, {
+            const dialog = await window.vyraFetch('/dialogs', {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ title: null })
+                body: { title: null }
             });
-
-            if (response.ok) {
-                const dialog = await response.json();
+            if (dialog && dialog.id) {
                 currentDialogId = dialog.id;
                 clearMessages();
                 resetNewDialogButtonHighlight(); // Animasyonu kaldır
@@ -11765,7 +11740,7 @@ window.DialogChatModule = (function () {
             }
         } catch (error) {
             console.error('[DialogChat] Yeni dialog oluşturulamadı:', error);
-            showToast('error', 'Dialog başlatılamadı');
+            showToast('error', error && error.message ? error.message : 'Dialog başlatılamadı');
         }
     }
 
@@ -11794,22 +11769,11 @@ window.DialogChatModule = (function () {
         setTicketButtonEnabled(true);
 
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${API_BASE}/dialogs/${dialogId}/messages`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-
-            if (response.ok) {
-                const messages = await response.json();
-                console.log(`[DialogChat] Dialog #${dialogId} - ${messages.length} mesaj yüklendi`);
-
-                if (messages.length > 0) {
-                    renderMessages(messages);
-                } else {
-                    addSystemMessage('👋 Merhaba! Size nasıl yardımcı olabilirim?');
-                }
+            const messages = await window.vyraFetch(`/dialogs/${dialogId}/messages`);
+            console.log(`[DialogChat] Dialog #${dialogId} - ${messages.length} mesaj yüklendi`);
+            if (messages.length > 0) {
+                renderMessages(messages);
             } else {
-                console.error('[DialogChat] Dialog mesajları alınamadı');
                 addSystemMessage('👋 Merhaba! Size nasıl yardımcı olabilirim?');
             }
         } catch (error) {
@@ -11825,24 +11789,17 @@ window.DialogChatModule = (function () {
         if (!currentDialogId) return;
 
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${API_BASE}/dialogs/${currentDialogId}/messages`, {
-                headers: { 'Authorization': `Bearer ${token}` }
+            const messages = await window.vyraFetch(`/dialogs/${currentDialogId}/messages`);
+            console.log('[DialogChat] Mesajlar yüklendi:', messages.length, 'adet');
+
+            // Debug: Her mesajın metadata'sını kontrol et
+            messages.forEach((msg, i) => {
+                if (msg.role === 'assistant' && msg.metadata?.quick_reply) {
+                    console.log(`[DialogChat] Mesaj #${i} quick_reply var:`, msg.metadata.quick_reply.type);
+                }
             });
 
-            if (response.ok) {
-                const messages = await response.json();
-                console.log('[DialogChat] Mesajlar yüklendi:', messages.length, 'adet');
-
-                // Debug: Her mesajın metadata'sını kontrol et
-                messages.forEach((msg, i) => {
-                    if (msg.role === 'assistant' && msg.metadata?.quick_reply) {
-                        console.log(`[DialogChat] Mesaj #${i} quick_reply var:`, msg.metadata.quick_reply.type);
-                    }
-                });
-
-                renderMessages(messages);
-            }
+            renderMessages(messages);
         } catch (error) {
             console.error('[DialogChat] Mesajlar yüklenemedi:', error);
         }
@@ -11915,22 +11872,20 @@ window.DialogChatModule = (function () {
 
             // Dialog yoksa oluştur
             if (!currentDialogId) {
-                const dialogRes = await fetch(`${API_BASE}/dialogs`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ title: null })
-                });
-                if (dialogRes.ok) {
-                    const dialog = await dialogRes.json();
-                    currentDialogId = dialog.id;
-                    console.log(`[DialogChat] Mesaj için yeni dialog #${dialog.id} oluşturuldu`);
-                }
+                try {
+                    const dialog = await window.vyraFetch('/dialogs', {
+                        method: 'POST',
+                        body: { title: null }
+                    });
+                    if (dialog && dialog.id) {
+                        currentDialogId = dialog.id;
+                        console.log(`[DialogChat] Mesaj için yeni dialog #${dialog.id} oluşturuldu`);
+                    }
+                } catch (_e) { /* aşağıdaki SSE fetch hata akışına düşer */ }
             }
 
             // 🆕 v2.50.0: Streaming SSE endpoint
+            // v3.34.0: raw fetch — text/event-stream (vyraFetch JSON-only, body.getReader() gerekli)
             const response = await fetch(`${API_BASE}/dialogs/${currentDialogId}/messages/stream`, {
                 method: 'POST',
                 headers: {
@@ -12345,16 +12300,13 @@ window.DialogChatModule = (function () {
                                                 cancelBtn.textContent = '⚠️ Diyalog bulunamadı';
                                                 return;
                                             }
-                                            const token = localStorage.getItem('access_token');
-                                            const headers = { 'Content-Type': 'application/json' };
-                                            if (token) headers['Authorization'] = `Bearer ${token}`;
-                                            const resp = await fetch(`/api/dialogs/${dlgId}/jobs/${encodeURIComponent(activeJobId)}/cancel`, {
-                                                method: 'POST',
-                                                headers,
-                                            });
-                                            if (resp.ok) {
+                                            try {
+                                                await window.vyraFetch(
+                                                    `/dialogs/${dlgId}/jobs/${encodeURIComponent(activeJobId)}/cancel`,
+                                                    { method: 'POST' }
+                                                );
                                                 cancelBtn.textContent = '✓ İptal sinyali gönderildi';
-                                            } else {
+                                            } catch (_err) {
                                                 cancelBtn.textContent = '⚠️ İptal başarısız';
                                                 cancelBtn.disabled = false;
                                             }
@@ -12815,6 +12767,7 @@ window.DialogChatModule = (function () {
         if (reportTemplate) body.report_template = reportTemplate;
 
         try {
+            // v3.34.0: raw fetch — text/event-stream (vyraFetch JSON-only, body.getReader() gerekli)
             const response = await fetch(`${API_BASE}/dialogs/${currentDialogId}/messages/stream`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
@@ -13091,26 +13044,16 @@ window.DialogChatModule = (function () {
         showTypingIndicator();
 
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${API_BASE}/dialogs/${currentDialogId}/quick-reply`, {
+            const message = await window.vyraFetch(`/dialogs/${currentDialogId}/quick-reply`, {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
+                body: {
                     action: 'multi_select',
                     selection_ids: selectedCardIds,
                     message_id: targetMessageId
-                })
+                }
             });
-
             hideTypingIndicator();
-
-            if (response.ok) {
-                const message = await response.json();
-                addAssistantMessage(message);
-            }
+            if (message) addAssistantMessage(message);
         } catch (error) {
             hideTypingIndicator();
             console.error('[DialogChat] Multi-select hatası:', error);
@@ -13253,26 +13196,16 @@ window.DialogChatModule = (function () {
             : null;
 
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${API_BASE}/dialogs/${currentDialogId}/quick-reply`, {
+            const message = await window.vyraFetch(`/dialogs/${currentDialogId}/quick-reply`, {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
+                body: {
                     action,
                     selection_id: selectionId,
                     message_id: targetMessageId  // 🔒 Direkt mesaj ID ile al
-                })
+                }
             });
-
             hideTypingIndicator();
-
-            if (response.ok) {
-                const message = await response.json();
-                addAssistantMessage(message);
-            }
+            if (message) addAssistantMessage(message);
         } catch (error) {
             hideTypingIndicator();
             console.error('[DialogChat] Quick reply hatası:', error);
@@ -13281,14 +13214,9 @@ window.DialogChatModule = (function () {
 
     async function sendFeedback(messageId, feedbackType, btn = null) {
         try {
-            const token = localStorage.getItem('access_token');
-            await fetch(`${API_BASE}/dialogs/${currentDialogId}/feedback`, {
+            await window.vyraFetch(`/dialogs/${currentDialogId}/feedback`, {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ message_id: messageId, feedback_type: feedbackType })
+                body: { message_id: messageId, feedback_type: feedbackType }
             });
 
             // Butonu seçili hale getir
@@ -13337,29 +13265,24 @@ window.DialogChatModule = (function () {
                 btn.textContent = '⏳ Yükleniyor...';
             }
 
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${API_BASE}/dialogs/${currentDialogId}/messages`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    content: `Sonraki kategori[${shownCount}]: ${query}`
-                })
-            });
+            let data;
+            try {
+                data = await window.vyraFetch(`/dialogs/${currentDialogId}/messages`, {
+                    method: 'POST',
+                    body: { content: `Sonraki kategori[${shownCount}]: ${query}` }
+                });
+            } catch (httpErr) {
+                hideTypingIndicator();
+                showToast('error', (httpErr && httpErr.message) || 'Sunucu hatası');
+                throw httpErr;
+            }
 
             hideTypingIndicator();
 
-            if (response.ok) {
-                const data = await response.json();
-                if (data.message) {
-                    // Duplicate önleme: ÖNCE ID'yi kaydet
-                    lastAddedMessageId = data.message.id;
-                    addAssistantMessage(data.message);
-                }
-            } else {
-                showToast('error', 'Sunucu hatası');
+            if (data && data.message) {
+                // Duplicate önleme: ÖNCE ID'yi kaydet
+                lastAddedMessageId = data.message.id;
+                addAssistantMessage(data.message);
             }
         } catch (error) {
             hideTypingIndicator();
@@ -13997,17 +13920,9 @@ window.DialogChatModule = (function () {
         if (!messageId || !currentDialogId) return;
 
         try {
-            const token = localStorage.getItem('access_token');
-            await fetch(`${API_BASE}/dialogs/${currentDialogId}/response-time`, {
+            await window.vyraFetch(`/dialogs/${currentDialogId}/response-time`, {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    message_id: messageId,
-                    response_time: responseTime
-                })
+                body: { message_id: messageId, response_time: responseTime }
             });
         } catch (error) {
             console.warn('[DialogChat] Response time kaydedilemedi:', error);
@@ -14074,6 +13989,7 @@ window.DialogChatModule = (function () {
             showToast('Dosya indiriliyor...', 'info');
 
             // Auth token ile fetch yap
+            // v3.34.0: raw fetch — response.blob() download (vyraFetch JSON döner)
             const token = localStorage.getItem('access_token');
             const response = await fetch(`${window.API_BASE_URL || 'http://localhost:8002'}${url}`, {
                 method: 'GET',
@@ -14162,16 +14078,16 @@ window.DialogChatModule = (function () {
                 return;
             }
 
-            const response = await fetch(`${window.API_BASE_URL || 'http://localhost:8002'}/api/dialogs/${dialogId}/messages/enhance`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${localStorage.getItem('access_token')}`
-                },
-                body: JSON.stringify({ query: query, message_id: messageId })
-            });
-
-            const data = await response.json();
+            let data;
+            try {
+                data = await window.vyraFetch(`/dialogs/${dialogId}/messages/enhance`, {
+                    method: 'POST',
+                    body: { query: query, message_id: messageId }
+                });
+            } catch (httpErr) {
+                container.innerHTML = `<span class="vyra-enhance-error">${(httpErr && httpErr.message) || 'Enhance hatası'}</span>`;
+                return;
+            }
 
             if (data.success && data.content) {
                 // Mesaj içeriğini güncelle
@@ -14406,6 +14322,7 @@ window.DBExportHandler = (function () {
             const btn = document.querySelector(`#${barId} .db-export-btn.${format}`);
             if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
 
+            // v3.34.0: raw fetch — export endpoint blob (xlsx/docx/pdf) döner; vyraFetch JSON-only
             const resp = await fetch(endpoint, {
                 method: 'POST',
                 headers: {
@@ -15399,6 +15316,7 @@ const MaturityScoreModal = {
             const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 saniye
 
             const token = localStorage.getItem('access_token');
+            // raw fetch: FormData multipart upload + AbortController/signal — vyraFetch not applicable
             const response = await fetch(`${this.API_BASE}/rag/analyze-maturity`, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${token}` },
@@ -16153,6 +16071,7 @@ const DocumentEnhancerModal = (function () {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), ENHANCEMENT_TIMEOUT_MS);
 
+        // raw fetch: multipart/FormData + AbortController — vyraFetch not applicable.
         return fetch(`${API_BASE}/api/rag/enhance-document`, {
             method: 'POST',
             headers: _authHeaders(),
@@ -16212,6 +16131,7 @@ const DocumentEnhancerModal = (function () {
             downloadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> İndiriliyor...';
         }
 
+        // raw fetch: blob download (res.blob()) — vyraFetch only handles JSON.
         fetch(url, {
             method: 'GET',
             headers: _authHeaders()
@@ -16287,7 +16207,7 @@ const DocumentEnhancerModal = (function () {
     }
 
     function _executeUpload(sessionId, approvedIndexes) {
-        let url = `${API_BASE}/api/rag/upload-enhanced/${sessionId}`;
+        let url = `/rag/upload-enhanced/${sessionId}`;
         const urlParams = [];
         if (approvedIndexes.length > 0) {
             urlParams.push(`sections=${approvedIndexes.join(',')}`);
@@ -16316,26 +16236,8 @@ const DocumentEnhancerModal = (function () {
 
         // v3.4.5: API yanıtını BEKLE (dosya DB'ye kaydedilsin)
         // Yanıt gelince HEMEN modal kapat — normal upload akışıyla tutarlı
-        fetch(url, {
-            method: 'POST',
-            headers: _authHeaders()
-        })
-            .then(res => {
-                if (!res.ok) {
-                    // v3.4.8: HTML error page (504 vb.) gelirse json() patlar — text ile güvenli oku
-                    return res.text().then(txt => {
-                        let detail = `HTTP ${res.status}`;
-                        try {
-                            const parsed = JSON.parse(txt);
-                            detail = parsed.detail || detail;
-                        } catch (_) {
-                            detail = `Sunucu hatası (HTTP ${res.status}). Lütfen tekrar deneyin.`;
-                        }
-                        throw new Error(detail);
-                    });
-                }
-                return res.json();
-            })
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+        window.vyraFetch(url, { method: 'POST' })
             .then(data => {
                 // ─── Dosya DB'ye kaydedildi, background processing başladı ───
                 // HEMEN modal kapat (bekleme yok)
@@ -16447,10 +16349,9 @@ const DocumentEnhancerModal = (function () {
     }
 
     function _cleanupSession(sessionId) {
-        fetch(`${API_BASE}/api/rag/cleanup-enhanced/${sessionId}`, {
-            method: 'DELETE',
-            headers: _authHeaders()
-        }).catch(() => { });
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+        window.vyraFetch(`/rag/cleanup-enhanced/${sessionId}`, { method: 'DELETE' })
+            .catch(() => { });
     }
 
     // ─────────────────────────────────────────
@@ -17566,18 +17467,17 @@ window.SystemManagerModule = (function () {
     const API_BASE_URL = window.API_BASE_URL || 'http://localhost:8002';
 
     // --- VERSİYON ---
+    // v3.34.0: vyraFetch — non-fatal; helper'ın friendly mesajı catch'te yutulur,
+    // version el atomicpath ise dolduralur. Auth gerekmez (/health public).
     async function loadAppVersion() {
         try {
-            const response = await fetch(`${API_BASE_URL}/api/health`);
-            if (response.ok) {
-                const data = await response.json();
-                const versionEl = document.getElementById('appVersion');
-                if (versionEl && data.version) {
-                    versionEl.textContent = `v${data.version}`;
-                }
+            const data = await window.vyraFetch('/health', { auth: false });
+            const versionEl = document.getElementById('appVersion');
+            if (versionEl && data && data.version) {
+                versionEl.textContent = `v${data.version}`;
             }
         } catch (err) {
-            console.warn('[NGSSAI] Versiyon yüklenemedi:', err);
+            console.warn('[NGSSAI] Versiyon yüklenemedi:', err && err.message);
         }
     }
 
@@ -17834,17 +17734,15 @@ window.SystemManagerModule = (function () {
     }
 
     // --- SİDEBAR PROFİL ---
+    // v3.34.0: vyraFetch — Authorization header otomatik; non-fatal hata
+    // catch'te yutulur (sidebar boşta kalır, app crash etmez).
     async function loadSidebarProfile() {
         try {
             const token = localStorage.getItem('access_token');
             if (!token) return;
 
-            const response = await fetch(`${API_BASE_URL}/api/users/me`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-
-            if (response.ok) {
-                const user = await response.json();
+            const user = await window.vyraFetch('/users/me');
+            if (user) {
 
                 const fullName = user.full_name || user.username || 'Kullanıcı';
                 const nameEl = document.getElementById('sidebarUserName');
@@ -18071,19 +17969,16 @@ window.startSessionTimer = window.SystemManagerModule.startTimer;
     // v3.15.4: Versiyon mismatch kontrolü — backend yeni APP_VERSION ile ayağa
     // kalkmışsa /api/auth/me 401 + detail="version_mismatch" döner. Bu durumda
     // localStorage temizlenir ve login'e yönlendirilir.
+    // v3.34.0: vyraFetch — error.status + error.data.detail üzerinden 401 ve
+    // version_mismatch tespiti yapılır. Network hatasında error.status undefined
+    // olur ve kullanıcı oturumda kalır (eski davranış parity).
     (async function verifyTokenWithServer() {
         try {
-            const apiBase = window.API_BASE_URL || 'http://localhost:8002';
-            const res = await fetch(`${apiBase}/api/auth/me`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (res.status === 401) {
-                let detail = '';
-                try {
-                    const body = await res.json();
-                    detail = (body && body.detail) || '';
-                } catch (_) { /* parse hatası önemsiz */ }
-
+            await window.vyraFetch('/auth/me');
+            // 200 → token geçerli, no-op
+        } catch (e) {
+            if (e && e.status === 401) {
+                const detail = (e.data && (e.data.detail || e.data.message)) || '';
                 const isVersionMismatch = detail === 'version_mismatch';
                 if (isVersionMismatch) {
                     console.warn('[NGSSAI] Sürüm güncellendi (version_mismatch), yeniden giriş gerekli.');
@@ -18095,9 +17990,10 @@ window.startSessionTimer = window.SystemManagerModule.startTimer;
                 localStorage.removeItem('refresh_token');
                 localStorage.removeItem('session_start_time');
                 window.location.href = 'login.html';
+                return;
             }
-        } catch (e) {
-            // Ağ hatası → kullanıcıyı zorla atma; mevcut oturumla devam etsin.
+            // Ağ hatası (status undefined) veya 5xx → kullanıcıyı zorla atma;
+            // mevcut oturumla devam etsin (eski davranış parity).
             console.warn('[NGSSAI] /auth/me doğrulaması ağ hatası:', e && e.message);
         }
     })();
@@ -20316,11 +20212,8 @@ window.RAGOrgModal = {
         if (!token) return;
 
         try {
-            const response = await fetch(`${this.API_BASE}/organizations`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (!response.ok) throw new Error('Org yüklenemedi');
-            const data = await response.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch('/organizations');
             this.orgs = (data.organizations || []).filter(o => o.is_active);
 
             // SessionStorage'dan önceki seçimi yükle (varsa)
@@ -20678,8 +20571,6 @@ window.RAGFileList = {
      */
     async loadFiles() {
         try {
-            const token = localStorage.getItem('access_token');
-
             const params = new URLSearchParams({
                 page: this.filesCurrentPage,
                 per_page: this.filesPerPage
@@ -20694,17 +20585,8 @@ window.RAGFileList = {
                 params.append('company_id', compSel.value);
             }
 
-            const response = await fetch(`${this.API_BASE}/rag/files?${params}`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-
-            if (!response.ok) {
-                throw new Error('Dosya listesi alınamadı');
-            }
-
-            const data = await response.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch(`/rag/files?${params}`);
             this.files = data.files || [];
             this.filesTotalCount = data.total || 0;
 
@@ -20799,26 +20681,16 @@ window.RAGFileList = {
      */
     async loadStats() {
         try {
-            const token = localStorage.getItem('access_token');
-            let statsUrl = `${this.API_BASE}/rag/stats`;
+            let path = `/rag/stats`;
 
             // Firma bazlı filtreleme
             const compSel = document.getElementById('ragCompanySelect');
             if (compSel && compSel.value) {
-                statsUrl += `?company_id=${compSel.value}`;
+                path += `?company_id=${compSel.value}`;
             }
 
-            const response = await fetch(statsUrl, {
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-
-            if (!response.ok) {
-                throw new Error('İstatistikler alınamadı');
-            }
-
-            const stats = await response.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const stats = await window.vyraFetch(path);
             this.updateStatsUI(stats);
 
         } catch (error) {
@@ -20838,20 +20710,8 @@ window.RAGFileList = {
         btn.innerHTML = '<i class="fas fa-sync-alt"></i> Yenileniyor...';
 
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${this.API_BASE}/rag/rebuild`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || 'Rebuild hatası');
-            }
-
-            const result = await response.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const result = await window.vyraFetch(`/rag/rebuild`, { method: 'POST' });
 
             if (result.success) {
                 this.showToast(
@@ -20895,18 +20755,8 @@ window.RAGFileList = {
             cancelText: 'İptal',
             onConfirm: async () => {
                 try {
-                    const token = localStorage.getItem('access_token');
-                    const response = await fetch(`${this.API_BASE}/rag/files/${fileId}`, {
-                        method: 'DELETE',
-                        headers: {
-                            'Authorization': `Bearer ${token}`
-                        }
-                    });
-
-                    if (!response.ok) {
-                        const error = await response.json();
-                        throw new Error(error.detail || 'Silme hatası');
-                    }
+                    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                    await window.vyraFetch(`/rag/files/${fileId}`, { method: 'DELETE' });
 
                     this.showToast(`"${fileName}" silindi`, 'success');
                     if (window.NgssNotification) {
@@ -21071,6 +20921,7 @@ window.RAGFileList = {
         try {
             console.log('[RAGUpload] Dosya açılıyor:', url);
 
+            // raw fetch: blob download (response.blob()) — vyraFetch not applicable
             const response = await fetch(url, {
                 headers: {
                     'Authorization': `Bearer ${token}`
@@ -21241,18 +21092,8 @@ window.RAGFileList = {
         }
 
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${this.API_BASE}/rag/retry-file/${fileId}`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || 'Yeniden işleme hatası');
-            }
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            await window.vyraFetch(`/rag/retry-file/${fileId}`, { method: 'POST' });
 
             this.showToast(`"${fileName}" yeniden işleniyor...`, 'success');
             if (window.NgssNotification) {
@@ -21384,18 +21225,10 @@ window.RAGFileOrgEdit = {
         if (!this.orgs || this.orgs.length === 0) {
             console.warn('[RAGUpload] this.orgs boş — fallback API fetch başlatılıyor...');
             try {
-                const token = localStorage.getItem('access_token');
-                const response = await fetch(`${this.API_BASE}/organizations`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (response.ok) {
-                    const data = await response.json();
-                    this.orgs = (data.organizations || []).filter(o => o.is_active);
-                    console.log('[RAGUpload] Fallback org fetch başarılı:', this.orgs.length, 'org yüklendi');
-                } else {
-                    console.error('[RAGUpload] Fallback org fetch başarısız:', response.status);
-                    this.orgs = [];
-                }
+                // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                const data = await window.vyraFetch(`/organizations`);
+                this.orgs = (data.organizations || []).filter(o => o.is_active);
+                console.log('[RAGUpload] Fallback org fetch başarılı:', this.orgs.length, 'org yüklendi');
             } catch (err) {
                 console.error('[RAGUpload] Fallback org fetch hatası:', err);
                 this.orgs = [];
@@ -21597,20 +21430,11 @@ window.RAGFileOrgEdit = {
         }
 
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${this.API_BASE}/rag/files/${this.fileOrgEditId}/organizations`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            await window.vyraFetch(`/rag/files/${this.fileOrgEditId}/organizations`, {
                 method: 'PATCH',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ org_ids: this.fileOrgEditSelectedIds })
+                body: { org_ids: this.fileOrgEditSelectedIds }
             });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || 'Güncelleme hatası');
-            }
 
             this.showToast('Org grupları güncellendi', 'success');
             this.closeFileOrgModal();
@@ -22043,14 +21867,13 @@ const RAGUpload = {
             }
 
             try {
-                const token = localStorage.getItem('access_token');
-                // v3.4.4: Tüm dosya listesi yerine sadece processing dosyaları sorgula
-                const resp = await fetch(`${self.API_BASE}/rag/files?page=1&per_page=10&status=processing`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (!resp.ok) return;
-
-                const data = await resp.json();
+                // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                let data;
+                try {
+                    data = await window.vyraFetch('/rag/files?page=1&per_page=10&status=processing');
+                } catch (_) {
+                    return;
+                }
                 const files = data.files || [];
 
                 // Yüklenen dosyalar arasında hâlâ processing olan var mı?
@@ -22120,13 +21943,14 @@ const RAGUpload = {
         if (!container) return;
 
         try {
-            const token = localStorage.getItem('access_token');
-            const resp = await fetch(`${this.API_BASE}/rag/enhancement-impact?limit=5`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (!resp.ok) { container.innerHTML = ''; return; }
-
-            const data = await resp.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            let data;
+            try {
+                data = await window.vyraFetch('/rag/enhancement-impact?limit=5');
+            } catch (_) {
+                container.innerHTML = '';
+                return;
+            }
             const summary = data.summary || {};
             const items = data.items || [];
 
@@ -22341,11 +22165,13 @@ const RAGUpload = {
      */
     async loadMaturityThreshold() {
         try {
-            const res = await fetch(`${this.API_BASE}/system/maturity-threshold`, {
-                headers: { 'Authorization': `Bearer ${localStorage.getItem('access_token')}` }
-            });
-            if (!res.ok) return;
-            const data = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            let data;
+            try {
+                data = await window.vyraFetch('/system/maturity-threshold');
+            } catch (_) {
+                return;
+            }
             const threshold = data.threshold ?? 80;
 
             // Slider ve label güncelle
@@ -22367,16 +22193,12 @@ const RAGUpload = {
      */
     async saveMaturityThreshold(value) {
         try {
-            const res = await fetch(`${this.API_BASE}/system/maturity-threshold?threshold=${value}`, {
-                method: 'PUT',
-                headers: { 'Authorization': `Bearer ${localStorage.getItem('access_token')}` }
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            await window.vyraFetch(`/system/maturity-threshold?threshold=${value}`, {
+                method: 'PUT'
             });
-            if (res.ok) {
-                window._maturityEnhanceThreshold = value;
-                this.showToast(`İyileştirme eşik değeri ${value} olarak güncellendi.`, 'success');
-            } else {
-                this.showToast('Eşik değeri kaydedilemedi.', 'error');
-            }
+            window._maturityEnhanceThreshold = value;
+            this.showToast(`İyileştirme eşik değeri ${value} olarak güncellendi.`, 'success');
         } catch (err) {
             console.error('[RAGUpload] Threshold kayıt hatası:', err);
             this.showToast('Eşik değeri kaydedilemedi.', 'error');
@@ -22389,14 +22211,11 @@ const RAGUpload = {
         if (!select) return;
 
         try {
-            const token = localStorage.getItem('access_token') || '';
-            const headers = { 'Authorization': 'Bearer ' + token };
-
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
             // Kullanıcı bilgisini al (is_admin, company_id)
             let userProfile = null;
             try {
-                const meRes = await fetch(this.API_BASE + '/users/me', { headers });
-                if (meRes.ok) userProfile = await meRes.json();
+                userProfile = await window.vyraFetch('/users/me');
             } catch (e) {
                 console.warn('[RAGUpload] Kullanıcı profili alınamadı:', e);
             }
@@ -22405,9 +22224,12 @@ const RAGUpload = {
             const userCompanyId = userProfile ? userProfile.company_id : null;
 
             // Firma listesini yükle
-            const res = await fetch(this.API_BASE + '/companies', { headers });
-            if (!res.ok) return;
-            const companies = await res.json();
+            let companies;
+            try {
+                companies = await window.vyraFetch('/companies');
+            } catch (_) {
+                return;
+            }
 
             if (isAdmin) {
                 // Admin: Firma seçimi zorunlu, tüm firmalar listelenir
@@ -22521,18 +22343,14 @@ const RAGUpload = {
                 return;
             }
 
-            const token = localStorage.getItem('access_token') || '';
-            const res = await fetch(
-                this.API_BASE.replace('/api', '') + '/api/data-sources?company_id=' + companyId,
-                { headers: { 'Authorization': 'Bearer ' + token } }
-            );
-
-            if (!res.ok) {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            let sources;
+            try {
+                sources = await window.vyraFetch('/data-sources?company_id=' + companyId);
+            } catch (_) {
                 select.innerHTML = '<option value="manual_file">📄 Manuel Dosya Ekleme</option>';
                 return;
             }
-
-            const sources = await res.json();
             select.innerHTML = '<option value="manual_file">📄 Manuel Dosya Ekleme</option>';
 
             const TYPE_EMOJI = { 'database': '🗄', 'file_server': '🖥', 'ftp': '🔀', 'sharepoint': '🟦', 'manual_file': '📄' };
@@ -22577,14 +22395,9 @@ const RAGUpload = {
             const [sourceType, sourceId] = val.split(':');
             
             try {
-                const token = localStorage.getItem('access_token') || '';
-                const res = await fetch(
-                    this.API_BASE.replace('/api', '') + '/api/data-sources/' + sourceId + '/enrichment-approved',
-                    { headers: { 'Authorization': 'Bearer ' + token } }
-                );
-                
-                const data = await res.json();
-                
+                // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                const data = await window.vyraFetch('/data-sources/' + sourceId + '/enrichment-approved');
+
                 if (wrap) {
                     if (data.success && data.approved && data.approved.length > 0) {
                         RAGUpload._approvedTablesFull = data.approved;
@@ -22711,33 +22524,21 @@ window.RAGUpload = RAGUpload;
         }
 
         try {
-            const url = new URL(`${API_BASE}/users/list`);
-            if (pendingOnly) url.searchParams.set("pending_only", "true");
-            if (usersSearchTerm) url.searchParams.set("search", usersSearchTerm);
-            url.searchParams.set("page", usersCurrentPage);
-            url.searchParams.set("per_page", usersPerPage);
-
-            // Firma bazlı filtreleme
+            // v3.34.0: vyraFetch — query params'i path'e ekliyoruz; helper
+            // Authorization + JSON parse + friendly error contract'ı sağlar.
+            const params = new URLSearchParams();
+            if (pendingOnly) params.set("pending_only", "true");
+            if (usersSearchTerm) params.set("search", usersSearchTerm);
+            params.set("page", usersCurrentPage);
+            params.set("per_page", usersPerPage);
             const compSel = document.getElementById('authCompanySelect');
             if (compSel && compSel.value) {
-                url.searchParams.set("company_id", compSel.value);
+                params.set("company_id", compSel.value);
             }
+            const path = `/users/list?${params.toString()}`;
+            console.log("[Authorization] Kullanıcılar yükleniyor...", path);
 
-            console.log("[Authorization] Kullanıcılar yükleniyor...", url.toString());
-
-            const response = await fetch(url, {
-                headers: { "Authorization": `Bearer ${token}` }
-            });
-
-            console.log("[Authorization] Response status:", response.status);
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                console.error("[Authorization] Error response:", errorText);
-                throw new Error("Kullanıcılar yüklenemedi");
-            }
-
-            const data = await response.json();
+            const data = await window.vyraFetch(path);
             console.log("[Authorization] Loaded users:", data);
 
             usersTotalCount = data.total || 0;
@@ -22814,16 +22615,10 @@ window.RAGUpload = RAGUpload;
     }
 
     async function loadOrgs() {
-        const token = localStorage.getItem("access_token");
-        if (!token) return;
-
         try {
-            const response = await fetch(`${API_BASE}/organizations`, {
-                headers: { "Authorization": `Bearer ${token}` }
-            });
-            if (!response.ok) throw new Error("Org yüklenemedi");
-            const data = await response.json();
-            orgs = data.organizations || [];
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch('/organizations');
+            orgs = (data && data.organizations) || [];
             console.log("[Authorization] Loaded orgs:", orgs);
         } catch (error) {
             console.error("[Authorization] Org load error:", error);
@@ -22837,12 +22632,9 @@ window.RAGUpload = RAGUpload;
         if (!select) return;
 
         try {
-            const token = localStorage.getItem('access_token') || '';
-            const res = await fetch(`${API_BASE}/companies`, {
-                headers: { 'Authorization': 'Bearer ' + token }
-            });
-            if (!res.ok) return;
-            const companies = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const companies = await window.vyraFetch('/companies');
+            if (!Array.isArray(companies)) return;
 
             select.innerHTML = '<option value="">Tüm Firmalar</option>';
             companies.forEach(c => {
@@ -22872,19 +22664,10 @@ window.RAGUpload = RAGUpload;
     }
 
     async function loadRoles() {
-        const token = localStorage.getItem("access_token");
-        if (!token) return;
-
         try {
-            const response = await fetch(`${API_BASE}/users/roles`, {
-                headers: { "Authorization": `Bearer ${token}` }
-            });
-
-            if (!response.ok) throw new Error("Roller yüklenemedi");
-
-            const data = await response.json();
-            roles = data.roles;
-
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch('/users/roles');
+            roles = (data && data.roles) || [];
         } catch (error) {
             console.error("[Authorization] Roles error:", error);
         }
@@ -23248,22 +23031,11 @@ window.RAGUpload = RAGUpload;
 
         // Backend API çağrısı - veritabanına kaydet
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${API_BASE}/users/${orgModalUserId}/organizations`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const result = await window.vyraFetch(`/users/${orgModalUserId}/organizations`, {
                 method: 'PATCH',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ org_ids: orgModalSelectedIds })
+                body: { org_ids: orgModalSelectedIds }
             });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || 'Güncelleme hatası');
-            }
-
-            const result = await response.json();
             console.log('[confirmOrgSelection] API result:', result);
 
             // Row'daki badge'ları güncelle
@@ -23314,7 +23086,6 @@ window.RAGUpload = RAGUpload;
     }
 
     async function handleApprove(userId) {
-        const token = localStorage.getItem("access_token");
         const row = document.querySelector(`tr[data-user-id="${userId}"]`);
         const roleSelect = row?.querySelector(".role-select");
         const roleId = parseInt(roleSelect?.value || 2);
@@ -23333,21 +23104,16 @@ window.RAGUpload = RAGUpload;
         }
 
         try {
-            const response = await fetch(`${API_BASE}/users/approve`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            await window.vyraFetch('/users/approve', {
                 method: "POST",
-                headers: {
-                    "Authorization": `Bearer ${token}`,
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
+                body: {
                     user_id: parseInt(userId),
                     role_id: roleId,
                     is_admin: isAdmin,
                     org_ids: orgIds
-                })
+                }
             });
-
-            if (!response.ok) throw new Error("Onaylama başarısız");
 
             showToast("Kullanıcı onaylandı", "success");
             loadUsers(document.getElementById("filterPendingOnly")?.checked);
@@ -23365,19 +23131,12 @@ window.RAGUpload = RAGUpload;
             confirmText: 'Reddet',
             cancelText: 'İptal',
             onConfirm: async () => {
-                const token = localStorage.getItem("access_token");
-
                 try {
-                    const response = await fetch(`${API_BASE}/users/reject`, {
+                    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                    await window.vyraFetch('/users/reject', {
                         method: "POST",
-                        headers: {
-                            "Authorization": `Bearer ${token}`,
-                            "Content-Type": "application/json"
-                        },
-                        body: JSON.stringify({ user_id: parseInt(userId) })
+                        body: { user_id: parseInt(userId) }
                     });
-
-                    if (!response.ok) throw new Error("Reddetme başarısız");
 
                     showToast("Kullanıcı reddedildi", "success");
                     loadUsers(document.getElementById("filterPendingOnly")?.checked);
@@ -23449,20 +23208,10 @@ window.RAGUpload = RAGUpload;
             confirmClass: isCurrentlyActive ? "danger" : "success",
             onConfirm: async () => {
                 try {
-                    const response = await fetch(`${API_BASE}/users/${userId}/toggle-active`, {
-                        method: "PUT",
-                        headers: {
-                            "Authorization": `Bearer ${token}`,
-                            "Content-Type": "application/json"
-                        }
+                    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                    const data = await window.vyraFetch(`/users/${userId}/toggle-active`, {
+                        method: "PUT"
                     });
-
-                    if (!response.ok) {
-                        const err = await response.json();
-                        throw new Error(err.detail || "İşlem başarısız");
-                    }
-
-                    const data = await response.json();
                     showToast(data.message, "success");
                     loadUsers(document.getElementById("filterPendingOnly")?.checked);
 
@@ -23480,13 +23229,8 @@ window.RAGUpload = RAGUpload;
         if (!token) return;
 
         try {
-            const response = await fetch(`${API_BASE}/users/me`, {
-                headers: { "Authorization": `Bearer ${token}` }
-            });
-
-            if (!response.ok) throw new Error("Profil yüklenemedi");
-
-            const profile = await response.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const profile = await window.vyraFetch('/users/me');
             renderProfile(profile);
 
         } catch (error) {
@@ -23557,24 +23301,16 @@ window.RAGUpload = RAGUpload;
     }
 
     async function uploadAvatar(file) {
-        const token = localStorage.getItem("access_token");
-
         const reader = new FileReader();
         reader.onload = async (e) => {
             const base64 = e.target.result;
 
             try {
-                const response = await fetch(`${API_BASE}/users/me/avatar`, {
+                // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                await window.vyraFetch('/users/me/avatar', {
                     method: "PUT",
-                    headers: {
-                        "Authorization": `Bearer ${token}`,
-                        "Content-Type": "application/json"
-                    },
-                    body: JSON.stringify({ avatar: base64 })
+                    body: { avatar: base64 }
                 });
-
-                if (!response.ok) throw new Error("Avatar yüklenemedi");
-
                 showToast("Avatar güncellendi", "success");
                 loadProfile();
 
@@ -23587,8 +23323,6 @@ window.RAGUpload = RAGUpload;
     }
 
     async function saveProfile() {
-        const token = localStorage.getItem("access_token");
-
         const payload = {
             full_name: document.getElementById("profileEditFullName").value.trim(),
             email: document.getElementById("profileEditEmail").value.trim(),
@@ -23601,20 +23335,11 @@ window.RAGUpload = RAGUpload;
         }
 
         try {
-            const response = await fetch(`${API_BASE}/users/me`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            await window.vyraFetch('/users/me', {
                 method: "PUT",
-                headers: {
-                    "Authorization": `Bearer ${token}`,
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify(payload)
+                body: payload
             });
-
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.detail || "Güncelleme başarısız");
-            }
-
             showToast("Profil güncellendi", "success");
             loadProfile();
 
@@ -23625,8 +23350,6 @@ window.RAGUpload = RAGUpload;
     }
 
     async function changePassword() {
-        const token = localStorage.getItem("access_token");
-
         const currentPassword = document.getElementById("currentPassword").value;
         const newPassword = document.getElementById("newPassword").value;
         const newPasswordConfirm = document.getElementById("newPasswordConfirm").value;
@@ -23647,23 +23370,14 @@ window.RAGUpload = RAGUpload;
         }
 
         try {
-            const response = await fetch(`${API_BASE}/users/me/change-password`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            await window.vyraFetch('/users/me/change-password', {
                 method: "POST",
-                headers: {
-                    "Authorization": `Bearer ${token}`,
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
+                body: {
                     current_password: currentPassword,
                     new_password: newPassword
-                })
+                }
             });
-
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.detail || "Şifre değiştirme başarısız");
-            }
-
             showToast("Şifre değiştirildi", "success");
 
             // Clear fields
@@ -23831,14 +23545,9 @@ window.RAGUpload = RAGUpload;
                 params.append('company_id', compSel.value);
             }
 
-            const response = await fetch(`${API_BASE}/organizations?${params}`, {
-                headers: { "Authorization": `Bearer ${token}` }
-            });
-
-            if (!response.ok) throw new Error("Organizasyonlar yüklenemedi");
-
-            const data = await response.json();
-            orgs = data.organizations || [];
+            // v3.34.0: vyraFetch — Auth + JSON parse + friendly error helper'da.
+            const data = await window.vyraFetch(`/organizations?${params}`);
+            orgs = (data && data.organizations) || [];
 
             renderOrganizations();
             renderPagination(data.total, data.page, data.per_page);
@@ -23930,13 +23639,9 @@ window.RAGUpload = RAGUpload;
     }
 
     async function openEditModal(orgId) {
-        const token = localStorage.getItem("access_token");
         try {
-            const response = await fetch(`${API_BASE}/organizations/${orgId}`, {
-                headers: { "Authorization": `Bearer ${token}` }
-            });
-            if (!response.ok) throw new Error("Org yüklenemedi");
-            const org = await response.json();
+            // v3.34.0: vyraFetch — Auth/JSON parse/friendly error helper'da.
+            const org = await window.vyraFetch(`/organizations/${orgId}`);
             editingOrgId = orgId;
             showOrgModal("Organizasyon Düzenle", org);
         } catch (error) {
@@ -24009,7 +23714,6 @@ window.RAGUpload = RAGUpload;
 
     async function saveOrg(event) {
         event.preventDefault();
-        const token = localStorage.getItem("access_token");
 
         const payload = {
             org_name: document.getElementById("modalOrgName").value.trim(),
@@ -24028,22 +23732,11 @@ window.RAGUpload = RAGUpload;
         }
 
         try {
-            const url = editingOrgId ? `${API_BASE}/organizations/${editingOrgId}` : `${API_BASE}/organizations`;
+            // v3.34.0: vyraFetch — body objesi JSON.stringify edilir;
+            // auth + friendly error contract merkezi.
+            const path = editingOrgId ? `/organizations/${editingOrgId}` : '/organizations';
             const method = editingOrgId ? "PUT" : "POST";
-
-            const response = await fetch(url, {
-                method,
-                headers: {
-                    "Authorization": `Bearer ${token}`,
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify(payload)
-            });
-
-            if (!response.ok) {
-                const err = await response.json();
-                throw new Error(err.detail || "Kayıt başarısız");
-            }
+            await window.vyraFetch(path, { method, body: payload });
 
             showToast(editingOrgId ? "Organizasyon güncellendi" : "Organizasyon oluşturuldu", "success");
             closeModal();
@@ -24066,18 +23759,11 @@ window.RAGUpload = RAGUpload;
             confirmText: 'Sil',
             cancelText: 'İptal',
             onConfirm: async () => {
-                const token = localStorage.getItem("access_token");
                 try {
-                    const response = await fetch(`${API_BASE}/organizations/${orgId}`, {
-                        method: "DELETE",
-                        headers: { "Authorization": `Bearer ${token}` }
-                    });
-
-                    if (!response.ok) throw new Error("Silme başarısız");
-
+                    // v3.34.0: vyraFetch — DELETE + Auth merkezi.
+                    await window.vyraFetch(`/organizations/${orgId}`, { method: 'DELETE' });
                     showToast("Organizasyon silindi", "success");
                     loadOrganizations();
-
                 } catch (error) {
                     showToast(error.message, "error");
                 }
@@ -24159,12 +23845,9 @@ window.RAGUpload = RAGUpload;
         if (!select) return;
 
         try {
-            const token = localStorage.getItem('access_token') || '';
-            const res = await fetch(`${API_BASE}/companies`, {
-                headers: { 'Authorization': 'Bearer ' + token }
-            });
-            if (!res.ok) return;
-            const companies = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const companies = await window.vyraFetch('/companies');
+            if (!Array.isArray(companies)) return;
 
             select.innerHTML = '<option value="">Tüm Firmalar</option>';
             companies.forEach(c => {
@@ -24419,8 +24102,8 @@ window.RAGUpload = RAGUpload;
         popupOverlay.classList.add('visible');
 
         try {
-            const resp = await fetch(`${API_BASE}/api/rag/images/${imageId}/ocr`);
-            const data = await resp.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch(`/rag/images/${imageId}/ocr`);
 
             loading.style.display = 'none';
 
@@ -24488,10 +24171,13 @@ window.RAGUpload = RAGUpload;
      */
     async function _prefetchOcrTooltip(wrapper, imageId) {
         try {
-            const resp = await fetch(`${API_BASE}/api/rag/images/${imageId}/ocr`);
-            if (!resp.ok) return;
-
-            const data = await resp.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            let data;
+            try {
+                data = await window.vyraFetch(`/rag/images/${imageId}/ocr`);
+            } catch (_e) {
+                return;
+            }
             if (data.has_text && data.ocr_text) {
                 // Tooltip'i body'ye ekle (overflow:hidden sorununu aş)
                 const tooltip = document.createElement('div');
@@ -24602,7 +24288,7 @@ window.RAGUpload = RAGUpload;
 window.LdapSettingsModule = (function () {
     'use strict';
 
-    const API_BASE = window.API_BASE_URL || 'http://localhost:8002';
+    // v3.34.0: vyraFetch /api + API_BASE_URL prefix'ini kendi ekliyor — burada sadece path tutuyoruz.
     let editingId = null;
     let domainOrgData = []; // domain_org_permissions cache
 
@@ -24617,29 +24303,14 @@ window.LdapSettingsModule = (function () {
     }
 
     // ---------------------------------------------------------
-    //  Helper: Auth header
-    // ---------------------------------------------------------
-    function authHeaders() {
-        const token = localStorage.getItem('access_token');
-        return {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-        };
-    }
-
-    // ---------------------------------------------------------
     //  Load LDAP Settings List
     // ---------------------------------------------------------
     async function load(companyId) {
         try {
-            let url = `${API_BASE}/api/ldap-settings`;
-            if (companyId) url += `?company_id=${companyId}`;
-            const response = await fetch(url, {
-                headers: authHeaders()
-            });
-            if (!response.ok) throw new Error('LDAP ayarları yüklenemedi');
-
-            const data = await response.json();
+            let path = `/ldap-settings`;
+            if (companyId) path += `?company_id=${companyId}`;
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch(path);
             renderTable(data.settings || []);
         } catch (err) {
             console.error('[LDAP] Load error:', err);
@@ -24696,11 +24367,8 @@ window.LdapSettingsModule = (function () {
     // ---------------------------------------------------------
     async function fetchDomainOrgs() {
         try {
-            const resp = await fetch(`${API_BASE}/api/domain-org-permissions`, {
-                headers: authHeaders()
-            });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            domainOrgData = await resp.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            domainOrgData = await window.vyraFetch(`/domain-org-permissions`);
         } catch (err) {
             console.warn('[LDAP] domain-org-permissions yukleme hatasi:', err);
             domainOrgData = [];
@@ -24804,10 +24472,8 @@ window.LdapSettingsModule = (function () {
             await fetchDomainOrgs();
 
             // Listedeki verileri kullan
-            const response = await fetch(`${API_BASE}/api/ldap-settings`, {
-                headers: authHeaders()
-            });
-            const data = await response.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch(`/ldap-settings`);
             const setting = (data.settings || []).find(s => s.id === id);
 
             if (!setting) {
@@ -24915,21 +24581,12 @@ window.LdapSettingsModule = (function () {
 
         try {
             const method = editingId ? 'PUT' : 'POST';
-            const endpoint = editingId
-                ? `${API_BASE}/api/ldap-settings/${editingId}`
-                : `${API_BASE}/api/ldap-settings`;
+            const path = editingId
+                ? `/ldap-settings/${editingId}`
+                : `/ldap-settings`;
 
-            const response = await fetch(endpoint, {
-                method,
-                headers: authHeaders(),
-                body: JSON.stringify(body)
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                throw new Error(data.detail || 'İşlem başarısız');
-            }
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch(path, { method, body });
 
             if (window.showToast) window.showToast(data.message || 'Başarılı', 'success');
             closeModal();
@@ -24951,14 +24608,8 @@ window.LdapSettingsModule = (function () {
             cancelText: 'İptal',
             onConfirm: async () => {
                 try {
-                    const response = await fetch(`${API_BASE}/api/ldap-settings/${id}`, {
-                        method: 'DELETE',
-                        headers: authHeaders()
-                    });
-
-                    const data = await response.json();
-                    if (!response.ok) throw new Error(data.detail || 'Silme başarısız');
-
+                    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                    const data = await window.vyraFetch(`/ldap-settings/${id}`, { method: 'DELETE' });
                     if (window.showToast) window.showToast(data.message || 'Silindi', 'success');
                     load();
                 } catch (err) {
@@ -24976,12 +24627,8 @@ window.LdapSettingsModule = (function () {
         if (window.showToast) window.showToast('Bağlantı testi yapılıyor...', 'info');
 
         try {
-            const response = await fetch(`${API_BASE}/api/ldap-settings/${id}/test`, {
-                method: 'POST',
-                headers: authHeaders()
-            });
-
-            const data = await response.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch(`/ldap-settings/${id}/test`, { method: 'POST' });
 
             if (data.success) {
                 let stepsHtml = (data.steps || []).map(s =>
@@ -25075,8 +24722,8 @@ window.LdapSettingsModule = (function () {
 window.OrgPermissionsModule = (function () {
     'use strict';
 
-    const API_BASE = window.API_BASE_URL || 'http://localhost:8002';
-    const ENDPOINT = `${API_BASE}/api/domain-org-permissions`;
+    // v3.34.0: vyraFetch /api + API_BASE_URL prefix'ini kendi ekliyor — burada sadece path tutuyoruz.
+    const ENDPOINT = `/domain-org-permissions`;
 
     // Düzenleme modu state
     let editingId = null;
@@ -25094,16 +24741,10 @@ window.OrgPermissionsModule = (function () {
     async function load(companyId) {
         _currentCompanyId = companyId || null;
         try {
-            const token = localStorage.getItem('access_token');
-            let url = ENDPOINT;
-            if (companyId) url += `?company_id=${companyId}`;
-            const resp = await fetch(url, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-
-            const data = await resp.json();
+            let path = ENDPOINT;
+            if (companyId) path += `?company_id=${companyId}`;
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch(path);
             renderTable(data);
         } catch (err) {
             console.error('[OrgPermissions] Load error:', err);
@@ -25305,9 +24946,8 @@ window.OrgPermissionsModule = (function () {
         if (addBtn) { addBtn.disabled = true; }
 
         try {
-            const token = localStorage.getItem('access_token');
             const isUpdate = editingId !== null;
-            const url = isUpdate ? `${ENDPOINT}/${editingId}` : ENDPOINT;
+            const path = isUpdate ? `${ENDPOINT}/${editingId}` : ENDPOINT;
             const method = isUpdate ? 'PUT' : 'POST';
 
             const payload = { domain, org_code: orgCode, description };
@@ -25315,19 +24955,8 @@ window.OrgPermissionsModule = (function () {
                 payload.company_id = _currentCompanyId;
             }
 
-            const resp = await fetch(url, {
-                method,
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`,
-                },
-                body: JSON.stringify(payload),
-            });
-
-            if (!resp.ok) {
-                const err = await resp.json().catch(() => ({}));
-                throw new Error(err.detail || `HTTP ${resp.status}`);
-            }
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            await window.vyraFetch(path, { method, body: payload });
 
             cancelEdit(); // Formu temizle ve normal moda dön
             showToast(
@@ -25354,15 +24983,8 @@ window.OrgPermissionsModule = (function () {
             cancelText: 'İptal',
             onConfirm: async () => {
                 try {
-                    const token = localStorage.getItem('access_token');
-                    const resp = await fetch(`${ENDPOINT}/${id}`, {
-                        method: 'DELETE',
-                        headers: { 'Authorization': `Bearer ${token}` },
-                    });
-
-                    if (!resp.ok && resp.status !== 204) {
-                        throw new Error(`HTTP ${resp.status}`);
-                    }
+                    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                    await window.vyraFetch(`${ENDPOINT}/${id}`, { method: 'DELETE' });
 
                     // Eğer silinen satır düzenleniyorsa iptal et
                     if (editingId === String(id)) cancelEdit();
@@ -25438,21 +25060,11 @@ window.OrgPermissionsModule = (function () {
 (function () {
     "use strict";
 
-    const API_BASE = (window.API_BASE_URL || "http://localhost:8002") + "/api";
-
-    function getToken() {
-        return localStorage.getItem("access_token") || "";
-    }
-
+    // v3.34.0: vyraFetch delegate — eski apiRequest Response döndürüyordu,
+    // şimdi parsed JSON döndürür ve non-2xx'te throw eder. Tüm callsiteler
+    // adapte edildi (try/catch dış blokta zaten vardı).
     function apiRequest(method, path, body) {
-        return fetch(`${API_BASE}${path}`, {
-            method,
-            headers: {
-                "Authorization": `Bearer ${getToken()}`,
-                "Content-Type": "application/json",
-            },
-            body: body ? JSON.stringify(body) : undefined,
-        });
+        return window.vyraFetch(path, { method, body: body || null });
     }
 
     // ------------------------------------------------------------------
@@ -25467,11 +25079,8 @@ window.OrgPermissionsModule = (function () {
     // ------------------------------------------------------------------
     async function loadOrgs() {
         try {
-            const resp = await apiRequest("GET", "/organizations");
-            if (resp.ok) {
-                const data = await resp.json();
-                orgs = data.organizations || data.items || (Array.isArray(data) ? data : []);
-            }
+            const data = await apiRequest("GET", "/organizations");
+            orgs = data.organizations || data.items || (Array.isArray(data) ? data : []);
         } catch (e) {
             console.error("[Widget] Orgs yüklenemedi:", e);
         }
@@ -25496,8 +25105,7 @@ window.OrgPermissionsModule = (function () {
     // ------------------------------------------------------------------
     async function loadOptions() {
         try {
-            const resp = await apiRequest("GET", "/widget/options");
-            if (resp.ok) widgetOptions = await resp.json();
+            widgetOptions = await apiRequest("GET", "/widget/options");
         } catch {}
     }
 
@@ -25542,9 +25150,7 @@ window.OrgPermissionsModule = (function () {
         try {
             let keysUrl = "/widget/keys";
             if (companyId) keysUrl += `?company_id=${companyId}`;
-            const resp = await apiRequest("GET", keysUrl);
-            if (!resp.ok) throw new Error("Yüklenemedi");
-            keys = await resp.json();
+            keys = await apiRequest("GET", keysUrl);
         } catch (e) {
             tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--red);padding:24px">
                 Anahtarlar yüklenemedi: ${e.message}
@@ -25681,18 +25287,11 @@ window.OrgPermissionsModule = (function () {
         if (saveBtn) { saveBtn.disabled = true; saveBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Oluşturuluyor...'; }
 
         try {
-            const resp = await apiRequest("POST", "/widget/keys", {
+            const data = await apiRequest("POST", "/widget/keys", {
                 name, org_id: orgId, allowed_domains: allowedDomains, is_active: isActive,
                 prompt_id: promptId, llm_config_id: llmConfigId, use_rag: useRag,
                 company_id: companyIdVal ? parseInt(companyIdVal) : null,
             });
-
-            if (!resp.ok) {
-                const err = await resp.json().catch(() => ({}));
-                throw new Error(err.detail || "Oluşturulamadı");
-            }
-
-            const data = await resp.json();
             closeNewKeyModal();
             showCreatedModal(data);
             await loadKeys();
@@ -25751,10 +25350,9 @@ window.OrgPermissionsModule = (function () {
     // ------------------------------------------------------------------
     async function toggleKey(keyId, currentlyActive) {
         try {
-            const resp = await apiRequest("PUT", `/widget/keys/${keyId}`, {
+            await apiRequest("PUT", `/widget/keys/${keyId}`, {
                 is_active: !currentlyActive,
             });
-            if (!resp.ok) throw new Error("Güncellenemedi");
             showToast(`Anahtar ${!currentlyActive ? "aktifleştirildi" : "pasifleştirildi"}`, "success");
             await loadKeys();
         } catch (e) {
@@ -25774,8 +25372,7 @@ window.OrgPermissionsModule = (function () {
             cancelText: 'İptal',
             onConfirm: async () => {
                 try {
-                    const resp = await apiRequest("DELETE", `/widget/keys/${keyId}`);
-                    if (!resp.ok) throw new Error("Silinemedi");
+                    await apiRequest("DELETE", `/widget/keys/${keyId}`);
                     showToast("Anahtar silindi", "success");
                     await loadKeys();
                 } catch (e) {
@@ -25923,11 +25520,8 @@ window.CompanyModule = (function () {
 
     async function fetchCompanies() {
         try {
-            const res = await fetch(API_BASE + '/api/companies/', {
-                headers: authHeaders()
-            });
-            if (!res.ok) throw new Error('Firma listesi alınamadı');
-            companies = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            companies = await window.vyraFetch('/companies/');
             return companies;
         } catch (err) {
             console.error('[CompanyModule] fetch error:', err);
@@ -25936,40 +25530,22 @@ window.CompanyModule = (function () {
     }
 
     async function saveCompany(data) {
-        const url = editingId
-            ? API_BASE + '/api/companies/' + editingId
-            : API_BASE + '/api/companies/';
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+        const path = editingId ? '/companies/' + editingId : '/companies/';
         const method = editingId ? 'PUT' : 'POST';
-
-        const res = await fetch(url, {
-            method: method,
-            headers: authHeaders(),
-            body: JSON.stringify(data)
-        });
-
-        if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.detail || 'Kaydetme hatası');
-        }
-        return await res.json();
+        return await window.vyraFetch(path, { method, body: data });
     }
 
     async function deleteCompany(id) {
-        const res = await fetch(API_BASE + '/api/companies/' + id, {
-            method: 'DELETE',
-            headers: authHeaders()
-        });
-        if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.detail || 'Silme hatası');
-        }
-        return await res.json();
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+        return await window.vyraFetch('/companies/' + id, { method: 'DELETE' });
     }
 
     async function uploadLogo(companyId, file) {
         const formData = new FormData();
         formData.append('file', file);
 
+        // raw fetch: multipart/FormData — vyraFetch not applicable.
         const res = await fetch(API_BASE + '/api/companies/' + companyId + '/logo', {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + getToken() },
@@ -25989,11 +25565,8 @@ window.CompanyModule = (function () {
 
     async function fetchThemesFull() {
         try {
-            const res = await fetch(API_BASE + '/api/themes/full', {
-                headers: authHeaders()
-            });
-            if (!res.ok) return [];
-            themesList = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            themesList = await window.vyraFetch('/themes/full');
             return themesList;
         } catch (err) {
             console.warn('[CompanyModule] Tema listesi alınamadı:', err);
@@ -26004,11 +25577,8 @@ window.CompanyModule = (function () {
     async function fetchAssignedThemes(companyId) {
         if (!companyId) return [];
         try {
-            const res = await fetch(API_BASE + '/api/themes/company/' + companyId, {
-                headers: authHeaders()
-            });
-            if (!res.ok) return [];
-            return await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            return await window.vyraFetch('/themes/company/' + companyId);
         } catch (err) {
             console.warn('[CompanyModule] Atanmış temalar alınamadı:', err);
             return [];
@@ -26168,13 +25738,11 @@ window.CompanyModule = (function () {
             suggestBtn.onclick = async function() {
                 var color = c1Input ? c1Input.value : '#06B6D4';
                 try {
-                    var res = await fetch(API_BASE + '/api/themes/suggest', {
+                    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                    var data = await window.vyraFetch('/themes/suggest', {
                         method: 'POST',
-                        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ color: color })
+                        body: { color: color }
                     });
-                    if (!res.ok) throw new Error('Öneri alınamadı');
-                    var data = await res.json();
                     renderSuggestions(data.suggestions || []);
                 } catch (err) {
                     console.error('[CompanyModule] Öneri hatası:', err);
@@ -26194,15 +25762,11 @@ window.CompanyModule = (function () {
                     return;
                 }
                 try {
-                    var res = await fetch(API_BASE + '/api/themes/', {
+                    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                    await window.vyraFetch('/themes/', {
                         method: 'POST',
-                        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ name: name, color1: color1, color2: color2, company_id: editingId })
+                        body: { name: name, color1: color1, color2: color2, company_id: editingId }
                     });
-                    if (!res.ok) {
-                        var err = await res.json().catch(function() { return {}; });
-                        throw new Error(err.detail || 'Tema oluşturulamadı');
-                    }
                     if (window.VyraToast) VyraToast.success('Tema oluşturuldu: ' + name);
                     // Listeyi yenile
                     themesList = [];
@@ -26265,9 +25829,9 @@ window.CompanyModule = (function () {
 
         select.innerHTML = '<option value="">Yükleniyor...</option>';
         try {
-            const res = await fetch(API_BASE + '/api/address/provinces');
-            if (!res.ok) throw new Error('İl listesi alınamadı');
-            const data = (await res.json())
+            // v3.34.0: vyraFetch — public endpoint (auth:false).
+            const raw = await window.vyraFetch('/address/provinces', { auth: false });
+            const data = raw
                 .map(p => ({ value: p.name, label: p.name, id: p.id }))
                 .sort((a, b) => a.label.localeCompare(b.label, 'tr'));
             addressCache.provinces = data;
@@ -26310,9 +25874,9 @@ window.CompanyModule = (function () {
         select.disabled = true;
 
         try {
-            const res = await fetch(API_BASE + '/api/address/districts/' + province.id);
-            if (!res.ok) throw new Error('İlçe listesi alınamadı');
-            const districts = (await res.json())
+            // v3.34.0: vyraFetch — public endpoint (auth:false).
+            const raw = await window.vyraFetch('/address/districts/' + province.id, { auth: false });
+            const districts = raw
                 .map(d => ({ value: d.name, label: d.name, id: d.id }))
                 .sort((a, b) => a.label.localeCompare(b.label, 'tr'));
             addressCache.districts[province.id] = districts;
@@ -26353,9 +25917,9 @@ window.CompanyModule = (function () {
         select.disabled = true;
 
         try {
-            const res = await fetch(API_BASE + '/api/address/neighborhoods/' + district.id);
-            if (!res.ok) throw new Error('Mahalle listesi alınamadı');
-            const neighborhoods = (await res.json())
+            // v3.34.0: vyraFetch — public endpoint (auth:false).
+            const raw = await window.vyraFetch('/address/neighborhoods/' + district.id, { auth: false });
+            const neighborhoods = raw
                 .map(n => ({ value: n.name, label: n.name }))
                 .sort((a, b) => a.label.localeCompare(b.label, 'tr'));
             addressCache.neighborhoods[cacheKey] = neighborhoods;
@@ -26607,18 +26171,15 @@ window.CompanyModule = (function () {
                 var themeIds = Array.from(assignedThemeIds);
                 var defaultId = selectedDefaultThemeId || (themeIds.length > 0 ? themeIds[0] : null);
                 try {
-                    var assignRes = await fetch(API_BASE + '/api/themes/assign', {
+                    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                    await window.vyraFetch('/themes/assign', {
                         method: 'POST',
-                        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
+                        body: {
                             company_id: savedCompanyId,
                             theme_ids: themeIds,
                             default_theme_id: defaultId
-                        })
+                        }
                     });
-                    if (!assignRes.ok) {
-                        throw new Error('HTTP ' + assignRes.status);
-                    }
 
                     // v2.60.0: Tema değişikliğini anlık yansıt
                     if (window.BrandingEngine && defaultId) {
@@ -26817,6 +26378,8 @@ window.DataSourcesModule = (function () {
     'use strict';
 
     const API_BASE = (window.API_BASE_URL || '') + '/api/data-sources';
+    // v3.34.0: vyraFetch /api prefix'i kendi ekliyor — path bu prefix'ten başlar.
+    const VF_BASE = '/data-sources';
     let sources = [];
 
     // Kaynak Tipi Etiketleri
@@ -26847,16 +26410,10 @@ window.DataSourcesModule = (function () {
 
     async function load(companyId) {
         try {
-            const token = localStorage.getItem('access_token') || '';
-            let url = API_BASE;
-            if (companyId) url += `?company_id=${companyId}`;
-
-            const res = await fetch(url, {
-                headers: { 'Authorization': 'Bearer ' + token }
-            });
-            if (!res.ok) throw new Error('Kaynak listesi alınamadı');
-
-            sources = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            let path = VF_BASE;
+            if (companyId) path += `?company_id=${companyId}`;
+            sources = await window.vyraFetch(path);
             renderGrid();
         } catch (error) {
             console.error('[DataSources] Load error:', error);
@@ -26867,29 +26424,15 @@ window.DataSourcesModule = (function () {
 
     async function save(formData) {
         try {
-            const token = localStorage.getItem('access_token') || '';
             const isEdit = !!formData.id;
-            const url = isEdit ? `${API_BASE}/${formData.id}` : API_BASE;
+            const path = isEdit ? `${VF_BASE}/${formData.id}` : VF_BASE;
             const method = isEdit ? 'PUT' : 'POST';
 
             const body = { ...formData };
             delete body.id; // ID body'de olmamalı
 
-            const res = await fetch(url, {
-                method,
-                headers: {
-                    'Authorization': 'Bearer ' + token,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(body)
-            });
-
-            if (!res.ok) {
-                const err = await res.json();
-                throw new Error(err.detail || 'Kaydetme hatası');
-            }
-
-            const result = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const result = await window.vyraFetch(path, { method, body });
             if (typeof showToast === 'function') {
                 showToast(isEdit ? 'Kaynak güncellendi' : 'Yeni kaynak eklendi', 'success');
             }
@@ -26916,15 +26459,8 @@ window.DataSourcesModule = (function () {
             cancelText: 'İptal',
             onConfirm: async () => {
                 try {
-                    const token = localStorage.getItem('access_token') || '';
-                    const res = await fetch(`${API_BASE}/${id}`, {
-                        method: 'DELETE',
-                        headers: { 'Authorization': 'Bearer ' + token }
-                    });
-                    if (!res.ok) {
-                        const err = await res.json();
-                        throw new Error(err.detail || 'Silme hatası');
-                    }
+                    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                    await window.vyraFetch(`${VF_BASE}/${id}`, { method: 'DELETE' });
                     if (typeof showToast === 'function') {
                         showToast(`"${name}" silindi`, 'success');
                     }
@@ -27620,18 +27156,13 @@ window.DataSourcesModule = (function () {
 
         // Veri yükle (subjects + current permissions paralel)
         try {
-            const token = localStorage.getItem('access_token') || '';
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
             const companyId = _getSelectedCompanyId();
-            const subjectsUrl = `${API_BASE}/permissions/subjects${companyId ? '?company_id=' + companyId : ''}`;
-            const [subjectsRes, permsRes] = await Promise.all([
-                fetch(subjectsUrl, { headers: { 'Authorization': 'Bearer ' + token } }),
-                fetch(`${API_BASE}/${sourceId}/permissions`, { headers: { 'Authorization': 'Bearer ' + token } })
+            const subjectsPath = `${VF_BASE}/permissions/subjects${companyId ? '?company_id=' + companyId : ''}`;
+            const [subjects, perms] = await Promise.all([
+                window.vyraFetch(subjectsPath),
+                window.vyraFetch(`${VF_BASE}/${sourceId}/permissions`)
             ]);
-            if (!subjectsRes.ok) throw new Error('Kullanıcı/org listesi alınamadı');
-            if (!permsRes.ok) throw new Error('Yetki listesi alınamadı');
-
-            const subjects = await subjectsRes.json();
-            const perms = await permsRes.json();
             permState.users = subjects.users || [];
             permState.orgs = subjects.orgs || [];
             permState.viewUserIds = new Set(perms.user_ids || []);
@@ -27753,7 +27284,6 @@ window.DataSourcesModule = (function () {
             saveBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Kaydediliyor...';
         }
         try {
-            const token = localStorage.getItem('access_token') || '';
             // FIX (v3.27.5): NaN/non-integer guard — JSON.stringify NaN'ı null'a çevirir,
             // backend 422 "Input should be a valid integer" verirdi.
             const _toIntArr = (s) => Array.from(s).filter(v => Number.isInteger(v));
@@ -27763,15 +27293,15 @@ window.DataSourcesModule = (function () {
                 can_execute_user_ids: _toIntArr(permState.execUserIds),
                 can_execute_org_ids: _toIntArr(permState.execOrgIds),
             };
-            const res = await fetch(`${API_BASE}/${permState.sourceId}/permissions`, {
-                method: 'PUT',
-                headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
-            });
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                // FastAPI 422 → detail = [{loc,msg,type},...]; tek satıra düzleştir
-                let msg = err.detail || err.message || 'Yetkiler kaydedilemedi';
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            // FastAPI 422 detail array'i için manuel flattening korunur.
+            try {
+                await window.vyraFetch(`${VF_BASE}/${permState.sourceId}/permissions`, {
+                    method: 'PUT',
+                    body
+                });
+            } catch (vfErr) {
+                let msg = (vfErr && vfErr.data && (vfErr.data.detail || vfErr.data.message)) || vfErr.message || 'Yetkiler kaydedilemedi';
                 if (Array.isArray(msg)) {
                     msg = msg.map(d => (d && d.msg) ? `${(d.loc || []).slice(-1)[0] || '?'}: ${d.msg}` : JSON.stringify(d)).join('; ');
                 } else if (typeof msg === 'object') {
@@ -27803,18 +27333,10 @@ window.DataSourcesModule = (function () {
         }
 
         try {
-            const token = localStorage.getItem('access_token') || '';
-            const res = await fetch(`${API_BASE}/${id}/test-connection`, {
-                method: 'POST',
-                headers: { 'Authorization': 'Bearer ' + token }
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const result = await window.vyraFetch(`${VF_BASE}/${id}/test-connection`, {
+                method: 'POST'
             });
-
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                throw new Error(err.detail || 'Bağlantı testi başarısız');
-            }
-
-            const result = await res.json();
             _showTestResultModal(name, result);
 
         } catch (error) {
@@ -27985,36 +27507,27 @@ window.DSLearningModule = (function () {
     }
 
     // API helper
+    // v3.34.0: vyraFetch delegasyonu. Eski kontrat korunur — non-2xx'te friendly
+    // mesajla {success: false, message} döner, throw etmez. Bu sayede mevcut
+    // caller'lar `data.success` desenini değiştirmeden çalışır.
     async function apiCall(endpoint, method = 'GET', body = null) {
-        const token = localStorage.getItem('access_token');
-        const options = {
-            method,
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-            }
-        };
-        if (body) options.body = JSON.stringify(body);
-
-        const response = await fetch(`${API_BASE}/api/data-sources${endpoint}`, options);
-
-        // Response body'yi text olarak oku, sonra JSON parse dene
-        const text = await response.text();
-        let data;
         try {
-            data = JSON.parse(text);
-        } catch (_parseErr) {
-            // Backend düzgün JSON dönmedi — anlamlı hata objesi üret
-            console.error('[DSLearning] JSON parse hatası:', text.substring(0, 200));
-            return { success: false, message: `Sunucu hatası (HTTP ${response.status})` };
+            return await window.vyraFetch(`/data-sources${endpoint}`, {
+                method,
+                body: body || undefined,
+            });
+        } catch (err) {
+            // Backend JSON `success:false` döndürdüyse onu olduğu gibi geri ver.
+            const payload = err && err.data;
+            if (payload && typeof payload === 'object' && payload.success !== undefined) {
+                return payload;
+            }
+            return {
+                success: false,
+                message: (err && err.message) ||
+                    `Sunucu hatası (HTTP ${err && err.status})`,
+            };
         }
-
-        // HTTP hata durumunda success: false dön
-        if (!response.ok && data.success === undefined) {
-            return { success: false, message: data.detail || data.message || `HTTP ${response.status}` };
-        }
-
-        return data;
     }
 
     // ============================================
@@ -30160,12 +29673,8 @@ window.DSLearningModule = (function () {
                 approvedBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Başlatılıyor...';
 
                 try {
-                    const token = localStorage.getItem('access_token');
-                    const res = await fetch(`/api/data-sources/${sourceId}/run-approved-learning`, {
-                        method: 'POST',
-                        headers: { 'Authorization': `Bearer ${token}` }
-                    });
-                    const data = await res.json();
+                    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                    const data = await window.vyraFetch(`/data-sources/${sourceId}/run-approved-learning`, { method: 'POST' });
                     if (data.success) {
                         if (typeof showToast === 'function') showToast(data.message || 'Onaylıları öğrenme başlatıldı!', 'success');
                         setTimeout(() => loadHistory(sourceId), 2000);
@@ -30224,20 +29733,16 @@ window.DSLearningModule = (function () {
 
         const params = new URLSearchParams({ table, limit: '5' });
         if (schema) params.append('schema', schema);
-        const url = `/api/data-sources/${encodeURIComponent(sourceId)}/samples?${params.toString()}`;
-        const token = localStorage.getItem('access_token');
+        const path = `/data-sources/${encodeURIComponent(sourceId)}/samples?${params.toString()}`;
 
-        fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-            .then(async (res) => {
-                if (res.status === 404) {
-                    const body = await res.json().catch(() => ({}));
-                    throw new Error(body.detail || 'Cache boş — örnek veri toplanmamış.');
-                }
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                return res.json();
-            })
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+        window.vyraFetch(path)
             .then((data) => _renderSampleInSlot(slot, data))
             .catch((err) => {
+                if (err && err.status === 404) {
+                    const detail = (err.data && err.data.detail) || 'Cache boş — örnek veri toplanmamış.';
+                    err = new Error(detail);
+                }
                 slot.innerHTML = `
                     <div class="ds-lr-sample-empty">
                         <i class="fa-solid fa-triangle-exclamation"></i>
@@ -30514,21 +30019,25 @@ const DSEnrichmentModule = (() => {
             return;
         }
         try {
-            const res = await _authFetch(
-                `/api/data-sources/${_currentSourceId}/check-running-job`
-            );
-            // v3.32.0 ARES Y1-recur fix: 403 -> ACL reddi (yanlış kaynak), poll'u durdur.
-            // 404 -> kaynak silinmiş, poll'u durdur.
-            if (res.status === 403 || res.status === 404) {
-                _stopRunningJobPoll();
-                _runningJob = null;
-                return;
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            let data;
+            try {
+                data = await _authFetch(
+                    `/api/data-sources/${_currentSourceId}/check-running-job`
+                );
+            } catch (httpErr) {
+                // v3.32.0 ARES Y1-recur fix: 403 -> ACL reddi (yanlış kaynak), poll'u durdur.
+                // 404 -> kaynak silinmiş, poll'u durdur.
+                if (httpErr && (httpErr.status === 403 || httpErr.status === 404)) {
+                    _stopRunningJobPoll();
+                    _runningJob = null;
+                    return;
+                }
+                // v3.32.0 TYCHE O1 fix: !res.ok (401/500 vb.) data.has_running'i okumadan
+                // hata olarak handle et — eski kod 500'de silently _runningJob=null yapıyor,
+                // spurious refreshData() + stop-poll tetikliyordu.
+                throw httpErr;
             }
-            // v3.32.0 TYCHE O1 fix: !res.ok (401/500 vb.) data.has_running'i okumadan
-            // hata olarak handle et — eski kod 500'de silently _runningJob=null yapıyor,
-            // spurious refreshData() + stop-poll tetikliyordu.
-            if (!res.ok) throw new Error('http_' + res.status);
-            const data = await res.json();
             // Backend hata bildirdiyse (success:false) — _runningJob state'ini DEĞİŞTİRME
             // (gate'i kazara açmamak için). Backoff ile devam.
             if (data && data.success === false) {
@@ -30615,14 +30124,11 @@ const DSEnrichmentModule = (() => {
 
     async function _loadData() {
         try {
-            const [statsRes, allRes] = await Promise.all([
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const [stats, allData] = await Promise.all([
                 _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`),
                 _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-all`)
             ]);
-
-            if (!statsRes.ok || !allRes.ok) throw new Error(`Sunucu hatası (HTTP ${statsRes.ok ? allRes.status : statsRes.status})`);
-            const stats = await statsRes.json();
-            const allData = await allRes.json();
 
             _pendingData = (allData.tables || []).map(x => {
                 return {
@@ -30654,12 +30160,11 @@ const DSEnrichmentModule = (() => {
         if (!_currentSourceId || _isPolling) return;
         _isPolling = true;
         try {
-            const [statsRes, allRes] = await Promise.all([
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const [stats, allData] = await Promise.all([
                 _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`),
                 _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-all`)
             ]);
-            const stats = await statsRes.json();
-            const allData = await allRes.json();
             const newPending = (allData.tables || []).map(x => ({
                 ...x, id: x.object_id, is_approved: !!x.admin_approved
             }));
@@ -31159,7 +30664,8 @@ const DSEnrichmentModule = (() => {
         // donuyor; aynisi bulk endpoint'inde de mevcut. UX: data.message toast'a
         // backend'den geliyor.
         try {
-            const res = await _authFetch(
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await _authFetch(
                 `/api/data-sources/${_currentSourceId}/enrichment-approve/${enrichmentId}`,
                 {
                     method: 'POST',
@@ -31167,7 +30673,6 @@ const DSEnrichmentModule = (() => {
                     body: JSON.stringify({})
                 }
             );
-            const data = await res.json();
 
             if (data.success) {
                 const existing = _pendingData.find(p => p.id === objectId);
@@ -31269,7 +30774,8 @@ const DSEnrichmentModule = (() => {
         const notes = document.getElementById('dsEditNotes')?.value?.trim() || null;
 
         try {
-            const res = await _authFetch(
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await _authFetch(
                 `/api/data-sources/${_currentSourceId}/enrichment-approve/${realEnrichmentId}`,
                 {
                     method: 'POST',
@@ -31280,7 +30786,6 @@ const DSEnrichmentModule = (() => {
                     })
                 }
             );
-            const data = await res.json();
 
             if (data.success) {
                 const existing = _pendingData.find(p => p.id === objectId);
@@ -31324,15 +30829,15 @@ const DSEnrichmentModule = (() => {
                 _showToast('Bu tablo henüz keşfedilmedi', 'warning');
                 return;
             }
-            const res = await _authFetch(`/api/data-sources/enrichment/${enrichmentId}/columns`);
-
-            if (!res.ok) {
-                console.error('[DSEnrich] Sütun API hatası:', res.status, res.statusText);
-                _showToast(`Sütun verisi alınamadı (HTTP ${res.status})`, 'error');
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            let data;
+            try {
+                data = await _authFetch(`/api/data-sources/enrichment/${enrichmentId}/columns`);
+            } catch (httpErr) {
+                console.error('[DSEnrich] Sütun API hatası:', httpErr.status, httpErr.message);
+                _showToast(`Sütun verisi alınamadı (HTTP ${httpErr.status || '?'})`, 'error');
                 return;
             }
-
-            const data = await res.json();
             console.log('[DSEnrich] showColumns enrichmentId=', enrichmentId, 'response=', data);
 
             if (!data.success || !data.columns || data.columns.length === 0) {
@@ -31530,12 +31035,12 @@ const DSEnrichmentModule = (() => {
         }
 
         try {
-            const res = await _authFetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await _authFetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ object_ids: toDiscover })
             });
-            const data = await res.json();
             if (data.success) {
                 _showToast(data.message || `${toDiscover.length} tablo için arkada keşif başlatıldı. Birazdan liste yeşillenecek.`, 'success');
                 // v3.14.0: Seçili satırların İŞLEM kolonunu "Devam Ediyor" olarak güncelle
@@ -31573,12 +31078,12 @@ const DSEnrichmentModule = (() => {
         }
 
         try {
-            const res = await _authFetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await _authFetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ object_ids: unprocessed })
             });
-            const data = await res.json();
             if (data.success) {
                 _showToast(data.message || `${unprocessed.length} tablo için keşif başlatıldı. Liste otomatik güncellenecek.`, 'success');
                 // v3.14.0: Tüm satırların İŞLEM kolonunu "Devam Ediyor" olarak güncelle
@@ -31637,7 +31142,8 @@ const DSEnrichmentModule = (() => {
             // Per-item SAVEPOINT, partial success (stop_on_error=false), 5 worker
             // post-commit paralel schema_record. ~5x daha hizli + transactional.
             const enrichmentIds = approvableIds.map(oid => objectToEnrichMap[oid]);
-            const res = await _authFetch(
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await _authFetch(
                 `/api/data-sources/${_currentSourceId}/enrichment-approve-bulk`,
                 {
                     method: 'POST',
@@ -31649,7 +31155,6 @@ const DSEnrichmentModule = (() => {
                     })
                 }
             );
-            const data = await res.json();
 
             // approved_ids -> objectId map'i tersle
             const approvedEnrichSet = new Set((data.approved_ids || []).map(String));
@@ -31726,7 +31231,8 @@ const DSEnrichmentModule = (() => {
         try {
             // v3.31.0: Tek POST -> backend bulk endpoint (transactional + paralel)
             const enrichmentIds = toApprove.map(x => x.enrichment_id);
-            const res = await _authFetch(
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await _authFetch(
                 `/api/data-sources/${_currentSourceId}/enrichment-approve-bulk`,
                 {
                     method: 'POST',
@@ -31738,7 +31244,6 @@ const DSEnrichmentModule = (() => {
                     })
                 }
             );
-            const data = await res.json();
 
             const approvedSet = new Set((data.approved_ids || []).map(String));
             // Frontend state'i guncelle
@@ -31781,8 +31286,8 @@ const DSEnrichmentModule = (() => {
     // ============================================
 
     function _updateStatsAfterApprove() {
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
         _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`)
-            .then(r => r.json())
             .then(stats => _renderStats(stats))
             .catch(() => {});
 
@@ -31825,17 +31330,22 @@ const DSEnrichmentModule = (() => {
         });
     }
 
-    // v3.31.0 (R001): Auth header injection helper.
-    // Tüm modül-içi fetch çağrıları bunu kullanır — token okuma + Bearer header
-    // tek noktada. Caller method/body/content-type sorumluluğunda; biz sadece
-    // Authorization header'ı enjekte ederiz.
+    // v3.34.0: vyraFetch helper delegasyonu.
+    // Eski _authFetch (R001) bir Response döndürüyordu; vyraFetch parse edilmiş
+    // JSON datayı döndürür ve non-2xx'te Error fırlatır (.status, .data, .message).
+    // path: '/api/...' biçiminde verilebilir — vyraFetch zaten '/api' prefix'i
+    // ekler, bu yüzden '/api/' prefix'ini stripleriz. body opsiyonel objedir.
     async function _authFetch(url, opts = {}) {
-        const token = localStorage.getItem('access_token');
-        const headers = {
-            ...(opts.headers || {}),
-            'Authorization': `Bearer ${token}`
-        };
-        return fetch(url, { ...opts, headers });
+        const path = url.startsWith('/api/') ? url.slice(4) : url;
+        const callOpts = { method: opts.method || 'GET' };
+        if (opts.body) {
+            try {
+                callOpts.body = typeof opts.body === 'string' ? JSON.parse(opts.body) : opts.body;
+            } catch (_e) {
+                callOpts.body = opts.body;
+            }
+        }
+        return window.vyraFetch(path, callOpts);
     }
 
     function _showToast(message, type) {
@@ -31906,11 +31416,8 @@ window.ThemeCatalogModule = (function () {
     /* --- Companies yükle --- */
     async function loadCompanies() {
         try {
-            const res = await fetch(API_BASE + '/api/companies/', {
-                headers: { 'Authorization': 'Bearer ' + getToken() }
-            });
-            if (!res.ok) return;
-            companies = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            companies = await window.vyraFetch('/companies/');
             // İlk firmayı otomatik seç
             if (companies.length > 0 && !selectedCompanyId) {
                 selectedCompanyId = companies[0].id;
@@ -31928,11 +31435,8 @@ window.ThemeCatalogModule = (function () {
             return;
         }
         try {
-            const res = await fetch(API_BASE + '/api/themes/company/' + selectedCompanyId, {
-                headers: { 'Authorization': 'Bearer ' + getToken() }
-            });
-            if (!res.ok) { companyAssignments = []; defaultThemeId = null; return; }
-            companyAssignments = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            companyAssignments = await window.vyraFetch('/themes/company/' + selectedCompanyId);
             var def = companyAssignments.find(function (a) { return a.is_default; });
             defaultThemeId = def ? def.id : null;
         } catch (err) {
@@ -31977,18 +31481,15 @@ window.ThemeCatalogModule = (function () {
         grid.innerHTML = '<div class="tc-loading"><i class="fa-solid fa-spinner fa-spin"></i> Temalar yükleniyor...</div>';
 
         try {
-            var url = API_BASE + '/api/themes/';
+            var path = '/themes/';
             if (selectedCompanyId) {
-                url += '?company_id=' + selectedCompanyId;
+                path += '?company_id=' + selectedCompanyId;
             } else {
-                url += '?include_custom=true';
+                path += '?include_custom=true';
             }
 
-            var res = await fetch(url, {
-                headers: { 'Authorization': 'Bearer ' + getToken() }
-            });
-            if (!res.ok) throw new Error('Tema listesi alınamadı');
-            themes = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            themes = await window.vyraFetch(path);
 
             themes = themes.map(function (t) {
                 if (typeof t.preview_colors === 'string') {
@@ -32114,29 +31615,21 @@ window.ThemeCatalogModule = (function () {
                 assignedIds.push(themeId);
             }
 
-            var res = await fetch(API_BASE + '/api/themes/assign', {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            await window.vyraFetch('/themes/assign', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': 'Bearer ' + getToken()
-                },
-                body: JSON.stringify({
+                body: {
                     company_id: selectedCompanyId,
                     theme_ids: assignedIds,
                     default_theme_id: themeId
-                })
+                }
             });
-
-            if (!res.ok) {
-                var errData = await res.json().catch(function () { return {}; });
-                throw new Error(errData.detail || 'Atama başarısız');
-            }
 
             // Tema detayını (CSS variables dahil) API'den al
-            var themeDetail = await fetch(API_BASE + '/api/themes/' + themeId, {
-                headers: { 'Authorization': 'Bearer ' + getToken() }
-            });
-            var themeData = themeDetail.ok ? await themeDetail.json() : null;
+            var themeData = null;
+            try {
+                themeData = await window.vyraFetch('/themes/' + themeId);
+            } catch (_) { /* detail eksik kalabilir — branding fallback'i devreye girer */ }
 
             // BrandingEngine cache güncelle — tema anında uygulanır
             if (window.BrandingEngine && themeData) {
@@ -32337,11 +31830,8 @@ window.ThemePreviewModal = (function () {
     /* --- Tema CSS variables'ı API'den al --- */
     async function fetchThemeFull(themeId) {
         try {
-            var res = await fetch(API_BASE + '/api/themes/' + themeId, {
-                headers: { 'Authorization': 'Bearer ' + getToken() }
-            });
-            if (!res.ok) return null;
-            return await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            return await window.vyraFetch('/themes/' + themeId);
         } catch (err) {
             console.error('[ThemePreview] Tema detayı alınamadı:', err);
             return null;
@@ -32637,12 +32127,8 @@ window.ThemePickerPopup = (function () {
                 return;
             }
 
-            var res = await fetch(API_BASE + '/api/themes/company/' + companyId, {
-                headers: authHeaders()
-            });
-
-            if (!res.ok) throw new Error('Tema listesi alınamadı');
-            var themes = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            var themes = await window.vyraFetch('/themes/company/' + companyId);
 
             if (!themes.length) {
                 grid.innerHTML = '<div class="tp-empty">Bu firma için tanımlı tema yok</div>';
@@ -32775,8 +32261,9 @@ window.ThemePickerPopup = (function () {
 (function () {
     'use strict';
 
-    const API_BASE = '/api/feature-permissions';
-    const SUBJECTS_API = '/api/data-sources/permissions/subjects';
+    // v3.34.0: vyraFetch /api prefix'i kendi ekliyor — burada sadece path tutuyoruz.
+    const API_BASE = '/feature-permissions';
+    const SUBJECTS_API = '/data-sources/permissions/subjects';
     // v3.30.0: aki_kesif (Akıllı Veri Keşfi / DB Smart Wizard) eklendi
     const FEATURE_KEYS = ['kb', 'db', 'llm', 'aki_kesif'];
     const FEATURE_LABELS = {
@@ -32795,19 +32282,9 @@ window.ThemePickerPopup = (function () {
     let _adminSubjects = null;       // users + orgs
     let _adminState = null;          // editing state per feature
 
-    function _authHeaders() {
-        const token = localStorage.getItem('access_token') || '';
-        return { 'Authorization': 'Bearer ' + token };
-    }
-
-    async function _fetchJson(url, opts = {}) {
-        const headers = Object.assign({}, _authHeaders(), opts.headers || {});
-        const res = await fetch(url, Object.assign({}, opts, { headers }));
-        if (!res.ok) {
-            const text = await res.text().catch(() => '');
-            throw new Error(`${res.status}: ${text || res.statusText}`);
-        }
-        return res.json();
+    // v3.34.0: vyraFetch delegate — Auth + JSON + friendly error helper'da.
+    async function _fetchJson(path, opts = {}) {
+        return window.vyraFetch(path, opts);
     }
 
     // ============================================
@@ -33145,12 +32622,11 @@ window.ThemePickerPopup = (function () {
                 const st = _adminState[fk];
                 await _fetchJson(`${API_BASE}/${fk}`, {
                     method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
+                    body: {
                         user_allow_ids: Array.from(st.user_allow_ids),
                         user_deny_ids:  Array.from(st.user_deny_ids),
                         org_allow_ids:  Array.from(st.org_allow_ids),
-                    }),
+                    },
                 });
             }
             if (typeof window.showToast === 'function') {
@@ -33325,6 +32801,7 @@ window.ThemePickerPopup = (function () {
             history: history || [],
         });
 
+        // raw fetch: SSE streaming (text/event-stream) + AbortController — vyraFetch not applicable.
         const promise = fetch(ENDPOINT, {
             method: 'POST', headers, body, signal: controller.signal,
         }).then(async (res) => {
@@ -33626,6 +33103,7 @@ window.ThemePickerPopup = (function () {
         const seq = ++state.seq;
 
         try {
+            // raw fetch: AbortController/stale-render guard — vyraFetch not applicable.
             const res = await fetch(`${ENDPOINT}?hours=${encodeURIComponent(hours)}`, {
                 headers: _authHeaders(),
                 signal: controller.signal,
@@ -33720,6 +33198,7 @@ window.ThemePickerPopup = (function () {
     }
 
     async function _fetchJson(url, signal) {
+        // raw fetch: AbortController signal (tab-switch cancellation) — vyraFetch not applicable.
         const resp = await fetch(url, { headers: _authHeaders(), signal });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         return resp.json();
@@ -34077,19 +33556,13 @@ window.ThemePickerPopup = (function () {
 
     let _initialized = false;
 
+    // v3.34.0: vyraFetch delegate — Auth + JSON + friendly error helper'da.
     function _api(path, options = {}) {
-        const opts = Object.assign({ credentials: 'include' }, options);
-        opts.headers = Object.assign(
-            { 'Content-Type': 'application/json' },
-            options.headers || {},
-        );
-        return fetch(`/api/admin/signal-weights${path}`, opts).then(async (r) => {
-            if (!r.ok) {
-                const txt = await r.text().catch(() => '');
-                throw new Error(`HTTP ${r.status}: ${txt.slice(0, 200)}`);
-            }
-            return r.json();
-        });
+        const opts = { method: options.method || 'GET' };
+        if (options.body !== undefined && options.body !== null) {
+            opts.body = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
+        }
+        return window.vyraFetch(`/admin/signal-weights${path}`, opts);
     }
 
     function _toast(msg, kind = 'success') {
@@ -34364,22 +33837,11 @@ window.ThemePickerPopup = (function () {
     let _sourcesLoaded = false;
     let _currentSourceId = null;
 
-    function _authHeaders() {
-        const h = { 'Accept': 'application/json' };
-        try {
-            const t = global.localStorage && global.localStorage.getItem('access_token');
-            if (t) h['Authorization'] = `Bearer ${t}`;
-        } catch (_e) { /* sessiz */ }
-        return h;
-    }
-
-    async function _fetchJson(url) {
-        const r = await fetch(url, { headers: _authHeaders(), credentials: 'include' });
-        if (!r.ok) {
-            const txt = await r.text().catch(() => '');
-            throw new Error(`HTTP ${r.status}: ${txt.slice(0, 200)}`);
-        }
-        return r.json();
+    // v3.34.0: vyraFetch delegate — Auth + JSON + friendly error helper'da.
+    async function _fetchJson(path) {
+        // vyraFetch otomatik /api prefix ekler — '/api/...' geçilirse strip et
+        const p = path.startsWith('/api/') ? path.slice(4) : path;
+        return window.vyraFetch(p);
     }
 
     function _escape(s) {
@@ -35213,6 +34675,7 @@ window.ThemePickerPopup = (function () {
     }
 
     // ---- Default fetchJson (Bearer auth — wizard pattern mirrored) ----
+    // raw fetch: AbortController signal (patch/explain debounce cancellation) — vyraFetch not applicable.
     function _defaultFetchJson(url, opts) {
         opts = opts || {};
         var token = (window.localStorage && localStorage.getItem('access_token')) || '';
@@ -35936,12 +35399,14 @@ window.ThemePickerPopup = (function () {
  *
  * Backend: yeni endpoint gerekmez — mevcut iki endpoint reuse:
  *   GET /api/db-smart/sources/{source_id}/tables?q=<q>&limit=200
+ *     (backend cap: le=500, v3.34.0; picker 200 ile çağırır — çoğu kaynak için yeterli)
  *   GET /api/db-smart/sources/{source_id}/tables/{table_id}/related?depth=1
  */
 (function () {
     'use strict';
 
-    const API_BASE = '/api/db-smart';
+    // v3.34.0: vyraFetch /api prefix'i kendi ekliyor — burada sadece path tutuyoruz.
+    const API_BASE = '/db-smart';
 
     // ---- Türkçe normalizasyon (frontend arama için) ----
     const _TR_MAP = { 'İ': 'i', 'I': 'i', 'ı': 'i', 'Ş': 's', 'ş': 's',
@@ -35964,18 +35429,9 @@ window.ThemePickerPopup = (function () {
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    function _authHeaders() {
-        const token = localStorage.getItem('access_token') || '';
-        return { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' };
-    }
-
+    // v3.34.0: vyraFetch delegate — Auth + JSON + friendly error helper'da.
     async function _fetchJson(url) {
-        const res = await fetch(url, { headers: _authHeaders() });
-        if (!res.ok) {
-            const txt = await res.text().catch(() => '');
-            throw new Error(res.status + ': ' + (txt || res.statusText));
-        }
-        return res.json();
+        return window.vyraFetch(url);
     }
 
     // ---- State ----
@@ -36391,7 +35847,8 @@ window.ThemePickerPopup = (function () {
 (function () {
     'use strict';
 
-    const API_BASE = '/api/db-smart';
+    // v3.34.0: vyraFetch /api prefix'i kendi ekliyor — burada sadece path tutuyoruz.
+    const API_BASE = '/db-smart';
     const TOTAL_STEPS = 5;
 
     // v3.30.0 FAZ 5 P34 — i18n helper (VyraI18n yüklü değilse key passthrough)
@@ -36438,23 +35895,17 @@ window.ThemePickerPopup = (function () {
         el.setAttribute('aria-busy', busy ? 'true' : 'false');
     }
 
-    function _authHeaders() {
-        const token = localStorage.getItem('access_token') || '';
-        return {
-            'Authorization': 'Bearer ' + token,
-            'Content-Type': 'application/json',
-        };
-    }
-
+    // v3.34.0: vyraFetch delegate — Auth + JSON + friendly error helper'da.
+    // Eski caller'lar `body: JSON.stringify(...)` geçiyor; vyraFetch'in tekrar
+    // stringify etmemesi için string body'i geri parse ederiz (org_utils paterni).
     async function _fetchJson(url, opts) {
         opts = opts || {};
-        const headers = Object.assign({}, _authHeaders(), opts.headers || {});
-        const res = await fetch(url, Object.assign({}, opts, { headers }));
-        if (!res.ok) {
-            const text = await res.text().catch(() => '');
-            throw new Error(res.status + ': ' + (text || res.statusText));
+        const method = (opts.method || 'GET').toUpperCase();
+        let body = opts.body != null ? opts.body : null;
+        if (typeof body === 'string') {
+            try { body = JSON.parse(body); } catch (_) { /* binary/text → ignore */ }
         }
-        return res.json();
+        return window.vyraFetch(url, { method, body, auth: true });
     }
 
     // ============================================
@@ -37764,36 +37215,24 @@ window.ThemePickerPopup = (function () {
         }
 
         try {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
             // 1) yeni session
-            const sessRes = await fetch(API_BASE + '/sessions', {
-                method: 'POST',
-                headers: _authHeaders(),
-                body: JSON.stringify({}),
-            });
-            if (!sessRes.ok) throw new Error('Session oluşturulamadı (HTTP ' + sessRes.status + ')');
-            const sess = await sessRes.json();
+            const sess = await window.vyraFetch('/sessions', { method: 'POST', body: {} });
             const uid = sess.session_uid || sess.uid || sess.id;
             if (!uid) throw new Error('Session UID alınamadı');
 
             // 2) execute wizard_state
             const wizardState = _report.wizard_state || {};
-            const execRes = await fetch(API_BASE + '/sessions/' + encodeURIComponent(uid) + '/execute', {
-                method: 'POST',
-                headers: _authHeaders(),
-                body: JSON.stringify(wizardState),
-            });
-            if (!execRes.ok) {
-                let detail = 'HTTP ' + execRes.status;
-                try { const j = await execRes.json(); if (j && j.detail) detail = j.detail; } catch (_) { /* noop */ }
-                throw new Error('Çalıştırma başarısız: ' + detail);
-            }
-            const result = await execRes.json();
+            const result = await window.vyraFetch(
+                '/sessions/' + encodeURIComponent(uid) + '/execute',
+                { method: 'POST', body: wizardState }
+            );
 
             // 3) mark-run (best-effort)
-            fetch(API_BASE + '/saved-reports/' + encodeURIComponent(_reportId) + '/mark-run', {
-                method: 'POST',
-                headers: _authHeaders(),
-            }).catch(() => { /* noop */ });
+            window.vyraFetch(
+                '/saved-reports/' + encodeURIComponent(_reportId) + '/mark-run',
+                { method: 'POST' }
+            ).catch(() => { /* noop */ });
 
             // render result
             if (resultMount) _renderRunResult(resultMount, result);
@@ -37869,19 +37308,11 @@ window.ThemePickerPopup = (function () {
     // ─── Duplicate (inline rename mini-modal) ───
     function _onDuplicate() {
         _openRenameMini((newName) => {
-            fetch(API_BASE + '/saved-reports/' + encodeURIComponent(_reportId) + '/duplicate', {
-                method: 'POST',
-                headers: _authHeaders(),
-                body: JSON.stringify({ name: newName }),
-            })
-                .then((res) => {
-                    if (!res.ok) {
-                        return res.json().catch(() => ({})).then((j) => {
-                            throw new Error((j && j.detail) || ('HTTP ' + res.status));
-                        });
-                    }
-                    return res.json();
-                })
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            window.vyraFetch(
+                '/saved-reports/' + encodeURIComponent(_reportId) + '/duplicate',
+                { method: 'POST', body: { name: newName } }
+            )
                 .then((data) => {
                     const newId = (data && (data.report_id || data.id)) || null;
                     _toast('Rapor kopyalandı', 'success');
@@ -37965,19 +37396,11 @@ window.ThemePickerPopup = (function () {
 
     // ─── Share ───
     function _onShare() {
-        fetch(API_BASE + '/saved-reports/' + encodeURIComponent(_reportId) + '/share', {
-            method: 'POST',
-            headers: _authHeaders(),
-            body: JSON.stringify({ ttl_hours: 168 }),
-        })
-            .then((res) => {
-                if (!res.ok) {
-                    return res.json().catch(() => ({})).then((j) => {
-                        throw new Error((j && j.detail) || ('HTTP ' + res.status));
-                    });
-                }
-                return res.json();
-            })
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+        window.vyraFetch(
+            '/saved-reports/' + encodeURIComponent(_reportId) + '/share',
+            { method: 'POST', body: { ttl_hours: 168 } }
+        )
             .then((data) => {
                 const token = data && data.share_token;
                 if (!token) throw new Error('Share token alınamadı');
@@ -38007,16 +37430,12 @@ window.ThemePickerPopup = (function () {
             cancelText: 'İptal',
             danger: true,
             onConfirm: () => {
-                fetch(API_BASE + '/saved-reports/' + encodeURIComponent(_reportId), {
-                    method: 'DELETE',
-                    headers: _authHeaders(),
-                })
-                    .then((res) => {
-                        if (!res.ok) {
-                            return res.json().catch(() => ({})).then((j) => {
-                                throw new Error((j && j.detail) || ('HTTP ' + res.status));
-                            });
-                        }
+                // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                window.vyraFetch(
+                    '/saved-reports/' + encodeURIComponent(_reportId),
+                    { method: 'DELETE' }
+                )
+                    .then(() => {
                         _toast('Rapor silindi', 'success');
                         const deletedId = _reportId;
                         close();
@@ -38092,13 +37511,8 @@ window.ThemePickerPopup = (function () {
 
     // ─── Fetch detail ───
     async function _fetchDetail(id) {
-        const res = await fetch(API_BASE + '/saved-reports/' + encodeURIComponent(id), { headers: _authHeaders() });
-        if (!res.ok) {
-            let detail = 'HTTP ' + res.status;
-            try { const j = await res.json(); if (j && j.detail) detail = j.detail; } catch (_) { /* noop */ }
-            throw new Error(detail);
-        }
-        return await res.json();
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+        return await window.vyraFetch('/saved-reports/' + encodeURIComponent(id));
     }
 
     // ─── Public ───
@@ -38559,17 +37973,8 @@ window.ThemePickerPopup = (function () {
         const params = new URLSearchParams();
         params.set('limit', '24');
         if (q) params.set('q', q);
-        const url = API_BASE + '/saved-reports?' + params.toString();
-        const res = await fetch(url, { headers: _authHeaders() });
-        if (!res.ok) {
-            let detail = 'HTTP ' + res.status;
-            try {
-                const data = await res.json();
-                if (data && data.detail) detail = data.detail;
-            } catch (_) { /* noop */ }
-            throw new Error(detail);
-        }
-        const data = await res.json();
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+        const data = await window.vyraFetch('/saved-reports?' + params.toString());
         return Array.isArray(data && data.items) ? data.items : [];
     }
 
@@ -38640,7 +38045,7 @@ window.ThemePickerPopup = (function () {
    - Hex sabit YOK → tüm renkler design token'lar üzerinden CSS sınıflarıyla
 ------------------------------------------------ */
 
-const LCD_API_BASE = (typeof window !== 'undefined' && window.LCD_API_BASE_URL) || 'http://localhost:8002';
+// v3.34.0: vyraFetch /api + API_BASE_URL prefix'ini kendi ekliyor — base sabiti kaldırıldı.
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -38700,23 +38105,11 @@ function _fmtNum(n) {
 }
 
 async function _fetchStats(sourceId) {
-    const token = (typeof localStorage !== 'undefined')
-        ? localStorage.getItem('access_token') : null;
-    const headers = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-
-    const url = `${LCD_API_BASE}/api/data-sources/${encodeURIComponent(sourceId)}/cache-stats`;
-    const res = await fetch(url, { method: 'GET', headers });
-    const text = await res.text();
-    let data;
-    try {
-        data = JSON.parse(text);
-    } catch (_e) {
-        throw new Error(`HTTP ${res.status} — JSON parse hatası`);
-    }
-    if (!res.ok || data?.success === false) {
-        const msg = data?.detail || data?.message || `HTTP ${res.status}`;
-        throw new Error(msg);
+    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+    const path = `/data-sources/${encodeURIComponent(sourceId)}/cache-stats`;
+    const data = await window.vyraFetch(path);
+    if (data?.success === false) {
+        throw new Error(data?.detail || data?.message || 'Sunucu hata bildirdi');
     }
     return data;
 }
@@ -38985,7 +38378,8 @@ if (typeof window !== "undefined") {
  * yenilenir, event listener çoğalmaz.
  */
 
-const AER_API_BASE = "/api/data-sources/admin/error-rewrites";
+// v3.34.0: vyraFetch /api prefix'i kendi ekliyor — burada sadece path tutuyoruz.
+const AER_API_BASE = "/data-sources/admin/error-rewrites";
 const MOUNT_FLAG = "__vyraErrorReviewMounted";
 
 const STATUS_LABELS = {
@@ -39198,12 +38592,9 @@ async function fetchList(root, statusFilter) {
   showError(root, "");
   setLoading(root, true);
   try {
+    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
     const url = `${AER_API_BASE}?status=${encodeURIComponent(statusFilter)}&limit=50`;
-    const res = await fetch(url, { headers: authHeaders() });
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
-    }
-    const json = await res.json();
+    const json = await window.vyraFetch(url);
     const items = (json && json.items) || [];
     renderList(root, items);
   } catch (err) {
@@ -39217,17 +38608,14 @@ async function fetchList(root, statusFilter) {
 /** POST review (approve/reject). */
 async function postReview(root, rewriteId, decision, note) {
   try {
-    const res = await fetch(
+    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+    await window.vyraFetch(
       `${AER_API_BASE}/${encodeURIComponent(rewriteId)}/review`,
       {
         method: "POST",
-        headers: { ...authHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ decision, note: note || null }),
+        body: { decision, note: note || null },
       },
     );
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
-    }
     toast(
       decision === "approved"
         ? "Rewrite onaylandı."
