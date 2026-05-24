@@ -300,10 +300,15 @@
             statusEl.textContent = data.warnings && data.warnings.length
                 ? `Uyarılar: ${data.warnings.join('; ')}`
                 : 'SQL hazır.';
-            sqlBox.textContent = data.sql || '';
+            // v3.33.0: display_sql tercih (backend `%s` placeholder'ları
+            // _inline_literal whitelist'iyle güvenli inline etti). display_sql
+            // None ise (güvensiz tip) ham sql fallback'i basılır.
+            sqlBox.textContent = data.display_sql || data.sql || '';
             _announce(root, 'SQL üretildi');
 
-            // v3.32.0: SQL'i state'e cache'le ve action butonlarını aktif et
+            // v3.32.0: SQL'i state'e cache'le ve action butonlarını aktif et.
+            // NOT: execute path backend'de inline ediyor, bu yüzden state.lastSql
+            // hâlâ ham `%s`'li sürüm — execute body re-build ediliyor zaten.
             state.lastSql = data.sql || '';
             state.lastParams = data.params || [];
             _enableActionButtons(root, !!state.lastSql);

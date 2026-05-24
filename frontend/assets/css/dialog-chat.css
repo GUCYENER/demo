@@ -3146,6 +3146,13 @@
 }
 .db-followup-anchor-badge i { font-size: 11px; }
 
+/* v3.33.0 — Badge `.db-export-bar` içinde Kopyala butonu SAĞINA itilir.
+   flex-row sonunda yer alır (margin-left:auto). Bar `flex-wrap:wrap`
+   olduğu için dar viewport'ta alt satıra düşer (kayıp olmaz). */
+.db-export-bar .db-followup-anchor-badge {
+    margin: 0 0 0 auto;
+}
+
 /* v3.16.0: Textarea üstünde aktif çıpa rozeti */
 .db-followup-indicator {
     display: flex;

@@ -662,6 +662,14 @@ window.DialogChatModule = (function () {
             let elapsedTickHandle = null;
             let elapsedSeconds = 0;
             let activeJobId = null;
+            // v3.33.0 — Backend olay sırası: done → followup → saved.
+            // 'followup' geldiğinde savedMessageId hâlâ null (saved sonra geliyor),
+            // bu yüzden "Son konu ile ilgili sor" badge data-anchor-id'si boş
+            // kalıyordu ve badge HİÇ render edilmiyordu (ilk sorguda regression).
+            // Çözüm: followup payload'unu buffer'la, saved gelince (veya stream
+            // bitince fallback) güncel savedMessageId ile birlikte render et.
+            let pendingFollowupSuggestions = null;
+            let followupAlreadyRendered = false;
             const _formatElapsed = (sec) => {
                 const s = Math.max(0, parseInt(sec) || 0);
                 if (s < 60) return `${s}s`;
@@ -750,6 +758,13 @@ window.DialogChatModule = (function () {
                                 if (isDbMode && savedMessageId) {
                                     lastDbAssistantMessageId = savedMessageId;
                                 }
+                                // v3.33.0: followup render'ı buradan kaldırıldı.
+                                // Sebep: badge artık `.db-export-bar` içine append
+                                // ediliyor, ama export bar table render'ı POST-LOOP
+                                // yapılıyor → in-loop render yaptığımızda DOM'da
+                                // export bar henüz yok, badge fallback olarak
+                                // dikey yığılıyordu. Render tek noktada: post-loop
+                                // fallback bloğu (export bar artık DOM'da).
                                 break;
 
                             // v4.0: Disambiguation v1 — aynı isimde çoklu tablo (geri uyumlu)
@@ -844,9 +859,28 @@ window.DialogChatModule = (function () {
                                     const origQuery = content; // closure
                                     const tmplHtml = window.DialogChatUtils.renderReportTemplates(
                                         templates, sMsg,
-                                        (hint) => {
-                                            // Kullanıcı şablon seçti — report_template ile yeniden gönder
-                                            _sendDbMessageWithHint(origQuery, null, hint);
+                                        // v3.33.0: callback artık full template objesi alıyor.
+                                        // Kullanıcı seçimi user-side bubble olarak diyaloğa
+                                        // basılır → konuşma akışında "kim ne seçti" izlenebilir
+                                        // olur (önceden seçim sessiz uçuyor, sadece sonuç
+                                        // görünüyordu).
+                                        (picked) => {
+                                            const _title = (picked && picked.title) || '';
+                                            const _desc  = (picked && picked.description) || '';
+                                            const _hintS = (picked && picked.hint) || '';
+                                            // v3.33.0 — Yalnız `hint` kısa/jenerik kalıyordu;
+                                            // LLM şablonlarda asıl semantik (JOIN edilecek
+                                            // tablo adları, segment kırılımları vs.)
+                                            // `description` içinde. Backend SQL generator'a
+                                            // tam bağlam iletmek için title + description +
+                                            // hint birleşik gönderilir.
+                                            const _payload = [_title, _desc, _hintS]
+                                                .filter(s => s && String(s).trim())
+                                                .join(' — ');
+                                            if (_title) {
+                                                addUserMessage(_title);
+                                            }
+                                            _sendDbMessageWithHint(origQuery, null, _payload || _hintS || _title);
                                         }
                                     );
                                     _insertInteractiveBlock(tmplHtml);
@@ -1028,47 +1062,17 @@ window.DialogChatModule = (function () {
                             // "🔗 Önceki konu ile ilgili soru sor" badge eklenir.
                             // Kullanıcı tıklayınca pendingFollowupAnchorId ayarlanır,
                             // textarea'ya odaklanılır, placeholder güncellenir.
+                            // v3.33.0: Render ertelendi — backend 'followup' eventi 'saved'
+                            // eventinden ÖNCE geliyor; savedMessageId henüz null olduğu için
+                            // badge HİÇ basılamıyordu. Buffer'lıyoruz, 'saved' handler'ı
+                            // ya da post-loop fallback render edecek.
                             case 'followup': {
                                 const { suggestions: fuSugg } = eventData;
                                 if (fuSugg?.length) {
-                                    const fuHtml = window.DialogChatUtils.renderFollowUpChips(
-                                        fuSugg,
-                                        (q) => {
-                                            // Kullanıcı follow-up seçti — normal DB sorgusu gönder
-                                            const inputEl = document.getElementById('dialogInput');
-                                            if (inputEl) {
-                                                inputEl.value = q;
-                                                handleSendMessage();
-                                            }
-                                        }
-                                    );
-                                    // v3.16.0: DB modunda badge'i chip listesinin başına ekle.
-                                    let prefixHtml = '';
-                                    if (isDbMode && lastDbAssistantMessageId) {
-                                        prefixHtml = `<button type="button" class="db-followup-anchor-badge" data-anchor-id="${lastDbAssistantMessageId}" title="Sonraki mesaj son sorgu üzerinde devam edecek — tablo + bağlam korunur"><i class="fa-solid fa-link"></i> Son konu ile ilgili sor</button>`;
-                                    }
-                                    _insertInteractiveBlock(prefixHtml + fuHtml);
-                                    // Badge tıklama handler'ı
-                                    if (prefixHtml) {
-                                        try {
-                                            const badges = document.querySelectorAll('.db-followup-anchor-badge[data-anchor-id]');
-                                            badges.forEach((btn) => {
-                                                if (btn.dataset.bound === '1') return;
-                                                btn.dataset.bound = '1';
-                                                btn.addEventListener('click', () => {
-                                                    const aid = parseInt(btn.dataset.anchorId, 10);
-                                                    if (!aid) return;
-                                                    pendingFollowupAnchorId = aid;
-                                                    _showFollowupIndicator(aid);
-                                                    const inp = document.getElementById('dialogInput');
-                                                    if (inp) {
-                                                        inp.placeholder = '↪ Son sorgu üzerinde devam edin (tablo + bağlam korunacak)...';
-                                                        inp.focus();
-                                                    }
-                                                });
-                                            });
-                                        } catch (_e) { /* sessiz */ }
-                                    }
+                                    // v3.33.0: yalnız buffer'la. Render post-loop'ta,
+                                    // export bar DOM'a eklendikten SONRA yapılır
+                                    // (badge `.db-export-bar` içine append edilir).
+                                    pendingFollowupSuggestions = fuSugg;
                                 }
                                 break;
                             }
@@ -1135,7 +1139,18 @@ window.DialogChatModule = (function () {
                 // soru + sonuç (tablo) görünür kalsın. Stream içeriği zaten satır satır
                 // birikmiş "UpdateUserId: ..., UpdateUserTime: ..." dökümü; tablo render
                 // edildikten sonra redundant.
-                if (!isDbOnly) {
+                //
+                // v3.33.0 — DB-Only empty/error rendering regression fix:
+                // Önceki kural narrative'i istisnasız gizliyordu; ancak raw_data boş
+                // (empty result / error / timeout / cancelled) durumlarda tabular blok
+                // da render olmadığı için kullanıcı sadece skeleton'lu preview kartı
+                // veya SQL butonu görüyor, "sonuç gelmedi" hissi yaşıyordu (özellikle
+                // 'son konu ile ilgili sor' follow-up'larında belirgin).
+                // Kural: narrative'i yalnızca BAŞARILI tabular blok varken gizle.
+                const _dbHasTabular = !!(finalMetadata
+                    && Array.isArray(finalMetadata.raw_data) && finalMetadata.raw_data.length > 0
+                    && Array.isArray(finalMetadata.columns) && finalMetadata.columns.length > 0);
+                if (!isDbOnly || !_dbHasTabular) {
                     addAssistantMessage(msgObj, savedQuickReply, true, responseTime);
                 }
 
@@ -1166,6 +1181,17 @@ window.DialogChatModule = (function () {
                     if (blockHtml) {
                         _insertInteractiveBlock(blockHtml);
                     }
+                }
+
+                // v3.33.0: Followup chips + "Son konu ile ilgili sor" badge —
+                // table + exportbar DOM'a basıldıktan SONRA render edilir.
+                // Badge `.db-export-bar` içine (Kopyala butonu sağına) append
+                // edilir → kullanıcı export aksiyonlarıyla aynı satırda görür.
+                if (pendingFollowupSuggestions && !followupAlreadyRendered) {
+                    const _anchor = savedMessageId || lastDbAssistantMessageId || null;
+                    _renderFollowupBlock(pendingFollowupSuggestions, _anchor, isDbMode);
+                    followupAlreadyRendered = true;
+                    pendingFollowupSuggestions = null;
                 }
 
                 // Response time'ı backend'e kaydet
@@ -1307,6 +1333,76 @@ window.DialogChatModule = (function () {
         container.scrollTop = container.scrollHeight;
     }
 
+    /**
+     * v3.33.0: Follow-up chips + (DB modunda) "Son konu ile ilgili sor" anchor badge'i render eder.
+     * Eskiden `case 'followup'` içinde inline'dı; ancak backend event sırası
+     * done → followup → saved olduğu için `lastDbAssistantMessageId` henüz null'dı,
+     * badge'in `data-anchor-id`'si üretilemiyordu. Bu yardımcıyı `case 'saved'`
+     * ve post-stream fallback noktalarından çağırarak gerçek anchorId ile render
+     * ediliyor.
+     */
+    function _renderFollowupBlock(suggestions, anchorId, isDbMode) {
+        if (!suggestions || !suggestions.length) return;
+        const fuHtml = window.DialogChatUtils.renderFollowUpChips(
+            suggestions,
+            (q) => {
+                const inputEl = document.getElementById('dialogInput');
+                if (inputEl) {
+                    inputEl.value = q;
+                    handleSendMessage();
+                }
+            }
+        );
+        // v3.33.0 (UX): Chip listesi her zaman ayrı blok olarak basılır.
+        _insertInteractiveBlock(fuHtml);
+
+        // "Son konu ile ilgili sor" badge'i artık chips bloğunun üstüne değil,
+        // en son export bar'ın (İndir: Excel/Word/PDF/Kopyala) sağına eklenir
+        // — kullanıcı export aksiyonlarıyla aynı satırda görür, dikey gürültü
+        // azalır. Export bar yoksa (sonuç boş / tablo render edilmemiş) eski
+        // davranışa düş: chips bloğunun üstüne ekle.
+        if (isDbMode && anchorId) {
+            const badgeHtml = `<button type="button" class="db-followup-anchor-badge" data-anchor-id="${anchorId}" title="Sonraki mesaj son sorgu üzerinde devam edecek — tablo + bağlam korunur"><i class="fa-solid fa-link"></i> Son konu ile ilgili sor</button>`;
+            try {
+                const container = document.getElementById('dialogMessages');
+                const exportBars = container ? container.querySelectorAll('.db-export-bar') : [];
+                const lastExportBar = exportBars.length ? exportBars[exportBars.length - 1] : null;
+                if (lastExportBar && !lastExportBar.querySelector('.db-followup-anchor-badge')) {
+                    // Wrapper div oluştur (innerHTML ile inject etmek yerine
+                    // DOM API kullanmak event handler bind'ini tek node'a sabitler)
+                    const tmp = document.createElement('div');
+                    tmp.innerHTML = badgeHtml;
+                    const btn = tmp.firstChild;
+                    if (btn) lastExportBar.appendChild(btn);
+                } else {
+                    // Fallback — export bar yoksa chips bloğunun ÜSTÜNE ekle
+                    _insertInteractiveBlock(badgeHtml);
+                }
+            } catch (_e) {
+                _insertInteractiveBlock(badgeHtml);
+            }
+            // Badge click handler — DOM'a artık eklendi, tek noktadan bind.
+            try {
+                const badges = document.querySelectorAll('.db-followup-anchor-badge[data-anchor-id]');
+                badges.forEach((btn) => {
+                    if (btn.dataset.bound === '1') return;
+                    btn.dataset.bound = '1';
+                    btn.addEventListener('click', () => {
+                        const aid = parseInt(btn.dataset.anchorId, 10);
+                        if (!aid) return;
+                        pendingFollowupAnchorId = aid;
+                        _showFollowupIndicator(aid);
+                        const inp = document.getElementById('dialogInput');
+                        if (inp) {
+                            inp.placeholder = '↪ Son sorgu üzerinde devam edin (tablo + bağlam korunacak)...';
+                            inp.focus();
+                        }
+                    });
+                });
+            } catch (_e) { /* sessiz */ }
+        }
+    }
+
     // v3.16.0: Follow-up çıpası aktifken textarea üstünde gösterilen rozet.
     // Kullanıcı çıpadan vazgeçerse X ile kapatabilir.
     function _showFollowupIndicator(anchorId) {
@@ -1359,6 +1455,19 @@ window.DialogChatModule = (function () {
             content: query,
             source_type: 'db',
         };
+        // v3.33.0 — Backend `dialog.py:386` source_type='db' iken `source_id`
+        // ZORUNLU; eksikse 400 "Veritabanı modunda bir veri kaynağı seçmelisiniz"
+        // dönüyor → frontend "İstek gönderilemedi" toast'u atıyordu.
+        // Disambig kartı veya rapor şablonu seçimi sonrası yeniden POST'ta da
+        // selector'dan source_id'yi alıp body'ye ekle (ana handleSendMessage
+        // ile aynı pattern: window.DbSourceSelector.getSelectedSourceId()).
+        try {
+            if (window.DbSourceSelector
+                && typeof window.DbSourceSelector.getSelectedSourceId === 'function') {
+                const _sid = window.DbSourceSelector.getSelectedSourceId();
+                if (_sid != null) body.source_id = _sid;
+            }
+        } catch (_e) { /* sessiz */ }
         if (schemaHint) body.schema_hint = schemaHint;
         if (reportTemplate) body.report_template = reportTemplate;
 
@@ -1383,6 +1492,13 @@ window.DialogChatModule = (function () {
             let finalContent = null;
             let finalMetadata = null;
             let buffer = '';
+            // v3.33.0: ana handleSendMessage ile parity — followup + saved
+            // payload'larını buffer'la, post-loop'ta (table/exportbar DOM'da
+            // hazır olunca) _renderFollowupBlock ile badge'i export bar'a
+            // append et.
+            let hintSavedMessageId = null;
+            let hintPendingFollowup = null;
+            let hintFollowupRendered = false;
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -1410,12 +1526,21 @@ window.DialogChatModule = (function () {
                                 finalContent = ev.data.content;
                                 finalMetadata = ev.data.metadata || {};
                                 break;
+                            case 'saved': {
+                                // SSE event şeması: handleSendMessage'dakiyle
+                                // aynı yapıda — message_id top-level. Defansif
+                                // olarak ev.data altını da kontrol et.
+                                const _mid = ev.message_id ?? (ev.data && ev.data.message_id);
+                                if (_mid) {
+                                    hintSavedMessageId = _mid;
+                                    lastDbAssistantMessageId = _mid;
+                                }
+                                break;
+                            }
                             case 'followup': {
-                                const { suggestions: fs } = ev.data;
+                                const { suggestions: fs } = ev.data || ev;
                                 if (fs?.length) {
-                                    const fHtml = window.DialogChatUtils.renderFollowUpChips(fs,
-                                        (q) => { const inp = document.getElementById('dialogInput'); if (inp) { inp.value = q; handleSendMessage(); } });
-                                    _insertInteractiveBlock(fHtml);
+                                    hintPendingFollowup = fs;
                                 }
                                 break;
                             }
@@ -1432,17 +1557,47 @@ window.DialogChatModule = (function () {
 
             if (streamingEl) streamingEl.remove();
             if (finalContent) {
+                const isDbOnly = !!finalMetadata?.db_only;
+                // v3.33.0: ana handleSendMessage ile aynı kural — narrative
+                // sadece BAŞARILI tabular blok varken gizlenir (boş/hatalı
+                // sonuçta kullanıcı en azından açıklayıcı metni görsün).
+                const _dbHasTabular = !!(finalMetadata
+                    && Array.isArray(finalMetadata.raw_data) && finalMetadata.raw_data.length > 0
+                    && Array.isArray(finalMetadata.columns) && finalMetadata.columns.length > 0);
                 const msgObj = { id: 0, role: 'assistant', content: finalContent, content_type: 'text', metadata: finalMetadata, created_at: new Date().toISOString() };
-                addAssistantMessage(msgObj, null, true, '');
+                if (!isDbOnly || !_dbHasTabular) {
+                    addAssistantMessage(msgObj, null, true, '');
+                }
 
-                if (finalMetadata?.db_only && finalMetadata?.raw_data?.length > 0) {
+                // v3.33.0: SQL butonu, tablo + export bar — ana handler ile parity.
+                if (isDbOnly) {
                     const cols = finalMetadata.columns || [];
                     const rows = finalMetadata.raw_data || [];
-                    if (cols.length > 0) {
+                    const sqlText = finalMetadata.sql_executed || finalMetadata.sql || '';
+                    let blockHtml = '';
+                    if (rows.length > 0 && cols.length > 0) {
                         const tblHtml = window.DialogChatUtils.renderSQLResultTable(cols, rows, finalMetadata);
-                        const expHtml = window.DialogChatUtils.renderExportBar(cols, rows, { title: 'VYRA Sorgu Sonucu', query, sql: finalMetadata.sql_executed });
-                        _insertInteractiveBlock(tblHtml + expHtml);
+                        const expHtml = window.DialogChatUtils.renderExportBar(cols, rows, { title: 'VYRA Sorgu Sonucu', query, sql: sqlText });
+                        blockHtml += tblHtml + expHtml;
                     }
+                    // SQL butonu — her DB yanıtında (sonuç boş olsa da) göster.
+                    if (sqlText) {
+                        blockHtml += window.DialogChatUtils.renderSQLButton(sqlText);
+                    }
+                    if (blockHtml) {
+                        _insertInteractiveBlock(blockHtml);
+                    }
+                }
+
+                // v3.33.0: Followup + badge — ana flow ile parity.
+                // Export bar yukarıda DOM'a basıldı → badge `.db-export-bar`
+                // içine append edilebilir.
+                if (hintPendingFollowup && !hintFollowupRendered) {
+                    const _isDbModeLocal = !!finalMetadata?.db_only;
+                    const _anchor = hintSavedMessageId || lastDbAssistantMessageId || null;
+                    _renderFollowupBlock(hintPendingFollowup, _anchor, _isDbModeLocal);
+                    hintFollowupRendered = true;
+                    hintPendingFollowup = null;
                 }
             }
         } catch (err) {

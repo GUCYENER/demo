@@ -2283,8 +2283,24 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                         }}
                         return
             else:
-                # Kullanıcı rapor şablonu seçti — şablonu sorguya ekle
-                query = f"{query}\n\n[Rapor Yaklaşımı: {report_template}]"
+                # Kullanıcı rapor şablonu seçti — şablonu sorguya ekle.
+                # v3.33.0: Önceden `[Rapor Yaklaşımı: ...]` etiketi sorgunun
+                # SONUNA eklenirdi; LLM/SQL generator sıklıkla bu suffix'i
+                # decorative kabul edip orijinal kısa sorguyu (örn. "sipariş
+                # trendini listele") basit zaman serisi olarak yorumluyor,
+                # şablondaki tablo JOIN'leri (ABONELIKLER, KAMPANYALAR vs.)
+                # ihmal ediliyordu. Şablonu ÖN PLANA çekiyoruz ve açık
+                # "ZORUNLU YAKLAŞIM" tag'ı veriyoruz — generator bunu
+                # spec olarak yorumlar.
+                _rt = str(report_template).strip()
+                query = (
+                    "ZORUNLU ANALİZ YAKLAŞIMI — kullanıcı bu şablonu seçti,"
+                    " SQL bu yaklaşımı birebir uygulamalı (içinde geçen TÜM"
+                    " tablo adları ve JOIN/segmentasyon talimatları"
+                    " kullanılmalı):\n"
+                    f"  → {_rt}\n\n"
+                    f"Kullanıcının orijinal isteği: {query}"
+                )
 
             # ── 4e. v3.14.0: Value Retrieval — soruda geçen spesifik değerleri tespit et ──
             try:
@@ -2374,28 +2390,47 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             # Frontend'e seçilen birincil tabloyu duyur; consumer
             # /api/data-sources/{id}/samples'tan cached örnek satırları çeker.
             # Hata olursa graceful: event yayma.
+            #
+            # v3.33.0 — DB-Only akışındaki ranker pick regression fix:
+            # Önceden `pruned_tables[0]` / `combined_matched[0]` yayılıyordu;
+            # bu, LLM'in ürettiği SQL farklı tabloyu hedeflese bile (örn. JOIN'lerde
+            # MUSTERILER ⋈ SIPARISLER) yanlış tabloyu ("Aday Tablo — ABONELIKLER")
+            # gösteriyordu. v3.32.0 `pick_preview_table_validated` fixi yalnızca
+            # `agentic_query_api.py`'a uygulanmıştı; aynı kuralı burada da uyguluyoruz:
+            #   - SQL'de ≥2 tablo varsa preview atlanır (multi-table yanıltıcı).
+            #   - SQL'de 1 tablo varsa SQL'deki tablo kullanılır.
+            #   - SQL parse edilemezse (CTE/subquery dialect issues) ranker pick'e fallback.
             try:
+                from app.services.pipeline.nodes.sample_data_preview import (
+                    extract_all_tables_from_sql,
+                )
                 _preview_table = None
                 _preview_schema = None
-                # 1) pruned_tables varsa ilk eleman
-                _pt = locals().get("pruned_tables")
-                if isinstance(_pt, list) and _pt:
-                    _first = _pt[0]
-                    if isinstance(_first, dict):
-                        _preview_table = (
-                            _first.get("table_name") or _first.get("name") or _first.get("table")
-                        )
-                        _preview_schema = _first.get("schema") or _first.get("schema_name")
-                # 2) combined_matched fallback
-                if not _preview_table:
-                    _cm = locals().get("combined_matched")
-                    if isinstance(_cm, list) and _cm:
-                        _first2 = _cm[0]
-                        if isinstance(_first2, dict):
+                _sql_tables = extract_all_tables_from_sql(sql) if sql else []
+                if len(_sql_tables) == 1:
+                    _only = _sql_tables[0]
+                    _preview_table = _only.get("table")
+                    _preview_schema = _only.get("schema")
+                elif not _sql_tables:
+                    # SQL parse edilemedi → eski davranış (ranker pick) ile fallback.
+                    _pt = locals().get("pruned_tables")
+                    if isinstance(_pt, list) and _pt:
+                        _first = _pt[0]
+                        if isinstance(_first, dict):
                             _preview_table = (
-                                _first2.get("table_name") or _first2.get("name") or _first2.get("table")
+                                _first.get("table_name") or _first.get("name") or _first.get("table")
                             )
-                            _preview_schema = _first2.get("schema") or _first2.get("schema_name")
+                            _preview_schema = _first.get("schema") or _first.get("schema_name")
+                    if not _preview_table:
+                        _cm = locals().get("combined_matched")
+                        if isinstance(_cm, list) and _cm:
+                            _first2 = _cm[0]
+                            if isinstance(_first2, dict):
+                                _preview_table = (
+                                    _first2.get("table_name") or _first2.get("name") or _first2.get("table")
+                                )
+                                _preview_schema = _first2.get("schema") or _first2.get("schema_name")
+                # len >= 2 → preview emit edilmez (multi-table JOIN)
                 if _preview_table and source and source.get("id"):
                     yield {"type": "selected_table_for_preview", "data": {
                         "source_id": int(source["id"]),
