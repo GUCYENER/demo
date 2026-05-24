@@ -12,6 +12,7 @@
  *
  * Backend: yeni endpoint gerekmez — mevcut iki endpoint reuse:
  *   GET /api/db-smart/sources/{source_id}/tables?q=<q>&limit=200
+ *     (backend cap: le=500, v3.34.0; picker 200 ile çağırır — çoğu kaynak için yeterli)
  *   GET /api/db-smart/sources/{source_id}/tables/{table_id}/related?depth=1
  */
 (function () {

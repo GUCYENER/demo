@@ -1319,10 +1319,14 @@ def list_sources(
 def search_tables(
     source_id: int = Path(..., ge=1),
     q: str = Query("", description="Doğal dil arama sorgusu"),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=500),
     current_user: Dict[str, Any] = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """Hybrid arama: ds_db_objects + business_glossary embedding + cardinality boost."""
+    """Hybrid arama: ds_db_objects + business_glossary embedding + cardinality boost.
+
+    Cap 500'e yükseltildi (v3.34.0): Tablo Seçici alt-modal'ı kaynağa ait
+    tüm yetkili tabloları tek sayfada listeler (q boş + limit=200 default).
+    """
     _require_user_id(current_user)
     with get_db_context() as conn:
         cur = conn.cursor()
