@@ -136,8 +136,9 @@
     function _trapTab(e) {
         var root = $(MODAL_ID);
         if (!root) return;
+        // FIX7 F-FM1 (HEBE+ATHENA): disabled/hidden/tabindex=-1 elementleri focus trap'ten dışla
         var focusables = root.querySelectorAll(
-            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+            'a[href]:not([tabindex="-1"]), button:not([disabled]):not([tabindex="-1"]), input:not([disabled]):not([tabindex="-1"]):not([type="hidden"]), select:not([disabled]):not([tabindex="-1"]), textarea:not([disabled]):not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])'
         );
         if (focusables.length === 0) return;
         var first = focusables[0];

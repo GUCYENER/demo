@@ -34,7 +34,12 @@
         console.info('[DbSmartAstEditor] overwriting previous definition (rerun/hot-reload)');
     }
 
-    var API_BASE = (window.API_BASE_URL || 'http://localhost:8002') + '/api/db-smart';
+    // EDIT8 (ARES+POSEIDON 2026-05-25): API_BASE göreceli olmalı.
+    // Wizard'ın enjekte ettiği `_fetchJson` → `vyraFetch` → `VYRA_API.request`
+    // ki `request()` zaten `API_BASE_URL` (= "http://host/api") prefix ekliyor.
+    // Mutlak URL geçersek: "http://host/api" + "http://host/api/db-smart/..."
+    // → "http://host/apihttp://host/api/db-smart/..." → 405 (path eşleşmiyor).
+    var API_BASE = '/db-smart';
     var DEBOUNCE_MS = 250;
     var COST_GREEN = 1e4;
     var COST_YELLOW = 1e6;
@@ -58,7 +63,15 @@
             filterModalOpen: false,
             globalKeyHandler: null,
             lastExplain: null,       // {cost, cached}
+            // F6 (HERMES+ATHENA 2026-05-25): user-initiated patch'leri mount-time'dan
+            // ayırt etmek için son etkileşim zamanı. Toast politikası buna bakıyor.
+            lastInteractionAt: 0,
         };
+    }
+
+    // F6 (HERMES+ATHENA 2026-05-25): user-initiated patch'leri işaretle.
+    function _markInteraction() {
+        if (state) state.lastInteractionAt = Date.now();
     }
 
     // ---- Default fetchJson (Bearer auth — wizard pattern mirrored) ----
@@ -71,7 +84,15 @@
             'Content-Type': 'application/json',
         }, opts.headers || {});
         var fetchOpts = Object.assign({}, opts, { headers: headers });
-        return fetch(url, fetchOpts).then(function (res) {
+        // EDIT8 (ARES+POSEIDON 2026-05-25): API_BASE göreceli olduğu için standalone
+        // (wizard yokken) çağrıda host prefix'i burada eklenir. Wizard kullanılırken
+        // bu fonksiyon zaten çağrılmıyor (wizard _fetchJson enjekte ediyor).
+        var fullUrl = url;
+        if (typeof url === 'string' && url.charAt(0) === '/') {
+            var apiHost = (window.API_BASE_URL || 'http://localhost:8002');
+            fullUrl = apiHost + '/api' + url;
+        }
+        return fetch(fullUrl, fetchOpts).then(function (res) {
             if (!res.ok) {
                 return res.text().catch(function () { return ''; }).then(function (txt) {
                     var err = new Error(res.status + ': ' + (txt || res.statusText));
@@ -155,20 +176,9 @@
     }
 
     function _renderToolbar() {
-        var hist = window.DbSmartAstHistory;
-        var canUndo = hist && typeof hist.canUndo === 'function' && hist.canUndo();
-        var canRedo = hist && typeof hist.canRedo === 'function' && hist.canRedo();
-        return ''
-            + '<div class="dsw-toolbar" role="toolbar" aria-label="AST araçları">'
-            + '  <button type="button" class="dsw-toolbar-btn" data-action="undo"'
-            + '          aria-keyshortcuts="Control+Z"'
-            + (canUndo ? '' : ' disabled aria-disabled="true"')
-            + '>↶ Geri Al</button>'
-            + '  <button type="button" class="dsw-toolbar-btn" data-action="redo"'
-            + '          aria-keyshortcuts="Control+Y Control+Shift+Z"'
-            + (canRedo ? '' : ' disabled aria-disabled="true"')
-            + '>↷ Yinele</button>'
-            + '</div>';
+        // F22 (HEBE 2026-05-25): Geri Al / Yinele butonları UI'dan kaldırıldı —
+        // klavye kısayolu (Ctrl+Z / Ctrl+Y) hâlâ aktif (L783+ global key handler).
+        return '';
     }
 
     function _renderSelectList() {
@@ -246,24 +256,10 @@
     }
 
     function _renderCostBadge() {
-        var c = state.lastExplain;
-        var cls = 'cost-unknown', text = '?', cached = false;
-        if (c && typeof c.cost === 'number') {
-            if (c.cost < COST_GREEN) cls = 'cost-green';
-            else if (c.cost < COST_YELLOW) cls = 'cost-yellow';
-            else cls = 'cost-red';
-            text = _formatCost(c.cost);
-            cached = !!c.cached;
-        }
-        var aria = c && typeof c.cost === 'number'
-            ? ('Tahmini maliyet ' + text + (cached ? ', önbellekten' : ''))
-            : 'Tahmini maliyet bilinmiyor';
-        return ''
-            + '<div class="dsw-cost-badge ' + cls + (cached ? ' cached' : '') + '"'
-            + '     aria-label="' + _escape(aria) + '">'
-            + '  <span class="dsw-cost-badge-label">Maliyet:</span>'
-            + '  <span class="dsw-cost-badge-value">' + _escape(text) + '</span>'
-            + '</div>';
+        // F22b (HEBE 2026-05-25): kullanıcı talebi — "Maliyet: ?" etiketi
+        // step 4 önizlemeden kaldırıldı. Cost backend pipeline'ı henüz
+        // sinyal vermediği için sürekli "?" gösteriyor → kafa karıştırıcı.
+        return '';
     }
 
     function _formatCost(n) {
@@ -289,6 +285,7 @@
         if (!btn) return;
         var action = btn.dataset.action;
         var idx = parseInt(btn.dataset.index, 10);
+        _markInteraction();  // F6: kullanıcı etkileşimi — toast'a yetki ver
         if (action === 'undo') { e.preventDefault(); undo(); return; }
         if (action === 'redo') { e.preventDefault(); redo(); return; }
         if (action === 'remove_column' && !isNaN(idx)) {
@@ -315,11 +312,23 @@
             _toast('Filtre modülü yüklenmedi.', 'error');
             return;
         }
+        // F6 (HERMES+ATHENA 2026-05-25): kolon kataloğu boşsa modal'ın
+        // dropdown'u boş kalmasın — `*` placeholder ile en azından modal açılsın
+        // ve kullanıcı operatör/değer doldurabilsin. F7 ile multi-table
+        // kolon endpoint'i geldiğinde wizard buraya `state.options.columns`
+        // enjekte edecek.
+        var cols = _columnsFromAst(state.ast);
+        if (!cols || cols.length === 0) {
+            cols = [{ expr: '*', label: '*' }];
+        }
         state.filterModalOpen = true;
-        modal.open({ columns: _columnsFromAst(state.ast), dialect: state.dialect })
+        modal.open({ columns: cols, dialect: state.dialect })
             .then(function (spec) {
                 state.filterModalOpen = false;
-                if (spec) _applyPatch('add_filter', spec);
+                if (spec) {
+                    _markInteraction();  // F6: filter ekleme açık bir user aksiyonu
+                    _applyPatch('add_filter', spec);
+                }
             })
             .catch(function (err) {
                 state.filterModalOpen = false;
@@ -362,6 +371,7 @@
             var toIdx = _dropIndexAt(listEl, e.clientY);
             _removeDropIndicator(listEl);
             if (isNaN(fromIdx) || isNaN(toIdx) || fromIdx === toIdx) return;
+            _markInteraction();  // F6: DnD bir user etkileşimi
             var op = listKey === 'select' ? 'reorder_columns' : 'reorder_order';
             _applyPatch(op, { from: fromIdx, to: toIdx });
         });
@@ -403,6 +413,7 @@
             if (!li || li.parentElement !== listEl) return;
             var idx = parseInt(li.dataset.index, 10);
             if (isNaN(idx)) return;
+            _markInteraction();  // F6: klavye reorder/silme user etkileşimidir
 
             if (e.key === ' ' || e.key === 'Spacebar') {
                 e.preventDefault();
@@ -577,21 +588,54 @@
         }).catch(function (err) {
             state.patchAbort = null;
             if (err && err.name === 'AbortError') return;
-            // Rollback
+            var status = err && err.status;
+            var now = Date.now();
+            var userInitiated = state.lastInteractionAt &&
+                (now - state.lastInteractionAt) < 2000;
+            // F6 (HERMES+ATHENA 2026-05-25): Toast spam'ini ve "+Ekle hiçbir şey
+            // yapmadı" yanılgısını gider.
+            //  - 400/409 → user-meaningful (validation / conflict): rollback + toast.
+            //  - 404 veya network (no status) → sessiz: rollback YOK (optimistic
+            //    state kalsın), sadece console.warn. Çoğu zaman geçici/race veya
+            //    mount-time çağrı; kullanıcı için anlamsız.
+            //  - Diğer status → sadece kullanıcı son 2s içinde etkileşimde
+            //    bulunduysa toast; aksi halde console.warn.
+            if (status === 400 || status === 409) {
+                state.ast = rollbackAst;
+                _render();
+                var msg = (status === 400)
+                    ? 'Geçersiz işlem.'
+                    : 'AST çakışması — sayfayı yenileyin.';
+                _toast(msg, 'error');
+                console.warn('[DbSmartAstEditor] patch failed', err);
+                return;
+            }
+            if (status === 404 || !status) {
+                // Optimistic state korunur — kullanıcının +Ekle ile koyduğu chip
+                // ekranda kalır; backend transient ise sonraki round-trip
+                // resolve eder. Toast YOK.
+                console.warn('[DbSmartAstEditor] patch soft-failed (status=' +
+                    (status || 'network') + '); keeping optimistic state', err);
+                return;
+            }
+            // 5xx ve diğer hatalar: rollback + toast (yalnız user-initiated).
             state.ast = rollbackAst;
             _render();
-            var status = err && err.status;
-            var msg = 'AST yaması başarısız';
-            if (status === 400) msg = 'Geçersiz işlem.';
-            else if (status === 404) msg = 'Oturum bulunamadı.';
-            else if (status === 409) msg = 'AST çakışması — sayfayı yenileyin.';
-            _toast(msg, 'error');
+            if (userInitiated) {
+                _toast('AST yaması başarısız', 'error');
+            }
             console.warn('[DbSmartAstEditor] patch failed', err);
         });
     }
 
     function _refreshExplain() {
         if (!state || !state.ast) return;
+        // EDIT8 (ARES+POSEIDON 2026-05-25): sessionUid guard — boş/undefined/null
+        // değerlerle ".../sessions/undefined/explain" gibi URL üretip 405 almayı engelle.
+        var uid = state.sessionUid;
+        if (!uid || typeof uid !== 'string' || uid === 'undefined' || uid === 'null') {
+            return;
+        }
         if (state.explainAbort) {
             try { state.explainAbort.abort(); } catch (e) { /* ignore */ }
         }
@@ -604,6 +648,15 @@
         if (state.explainAbort) fetchOpts.signal = state.explainAbort.signal;
         state.fetchJson(url, fetchOpts).then(function (data) {
             state.explainAbort = null;
+            // F17 (ARES+POSEIDON+HERMES 2026-05-25): Backend `has_ast: false`
+            // ile graceful skip dönüyor (AST type=select set edilmemiş veya
+            // session AST persist edilmemiş). Cost badge'i temizle, hata olarak
+            // işaretleme — sessiz devam.
+            if (data && data.has_ast === false) {
+                state.lastExplain = null;
+                _updateCostBadge();
+                return;
+            }
             if (data && typeof data.cost !== 'undefined') {
                 state.lastExplain = { cost: Number(data.cost), cached: !!data.cached };
             } else {

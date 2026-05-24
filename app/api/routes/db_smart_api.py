@@ -100,8 +100,11 @@ class PreviewResponse(BaseModel):
 
 
 class ExecuteRequest(BaseModel):
+    # FIX3 P0-4 (HERMES+ORACLE): le=1_000_000 → le=100_000.
+    # Sync fetchall OOM riski: 1M satır × ortalama 200B = 200MB+ memory.
+    # limit > 50_000 ise stream=True zorunlu (executor'da enforce).
     stream: bool = False
-    limit: Optional[int] = Field(default=1000, ge=1, le=1000000)
+    limit: Optional[int] = Field(default=1000, ge=1, le=100_000)
 
 
 # Migration 032 ck_dbsmart_metric_viz CHECK constraint ile uyumlu enum.
@@ -122,6 +125,29 @@ class SaveReportRequest(BaseModel):
     is_public: bool = False
     default_viz: str = Field(default="table", pattern=_VIZ_PATTERN)
     tags: Optional[List[str]] = None
+    # F10b Fix 3 (POSEIDON+ATHENA): client wizard_state body override — backend
+    # session context'i stale/empty kalabilir; client'ın canonical state'ini
+    # tercih et. None ise eski davranış (ctx.get("wizard_state")) geçerli.
+    wizard_state: Optional[Dict[str, Any]] = None
+    generated_sql: Optional[str] = None
+    metric_key: Optional[str] = None
+    schema_version: Optional[str] = None
+
+
+class SaveReportFlatRequest(BaseModel):
+    """F10b Fix 1 (POSEIDON+ARES): session-less flat save payload.
+
+    Modal-mode veya session drop sonrası kayıt yapabilmek için session_uid
+    bağımsız kayıt route'u. Tenant scoping current_user'dan (RLS bound).
+    """
+    name: str = Field(..., min_length=1, max_length=200)
+    description: Optional[str] = None
+    source_id: Optional[int] = None
+    wizard_state: Dict[str, Any] = Field(default_factory=dict)
+    generated_sql: Optional[str] = None
+    metric_key: Optional[str] = None
+    tags: Optional[List[str]] = None
+    schema_version: Optional[str] = Field(default="v3.36", max_length=20)
 
 
 class SaveReportResponse(BaseModel):
@@ -147,6 +173,71 @@ class CreateShareTokenResponse(BaseModel):
     share_token: str
     share_expires_at: Optional[str] = None
     ttl_hours: int
+
+
+# v3.34.x B10 — LLM column-order suggestion (Filtre step "✨ LLM ile öner")
+# v3.36.x F8b (ATHENA+APOLLO+POSEIDON): F7 multi-table desteğinde aynı kolon
+# adı farklı tablolarda olabilir (örn. iki tabloda `id`). `table_id` istek
+# tarafına ve `ordered_pairs` yanıt tarafına additive olarak eklendi.
+# Geriye uyum: eski client `ordered` (List[str]) alanını kullanmaya devam
+# edebilir; eski client table_id göndermezse first-match heuristic devreye
+# girer.
+class ColumnInfo(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    semantic_type: Optional[str] = Field(default=None, max_length=60)
+    table: Optional[str] = Field(default=None, max_length=200)
+    table_id: Optional[int] = Field(default=None, ge=1)
+
+
+class SuggestOrderReq(BaseModel):
+    source_id: int = Field(..., ge=1)
+    primary_table_id: int = Field(..., ge=1)
+    join_table_ids: List[int] = Field(default_factory=list)
+    available_columns: List[ColumnInfo] = Field(..., min_length=1, max_length=200)
+
+
+class OrderedColumn(BaseModel):
+    """F8b — response item with table_id disambiguator."""
+    name: str = Field(..., min_length=1, max_length=200)
+    table_id: Optional[int] = Field(default=None, ge=1)
+
+
+class SuggestOrderResp(BaseModel):
+    # Legacy field — sadece kolon adı listesi (geriye uyum).
+    ordered: List[str]
+    # F8b additive: (name, table_id) çiftleri. Eğer istekte hiçbir
+    # available_columns item'ında table_id yoksa, bu alandaki table_id'ler
+    # null kalır (heuristic fallback de table_id taşıyamadığı için).
+    ordered_pairs: List[OrderedColumn] = Field(default_factory=list)
+    rationale: str
+    fallback: bool = False
+
+
+# v3.36.x F9 — Generate-report (LLM → validated SELECT → SafeSQLExecutor)
+class GenerateReportReq(BaseModel):
+    source_id: int = Field(..., ge=1)
+    primary_table_id: int = Field(..., ge=1)
+    join_table_ids: List[int] = Field(default_factory=list)
+    # report_columns: [{name, table_name?, semantic_type?}]
+    report_columns: List[Dict[str, Any]] = Field(default_factory=list)
+    metric: Optional[Dict[str, Any]] = None
+    user_note: str = Field(default="", max_length=2000)
+    # fk_context: [{from_table, to_table, from_col, to_col}]
+    fk_context: List[Dict[str, Any]] = Field(default_factory=list)
+    limit: int = Field(default=100, ge=1, le=1000)
+
+
+class GenerateReportResp(BaseModel):
+    sql: str
+    rationale: str
+    columns: List[str] = Field(default_factory=list)
+    rows: List[List[Any]] = Field(default_factory=list)
+    row_count: int = 0
+    elapsed_ms: int = 0
+    truncated: bool = False
+    success: bool
+    fallback: bool = False
+    error: Optional[str] = None
 
 
 # ─────────────────────────────────────────────────────────────
@@ -292,14 +383,29 @@ def _detect_company_scoped_aliases(ast: Dict[str, Any]) -> List[str]:
     `inject_rls` zaten no-op döner; non-admin için company_id filter
     eklenir (alias.company_id = <ctx.company_id>).
     """
+    # FIX3 P1 B2 (ARES): AST'ten gelen alias string'lerini ham olarak
+    # inject_rls'e geçirmek, attacker-controlled AST üzerinden alias adına
+    # SQL fragment enjekte etme riski yaratır (örn. alias = "u; DROP TABLE...").
+    # ast_renderer._validate_ident regex whitelist'iyle her aliası doğrula;
+    # geçersizler atılır + warning loglanır.
+    from app.services.db_smart.ast_renderer import _validate_ident
+
+    def _safe_add(a: Any, bucket: List[str]) -> None:
+        if not isinstance(a, str) or not a:
+            return
+        try:
+            _validate_ident(a)
+            bucket.append(a)
+        except ValueError:
+            logger.warning("[db_smart.ast] invalid alias rejected: %r", a)
+
     aliases: List[str] = []
     if not isinstance(ast, dict):
         return aliases
     src = ast.get("from")
     if isinstance(src, dict):
         a = src.get("alias") or src.get("table")
-        if isinstance(a, str) and a:
-            aliases.append(a)
+        _safe_add(a, aliases)
     joins = ast.get("joins") or []
     if isinstance(joins, list):
         for j in joins:
@@ -310,8 +416,7 @@ def _detect_company_scoped_aliases(ast: Dict[str, Any]) -> List[str]:
                 a = tbl.get("alias") or tbl.get("table") or tbl.get("name")
             else:
                 a = j.get("alias") or (tbl if isinstance(tbl, str) else None)
-            if isinstance(a, str) and a:
-                aliases.append(a)
+            _safe_add(a, aliases)
     # Dedup, sıralı
     seen = set()
     out: List[str] = []
@@ -339,81 +444,102 @@ def post_ast_patch(
 
     from app.services.db_smart import ast_renderer
 
-    with get_db_context() as conn:
-        cur = conn.cursor()
-        apply_vyra_user_context(cur, current_user)
-        ctx = session_manager.load_session(cur, session_uid, current_user)
-        if ctx is None:
-            raise HTTPException(status_code=404, detail="Oturum bulunamadı veya yetkiniz yok.")
+    # F17 (ARES+POSEIDON+HERMES 2026-05-25): Top-level try/except. Önceden
+    # session_manager.{load_session,update_context} DB errors veya
+    # ast_renderer.{inject_rls,render} non-ValueError/TypeError exception'ları
+    # FastAPI default 500 traceback olarak console spam yapıyordu. Artık
+    # logger.exception ile log'a düşer + clean JSON 500 döner. HTTPException
+    # bilerek raise edilenler re-raise edilir.
+    try:
+        with get_db_context() as conn:
+            cur = conn.cursor()
+            apply_vyra_user_context(cur, current_user)
+            ctx = session_manager.load_session(cur, session_uid, current_user)
+            if ctx is None:
+                raise HTTPException(status_code=404, detail="Oturum bulunamadı veya yetkiniz yok.")
 
-        ast = (ctx.get("context") or {}).get("ast") or {}
-        if not ast:
-            raise HTTPException(
-                status_code=409,
-                detail="AST henüz oluşturulmadı. Önce wizard'dan ilerleyin.",
+            ast = (ctx.get("context") or {}).get("ast") or {}
+            if not ast:
+                raise HTTPException(
+                    status_code=409,
+                    detail="AST henüz oluşturulmadı. Önce wizard'dan ilerleyin.",
+                )
+
+            fn = getattr(ast_renderer, op, None)
+            if not callable(fn):
+                raise HTTPException(status_code=400, detail=f"AST op çağrılamadı: {op}")
+
+            # F-020: set_limit dispatch'inde args.limit clamp (10M cap).
+            # _AST_OP_WHITELIST kontrolünden SONRA, fn(...) çağrısından ÖNCE.
+            if op == "set_limit" and isinstance(body.args, dict) and "limit" in body.args:
+                _lim = body.args.get("limit")
+                if isinstance(_lim, int) and _lim > _AST_SET_LIMIT_MAX:
+                    body.args["limit"] = _AST_SET_LIMIT_MAX
+
+            try:
+                new_ast = fn(ast, **(body.args or {}))
+            except TypeError as e:
+                # args mismatch — caller hatası
+                raise HTTPException(status_code=400, detail=f"AST args hatası: {e}")
+            except ValueError as e:
+                # identifier/operator whitelist veya semantik guard
+                raise HTTPException(status_code=400, detail=str(e))
+
+            # Patch'i context'e yaz
+            ok = session_manager.update_context(
+                cur, session_uid, {"ast": new_ast}, current_user,
             )
+            if not ok:
+                raise HTTPException(status_code=404, detail="Oturum bulunamadı (RLS).")
+            conn.commit()
 
-        fn = getattr(ast_renderer, op, None)
-        if not callable(fn):
-            raise HTTPException(status_code=400, detail=f"AST op çağrılamadı: {op}")
+        sql = binds = dialect_out = None
+        if body.render_preview:
+            dialect = body.dialect or ctx.get("dialect") or "postgresql"
+            try:
+                # F-021 (ARES KRİTİK): render'dan ÖNCE inject_rls — preview SQL
+                # başka path'e copy-paste edilirse cross-tenant sızıntı olmasın.
+                # company_scoped_aliases AST'in from+joins yapısından heuristic
+                # olarak türetilir; admin için inject_rls no-op döner.
+                _company_aliases = _detect_company_scoped_aliases(new_ast)
+                guarded_ast = ast_renderer.inject_rls(
+                    new_ast, current_user,
+                    company_scoped_tables=_company_aliases,
+                )
+                # Explicit skip flag: render() defense-in-depth would otherwise
+                # auto-inject RLS again — `inject_rls` is idempotent (predicate
+                # dedup), so this is purely a clarity/perf optimization.
+                rendered = ast_renderer.render(
+                    guarded_ast, dialect, current_user,
+                    _rls_already_injected=True,
+                )
+                sql = rendered["sql"]
+                binds = rendered["binds"]
+                dialect_out = rendered["dialect"]
+            except ValueError as e:
+                # AST patch geçerliydi ama render'da kalan kısımda problem var
+                logger.warning("[db_smart.ast] preview render skipped uid=%s: %s", session_uid, e)
 
-        # F-020: set_limit dispatch'inde args.limit clamp (10M cap).
-        # _AST_OP_WHITELIST kontrolünden SONRA, fn(...) çağrısından ÖNCE.
-        if op == "set_limit" and isinstance(body.args, dict) and "limit" in body.args:
-            _lim = body.args.get("limit")
-            if isinstance(_lim, int) and _lim > _AST_SET_LIMIT_MAX:
-                body.args["limit"] = _AST_SET_LIMIT_MAX
-
-        try:
-            new_ast = fn(ast, **(body.args or {}))
-        except TypeError as e:
-            # args mismatch — caller hatası
-            raise HTTPException(status_code=400, detail=f"AST args hatası: {e}")
-        except ValueError as e:
-            # identifier/operator whitelist veya semantik guard
-            raise HTTPException(status_code=400, detail=str(e))
-
-        # Patch'i context'e yaz
-        ok = session_manager.update_context(
-            cur, session_uid, {"ast": new_ast}, current_user,
+        return AstPatchResponse(
+            ast=new_ast,
+            sql=sql,
+            binds=binds,
+            dialect=dialect_out,
         )
-        if not ok:
-            raise HTTPException(status_code=404, detail="Oturum bulunamadı (RLS).")
-        conn.commit()
-
-    sql = binds = dialect_out = None
-    if body.render_preview:
-        dialect = body.dialect or ctx.get("dialect") or "postgresql"
-        try:
-            # F-021 (ARES KRİTİK): render'dan ÖNCE inject_rls — preview SQL
-            # başka path'e copy-paste edilirse cross-tenant sızıntı olmasın.
-            # company_scoped_aliases AST'in from+joins yapısından heuristic
-            # olarak türetilir; admin için inject_rls no-op döner.
-            _company_aliases = _detect_company_scoped_aliases(new_ast)
-            guarded_ast = ast_renderer.inject_rls(
-                new_ast, current_user,
-                company_scoped_tables=_company_aliases,
-            )
-            # Explicit skip flag: render() defense-in-depth would otherwise
-            # auto-inject RLS again — `inject_rls` is idempotent (predicate
-            # dedup), so this is purely a clarity/perf optimization.
-            rendered = ast_renderer.render(
-                guarded_ast, dialect, current_user,
-                _rls_already_injected=True,
-            )
-            sql = rendered["sql"]
-            binds = rendered["binds"]
-            dialect_out = rendered["dialect"]
-        except ValueError as e:
-            # AST patch geçerliydi ama render'da kalan kısımda problem var
-            logger.warning("[db_smart.ast] preview render skipped uid=%s: %s", session_uid, e)
-
-    return AstPatchResponse(
-        ast=new_ast,
-        sql=sql,
-        binds=binds,
-        dialect=dialect_out,
-    )
+    except HTTPException:
+        # Bilerek raise edilen 400/404/409 — FastAPI'ye olduğu gibi geç.
+        raise
+    except Exception:
+        # F17: önceden bare 500 + traceback console spam'i. Artık log'a yaz +
+        # clean JSON body dön (frontend F6 policy 5xx + no-interaction → silent).
+        logger.exception(
+            "[db_smart.ast/patch] unhandled exception uid=%s op=%s",
+            session_uid, op,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="AST yaması işlenirken iç hata oluştu (detay log'da).",
+        )
 
 
 # ─────────────────────────────────────────────────────────────
@@ -458,8 +584,15 @@ _EXPLAIN_CACHE_LOCK = threading.Lock()
 
 
 def _explain_cache_key(user_id: int, ast: Dict[str, Any], dialect: str) -> str:
-    payload = json.dumps({"u": user_id, "d": dialect, "a": ast},
-                         sort_keys=True, default=str)
+    # FIX3 P1 B5 (ARES): canonical JSON — sort_keys + compact separators.
+    # Önceki versiyon default ", "/": " separator'ları kullanıyordu; aynı
+    # AST için Python sürümleri / dict insertion order farklılıkları
+    # whitespace driftine yol açabilir → false cache miss + EXPLAIN spam.
+    # `separators=(",", ":")` ve `sort_keys=True` deterministic.
+    payload = json.dumps(
+        {"u": user_id, "d": dialect, "a": ast},
+        sort_keys=True, default=str, separators=(",", ":"),
+    )
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
@@ -510,8 +643,26 @@ def post_explain_ast(
 
     ast = body.ast or {}
     dialect = (body.dialect or "postgresql").strip().lower()
-    if not ast or ast.get("type") != "select":
-        raise HTTPException(status_code=400, detail="AST geçersiz (type=select bekleniyor).")
+    # F17 (ARES+POSEIDON+HERMES 2026-05-25): AST henüz hazır değil (örn. wizard
+    # starter AST'ında `type` set edilmemiş, veya F9 generate-report sonrası
+    # session AST persist edilmemiş) — eskiden 400 dönüp console spam yapıyordu.
+    # Artık 200 + has_ast:false ile graceful skip; frontend `_refreshExplain`
+    # bu durumda cost badge'i temizler, hata kaydetmez.
+    # F17b (ARES 2026-05-25): boş select listesi de "AST henüz hazır değil"
+    # demektir — ast_renderer "SELECT requires at least one column" ValueError
+    # fırlatıp 400'e yol açıyordu. Starter AST (kolon eklenmeden önce) ve F-9
+    # öncesi tüm durumlar bu yolu kullanır.
+    _sel = ast.get("select") if isinstance(ast, dict) else None
+    _select_empty = not isinstance(_sel, list) or len(_sel) == 0
+    if not ast or ast.get("type") != "select" or _select_empty:
+        return {
+            "has_ast": False,
+            "sql": "",
+            "dialect": dialect,
+            "explain": {},
+            "streaming_strategy": "direct",
+            "cached": False,
+        }
 
     cache_key = _explain_cache_key(uid, ast, dialect)
     cached = _explain_cache_get(cache_key)
@@ -640,12 +791,25 @@ def post_execute(
     """safe_sql_executor üzerinden çalıştır (SSE destekli).
 
     FAZ 1 stub: gerçek streaming SSE FAZ 2'de bağlanacak.
+
+    FIX3 P0-4 (HERMES+ORACLE+ARES): limit > 50_000 ise stream=True şarttır
+    (sync fetchall OOM koruması). Hard clamp 100_000 (Pydantic le=100_000
+    zaten zorunlu kılıyor, defansif extra).
     """
     _require_user_id(current_user)
+    # FIX3 P0-4: limit > 50k → stream zorunlu; ayrıca hard clamp 100k.
+    _req_limit = body.limit if body.limit is not None else 1000
+    if _req_limit > 100_000:
+        _req_limit = 100_000  # defansif clamp (Pydantic le=100k zaten)
+    if _req_limit > 50_000 and not body.stream:
+        raise HTTPException(
+            status_code=400,
+            detail="limit > 50000 için stream=True zorunlu (OOM koruması).",
+        )
     with get_db_context() as conn:
         cur = conn.cursor()
         apply_vyra_user_context(cur, current_user)
-        # TODO (FAZ 2): safe_sql_executor.run(...) + SSE chunk if stream=True
+        # TODO (FAZ 2): safe_sql_executor.run(..., limit=_req_limit) + SSE chunk if stream=True
     return {
         "session_uid": session_uid,
         "exec_id": None,
@@ -659,7 +823,10 @@ class ExecuteStreamRequest(BaseModel):
     """P15 G3.2 — Streaming SQL execute via SSE."""
     sql: Optional[str] = Field(default=None, description="Direkt SQL (preview'den)")
     wizard_state: Optional[Dict[str, Any]] = Field(default=None, description="SQL üretimi için (sql verilmezse assemble edilir)")
-    dialect: str = Field(default="postgresql", max_length=20)
+    # F21c (ARES 2026-05-25): Optional + None default — caller (saved-report rerun)
+    # dialect bilmek zorunda kalmasın; backend source.db_type'tan resolve eder.
+    # Explicit dialect (eski caller'lar) verirse mismatch guard halen devrede.
+    dialect: Optional[str] = Field(default=None, max_length=20)
     source_id: Optional[int] = Field(default=None, ge=1)
     batch_size: int = Field(default=200, ge=10, le=1000)
     max_rows: int = Field(default=10_000, ge=1, le=100_000)
@@ -715,6 +882,10 @@ def _load_source(
     rec = dict(zip(keys, row))
 
     # 3) Password decrypt — _decrypt_stored_password Fernet/base64 fallback
+    # FIX3 P1 B3 (HERMES+ARES): silent empty-string fallback yok. Decrypt
+    # başarısız olursa connector "" password ile bağlanmaya çalışır → ya
+    # auth fail (kafa karıştırıcı log) ya da (peer auth varsa) yanlış
+    # identity'yle bağlantı. Explicit 500 fırlat, observability korunsun.
     password_plain = ""
     encrypted = rec.pop("db_password_encrypted", None)
     if encrypted:
@@ -722,9 +893,12 @@ def _load_source(
             from app.api.routes.data_sources_api import _decrypt_stored_password
             password_plain = _decrypt_stored_password(encrypted) or ""
         except Exception as e:
-            logger.warning("[db_smart.stream] password decrypt failed source=%s: %s",
-                           source_id, e)
-            password_plain = ""
+            logger.error("[db_smart.stream] password decrypt failed source=%s: %s",
+                         source_id, e)
+            raise HTTPException(
+                status_code=500,
+                detail="Source credential decrypt failed",
+            )
 
     # 4) source dict — _get_db_connector'ın beklediği sade alanlar
     source_dict = {
@@ -735,7 +909,25 @@ def _load_source(
         "db_name": rec["db_name"],
         "db_user": rec["db_user"],
     }
-    dialect = (rec.get("db_type") or "postgresql").lower()
+    # F22c (ARES 2026-05-25): db_type değeri data_sources kaydı oluşturulurken
+    # yanlış girilmiş olabilir (örn. literal "db_type") → sql_executor_stream
+    # whitelist'i {"postgresql","oracle","mssql","mysql"} dışında ise 500
+    # değil sessiz fallback. Engine alias'larını da normalize ediyoruz.
+    _DIALECT_ALIAS = {
+        "postgres": "postgresql", "psql": "postgresql", "pg": "postgresql",
+        "ora": "oracle", "oracledb": "oracle",
+        "sqlserver": "mssql", "sql_server": "mssql", "ms_sql": "mssql",
+    }
+    _SUPPORTED_DIALECTS = {"postgresql", "oracle", "mssql", "mysql"}
+    raw_dt = (rec.get("db_type") or "").strip().lower()
+    dialect = _DIALECT_ALIAS.get(raw_dt, raw_dt)
+    if dialect not in _SUPPORTED_DIALECTS:
+        logger.warning(
+            "[db_smart._load_source] source_id=%s db_type=%r desteklenmiyor; "
+            "postgresql fallback uygulanıyor.",
+            source_id, rec.get("db_type"),
+        )
+        dialect = "postgresql"
     return source_dict, password_plain, dialect
 
 
@@ -765,7 +957,9 @@ def post_execute_stream(
 
     # SQL hazırlığı: body.sql > wizard_state assembly > load session
     sql_str = (body.sql or "").strip()
-    dialect = body.dialect or "postgresql"
+    # F21c (ARES): dialect explicit-vs-implicit ayır; None ise source dialect kullan.
+    dialect_explicit = body.dialect is not None and body.dialect.strip() != ""
+    dialect = (body.dialect or "postgresql").strip()
     src_id = body.source_id
 
     if not sql_str:
@@ -802,10 +996,22 @@ def post_execute_stream(
         # 404 vs 403 ayırmıyoruz — varlık vs yetki sızıntısını önler
         raise HTTPException(status_code=404, detail="Veri kaynağı bulunamadı veya erişim yok.")
     src_dict, src_password, src_dialect = loaded_src
-    # source.db_type request.dialect ile uyumsuzsa source'a güven (ARES)
-    if src_dialect and src_dialect != dialect:
-        logger.info("[db_smart.stream] dialect override request=%s source=%s",
-                    dialect, src_dialect)
+    # FIX3 P1 B1 (ORACLE): dialect mismatch artık silent downgrade DEĞİL.
+    # Caller'ın yanlış dialect ile SQL render ettiği query'yi sessizce başka
+    # bir engine'de çalıştırmak data corruption / syntax error riski yaratır.
+    # Explicit 400 ile reddet.
+    # F21c (ARES 2026-05-25): dialect_explicit=False ise (saved-report rerun gibi
+    # caller'lar source dialect'i bilmeden çağırır) source dialect'i adopte et.
+    # Explicit caller mismatch hâlen reddedilir.
+    if dialect_explicit and src_dialect and src_dialect != dialect:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Dialect mismatch: source is {src_dialect}, "
+                f"request specified {dialect}"
+            ),
+        )
+    if not dialect_explicit and src_dialect:
         dialect = src_dialect
 
     # SSE generator
@@ -852,33 +1058,62 @@ def post_save_report(
     if not raw_name:
         raise HTTPException(status_code=400, detail="name (veya title) zorunlu.")
 
-    with get_db_context() as conn:
-        cur = conn.cursor()
-        apply_vyra_user_context(cur, current_user)
-        loaded = session_manager.load_session(cur, session_uid, current_user)
-        if loaded is None:
-            raise HTTPException(status_code=404, detail="Oturum bulunamadı veya yetkiniz yok.")
-        ctx = (loaded.get("context") if isinstance(loaded, dict) else None) or {}
-        wizard_state = ctx.get("wizard_state") if isinstance(ctx, dict) else None
-        if not isinstance(wizard_state, dict):
-            wizard_state = dict(ctx) if isinstance(ctx, dict) else {}
-        last_sql = ctx.get("last_sql") if isinstance(ctx, dict) else None
-        last_dialect = ctx.get("dialect") if isinstance(ctx, dict) else None
-        source_id = loaded.get("source_id") if isinstance(loaded, dict) else None
+    # F16 (HEBE+ARES+POSEIDON): explicit try/except + logger.exception →
+    # generic 500'ün gerçek kök sebebini server log'a çıkar + client'a
+    # actionable detail döndür (FE generic "Sunucuda beklenmeyen…" yerine).
+    out = None
+    try:
+        with get_db_context() as conn:
+            cur = conn.cursor()
+            apply_vyra_user_context(cur, current_user)
+            loaded = session_manager.load_session(cur, session_uid, current_user)
+            if loaded is None:
+                raise HTTPException(status_code=404, detail="Oturum bulunamadı veya yetkiniz yok.")
+            ctx = (loaded.get("context") if isinstance(loaded, dict) else None) or {}
+            # F10b Fix 3 (POSEIDON+ATHENA): client body wizard_state > session ctx.
+            # Session context auto-sync edilmiyorsa stale/empty kaydı önler.
+            if isinstance(body.wizard_state, dict) and body.wizard_state:
+                wizard_state = body.wizard_state
+            else:
+                wizard_state = ctx.get("wizard_state") if isinstance(ctx, dict) else None
+                if not isinstance(wizard_state, dict):
+                    wizard_state = dict(ctx) if isinstance(ctx, dict) else {}
+            last_sql = body.generated_sql if body.generated_sql else (
+                ctx.get("last_sql") if isinstance(ctx, dict) else None
+            )
+            last_dialect = ctx.get("dialect") if isinstance(ctx, dict) else None
+            source_id = loaded.get("source_id") if isinstance(loaded, dict) else None
 
-        out = saved_reports.save(
-            cur, current_user,
-            name=raw_name,
-            wizard_state=wizard_state,
-            last_sql=last_sql,
-            last_dialect=last_dialect,
-            source_id=source_id,
-            description=body.description,
-            tags=body.tags,
+            out = saved_reports.save(
+                cur, current_user,
+                name=raw_name,
+                wizard_state=wizard_state,
+                last_sql=last_sql,
+                last_dialect=last_dialect,
+                source_id=source_id,
+                description=body.description,
+                tags=body.tags,
+            )
+            if out is None:
+                # save() içinde yakalanmış DB exception veya RLS reddi.
+                # Spesifik nedenler `saved_reports.save` logger.warning üretti.
+                raise HTTPException(
+                    status_code=500,
+                    detail="Rapor kaydedilemedi (DB INSERT başarısız - server log'una bakın).",
+                )
+            conn.commit()
+    except HTTPException:
+        raise
+    except ValueError as ve:
+        # _require_user_ctx / name validation gibi açık hatalar 400 olmalı.
+        logger.warning("[db_smart.save_report] validation error: %s", ve)
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.exception("[db_smart.save_report] unexpected failure session=%s", session_uid)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Rapor kaydedilemedi: {type(e).__name__}: {e}",
         )
-        if out is None:
-            raise HTTPException(status_code=500, detail="Rapor kaydedilemedi.")
-        conn.commit()
 
     created = out.get("created_at")
     if hasattr(created, "isoformat"):
@@ -889,6 +1124,64 @@ def post_save_report(
 # ─────────────────────────────────────────────────────────────
 # FAZ 3 P13 G3.3 — Saved Reports CRUD + Share
 # ─────────────────────────────────────────────────────────────
+
+@router.post("/saved-reports", response_model=SaveReportResponse)
+def post_save_report_flat(
+    body: SaveReportFlatRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> SaveReportResponse:
+    """F10b Fix 1 (POSEIDON+ARES+ATHENA): session-less flat save endpoint.
+
+    Modal-mode veya session drop senaryosunda kullanılır. Tenant scoping
+    current_user üzerinden RLS-bound (apply_vyra_user_context). Aynı
+    response shape session-bound endpoint ile (report_id + saved_at).
+    """
+    _require_user_id(current_user)
+    raw_name = (body.name or "").strip()
+    if not raw_name:
+        raise HTTPException(status_code=400, detail="name zorunlu.")
+
+    wizard_state = body.wizard_state if isinstance(body.wizard_state, dict) else {}
+
+    # F16 (HEBE+ARES+POSEIDON): mirror flat endpoint of try/except hardening.
+    out = None
+    try:
+        with get_db_context() as conn:
+            cur = conn.cursor()
+            apply_vyra_user_context(cur, current_user)
+            out = saved_reports.save(
+                cur, current_user,
+                name=raw_name,
+                wizard_state=wizard_state,
+                last_sql=body.generated_sql,
+                last_dialect=None,
+                source_id=body.source_id,
+                description=body.description,
+                tags=body.tags,
+            )
+            if out is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Rapor kaydedilemedi (DB INSERT başarısız - server log'una bakın).",
+                )
+            conn.commit()
+    except HTTPException:
+        raise
+    except ValueError as ve:
+        logger.warning("[db_smart.save_report_flat] validation error: %s", ve)
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.exception("[db_smart.save_report_flat] unexpected failure")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Rapor kaydedilemedi: {type(e).__name__}: {e}",
+        )
+
+    created = out.get("created_at")
+    if hasattr(created, "isoformat"):
+        created = created.isoformat()
+    return SaveReportResponse(report_id=int(out["id"]), saved_at=str(created or ""))
+
 
 @router.get("/saved-reports")
 def list_saved_reports(
@@ -1378,6 +1671,92 @@ def related_tables(
     }
 
 
+# v3.36 F7 (POSEIDON+ARES): tek-tablo kolon enrich mantığı — hem single
+# (`list_columns`) hem multi (`list_columns_multi`) route'ları bu helper'ı
+# kullanır. RealDictCursor + tuple cursor uyumu korunur. Per-tablo 50 kolon cap
+# (R-4): büyük tabloların multi payload'u şişirmesini engeller.
+_MAX_COLUMNS_PER_TABLE = 50
+
+
+def _fetch_table_columns(
+    cur,
+    source_id: int,
+    table_id: int,
+) -> Dict[str, Any]:
+    """Returns {table_id, table_name, schema_name, business_name_tr, columns:[…]}.
+
+    columns: [{name, data_type, is_nullable, semantic_type, business_name_tr, description_tr}]
+    Hard-cap _MAX_COLUMNS_PER_TABLE per table.
+    """
+    def _col(r, key, idx):
+        return r[key] if isinstance(r, dict) else r[idx]
+
+    cur.execute("""
+        SELECT o.schema_name, o.object_name, o.columns_json
+        FROM ds_db_objects o
+        WHERE o.source_id = %s AND o.id = %s
+        LIMIT 1
+    """, (int(source_id), int(table_id)))
+    row = cur.fetchone()
+    obj_columns_json = (_col(row, 'columns_json', 2) if row else None) or []
+    schema = _col(row, 'schema_name', 0) if row else None
+    obj_name = _col(row, 'object_name', 1) if row else None
+
+    # Enrichment: business_name_tr, semantic_type, description_tr (column-level)
+    # + table-level business_name_tr (for group header)
+    enrich_map: Dict[str, Dict[str, Any]] = {}
+    table_business_name: Optional[str] = None
+    if obj_name:
+        cur.execute("""
+            SELECT te.business_name_tr
+            FROM ds_table_enrichments te
+            WHERE te.source_id = %s
+              AND LOWER(te.table_name) = LOWER(%s)
+              AND LOWER(COALESCE(te.schema_name, '')) = LOWER(COALESCE(%s, ''))
+            LIMIT 1
+        """, (int(source_id), obj_name, schema or ""))
+        trow = cur.fetchone()
+        if trow:
+            table_business_name = _col(trow, 'business_name_tr', 0)
+
+        cur.execute("""
+            SELECT ce.column_name, ce.semantic_type, ce.business_name_tr,
+                   ce.description_tr
+            FROM ds_column_enrichments ce
+            JOIN ds_table_enrichments te ON te.id = ce.table_enrichment_id
+            WHERE te.source_id = %s
+              AND LOWER(te.table_name) = LOWER(%s)
+              AND LOWER(COALESCE(te.schema_name, '')) = LOWER(COALESCE(%s, ''))
+        """, (int(source_id), obj_name, schema or ""))
+        for r in cur.fetchall():
+            enrich_map[(_col(r, 'column_name', 0) or "").lower()] = {
+                "semantic_type": _col(r, 'semantic_type', 1),
+                "business_name_tr": _col(r, 'business_name_tr', 2),
+                "description_tr": _col(r, 'description_tr', 3),
+            }
+
+    columns: List[Dict[str, Any]] = []
+    for c in (obj_columns_json or [])[:_MAX_COLUMNS_PER_TABLE]:
+        col_name = c.get("name") or c.get("column_name") or ""
+        meta = enrich_map.get(col_name.lower(), {})
+        columns.append({
+            "name": col_name,
+            "data_type": c.get("type") or c.get("data_type"),
+            "is_nullable": c.get("nullable", c.get("is_nullable", True)),
+            "semantic_type": meta.get("semantic_type"),
+            "business_name_tr": meta.get("business_name_tr"),
+            "description_tr": meta.get("description_tr"),
+        })
+
+    return {
+        "table_id": int(table_id),
+        "table_name": obj_name,
+        "schema_name": schema,
+        "business_name_tr": table_business_name,
+        "columns": columns,
+    }
+
+
 @router.get("/sources/{source_id}/tables/{table_id}/columns")
 def list_columns(
     source_id: int = Path(..., ge=1),
@@ -1392,49 +1771,8 @@ def list_columns(
         cur = conn.cursor()
         apply_vyra_user_context(cur, current_user)
         try:
-            # ds_db_objects.columns_json + ds_column_enrichments (table_name LOWER match)
-            cur.execute("""
-                SELECT o.schema_name, o.object_name, o.columns_json
-                FROM ds_db_objects o
-                WHERE o.source_id = %s AND o.id = %s
-                LIMIT 1
-            """, (int(source_id), int(table_id)))
-            row = cur.fetchone()
-            obj_columns_json = (row[2] if row else None) or []
-            schema = row[0] if row else None
-            obj_name = row[1] if row else None
-
-            # Enrichment: business_name_tr, semantic_type, business_meaning_tr
-            enrich_map: Dict[str, Dict[str, Any]] = {}
-            if obj_name:
-                cur.execute("""
-                    SELECT ce.column_name, ce.semantic_type, ce.business_name_tr,
-                           ce.description_tr
-                    FROM ds_column_enrichments ce
-                    JOIN ds_table_enrichments te ON te.id = ce.table_enrichment_id
-                    WHERE te.source_id = %s
-                      AND LOWER(te.table_name) = LOWER(%s)
-                      AND LOWER(COALESCE(te.schema_name, '')) = LOWER(COALESCE(%s, ''))
-                """, (int(source_id), obj_name, schema or ""))
-                for r in cur.fetchall():
-                    enrich_map[(r[0] or "").lower()] = {
-                        "semantic_type": r[1],
-                        "business_name_tr": r[2],
-                        "description_tr": r[3],
-                    }
-
-            for c in (obj_columns_json or []):
-                col_name = c.get("name") or c.get("column_name") or ""
-                meta = enrich_map.get(col_name.lower(), {})
-                columns.append({
-                    "name": col_name,
-                    "data_type": c.get("type") or c.get("data_type"),
-                    "is_nullable": c.get("nullable", c.get("is_nullable", True)),
-                    "semantic_type": meta.get("semantic_type"),
-                    "business_name_tr": meta.get("business_name_tr"),
-                    "description_tr": meta.get("description_tr"),
-                })
-
+            info = _fetch_table_columns(cur, source_id, table_id)
+            columns = info["columns"]
             sample = eligibility.sample_preview(cur, table_id=table_id, user_ctx=current_user)
         except Exception as e:
             logger.warning("[db_smart] list_columns failed source=%s table=%s: %s",
@@ -1444,6 +1782,79 @@ def list_columns(
         "sample": sample,
         "source_id": source_id,
         "table_id": table_id,
+    }
+
+
+@router.get("/sources/{source_id}/tables/columns")
+def list_columns_multi(
+    source_id: int = Path(..., ge=1),
+    table_ids: str = Query(..., description="CSV table id listesi — request order preserved."),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """v3.36 F7 (POSEIDON+ARES+HEBE) — Çoklu tablo kolon listesi.
+
+    Filter step master-detail UI'sı için: primary + join tabloların kolonlarını
+    tek round-trip'te döner. Sıra `table_ids` CSV order'ına sadıktır
+    (UI tablo grup başlıklarını bu sıra ile render eder). Per-tablo
+    `_MAX_COLUMNS_PER_TABLE=50` cap (R-4 payload guard).
+
+    Response:
+      {
+        "source_id": int,
+        "tables": [
+          {
+            "table_id": int,
+            "table_name": str|None,
+            "schema_name": str|None,
+            "business_name_tr": str|None,
+            "columns": [{name, data_type, is_nullable, semantic_type,
+                         business_name_tr, description_tr}, ...]
+          }, ...
+        ],
+        "count": int
+      }
+    """
+    _require_user_id(current_user)
+    # Parse CSV → list[int], skip non-numeric, preserve order, dedup.
+    ids: List[int] = []
+    seen: set = set()
+    for tok in (table_ids or "").split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            tid = int(tok)
+        except ValueError:
+            continue
+        if tid in seen:
+            continue
+        seen.add(tid)
+        ids.append(tid)
+    if not ids:
+        raise HTTPException(status_code=400, detail="table_ids parametresi geçerli tablo id'si içermiyor.")
+
+    tables: List[Dict[str, Any]] = []
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        apply_vyra_user_context(cur, current_user)
+        for tid in ids:
+            try:
+                tables.append(_fetch_table_columns(cur, source_id, tid))
+            except Exception as e:
+                logger.warning("[db_smart] list_columns_multi failed source=%s table=%s: %s",
+                               source_id, tid, e)
+                # Hata olsa bile slot'u doldur (UI sıra korunsun, kolonlar boş kalır).
+                tables.append({
+                    "table_id": int(tid),
+                    "table_name": None,
+                    "schema_name": None,
+                    "business_name_tr": None,
+                    "columns": [],
+                })
+    return {
+        "source_id": source_id,
+        "tables": tables,
+        "count": len(tables),
     }
 
 
@@ -1467,6 +1878,7 @@ def list_metrics(
     _require_user_id(current_user)
     items: List[Dict[str, Any]] = []
     signature_meta: Optional[Dict[str, Any]] = None
+    fallback: bool = False
 
     with get_db_context() as conn:
         cur = conn.cursor()
@@ -1484,6 +1896,12 @@ def list_metrics(
                     "row_count": sig["row_count"],
                     "column_count": len(sig["columns"]),
                 }
+                # B7 fallback (POSEIDON+ARES): eligible 0 → tüm aktif library'yi göster
+                # ds_column_enrichments boş veya skor threshold yüksek olduğunda kullanıcı
+                # boş ekran yerine library'nin tamamını görür; UI hint için fallback=True.
+                if not items:
+                    items = metric_engine.list_all_active(cur)
+                    fallback = True
             else:
                 # Geriye dönük: tüm aktif metrikleri kategori bazında listele
                 cur.execute("""
@@ -1494,15 +1912,18 @@ def list_metrics(
                     ORDER BY category, metric_key
                     LIMIT 60
                 """)
+                # RealDictCursor + tuple cursor uyumu — kolon adıyla eriş.
+                def _col(r, key, idx):
+                    return r[key] if isinstance(r, dict) else r[idx]
                 for r in cur.fetchall():
                     items.append({
-                        "metric_key": r[0],
-                        "name_tr": r[1],
-                        "category": r[2],
-                        "description_tr": r[3],
-                        "default_viz": r[4],
-                        "applicable_when": r[5],
-                        "sql_templates": r[6],
+                        "metric_key": _col(r, 'metric_key', 0),
+                        "name_tr": _col(r, 'name_tr', 1),
+                        "category": _col(r, 'category', 2),
+                        "description_tr": _col(r, 'description_tr', 3),
+                        "default_viz": _col(r, 'default_viz', 4),
+                        "applicable_when": _col(r, 'applicable_when', 5),
+                        "sql_templates": _col(r, 'sql_templates', 6),
                     })
         except HTTPException:
             raise
@@ -1516,6 +1937,7 @@ def list_metrics(
         "signature": signature_meta,
         "min_score": min_score,
         "count": len(items),
+        "fallback": fallback,
     }
 
 
@@ -1778,3 +2200,306 @@ def get_template(
     if rec is None:
         raise HTTPException(status_code=404, detail="Şablon bulunamadı.")
     return rec
+
+
+# ─────────────────────────────────────────────────────────────
+# B10 — LLM column-order suggestion (Filtre step)
+# Plan: 2026-05-25_0030_metric_filter_dnd_llm_v1.md
+# Council: POSEIDON + APOLLO + ARES
+# ─────────────────────────────────────────────────────────────
+
+@router.post("/columns/suggest-order", response_model=SuggestOrderResp)
+def post_suggest_column_order(
+    req: SuggestOrderReq,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> SuggestOrderResp:
+    """LLM ile rapor kolon sıralama önerisi.
+
+    Filtre step'inin "✨ LLM ile öner" butonu çağırır. Body'deki
+    available_columns'ı kapsam dışına çıkarmadan (yalnızca verilen kolonları
+    yeniden sıralayarak) JSON döner.
+
+    Fail-soft: LLM ulaşılamaz veya geçersiz yanıt verirse heuristik sıralama
+    uygulanır ve `fallback=true` döner — 502 değil 200 döner (UI bozulmasın).
+
+    Tenant guard: source_id, current_user.company_id'ye ait olmalı.
+    """
+    _require_user_id(current_user)
+
+    company_id = current_user.get("company_id")
+    if not company_id:
+        logger.warning(
+            "[db_smart] suggest_order: current_user.company_id boş (user_id=%s)",
+            current_user.get("id"),
+        )
+        raise HTTPException(status_code=403, detail="Şirket bağlamı tanımlı değil.")
+
+    # Tenant scope — mirrors query_state_api._resolve_source_info pattern.
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        apply_vyra_user_context(cur, current_user)
+        try:
+            cur.execute(
+                """
+                SELECT company_id
+                FROM data_sources
+                WHERE id = %s
+                """,
+                (int(req.source_id),),
+            )
+            row = cur.fetchone()
+        except Exception as e:
+            logger.warning(
+                "[db_smart] suggest_order tenant-check failed source=%s: %s",
+                req.source_id, e,
+            )
+            raise HTTPException(status_code=500, detail="Kaynak doğrulanamadı.")
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Veri kaynağı bulunamadı.")
+    src_co = row.get("company_id") if isinstance(row, dict) else row[0]
+    if int(src_co or 0) != int(company_id):
+        logger.warning(
+            "[db_smart] suggest_order cross-tenant: source=%s belongs to co=%s, "
+            "current_user co=%s",
+            req.source_id, src_co, company_id,
+        )
+        raise HTTPException(status_code=403, detail="Bu veri kaynağına erişim yok.")
+
+    # Delegate to service (handles LLM call + heuristic fallback).
+    from app.services.db_smart import llm_column_order
+
+    result = llm_column_order.suggest_order(
+        source_id=req.source_id,
+        primary_table_id=req.primary_table_id,
+        join_table_ids=list(req.join_table_ids or []),
+        available_columns=[c.model_dump() for c in req.available_columns],
+        current_user=current_user,
+    )
+    # F8b: ordered_pairs (name + table_id) additive olarak döner. Service
+    # `ordered_pairs` üretir; üretemiyorsa biz burada `ordered`'dan boş
+    # table_id ile sentezleriz (yine de yanıt sözleşmesi tutarlı kalır).
+    ordered_names = list(result.get("ordered") or [])
+    raw_pairs = result.get("ordered_pairs")
+    if isinstance(raw_pairs, list) and raw_pairs:
+        pairs_out: List[OrderedColumn] = []
+        for p in raw_pairs:
+            if isinstance(p, dict) and p.get("name"):
+                pairs_out.append(
+                    OrderedColumn(
+                        name=str(p.get("name")),
+                        table_id=(int(p["table_id"]) if p.get("table_id") else None),
+                    )
+                )
+    else:
+        pairs_out = [OrderedColumn(name=n, table_id=None) for n in ordered_names]
+    return SuggestOrderResp(
+        ordered=ordered_names,
+        ordered_pairs=pairs_out,
+        rationale=result.get("rationale") or "",
+        fallback=bool(result.get("fallback", False)),
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# F9 — Generate-report LLM endpoint + SafeSQLExecutor (Önizleme step)
+# Plan: 2026-05-25_0330_v336_smart_discovery_completion_v1.md
+# Council: APOLLO + POSEIDON + ARES + HEBE
+# ─────────────────────────────────────────────────────────────
+
+@router.post("/generate-report", response_model=GenerateReportResp)
+def post_generate_report(
+    req: GenerateReportReq,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> GenerateReportResp:
+    """LLM ile tek bir SELECT SQL üret ve SafeSQLExecutor ile çalıştır.
+
+    Önizleme step'inin "▶️ Çalıştır" butonu çağırır.
+
+    Pipeline:
+      1. Tenant guard (current_user.company_id ↔ data_sources.company_id).
+      2. Dialect + connection bilgisini data_sources'tan oku.
+      3. allowed_tables = primary + join tabloların schema.object listesi
+         (ds_db_objects'ten okunur — LLM yanlış tablo uydursa bile
+         SafeSQLExecutor.check_table_whitelist reddi devreye girer).
+      4. llm_generate_report.generate_report(...) → {sql, rationale, fallback}.
+      5. SafeSQLExecutor.execute(sql, source, dialect, allowed_tables) — 5 s
+         timeout, max_rows=limit, result_cache devre dışı (her çalıştır taze).
+      6. Cevap: {sql, rationale, columns, rows, row_count, elapsed_ms,
+         truncated, success, fallback, error}.
+
+    Fail-soft: LLM ulaşılamaz veya yanıt invalid ise fallback `SELECT * FROM
+    <primary>` + dialect row-limit ile çalışmaya devam eder. 502 değil 200
+    döner (UI bozulmasın); response.fallback=True işaretlenir.
+    """
+    _require_user_id(current_user)
+
+    company_id = current_user.get("company_id")
+    if not company_id:
+        logger.warning(
+            "[db_smart] generate_report: current_user.company_id boş (user_id=%s)",
+            current_user.get("id"),
+        )
+        raise HTTPException(status_code=403, detail="Şirket bağlamı tanımlı değil.")
+
+    # ── Tenant guard + source resolution (connection dict for SafeSQLExecutor) ──
+    source: Dict[str, Any] = {}
+    dialect: str = "postgresql"
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        apply_vyra_user_context(cur, current_user)
+        try:
+            cur.execute(
+                """
+                SELECT id, db_type, host, port, db_name,
+                       db_user, db_password_encrypted, company_id
+                FROM data_sources
+                WHERE id = %s
+                """,
+                (int(req.source_id),),
+            )
+            row = cur.fetchone()
+        except Exception as e:
+            logger.warning(
+                "[db_smart] generate_report tenant-check failed source=%s: %s",
+                req.source_id, e,
+            )
+            raise HTTPException(status_code=500, detail="Kaynak doğrulanamadı.")
+
+        if row is None:
+            raise HTTPException(status_code=404, detail="Veri kaynağı bulunamadı.")
+        src = dict(row) if isinstance(row, dict) else dict(
+            zip([d[0] for d in cur.description], row)
+        )
+        if int(src.get("company_id") or 0) != int(company_id):
+            logger.warning(
+                "[db_smart] generate_report cross-tenant: source=%s belongs to co=%s, "
+                "current_user co=%s",
+                req.source_id, src.get("company_id"), company_id,
+            )
+            raise HTTPException(status_code=403, detail="Bu veri kaynağına erişim yok.")
+        source = src
+        dialect = str(src.get("db_type") or "postgresql").lower()
+
+        # ── allowed_tables: primary + joins → schema.object_name ──
+        all_ids = [int(req.primary_table_id)] + [
+            int(t) for t in (req.join_table_ids or [])
+        ]
+        allowed_tables: List[str] = []
+        try:
+            cur.execute(
+                """
+                SELECT schema_name, object_name
+                FROM ds_db_objects
+                WHERE source_id = %s AND id = ANY(%s)
+                """,
+                (int(req.source_id), list({int(t) for t in all_ids})),
+            )
+            # F15: allowed_tables case-insensitive defense in depth.
+            # Oracle metadata genelde UPPERCASE saklar; LLM PG/MySQL tarzı
+            # lowercase üretebilir veya tersi. SafeSQLExecutor parser tarafında
+            # .lower() yapar; biz de hem orijinal hem upper hem lower formatları
+            # ekleyerek herhangi bir karşılaştırma yolunun match etmesini sağlıyoruz.
+            _seen: set = set()
+            for r in cur.fetchall() or []:
+                schema = (r.get("schema_name") if isinstance(r, dict) else r[0]) or ""
+                obj = (r.get("object_name") if isinstance(r, dict) else r[1]) or ""
+                if not obj:
+                    continue
+                variants: List[str] = []
+                if schema:
+                    qual = f"{schema}.{obj}"
+                    variants.extend([qual, qual.lower(), qual.upper()])
+                variants.extend([obj, obj.lower(), obj.upper()])
+                for v in variants:
+                    if v and v not in _seen:
+                        _seen.add(v)
+                        allowed_tables.append(v)
+        except Exception as e:
+            logger.warning(
+                "[db_smart] generate_report allowed_tables lookup failed: %s", e
+            )
+
+    # ── LLM SQL generation (service handles all defensive paths) ──
+    from app.services.db_smart import llm_generate_report
+
+    gen = llm_generate_report.generate_report(
+        source_id=int(req.source_id),
+        dialect=dialect,
+        primary_table_id=int(req.primary_table_id),
+        join_table_ids=list(req.join_table_ids or []),
+        report_columns=list(req.report_columns or []),
+        metric=req.metric,
+        user_note=req.user_note or "",
+        fk_context=list(req.fk_context or []),
+        current_user=current_user,
+        limit=int(req.limit),
+    )
+    generated_sql: str = gen.get("sql") or ""
+    rationale: str = gen.get("rationale") or ""
+    fallback: bool = bool(gen.get("fallback"))
+
+    if not generated_sql:
+        # Service should always return a non-empty SQL (fallback path), but
+        # guard anyway.
+        return GenerateReportResp(
+            sql="",
+            rationale=rationale or "SQL üretilemedi.",
+            success=False,
+            fallback=True,
+            error="SQL üretilemedi (LLM + fallback başarısız).",
+        )
+
+    # ── Execute via SafeSQLExecutor — defense in depth ──
+    try:
+        from app.services.safe_sql_executor import SafeSQLExecutor
+
+        executor = SafeSQLExecutor(timeout=5, max_rows=int(req.limit))
+        sql_result = executor.execute(
+            generated_sql,
+            source,
+            dialect=dialect,
+            allowed_tables=allowed_tables or None,
+            use_result_cache=False,
+        )
+    except Exception:
+        # Driver-level errors may leak schema/permission info — generic message.
+        logger.exception("[db_smart] generate_report execute crashed")
+        return GenerateReportResp(
+            sql=generated_sql,
+            rationale=rationale,
+            success=False,
+            fallback=fallback,
+            error="Sorgu çalıştırılamadı (teknik detay log'da).",
+        )
+
+    columns = getattr(sql_result, "columns", []) or []
+    rows = getattr(sql_result, "data", None) or getattr(sql_result, "rows", []) or []
+    row_count = int(getattr(sql_result, "row_count", 0) or 0)
+    elapsed_ms = int(getattr(sql_result, "elapsed_ms", 0) or 0)
+    truncated = bool(getattr(sql_result, "truncated", False))
+
+    # Normalize row format: SafeSQLExecutor may return list-of-dicts (RealDictCursor)
+    # or list-of-tuples. The frontend modal expects list-of-lists keyed by `columns`.
+    norm_rows: List[List[Any]] = []
+    for r in rows:
+        if isinstance(r, dict):
+            norm_rows.append([r.get(c) for c in columns])
+        elif isinstance(r, (list, tuple)):
+            norm_rows.append(list(r))
+        else:
+            norm_rows.append([r])
+
+    return GenerateReportResp(
+        sql=generated_sql,
+        rationale=rationale,
+        columns=list(columns),
+        rows=norm_rows,
+        row_count=row_count,
+        elapsed_ms=elapsed_ms,
+        truncated=truncated,
+        success=bool(getattr(sql_result, "success", False)),
+        fallback=fallback,
+        error=(None if getattr(sql_result, "success", False)
+               else getattr(sql_result, "error", None) or "Sorgu başarısız."),
+    )

@@ -147,6 +147,8 @@ const JS_FILES = [
     'assets/js/modules/db_smart_filter_modal.js',        // v3.30.0 P20 — Filter spec modal (DbSmartFilterModal.open)
     'assets/js/modules/db_smart_ast_editor.js',          // v3.30.0 P20 — AST editor core (DnD + a11y), Agent A
     'assets/js/modules/db_smart_picker.js',              // v3.34.0 — Tablo seçici alt-modal (DbSmartPicker.open) — wizard'dan ÖNCE
+    'node_modules/chart.js/dist/chart.umd.js',           // v3.36.0 F11 — Chart.js UMD (window.Chart) — db_smart_chart.js'ten ÖNCE
+    'assets/js/modules/db_smart_chart.js',               // v3.36.0 F11 — Akıllı Keşfi grafik popup (DbSmartChart.open)
     'assets/js/modules/db_smart_wizard.js',              // v3.30.0 — Akıllı Veri Keşfi Wizard
     'assets/js/modules/report_detail_modal.js',          // v3.33.0 — Saved report detail modal (ReportDetailModal.open)
     'assets/js/modules/saved_reports_grid.js',           // v3.33.0 — Saved reports kart grid (SavedReportsGrid.mount)

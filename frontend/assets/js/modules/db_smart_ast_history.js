@@ -44,7 +44,14 @@
         try {
             return JSON.parse(JSON.stringify(value));
         } catch (e) {
-            console.warn('[DbSmartAstHistory] deepClone failed:', e);
+            // FIX5 P3 (TYCHE): silent fail yerine kullanıcıya görünür hata —
+            // history corruption sessizce kaybolmasın.
+            console.error('[DbSmartAstHistory] deepClone failed:', e);
+            try {
+                if (window.showToast) {
+                    window.showToast('AST geçmiş anlık görüntüsü alınamadı: ' + (e && e.message || 'unknown'), 'error');
+                }
+            } catch (_) { /* toast missing — console.error zaten yapıldı */ }
             return null;
         }
     }

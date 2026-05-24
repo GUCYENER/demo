@@ -311,6 +311,10 @@
             // hâlâ ham `%s`'li sürüm — execute body re-build ediliyor zaten.
             state.lastSql = data.sql || '';
             state.lastParams = data.params || [];
+            // v3.35.0: "Asistana Gönder" panel'deki display_sql ile aynı metni
+            // göndersin (param'lar inline). Aksi halde chat'e `%s`'li ham SQL
+            // gidiyor ve asistan değer eksik diye reddediyor.
+            state.lastDisplaySql = data.display_sql || data.sql || '';
             _enableActionButtons(root, !!state.lastSql);
 
             if (typeof state.onSqlReady === 'function') {
@@ -341,12 +345,16 @@
             return;
         }
         try {
+            // v3.35.x F2: kullanıcı "Üretilen SQL" panelinde gördüğü display_sql'i
+            // bekliyor (literaller inlined); state.lastSql ise %s placeholder'lı
+            // raw SQL. lastDisplaySql v3.35.0'da cache'lendi — fallback-safe.
+            const sqlToCopy = state.lastDisplaySql || state.lastSql;
             if (navigator.clipboard && navigator.clipboard.writeText) {
-                await navigator.clipboard.writeText(state.lastSql);
+                await navigator.clipboard.writeText(sqlToCopy);
             } else {
                 // Fallback: textarea trick
                 const ta = document.createElement('textarea');
-                ta.value = state.lastSql;
+                ta.value = sqlToCopy;
                 ta.setAttribute('readonly', '');
                 ta.style.position = 'absolute';
                 ta.style.left = '-9999px';
@@ -356,7 +364,7 @@
                 document.body.removeChild(ta);
             }
             statusEl.classList.remove('qb-status-error');
-            statusEl.textContent = 'SQL panoya kopyalandı.';
+            statusEl.textContent = 'SQL panoya kopyalandı (görüntülenen sürüm).';
             if (window.showToast) window.showToast('SQL panoya kopyalandı', 'success');
             _announce(root, 'SQL panoya kopyalandı');
         } catch (err) {
@@ -456,6 +464,7 @@
         if (!state.lastSql) return; // zaten geçersiz — tekrar mesaj basma
         state.lastSql = '';
         state.lastParams = [];
+        state.lastDisplaySql = '';
         _enableActionButtons(root, false);
         const statusEl = root.querySelector('.qb-status');
         if (statusEl) {
@@ -477,7 +486,12 @@
             statusEl.textContent = 'Sohbet kutusu bulunamadı.';
             return;
         }
-        const prefix = `Şu SQL'i çalıştırıp sonucunu açıklar mısın:\n\`\`\`sql\n${state.lastSql}\n\`\`\``;
+        // v3.35.0: "Üretilen SQL" panel'i display_sql gösteriyor (param inline).
+        // Önceden state.lastSql (ham %s'li sürüm) chat'e gidiyordu; asistan
+        // tarafında "değerler eksik" hatası oluşuyordu. Şimdi panel ile bire bir
+        // aynı metni gönderiyoruz.
+        const sqlToSend = state.lastDisplaySql || state.lastSql;
+        const prefix = `Şu SQL'i çalıştırıp sonucunu açıklar mısın:\n\`\`\`sql\n${sqlToSend}\n\`\`\``;
         inp.value = prefix;
         inp.focus();
         // textarea ise yüksekliği güncellesin

@@ -994,6 +994,70 @@ body::before {
     el.classList.add('show');
   }
 
+  // ---- FIX12 (v3.34.3): Safe JSON parse + friendly TR error mapping ----
+  // Backend/DB down ya da reverse proxy HTML 502 döndürdüğünde kullanıcı
+  // "Unexpected token '<', ..." ham SyntaxError görüyordu. Bu helper içerik
+  // tipini kontrol eder, parse hatasını yakalar ve SERVER_DOWN-tag'li bir
+  // Error fırlatır. Mesaj her durumda Türkçe + sanitized; raw HTML/JSON
+  // metni asla showLoginError'a sızmaz.
+  async function safeParseJsonResponse(response) {
+    var contentType = ((response.headers && response.headers.get && response.headers.get('content-type')) || '').toLowerCase();
+    var text = '';
+    try { text = await response.text(); } catch (_e) { text = ''; }
+
+    if (text && contentType.indexOf('application/json') === -1) {
+      var e1 = new Error('SERVER_DOWN');
+      e1.code = 'SERVER_DOWN';
+      e1.status = response.status;
+      throw e1;
+    }
+    if (!text) {
+      if (!response.ok) {
+        var eEmpty = new Error('HTTP_' + response.status);
+        eEmpty.status = response.status;
+        eEmpty.code = (response.status >= 500) ? 'SERVER_ERROR' : 'CLIENT_ERROR';
+        throw eEmpty;
+      }
+      return null;
+    }
+    try {
+      return JSON.parse(text);
+    } catch (_parseErr) {
+      var e2 = new Error('SERVER_DOWN');
+      e2.code = 'SERVER_DOWN';
+      e2.status = response.status;
+      throw e2;
+    }
+  }
+
+  function mapAuthError(error) {
+    if (!error) return 'Giriş yapılamadı. Lütfen tekrar deneyin.';
+    var code = error.code;
+    var status = error.status;
+    var rawMsg = (typeof error.message === 'string') ? error.message : '';
+    var looksLikeLeakage = /<\s*html|<\s*body|Unexpected token|is not valid JSON|SyntaxError|JSON\.parse/i.test(rawMsg);
+
+    if (code === 'SERVER_DOWN') {
+      return 'Sunucu şu anda yanıt vermiyor. Sistem ayağa kalkana kadar lütfen bekleyip tekrar deneyin.';
+    }
+    if (!status && (error.name === 'TypeError' || /failed to fetch|networkerror/i.test(rawMsg))) {
+      return 'Sunucu şu anda yanıt vermiyor. Sistem ayağa kalkana kadar lütfen bekleyip tekrar deneyin.';
+    }
+    if (status === 502 || status === 503 || status === 504) {
+      return 'Sunucu geçici olarak erişilemiyor. Lütfen 30 saniye sonra tekrar deneyin.';
+    }
+    if (status === 401) {
+      return 'Kullanıcı adı veya şifre hatalı.';
+    }
+    if (status === 500) {
+      return 'Sunucuda beklenmeyen bir hata oluştu. Sistem yöneticinizle iletişime geçin.';
+    }
+    if (rawMsg && !looksLikeLeakage && rawMsg.length < 240 && rawMsg !== 'SERVER_DOWN') {
+      return rawMsg;
+    }
+    return 'Giriş yapılamadı. Lütfen tekrar deneyin.';
+  }
+
   window.doLogin = async function() {
     hideErrors();
     var user = (document.getElementById('loginUser').value || '').trim();
@@ -1012,16 +1076,29 @@ body::before {
     if (domain) loginBody.domain = domain;
 
     try {
-      var response = await fetch(API_BASE + '/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(loginBody)
-      });
+      var response;
+      try {
+        response = await fetch(API_BASE + '/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(loginBody)
+        });
+      } catch (netErr) {
+        // Network failure / TypeError: backend tamamen erişilemiyor.
+        var ne = new Error('SERVER_DOWN');
+        ne.code = 'SERVER_DOWN';
+        ne.cause = netErr;
+        throw ne;
+      }
 
-      var data = await response.json();
+      // FIX12: content-type + JSON parse guard. Raw HTML asla data'ya geçmez.
+      var data = await safeParseJsonResponse(response);
 
       if (!response.ok) {
-        throw new Error(data.detail || 'Giriş başarısız');
+        var httpErr = new Error((data && data.detail) || ('HTTP_' + response.status));
+        httpErr.status = response.status;
+        httpErr.code = (response.status >= 500) ? 'SERVER_ERROR' : 'CLIENT_ERROR';
+        throw httpErr;
       }
 
       localStorage.setItem('access_token', data.access_token);
@@ -1044,11 +1121,10 @@ body::before {
     } catch (error) {
       btn.classList.remove('loading');
       btn.innerHTML = LOGIN_BTN_HTML;
-      var errorMessage = error.message;
-      if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
-        errorMessage = 'Sunucuya bağlanılamadı. Backend servisi çalışıyor mu?';
-      }
-      showLoginError(errorMessage);
+      console.error('[Login] Error:', error);
+      // FIX12: friendly TR mapping + JSON/HTML scrub. error.message ham
+      // SyntaxError olsa bile mapAuthError bunu generic catch-all'a düşürür.
+      showLoginError(mapAuthError(error));
     }
   };
 
@@ -1076,22 +1152,34 @@ body::before {
     btn.innerHTML = '<div class="spinner"></div>';
 
     try {
-      var response = await fetch(API_BASE + '/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          full_name: fullname,
-          username: username,
-          email: email,
-          phone: phone,
-          password: password
-        })
-      });
+      var response;
+      try {
+        response = await fetch(API_BASE + '/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            full_name: fullname,
+            username: username,
+            email: email,
+            phone: phone,
+            password: password
+          })
+        });
+      } catch (netErr) {
+        var rne = new Error('SERVER_DOWN');
+        rne.code = 'SERVER_DOWN';
+        rne.cause = netErr;
+        throw rne;
+      }
 
-      var data = await response.json();
+      // FIX12: content-type + JSON parse guard (register flow için aynı).
+      var data = await safeParseJsonResponse(response);
 
       if (!response.ok) {
-        throw new Error(data.detail || 'Kayıt başarısız');
+        var httpErr = new Error((data && data.detail) || ('HTTP_' + response.status));
+        httpErr.status = response.status;
+        httpErr.code = (response.status >= 500) ? 'SERVER_ERROR' : 'CLIENT_ERROR';
+        throw httpErr;
       }
 
       showRegSuccess('Kayıt başarılı! Giriş sayfasına yönlendiriliyorsunuz...');
@@ -1102,11 +1190,10 @@ body::before {
       }, 2000);
 
     } catch (error) {
-      var errorMessage = error.message;
-      if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
-        errorMessage = 'Sunucuya bağlanılamadı. Backend servisi çalışıyor mu?';
-      }
-      showRegError(errorMessage);
+      console.error('[Register] Error:', error);
+      // FIX12: register hata UX'i de login ile aynı sözlüğü kullanır;
+      // raw JSON sızıntısı engellenir.
+      showRegError(mapAuthError(error));
     } finally {
       btn.classList.remove('loading');
       btn.innerHTML = REG_BTN_HTML;

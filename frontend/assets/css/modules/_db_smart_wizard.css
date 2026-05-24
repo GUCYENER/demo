@@ -756,7 +756,7 @@
 .dsw-picker-modal {
     position: fixed;
     inset: 0;
-    z-index: 1100;   /* wizard modal'ın üstünde */
+    z-index: 1300;   /* wizard modal (1000) + filter modal (1100) üstünde */
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1047,6 +1047,7 @@
     gap: 6px;
 }
 .dsw-selected-summary li {
+    position: relative;
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -1062,6 +1063,48 @@
     border-color: rgba(79, 140, 255, 0.45);
     color: #fff;
     font-weight: 500;
+}
+/* v3.34.4 B1 (HEBE+HERMES) — chip × remove button */
+.dsw-selected-summary .dsw-chip-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.dsw-selected-summary .dsw-chip-remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 4px;
+    padding: 0 6px;
+    min-width: 18px;
+    height: 18px;
+    line-height: 1;
+    background: transparent;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    border: 0;
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease;
+}
+.dsw-selected-summary .dsw-chip-remove:hover {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+}
+.dsw-selected-summary .dsw-chip-remove:focus-visible {
+    outline: 2px solid var(--vyra-accent, #4f8cff);
+    outline-offset: 1px;
+}
+
+/* v3.34.4 B1 — Ara butonu disabled state (seçim varken pasif) */
+.dsw-ara-btn:disabled,
+.dsw-ara-btn[aria-disabled="true"] {
+    opacity: 0.45;
+    cursor: not-allowed;
+    pointer-events: none;
+    box-shadow: none;
+    transform: none;
 }
 .dsw-selected-summary .dsw-selected-edit {
     margin-top: 10px;
@@ -1090,6 +1133,179 @@
         border-right: none;
         border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     }
+}
+
+/* ============================================================
+   v3.34.x AGENT-B — Picker UX enhancements
+   (a) Schema accordion · (b) Clear All · (c) Only-Selected toggle
+   (d) Search × clear · (f) FK guard warning
+   ============================================================ */
+
+/* (d) Arama temizle (×) ikonu — input içinde değil, hemen sağında */
+.dsw-picker-search {
+    position: relative;
+}
+.dsw-picker-search-clear {
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    line-height: 24px;
+    font-size: 18px;
+    font-weight: 500;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    cursor: pointer;
+    padding: 0;
+    text-align: center;
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.dsw-picker-search-clear:hover {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.35);
+    color: #ef4444;
+}
+.dsw-picker-search-clear:focus {
+    outline: none;
+    border-color: #4f8cff;
+    box-shadow: 0 0 0 2px rgba(79, 140, 255, 0.25);
+}
+.dsw-picker-search-clear.hidden,
+.dsw-picker-search-clear[hidden] {
+    display: none;
+}
+
+/* Sol panel filter bar — toggle + Tümünü Temizle */
+.dsw-picker-filter-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+    padding: 6px 4px;
+}
+.dsw-picker-filter-only-selected {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    cursor: pointer;
+    user-select: none;
+}
+.dsw-picker-filter-only-selected input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    accent-color: #4f8cff;
+    cursor: pointer;
+    margin: 0;
+}
+.dsw-picker-filter-only-selected:hover {
+    color: var(--vyra-fg-primary, #e6e8eb);
+}
+
+/* (b) Tümünü Temizle butonu */
+.dsw-picker-clear-all-btn {
+    font-size: 12px;
+    font-weight: 500;
+    padding: 5px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.dsw-picker-clear-all-btn:hover:not(:disabled) {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.35);
+    color: #ef4444;
+}
+.dsw-picker-clear-all-btn:focus {
+    outline: none;
+    border-color: #4f8cff;
+    box-shadow: 0 0 0 2px rgba(79, 140, 255, 0.25);
+}
+.dsw-picker-clear-all-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* (a) Schema akordeon */
+.dsw-picker-accordion {
+    border-radius: 8px;
+    margin-bottom: 4px;
+    background: transparent;
+}
+.dsw-picker-accordion + .dsw-picker-accordion {
+    margin-top: 2px;
+}
+.dsw-picker-accordion-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 10px;
+    background: rgba(255, 255, 255, 0.025);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    color: var(--vyra-fg-primary, #e6e8eb);
+    font-size: 13px;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.12s ease, border-color 0.12s ease;
+}
+.dsw-picker-accordion-header:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+.dsw-picker-accordion-header:focus {
+    outline: none;
+    border-color: #4f8cff;
+    box-shadow: 0 0 0 2px rgba(79, 140, 255, 0.25);
+}
+.dsw-picker-accordion-caret {
+    display: inline-block;
+    width: 12px;
+    font-size: 11px;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    transition: transform 0.15s ease;
+    transform: rotate(0deg);
+}
+.dsw-picker-accordion.is-open .dsw-picker-accordion-caret {
+    transform: rotate(90deg);
+}
+.dsw-picker-accordion-title {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: 0.02em;
+}
+.dsw-picker-accordion-count {
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    padding: 1px 8px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 999px;
+}
+.dsw-picker-accordion-body {
+    padding: 4px 0 6px 8px;
+}
+.dsw-picker-accordion-body[hidden] {
+    display: none;
+}
+
+/* (f) FK warning placeholder (boş ilişki) */
+.dsw-picker-warning {
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.06);
+    border: 1px dashed rgba(245, 158, 11, 0.35);
+    border-radius: 8px;
 }
 
 /* ============================================================
@@ -1182,4 +1398,1362 @@
 }
 .dsw-ara-source-select[hidden] {
     display: none !important;
+}
+
+/* v3.34.3 — Tek source readonly badge (user feedback bug-2) */
+.dsw-ara-source-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    margin: 0 8px 0 0;
+    background: var(--vyra-bg-elevated, #14161a);
+    border: 1px solid var(--vyra-border-subtle, #2c3138);
+    border-radius: 999px;
+    font-size: 13px;
+    color: var(--vyra-text-secondary, #a8b3c1);
+}
+.dsw-ara-source-label[hidden] { display: none; }
+
+/* ============================================================
+   v3.34.3 — FIX8 polish (HEBE+ATHENA)
+   - 100dvh fallback (iOS Safari address bar) — modal yüksekliği
+   - WCAG AA focus contrast token (--vyra-focus, #0066cc fallback)
+   - Tablet grid order (focus restore, sticky source select)
+   - Body scroll-lock CSS hint (overscroll-behavior: contain)
+   - i18n FOUC guard (yalnız wizard scope, opt-in attribute)
+   Scope: yalnız db-smart-wizard + dsw-* + dsw-picker-* (smart discovery).
+   ============================================================ */
+
+/* (1) 100dvh — mobile modal full-height (iOS dinamik viewport) */
+@supports (height: 100dvh) {
+    @media (max-width: 768px) {
+        .dsw-modal-dialog {
+            height: 100dvh;
+            max-height: 100dvh;
+        }
+        .dsw-picker-dialog {
+            height: 100dvh;
+        }
+    }
+}
+
+/* (2) Focus contrast AAA — accent yerine yüksek kontrastlı focus token
+       Yalnız wizard + picker scope; global :focus-visible override etmez. */
+.db-smart-wizard :focus-visible,
+.dsw-modal-dialog :focus-visible,
+.dsw-picker-dialog :focus-visible,
+.dsw-ara-btn:focus-visible {
+    outline: 2px solid var(--vyra-focus, #0066cc);
+    outline-offset: 2px;
+}
+@media (prefers-color-scheme: dark) {
+    .db-smart-wizard :focus-visible,
+    .dsw-modal-dialog :focus-visible,
+    .dsw-picker-dialog :focus-visible,
+    .dsw-ara-btn:focus-visible {
+        outline-color: var(--vyra-focus-dark, #66b3ff);
+    }
+}
+
+/* (3) Tablet (768-1024) — source select sticky, grid order korunur
+       FIX: focus reflow'da kaybolmasın; DOM sırası DOM'da, görsel sıra order ile. */
+@media (min-width: 768px) and (max-width: 1024px) {
+    .dsw-modal-dialog .dsw-in-modal .dsw-search-row {
+        grid-template-columns: 1fr 200px auto;
+    }
+    .dsw-ara-block {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background: var(--vyra-bg-elevated, #14161a);
+    }
+    .dsw-ara-source-select {
+        order: 0;   /* desc'ten önce gelmesin; DOM sırası korunur */
+    }
+    .dsw-ara-desc { order: 1; }
+    .dsw-ara-btn  { order: 2; }
+}
+
+/* (4) Body scroll-lock CSS hint — modal/picker açıkken iOS rubber-band engeli
+       JS ref-count (FIX5) body class'ını set ettiğinde devreye girer. */
+.dsw-modal-overlay,
+.dsw-picker-modal {
+    overscroll-behavior: contain;
+    touch-action: none;
+}
+.dsw-modal-dialog,
+.dsw-picker-dialog {
+    overscroll-behavior: contain;
+}
+/* opt-in: body[data-dsw-locked="true"] iken ana sayfa scroll'u sabit */
+body[data-dsw-locked="true"] {
+    overflow: hidden;
+    overscroll-behavior: contain;
+}
+
+/* ── EDIT9 (HEBE+HERMES+ATHENA) — Step 3 Filter DnD ────────── */
+.dsw-filter-grid {
+    display: grid;
+    grid-template-columns: minmax(280px, 1fr) minmax(280px, 1fr);
+    gap: 16px;
+    margin-top: 8px;
+}
+@media (max-width: 880px) {
+    .dsw-filter-grid { grid-template-columns: 1fr; }
+}
+.dsw-filter-catalog,
+.dsw-filter-report {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+.dsw-filter-catalog h4,
+.dsw-filter-report-head h4 {
+    margin: 0 0 4px 0;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+}
+.dsw-filter-report-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.dsw-col-catalog {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 360px;
+    overflow-y: auto;
+}
+.dsw-col-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border: 1px solid var(--vyra-border-subtle, #2c3138);
+    border-radius: var(--vyra-radius-sm, 6px);
+    background: var(--vyra-bg-surface, #1c1f23);
+}
+.dsw-col-row-text {
+    flex: 1;
+    min-width: 0;
+}
+.dsw-col-row-text .dsw-r-title {
+    font-size: 13px;
+    color: var(--vyra-fg-primary, #e6e8eb);
+}
+.dsw-col-row-text .dsw-r-meta {
+    font-size: 11px;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    font-family: ui-monospace, monospace;
+}
+.dsw-col-add-btn {
+    flex-shrink: 0;
+    padding: 4px 10px;
+    font-size: 12px;
+    border: 1px solid var(--vyra-accent, #4f8cff);
+    border-radius: var(--vyra-radius-sm, 6px);
+    background: transparent;
+    color: var(--vyra-accent, #4f8cff);
+    cursor: pointer;
+    transition: background 120ms ease-out, color 120ms ease-out;
+}
+.dsw-col-add-btn:hover {
+    background: var(--vyra-accent, #4f8cff);
+    color: #fff;
+}
+.dsw-col-add-btn:focus-visible {
+    outline: 2px solid var(--vyra-accent, #4f8cff);
+    outline-offset: 2px;
+}
+.dsw-suggest-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+    border: 1px solid var(--vyra-accent-warning, #f59e0b);
+    border-radius: var(--vyra-radius-sm, 6px);
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.12), rgba(79, 140, 255, 0.12));
+    color: var(--vyra-fg-primary, #e6e8eb);
+    cursor: pointer;
+    transition: transform 120ms ease-out, box-shadow 120ms ease-out;
+}
+.dsw-suggest-btn:hover:not([disabled]) {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.25);
+}
+.dsw-suggest-btn:focus-visible {
+    outline: 2px solid var(--vyra-accent-warning, #f59e0b);
+    outline-offset: 2px;
+}
+.dsw-suggest-btn[disabled],
+.dsw-suggest-btn[aria-busy="true"] {
+    opacity: 0.6;
+    cursor: progress;
+}
+.dsw-dnd-list {
+    list-style: none;
+    margin: 0;
+    padding: 8px;
+    min-height: 200px;
+    border: 2px dashed var(--vyra-border-subtle, #2c3138);
+    border-radius: var(--vyra-radius-md, 8px);
+    background: var(--vyra-bg-elevated, #14161a);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.dsw-dnd-empty {
+    margin: auto;
+    padding: 24px 12px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    font-style: italic;
+}
+.dsw-dnd-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--vyra-border-subtle, #2c3138);
+    border-radius: var(--vyra-radius-sm, 6px);
+    background: var(--vyra-bg-surface, #1c1f23);
+    cursor: grab;
+    user-select: none;
+    transition: border-color 120ms ease-out, background 120ms ease-out;
+}
+.dsw-dnd-item:hover {
+    border-color: var(--vyra-accent, #4f8cff);
+}
+.dsw-dnd-item:active {
+    cursor: grabbing;
+}
+.dsw-dnd-item.dragging {
+    opacity: 0.4;
+    cursor: grabbing;
+}
+.dsw-dnd-item.drag-over {
+    border-color: var(--vyra-accent-warning, #f59e0b);
+    background: var(--vyra-bg-hover, #2a2e34);
+}
+.dsw-dnd-item:focus,
+.dsw-dnd-item:focus-visible {
+    outline: 2px solid var(--vyra-accent, #4f8cff);
+    outline-offset: 2px;
+}
+.dsw-dnd-handle {
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    font-size: 14px;
+    line-height: 1;
+    cursor: grab;
+}
+.dsw-dnd-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    color: var(--vyra-fg-primary, #e6e8eb);
+}
+.dsw-dnd-stype {
+    margin-left: 6px;
+    padding: 1px 6px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    background: var(--vyra-bg-elevated, #14161a);
+    border-radius: 999px;
+}
+.dsw-dnd-remove {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    line-height: 22px;
+    text-align: center;
+    border: 1px solid transparent;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    cursor: pointer;
+    font-size: 16px;
+}
+.dsw-dnd-remove:hover {
+    border-color: var(--vyra-accent-danger, #ef4444);
+    color: var(--vyra-accent-danger, #ef4444);
+}
+.dsw-dnd-remove:focus-visible {
+    outline: 2px solid var(--vyra-accent-danger, #ef4444);
+    outline-offset: 2px;
+}
+
+/* (5) i18n FOUC guard — yalnız wizard scope, opt-in
+       Aktif: parent'a [data-i18n-scope="smart-discovery"][data-i18n-ready="false"] set edildiğinde
+       i18n hazır olduğunda JS [data-i18n-ready="true"] yapar → fade-in. */
+[data-i18n-scope="smart-discovery"][data-i18n-ready="false"] [data-i18n] {
+    opacity: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+    [data-i18n-scope="smart-discovery"][data-i18n-ready="true"] [data-i18n] {
+        opacity: 1;
+        transition: opacity 140ms ease-out;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    [data-i18n-scope="smart-discovery"][data-i18n-ready="true"] [data-i18n] {
+        opacity: 1;
+    }
+}
+
+/* ── F8 (APOLLO+HEBE+ATHENA): LLM suggestion slots + user-note textarea ──
+ * Slots row sits above the step-3 filter grid; cards are max 240px wide,
+ * column preview list truncated to 6 + “+N daha…”. Active (applied) slot
+ * gets accent border tint. User-note textarea sits below the grid.
+ */
+.dsw-suggest-slots {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+.dsw-suggest-slots[hidden] { display: none; }
+
+.dsw-suggest-card {
+    flex: 0 1 240px;
+    max-width: 240px;
+    min-width: 200px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    border: 1px solid var(--vyra-border-subtle, #2c3138);
+    border-radius: var(--vyra-radius-md, 8px);
+    background: var(--vyra-bg-elevated, #14161a);
+    color: var(--vyra-fg-primary, #e6e8eb);
+}
+.dsw-suggest-card.active {
+    border-color: var(--vyra-accent, #4f8cff);
+    background: var(--vyra-bg-accent-soft, rgba(79, 140, 255, 0.08));
+}
+.dsw-suggest-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+.dsw-suggest-card-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--vyra-fg-primary, #e6e8eb);
+}
+.dsw-suggest-card-badge {
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 10px;
+    background: var(--vyra-accent, #4f8cff);
+    color: #fff;
+}
+.dsw-suggest-card-cols {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 96px;
+    overflow-y: auto;
+    font-size: 12px;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    border-top: 1px solid var(--vyra-border-subtle, #2c3138);
+    border-bottom: 1px solid var(--vyra-border-subtle, #2c3138);
+    padding: 4px 0;
+}
+.dsw-suggest-card-cols li {
+    padding: 1px 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dsw-suggest-card-cols .dsw-suggest-more {
+    color: var(--vyra-fg-tertiary, #6b7280);
+    font-style: italic;
+}
+.dsw-suggest-card-rationale {
+    font-size: 11px;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    line-height: 1.35;
+    max-height: 48px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+}
+.dsw-suggest-card-rationale .dsw-suggest-no-rat {
+    font-style: italic;
+    opacity: 0.7;
+}
+.dsw-suggest-apply-btn {
+    margin-top: 2px;
+    padding: 6px 10px;
+    border: 1px solid var(--vyra-accent, #4f8cff);
+    border-radius: var(--vyra-radius-sm, 6px);
+    background: transparent;
+    color: var(--vyra-accent, #4f8cff);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 120ms ease-out, color 120ms ease-out;
+}
+.dsw-suggest-apply-btn:hover {
+    background: var(--vyra-accent, #4f8cff);
+    color: #fff;
+}
+.dsw-suggest-apply-btn:focus-visible {
+    outline: 2px solid var(--vyra-accent, #4f8cff);
+    outline-offset: 2px;
+}
+.dsw-suggest-card.active .dsw-suggest-apply-btn {
+    background: var(--vyra-accent, #4f8cff);
+    color: #fff;
+}
+
+/* Free-text yorum textarea — sits at the bottom of step-3. */
+.dsw-user-note {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.dsw-user-note label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.dsw-user-note textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    border: 1px solid var(--vyra-border-subtle, #2c3138);
+    border-radius: var(--vyra-radius-sm, 6px);
+    background: var(--vyra-bg-surface, #1c1f23);
+    color: var(--vyra-fg-primary, #e6e8eb);
+    font: inherit;
+    line-height: 1.4;
+    resize: vertical;
+    min-height: 64px;
+}
+.dsw-user-note textarea:focus-visible {
+    outline: 2px solid var(--vyra-accent, #4f8cff);
+    outline-offset: 1px;
+    border-color: var(--vyra-accent, #4f8cff);
+}
+.dsw-user-note textarea::placeholder {
+    color: var(--vyra-fg-tertiary, #6b7280);
+    opacity: 0.8;
+}
+
+/* v3.36 F7 (HEBE): multi-table column catalog group headers */
+.dsw-filter-catalog .dsw-table-group {
+    margin: 14px 0 6px 0;
+    padding: 6px 8px;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--vyra-accent, #4f8cff);
+    background: var(--vyra-bg-elev-1, rgba(79, 140, 255, 0.06));
+    border-left: 3px solid var(--vyra-accent, #4f8cff);
+    border-radius: 3px;
+}
+.dsw-filter-catalog .dsw-table-group:first-child {
+    margin-top: 4px;
+}
+.dsw-filter-catalog .dsw-table-group-count {
+    margin-left: 6px;
+    font-weight: 500;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    text-transform: none;
+}
+
+/* ============================================================
+ * v3.36.0 F11 — Akıllı Keşfi Grafik Popup (DbSmartChart)
+ * Council: DIONYSOS + HEBE
+ * ============================================================ */
+.dsw-chart-modal {
+    position: fixed;
+    inset: 0;
+    /* v3.36.1 F11b — must sit ABOVE .dsw-result-modal-overlay (z=11000)
+       so the chart popup launched from the F9 result modal is visible.
+       11050 leaves headroom (50) below typical toast/notification layer. */
+    z-index: 11050;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+.dsw-chart-modal.hidden {
+    display: none !important;
+}
+.dsw-chart-modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+}
+.dsw-chart-modal__dialog {
+    position: relative;
+    width: 100%;
+    max-width: 900px;
+    max-height: calc(100vh - 48px);
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-card, #1c1f23);
+    color: var(--text-1, #F1F5FF);
+    border: 1px solid var(--border-strong, rgba(255,255,255,0.12));
+    border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    overflow: hidden;
+}
+.dsw-chart-modal__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border, rgba(255,255,255,0.07));
+}
+.dsw-chart-modal__title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-1, #F1F5FF);
+}
+.dsw-chart-modal__close {
+    background: transparent;
+    color: var(--text-2, #9DAAC4);
+    border: none;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 4px 10px;
+    border-radius: 6px;
+    transition: background 120ms;
+}
+.dsw-chart-modal__close:hover,
+.dsw-chart-modal__close:focus-visible {
+    background: var(--bg-hover, rgba(255,255,255,0.05));
+    color: var(--text-1, #F1F5FF);
+    outline: none;
+}
+.dsw-chart-modal__toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border, rgba(255,255,255,0.07));
+    background: var(--bg-surface, rgba(22,26,36,0.6));
+}
+.dsw-chart-modal__type-label {
+    font-size: 12px;
+    color: var(--text-2, #9DAAC4);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+}
+.dsw-chart-modal__type-select {
+    flex: 0 0 auto;
+    padding: 6px 10px;
+    background: var(--bg-input, rgba(16,20,30,0.95));
+    color: var(--text-1, #F1F5FF);
+    border: 1px solid var(--border-strong, rgba(255,255,255,0.12));
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+}
+.dsw-chart-modal__type-select:focus-visible {
+    outline: 2px solid var(--accent, #4D99FF);
+    outline-offset: 1px;
+}
+.dsw-chart-modal__canvas-wrap {
+    position: relative;
+    height: 400px;
+    padding: 16px 18px;
+    flex: 0 0 auto;
+}
+.dsw-chart-modal__canvas-wrap canvas {
+    width: 100% !important;
+    height: 100% !important;
+    display: block;
+}
+.dsw-chart-modal__fallback {
+    padding: 32px 24px;
+    text-align: center;
+    color: var(--text-2, #9DAAC4);
+    font-size: 14px;
+    line-height: 1.5;
+}
+.dsw-chart-modal__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 18px;
+    border-top: 1px solid var(--border, rgba(255,255,255,0.07));
+}
+.dsw-chart-modal__btn {
+    padding: 8px 16px;
+    background: var(--bg-input, rgba(16,20,30,0.95));
+    color: var(--text-1, #F1F5FF);
+    border: 1px solid var(--border-strong, rgba(255,255,255,0.12));
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 120ms, border-color 120ms;
+}
+.dsw-chart-modal__btn:hover,
+.dsw-chart-modal__btn:focus-visible {
+    background: var(--bg-hover, rgba(255,255,255,0.05));
+    border-color: var(--accent, #4D99FF);
+    outline: none;
+}
+
+/* ============================================================
+ * v3.36.0 F10 — Saved Reports (step-0 list + step-4 save CTA + modal)
+ * Council: ATHENA + HEBE + HERMES
+ * ============================================================ */
+.dsw-saved-reports {
+    margin: 0 0 18px 0;
+    padding: 14px 16px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.02);
+}
+.dsw-saved-reports-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+.dsw-saved-reports-head h4 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--vyra-fg-primary, #e6e8eb);
+}
+.dsw-saved-reports-hint {
+    font-size: 12px;
+    color: var(--vyra-fg-tertiary, #6b7280);
+}
+.dsw-saved-reports-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 10px;
+}
+.dsw-saved-reports-empty {
+    grid-column: 1 / -1;
+    padding: 14px;
+    font-size: 13px;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    text-align: center;
+    background: rgba(255, 255, 255, 0.015);
+    border: 1px dashed rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+}
+.dsw-saved-report-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.025);
+    transition: border-color 120ms ease, background 120ms ease;
+}
+.dsw-saved-report-card:hover {
+    border-color: rgba(79, 140, 255, 0.5);
+    background: rgba(79, 140, 255, 0.04);
+}
+.dsw-saved-report-main {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+.dsw-saved-report-name {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--vyra-fg-primary, #e6e8eb);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dsw-saved-report-desc {
+    margin: 0;
+    font-size: 12px;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.dsw-saved-report-date {
+    font-size: 11px;
+    color: var(--vyra-fg-tertiary, #6b7280);
+}
+.dsw-saved-report-actions {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+}
+.dsw-btn-sm {
+    padding: 4px 10px;
+    font-size: 12px;
+    line-height: 1.4;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--vyra-fg-primary, #e6e8eb);
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease;
+}
+.dsw-btn-sm:hover {
+    background: rgba(79, 140, 255, 0.12);
+    border-color: rgba(79, 140, 255, 0.5);
+}
+.dsw-btn-sm:focus-visible {
+    outline: 2px solid var(--vyra-accent, #4f8cff);
+    outline-offset: 1px;
+}
+.dsw-btn-sm.dsw-btn-danger:hover {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.6);
+    color: #fca5a5;
+}
+
+/* Step 4 — Save Report CTA */
+.dsw-preview-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.dsw-save-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* Save Report modal */
+/* v3.36.2 F16 — z-index 1080 → 11100 (HEBE+ARES).
+   F9 result modal overlay 11000, F11 chart modal 11050 üstünde olmalı ki
+   "💾 Raporu Kaydet" tıklandığında save modal arka planda kalmasın.
+   Toast layer 12000 altında bırakmak için 11100 — 900 headroom yeterli. */
+.dsw-save-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 11100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.dsw-save-modal.hidden,
+.dsw-save-modal[hidden] {
+    display: none !important;
+}
+.dsw-save-modal-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(8, 10, 16, 0.55);
+    backdrop-filter: blur(2px);
+}
+.dsw-save-modal-dialog {
+    position: relative;
+    width: min(480px, calc(100% - 32px));
+    max-height: calc(100vh - 48px);
+    overflow: auto;
+    background: var(--vyra-bg-elev-2, #1a1d24);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+    padding: 20px 22px 16px 22px;
+}
+.dsw-save-modal-close {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: transparent;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    border-radius: 6px;
+}
+.dsw-save-modal-close:hover { background: rgba(255, 255, 255, 0.06); color: #fff; }
+.dsw-save-modal-head h3 {
+    margin: 0 0 4px 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--vyra-fg-primary, #e6e8eb);
+}
+.dsw-save-modal-sub {
+    margin: 0 0 16px 0;
+    font-size: 12px;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+}
+.dsw-save-modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+.dsw-save-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+}
+.dsw-save-field > span {
+    font-weight: 500;
+}
+.dsw-save-field em {
+    color: #ef4444;
+    font-style: normal;
+    margin-left: 2px;
+}
+.dsw-save-desc {
+    resize: vertical;
+    min-height: 64px;
+    font: inherit;
+}
+.dsw-save-error {
+    padding: 8px 10px;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    border-radius: 6px;
+    background: rgba(239, 68, 68, 0.08);
+    color: #fca5a5;
+    font-size: 12px;
+}
+.dsw-save-modal-foot {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+@media (max-width: 880px) {
+    .dsw-saved-reports-list {
+        grid-template-columns: 1fr;
+    }
+    .dsw-saved-report-actions {
+        justify-content: flex-start;
+    }
+    .dsw-save-modal-dialog {
+        width: calc(100% - 16px);
+        padding: 16px;
+    }
+    .dsw-preview-actions {
+        justify-content: stretch;
+    }
+    .dsw-preview-actions .dsw-save-btn {
+        width: 100%;
+        justify-content: center;
+    }
+}
+
+/* ─────────────────────────────────────────────────────────── */
+/* v3.36 F9 — Çalıştır button + Rapor Sonucu modal             */
+/* Council: HEBE (UX) + APOLLO (LLM) + POSEIDON (data)         */
+/* ─────────────────────────────────────────────────────────── */
+
+.dsw-runbar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    margin: 0 0 12px 0;
+}
+.dsw-run-btn {
+    appearance: none;
+    border: 1px solid var(--vyra-accent, #4f8cff);
+    background: var(--vyra-accent, #4f8cff);
+    color: #fff;
+    padding: 8px 16px;
+    border-radius: var(--vyra-radius-sm, 6px);
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    transition: transform 0.08s ease, box-shadow 0.12s ease;
+}
+.dsw-run-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(79, 140, 255, 0.30);
+}
+.dsw-run-btn:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+}
+.dsw-run-btn:focus-visible {
+    outline: 2px solid var(--vyra-accent, #4f8cff);
+    outline-offset: 2px;
+}
+
+.dsw-result-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 11000;            /* above existing wizard modal stack */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    overflow: auto;
+}
+.dsw-result-modal {
+    background: var(--vyra-bg-surface, #1c1f23);
+    color: var(--vyra-fg-primary, #e6e8eb);
+    border: 1px solid var(--vyra-border-subtle, #2c3138);
+    border-radius: var(--vyra-radius-md, 10px);
+    width: min(1080px, 90vw);
+    max-height: 85vh;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.dsw-result-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--vyra-border-subtle, #2c3138);
+    background: var(--vyra-bg-surface-elevated, #22262c);
+}
+.dsw-result-modal-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+}
+.dsw-result-modal-close {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    color: var(--vyra-fg-primary, #e6e8eb);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: var(--vyra-radius-sm, 6px);
+}
+.dsw-result-modal-close:hover {
+    background: var(--vyra-bg-hover, #2a2e34);
+}
+.dsw-result-modal-close:focus-visible {
+    outline: 2px solid var(--vyra-accent, #4f8cff);
+    outline-offset: 2px;
+}
+
+.dsw-result-modal-body {
+    flex: 1 1 auto;
+    overflow: auto;
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.dsw-result-sql-wrap > summary {
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    padding: 4px 0;
+}
+.dsw-result-sql {
+    margin: 6px 0 0 0;
+    padding: 10px 12px;
+    background: var(--vyra-bg-input, #14171b);
+    border: 1px solid var(--vyra-border-subtle, #2c3138);
+    border-radius: var(--vyra-radius-sm, 6px);
+    font-family: ui-monospace, "JetBrains Mono", "Cascadia Code", Menlo, monospace;
+    font-size: 12px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 240px;
+    overflow: auto;
+}
+
+.dsw-result-stats {
+    font-size: 12px;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+}
+
+.dsw-result-table-wrap {
+    overflow: auto;
+    border: 1px solid var(--vyra-border-subtle, #2c3138);
+    border-radius: var(--vyra-radius-sm, 6px);
+    max-height: 50vh;
+}
+.dsw-result-table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 12.5px;
+}
+.dsw-result-table th,
+.dsw-result-table td {
+    text-align: left;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--vyra-border-subtle, #2c3138);
+    white-space: nowrap;
+    max-width: 360px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dsw-result-table thead th {
+    position: sticky;
+    top: 0;
+    background: var(--vyra-bg-surface-elevated, #22262c);
+    z-index: 1;
+    font-weight: 600;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 11px;
+}
+.dsw-result-table tbody tr:hover {
+    background: var(--vyra-bg-hover, #2a2e34);
+}
+.dsw-result-empty {
+    text-align: center;
+    color: var(--vyra-fg-tertiary, #6b7280);
+    padding: 18px;
+}
+
+.dsw-result-rationale {
+    font-size: 13px;
+    color: var(--vyra-fg-primary, #e6e8eb);
+    background: var(--vyra-bg-input, #14171b);
+    border: 1px dashed var(--vyra-border-subtle, #2c3138);
+    border-radius: var(--vyra-radius-sm, 6px);
+    padding: 10px 12px;
+}
+
+.dsw-result-error {
+    font-size: 13px;
+    color: var(--vyra-fg-primary, #e6e8eb);
+    padding: 12px;
+    background: rgba(239, 68, 68, 0.10);
+    border: 1px solid rgba(239, 68, 68, 0.40);
+    border-radius: var(--vyra-radius-sm, 6px);
+}
+.dsw-result-error-detail summary {
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+}
+.dsw-result-error-detail pre {
+    margin: 6px 0 0 0;
+    padding: 8px 10px;
+    background: var(--vyra-bg-input, #14171b);
+    border-radius: var(--vyra-radius-sm, 6px);
+    font-family: ui-monospace, monospace;
+    font-size: 11.5px;
+    white-space: pre-wrap;
+    max-height: 180px;
+    overflow: auto;
+}
+
+.dsw-result-modal-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 12px 18px;
+    border-top: 1px solid var(--vyra-border-subtle, #2c3138);
+    background: var(--vyra-bg-surface-elevated, #22262c);
+}
+.dsw-result-action {
+    appearance: none;
+    border: 1px solid var(--vyra-border-subtle, #2c3138);
+    background: var(--vyra-bg-surface, #1c1f23);
+    color: var(--vyra-fg-primary, #e6e8eb);
+    padding: 8px 14px;
+    border-radius: var(--vyra-radius-sm, 6px);
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.1s ease, border-color 0.1s ease;
+}
+.dsw-result-action:hover:not(:disabled) {
+    background: var(--vyra-bg-hover, #2a2e34);
+    border-color: var(--vyra-accent, #4f8cff);
+}
+.dsw-result-action:focus-visible {
+    outline: 2px solid var(--vyra-accent, #4f8cff);
+    outline-offset: 2px;
+}
+.dsw-result-action:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+.dsw-result-action-chart {
+    color: var(--vyra-accent, #4f8cff);
+}
+.dsw-result-action-save {
+    background: var(--vyra-accent, #4f8cff);
+    color: #fff;
+    border-color: var(--vyra-accent, #4f8cff);
+}
+.dsw-result-action-save:hover:not(:disabled) {
+    background: var(--vyra-accent-hover, #3a78f0);
+    border-color: var(--vyra-accent-hover, #3a78f0);
+}
+
+@media (max-width: 720px) {
+    .dsw-result-modal {
+        width: 100%;
+        max-height: 92vh;
+    }
+    .dsw-result-modal-actions {
+        flex-wrap: wrap;
+        justify-content: stretch;
+    }
+    .dsw-result-action {
+        flex: 1 1 auto;
+    }
+}
+
+/* ============================================
+ * F14 (HEBE+HERMES+ATHENA) — Metric step
+ *   Akordion + arama + multi-checkbox
+ * ============================================ */
+.dsw-metric-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 8px 0 12px;
+    flex-wrap: wrap;
+}
+.dsw-metric-search-wrap {
+    position: relative;
+    flex: 1 1 280px;
+    min-width: 220px;
+}
+.dsw-metric-search {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 9px 36px 9px 12px;
+    border: 1px solid var(--vyra-border, #2a3550);
+    border-radius: 8px;
+    background: var(--vyra-bg-elev, #131a2a);
+    color: var(--text-primary, #e9eef8);
+    font-size: 14px;
+    line-height: 1.3;
+    transition: border-color .15s ease, box-shadow .15s ease;
+}
+.dsw-metric-search:focus {
+    outline: none;
+    border-color: var(--vyra-accent, #4f8cff);
+    box-shadow: 0 0 0 3px rgba(79, 140, 255, 0.18);
+}
+.dsw-metric-search-clear {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 26px;
+    height: 26px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary, #98a4bd);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    border-radius: 4px;
+    padding: 0;
+}
+.dsw-metric-search-clear:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary, #e9eef8);
+}
+.dsw-metric-clear-all {
+    padding: 7px 14px;
+    border: 1px solid var(--vyra-border, #2a3550);
+    background: transparent;
+    color: var(--text-secondary, #98a4bd);
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: border-color .15s ease, color .15s ease;
+}
+.dsw-metric-clear-all:hover {
+    border-color: var(--vyra-accent, #4f8cff);
+    color: var(--vyra-accent, #4f8cff);
+}
+.dsw-metric-selected-count {
+    font-size: 12px;
+    color: var(--vyra-accent, #4f8cff);
+    font-weight: 500;
+}
+
+.dsw-metric-categories {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.dsw-metric-category {
+    border: 1px solid var(--vyra-border, #2a3550);
+    border-left: 3px solid var(--vyra-accent, #4f8cff);
+    border-radius: 8px;
+    background: var(--vyra-bg-elev, #131a2a);
+    overflow: hidden;
+}
+.dsw-metric-category-summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-weight: 600;
+    color: var(--text-primary, #e9eef8);
+    user-select: none;
+    transition: background .15s ease;
+}
+.dsw-metric-category-summary::-webkit-details-marker { display: none; }
+.dsw-metric-category-summary::marker { content: ''; }
+.dsw-metric-category-summary::before {
+    content: '\25B8';
+    display: inline-block;
+    margin-right: 6px;
+    transition: transform .15s ease;
+    color: var(--text-secondary, #98a4bd);
+    font-size: 11px;
+}
+.dsw-metric-category[open] > .dsw-metric-category-summary::before {
+    transform: rotate(90deg);
+}
+.dsw-metric-category-summary:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+.dsw-metric-category-name {
+    flex: 1 1 auto;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 12px;
+}
+.dsw-metric-category-count {
+    font-size: 11px;
+    color: var(--text-secondary, #98a4bd);
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 10px;
+    padding: 2px 8px;
+    min-width: 22px;
+    text-align: center;
+}
+.dsw-metric-list {
+    list-style: none;
+    margin: 0;
+    padding: 4px 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.dsw-metric-item {
+    border: 1px solid transparent;
+    border-radius: 6px;
+    transition: background .12s ease, border-color .12s ease;
+}
+.dsw-metric-item:hover {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: var(--vyra-border, #2a3550);
+}
+.dsw-metric-item.selected {
+    background: rgba(79, 140, 255, 0.08);
+    border-color: var(--vyra-accent, #4f8cff);
+}
+.dsw-metric-item-label {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 12px;
+    cursor: pointer;
+    width: 100%;
+    box-sizing: border-box;
+}
+.dsw-metric-checkbox {
+    flex: 0 0 auto;
+    width: 22px;
+    height: 22px;
+    margin-top: 2px;
+    cursor: pointer;
+    accent-color: var(--vyra-accent, #4f8cff);
+}
+.dsw-metric-item-body {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.dsw-metric-item-title {
+    color: var(--text-primary, #e9eef8);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.3;
+}
+.dsw-metric-item-desc {
+    color: var(--text-secondary, #98a4bd);
+    font-size: 12px;
+    line-height: 1.4;
+}
+.dsw-metric-item-meta {
+    color: var(--text-secondary, #98a4bd);
+    font-size: 11px;
+    opacity: 0.7;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-top: 2px;
+}
+
+@media (max-width: 880px) {
+    .dsw-metric-toolbar {
+        gap: 8px;
+    }
+    .dsw-metric-search-wrap {
+        flex: 1 1 100%;
+        min-width: 0;
+    }
+    .dsw-metric-clear-all {
+        flex: 0 0 auto;
+    }
+    .dsw-metric-selected-count {
+        flex: 1 1 100%;
+    }
+    .dsw-metric-item-label {
+        padding: 9px 10px;
+        gap: 10px;
+    }
+    .dsw-metric-checkbox {
+        width: 20px;
+        height: 20px;
+    }
+    .dsw-metric-item-title {
+        font-size: 13px;
+    }
 }

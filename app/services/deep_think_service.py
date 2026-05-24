@@ -27,6 +27,58 @@ from app.services.deep_think import DeepThinkFormattingMixin, DeepThinkFallbackM
 
 
 # ============================================
+# FIX2 P0-2 (ARES+METIS): Prompt injection guard
+# ============================================
+
+_PROMPT_INJECTION_PATTERNS = [
+    re.compile(r'(?i)\b(ignore|disregard|forget|override)\s+(all\s+)?(previous|above|prior|earlier|system)\s+(instructions?|prompts?|rules?|context)\b'),
+    re.compile(r'(?i)\b(you\s+are\s+now|act\s+as|pretend\s+to\s+be|roleplay\s+as)\s+(a\s+)?(different|new|other|jailbroken)\b'),
+    re.compile(r'(?i)\b(reveal|show|print|display|output|leak)\s+(your\s+)?(system\s+)?(prompt|instructions|rules)\b'),
+    re.compile(r'(?i)<\s*\|?\s*(system|assistant|user)\s*\|?\s*>'),  # role injection
+    re.compile(r'(?i)\[\s*(INST|SYSTEM|ASSISTANT)\s*\]'),  # llama-style markers
+]
+
+_MAX_QUERY_CHARS = 2000  # kullanıcı sorgu hard cap
+
+
+def _sanitize_user_query(query: str) -> str:
+    """Kullanıcı sorgusunu LLM prompt'a koymadan önce sanitize eder.
+
+    - Boyut cap (DoS koruması)
+    - Bilinen prompt-injection pattern'leri redact ([REDACTED] ile)
+    - Newline normalize (kontrol injection)
+    """
+    if not query:
+        return ""
+    s = str(query).strip()
+    if len(s) > _MAX_QUERY_CHARS:
+        s = s[:_MAX_QUERY_CHARS] + "... [trimmed]"
+    # Kontrol karakter normalize
+    s = re.sub(r'[\r\t\f\v]', ' ', s)
+    # Çok satırlı injection riski azalt — newline'ı tek satıra indir
+    s = re.sub(r'\n{3,}', '\n\n', s)
+    # Bilinen injection pattern'leri redact
+    redacted = False
+    for pat in _PROMPT_INJECTION_PATTERNS:
+        if pat.search(s):
+            s = pat.sub('[REDACTED]', s)
+            redacted = True
+    if redacted:
+        try:
+            log_warning(
+                "Deep Think: prompt injection pattern algılandı, sanitize edildi",
+                "deep_think",
+            )
+        except Exception:
+            pass
+    return s
+
+
+# Per-result content cap (FIX2 P0-3 — token overflow guard, char proxy)
+_MAX_RESULT_CHARS = 4000
+
+
+# ============================================
 # Deep Think Service
 # ============================================
 
@@ -373,9 +425,12 @@ class DeepThinkService(DeepThinkFormattingMixin, DeepThinkFallbackMixin):
         """Tek LLM çağrısı ile synthesis yapar."""
         format_instruction = self._get_format_instruction(intent)
         system_prompt = self.synthesis_prompt
-        
+
+        # FIX2 P0-2 (ARES+METIS): prompt injection guard — user query'sini sanitize et
+        safe_query = _sanitize_user_query(query)
+
         user_message = f"""SORU:
-{query}
+{safe_query}
 
 ---
 BİLGİ TABANI İÇERİĞİ ({result_count} sonuç):
@@ -497,14 +552,23 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
             return self._postprocess_llm_response(cleaned, intent)
     
     def _prepare_context(self, results: List[Dict], intent: IntentResult) -> str:
-        """RAG sonuçlarını LLM için hazırlar (heading bilgisi dahil)."""
+        """RAG sonuçlarını LLM için hazırlar (heading bilgisi dahil).
+
+        FIX2 P0-3 (METIS+PROMETHEUS+NIKE): per-result content cap → token overflow guard.
+        """
         context_parts = []
-        
+        truncated_count = 0
+
         for i, r in enumerate(results, 1):
             source = r.get("source_file", "Bilinmeyen Kaynak")
             content = r.get("content", "").strip()
             score = r.get("score", 0)
-            
+
+            # FIX2 P0-3: tek bir RAG sonucu token bütçesini tek başına yiyemesin
+            if len(content) > _MAX_RESULT_CHARS:
+                content = content[:_MAX_RESULT_CHARS] + "\n... [içerik kısaltıldı]"
+                truncated_count += 1
+
             # Metadata'dan heading bilgisini çıkar
             meta = r.get("metadata", {})
             if isinstance(meta, str):
@@ -514,17 +578,27 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
                 except (ValueError, TypeError):
                     meta = {}
             heading = meta.get("heading", "") if isinstance(meta, dict) else ""
-            
+
             # Heading bilgisini LLM context'e dahil et
             header = f"[{i}] Kaynak: {source}"
             if heading:
                 header += f" | Bölüm: {heading}"
             header += f" (Skor: {score:.2f})"
-            
+
             context_parts.append(header)
             context_parts.append(content)
             context_parts.append("")
-        
+
+        if truncated_count:
+            try:
+                log_system_event(
+                    "INFO",
+                    f"Deep Think: {truncated_count} RAG sonucu token bütçesi için kısaltıldı (cap={_MAX_RESULT_CHARS})",
+                    "deep_think",
+                )
+            except Exception:
+                pass
+
         return "\n".join(context_parts)
     
     # ========================================
@@ -1497,9 +1571,12 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
         context = self._prepare_context(rag_results, intent)
         format_instruction = self._get_format_instruction(intent)
         system_prompt = self.synthesis_prompt
-        
+
+        # FIX2 P0-2 (ARES+METIS): prompt injection guard
+        safe_query = _sanitize_user_query(query)
+
         user_message = f"""SORU:
-{query}
+{safe_query}
 
 ---
 BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
@@ -1748,9 +1825,12 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
         context = self._prepare_context(rag_results, intent)
         format_instruction = self._get_format_instruction(intent)
         system_prompt = self.synthesis_prompt
-        
+
+        # FIX2 P0-2 (ARES+METIS): prompt injection guard
+        safe_query = _sanitize_user_query(query)
+
         user_message = f"""SORU:
-{query}
+{safe_query}
 
 ---
 BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):

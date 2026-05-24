@@ -282,29 +282,44 @@ def load_session(
     row = cur.fetchone()
     if not row:
         return None
+    # F16b (ARES+POSEIDON): RealDictCursor uyumu — row dict olarak gelebilir.
+    # Önceki int-index erişimi `row[4]` RealDictCursor altında KeyError: 4 üretti
+    # (save-report 500 root cause). Tek noktada normalize → dict tabanlı erişim.
+    if isinstance(row, dict):
+        _ru = row.get
+        r0 = _ru("session_uid"); r1 = _ru("current_step"); r2 = _ru("status")
+        r3 = _ru("source_id"); r4 = _ru("context"); r5 = _ru("dialect")
+        r6 = _ru("generated_sql"); r7 = _ru("created_at")
+        r8 = _ru("last_activity_at"); r9 = _ru("completed_at")
+        r10 = _ru("user_id"); r11 = _ru("company_id")
+    else:
+        r0 = row[0]; r1 = row[1]; r2 = row[2]; r3 = row[3]; r4 = row[4]
+        r5 = row[5]; r6 = row[6]; r7 = row[7]; r8 = row[8]; r9 = row[9]
+        r10 = row[10] if len(row) > 10 else None
+        r11 = row[11] if len(row) > 11 else None
     # context: psycopg2 jsonb → dict; string ise normalize et.
-    ctx = row[4]
+    ctx = r4
     if isinstance(ctx, str):
         try:
             ctx = json.loads(ctx)
         except Exception:
             ctx = {}
     out = {
-        "session_uid": row[0],
-        "current_step": int(row[1]) if row[1] is not None else 0,
-        "status": row[2],
-        "source_id": row[3],
+        "session_uid": r0,
+        "current_step": int(r1) if r1 is not None else 0,
+        "status": r2,
+        "source_id": r3,
         "context": ctx or {},
-        "dialect": row[5],
-        "generated_sql": row[6],
-        "created_at": row[7].isoformat() if row[7] else None,
-        "last_activity_at": row[8].isoformat() if row[8] else None,
-        "completed_at": row[9].isoformat() if row[9] else None,
+        "dialect": r5,
+        "generated_sql": r6,
+        "created_at": r7.isoformat() if r7 else None,
+        "last_activity_at": r8.isoformat() if r8 else None,
+        "completed_at": r9.isoformat() if r9 else None,
     }
     # Cache'e (user_id/company_id ile) yaz — ARES guard'ı için.
     try:
-        row_user_id = row[10] if len(row) > 10 else None
-        row_company_id = row[11] if len(row) > 11 else None
+        row_user_id = r10
+        row_company_id = r11
         if row_user_id is not None and row_company_id is not None:
             payload = dict(out)
             payload["user_id"] = int(row_user_id)

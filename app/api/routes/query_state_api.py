@@ -195,8 +195,8 @@ def _resolve_source_info(source_id: int, company_id: Optional[int]) -> Dict[str,
                 apply_company_scope(cur, company_id=company_id)
                 cur.execute(
                     """
-                    SELECT id, db_type, db_host, db_port, db_name,
-                           db_username, db_password_encrypted, schema_name,
+                    SELECT id, db_type, host, port, db_name,
+                           db_user, db_password_encrypted,
                            company_id
                     FROM data_sources
                     WHERE id = %s AND company_id = %s
@@ -231,6 +231,8 @@ def _resolve_source_info(source_id: int, company_id: Optional[int]) -> Dict[str,
                         source_id, _other_co, company_id,
                     )
                     return {"ok": False, "reason": "cross_tenant"}
+                if isinstance(row, dict):
+                    return {"ok": True, "data": dict(row)}
                 cols = [d[0] for d in cur.description]
                 return {"ok": True, "data": dict(zip(cols, row))}
     except Exception as e:
@@ -253,8 +255,15 @@ def _resolve_dialect(source_id: Optional[int], requested: Optional[str]) -> str:
                 with conn.cursor() as cur:
                     cur.execute("SELECT db_type FROM data_sources WHERE id = %s", (source_id,))
                     row = cur.fetchone()
-                    if row and row[0]:
-                        return str(row[0]).lower()
+                    # v3.35.x B12: RealDictCursor → row dict; eski `row[0]` KeyError
+                    # fırlatıp dış except'e düşüyor, Oracle source'lar 'postgresql'
+                    # fallback'ine oturuyor → AST renderer LIMIT 100 üretip Oracle XE
+                    # tarafından reddediliyordu. _resolve_source_info pattern'i mirror.
+                    if row:
+                        _db_type = row.get('db_type') if isinstance(row, dict) else (row[0] if row else None)
+                        if _db_type:
+                            logger.debug("[query_state] resolved dialect for source %s: %s", source_id, _db_type)
+                            return str(_db_type).lower()
         except Exception as e:
             logger.warning("[query_state] dialect lookup failed for source %s: %s", source_id, e)
     return (requested or "postgresql").lower()

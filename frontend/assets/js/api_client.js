@@ -68,39 +68,77 @@
     }
 
     // ---- Friendly Turkish error builder ----
+    // FIX12 (v3.34.3): error metinleri login resilience plan F1 spec'ine hizalandı.
+    // Eski metinler ("Backend servisi yanıt vermiyor (HTTP {status})...") hard-coded
+    // olarak başka modülde tüketilmiyor; geriye dönük .message kontrol eden bir
+    // modül grep ile bulunmadı.
+    //
+    // Ek olarak ikinci dönüş değeri olarak bir "code" tag'i üretiyoruz; caller
+    // (login.js gibi UX-sensitive yerler) error.code üzerinden mapping yapabilir,
+    // mesajın exact-text değişimine duyarlı olmaz.
     function buildFriendlyMessage(status, isJson, data) {
         // 401 fast path
         if (status === 401) {
             const detail = data && (data.detail || data.message);
-            return detail || "Oturum sona erdi. Lütfen yeniden giriş yapın.";
+            return {
+                msg: detail || "Oturum sona erdi. Lütfen yeniden giriş yapın.",
+                code: 'AUTH_REQUIRED',
+            };
         }
         // 403 fast path
         if (status === 403) {
             const detail = data && (data.detail || data.message);
-            return detail || "Bu işlem için yetkiniz yok.";
+            return {
+                msg: detail || "Bu işlem için yetkiniz yok.",
+                code: 'FORBIDDEN',
+            };
         }
-        // JSON-formatlı hata: backend mesajını kullan
+        // JSON-formatlı hata: backend mesajını kullan (HTML/raw scrub: JSON
+        // değilse buraya hiç girmiyoruz — aşağıdaki path'ler devralır).
         if (isJson && data && (data.detail || data.message)) {
-            return data.detail || data.message;
+            return {
+                msg: data.detail || data.message,
+                code: status >= 500 ? 'SERVER_ERROR' : 'CLIENT_ERROR',
+            };
         }
         // 502/503/504 — proxy/backend down (genellikle HTML body)
         if (status === 502 || status === 503 || status === 504) {
-            return `Backend servisi yanıt vermiyor (HTTP ${status}). Lütfen sistem yöneticinize bildirin.`;
+            return {
+                msg: "Sunucu geçici olarak erişilemiyor. Lütfen 30 saniye sonra tekrar deneyin.",
+                code: 'SERVER_5XX',
+            };
+        }
+        // 500 generic
+        if (status === 500) {
+            return {
+                msg: "Sunucuda beklenmeyen bir hata oluştu. Sistem yöneticinizle iletişime geçin.",
+                code: 'SERVER_500',
+            };
         }
         // Diğer 5xx (non-JSON)
         if (status >= 500 && status < 600) {
-            return `Sunucu hatası (${status}). Lütfen tekrar deneyin.`;
+            return {
+                msg: "Sunucuda beklenmeyen bir hata oluştu. Sistem yöneticinizle iletişime geçin.",
+                code: 'SERVER_ERROR',
+            };
         }
         // Non-JSON 4xx
         if (status >= 400 && status < 500) {
-            return `İstek reddedildi (${status}).`;
+            return {
+                msg: `İstek reddedildi (${status}).`,
+                code: 'CLIENT_ERROR',
+            };
         }
         // Fallback
-        return `API error (${status})`;
+        return {
+            msg: `API error (${status})`,
+            code: 'UNKNOWN',
+        };
     }
 
     // R016 (v3.34.1): non-2xx Response'tan friendly error fırlatma helper'ı —
     // hem JSON hem stream/blob yolu tarafından paylaşılır (DRY).
+    // FIX12 (v3.34.3): {msg, code} unpacking + err.code propagation.
     async function _throwFriendlyHttpError(res) {
         let raw = "";
         try { raw = await res.text(); } catch { /* body okunamadı */ }
@@ -110,10 +148,11 @@
             try { data = JSON.parse(raw); parsedAsJson = true; }
             catch { data = { raw }; }
         }
-        const msg = buildFriendlyMessage(res.status, parsedAsJson, parsedAsJson ? data : null);
+        const { msg, code } = buildFriendlyMessage(res.status, parsedAsJson, parsedAsJson ? data : null);
         const err = new Error(msg);
         err.status = res.status;
         err.data = data;
+        err.code = code;
         console.error("[NGSSAI] API error:", err);
         throw err;
     }
@@ -170,10 +209,12 @@
                 throw netErr;
             }
             // TypeError = network failure / "Failed to fetch" (Nginx down, DNS, vb.)
-            const friendly = "Sunucuya bağlanılamadı. Proxy (Nginx) çalışmıyor olabilir veya ağ bağlantınızı kontrol edin.";
+            // FIX12 (v3.34.3): SERVER_DOWN code tag + spec-aligned mesaj.
+            const friendly = "Sunucu şu anda yanıt vermiyor. Sistem ayağa kalkana kadar lütfen bekleyip tekrar deneyin.";
             const err = new Error(friendly);
             err.status = undefined;
             err.data = null;
+            err.code = 'SERVER_DOWN';
             err.cause = netErr;
             console.error("[NGSSAI] API network error:", netErr);
             throw err;
@@ -208,17 +249,39 @@
             }
         } catch {
             // Parse başarısız — HTML/text response (Nginx 502 vb.)
+            // RAW HTML/text İÇERİĞİ ASLA kullanıcıya gösterilmez (login.js scrub eder),
+            // sadece console.error/debug için data.raw'da saklanır.
             data = { raw: text };
             parsedAsJson = false;
         }
 
         if (!res.ok) {
-            const isJson = parsedAsJson && looksJson !== false;
-            const msg = buildFriendlyMessage(res.status, parsedAsJson, parsedAsJson ? data : null);
+            const { msg, code } = buildFriendlyMessage(res.status, parsedAsJson, parsedAsJson ? data : null);
             const err = new Error(msg);
             err.status = res.status;
             err.data = data;
+            err.code = code;
             console.error("[NGSSAI] API error:", err);
+            throw err;
+        }
+
+        // FIX12 (v3.34.3): 2xx + non-JSON body (SPA fallback / proxy yanlış cevap).
+        // Eski davranış: {raw: "<html>..."} dön; caller `data.access_token` undefined
+        // alır, sessizce hatalı yola girer. Yeni: SERVER_DOWN tag'iyle throw.
+        //
+        // Tetikleme şartı: text non-boş VE JSON parse başarısız oldu. (Yalnız
+        // content-type yanlış ama parse başarılı olsaydı permissive davranıyoruz
+        // — bazı eski backend'ler text/plain header ile JSON gönderir.)
+        if (text && !parsedAsJson) {
+            const err = new Error(
+                "Sunucu şu anda yanıt vermiyor. Sistem ayağa kalkana kadar lütfen bekleyip tekrar deneyin."
+            );
+            err.status = res.status;
+            err.data = data;  // raw HTML burada; UI'ya gösterilmez.
+            err.code = 'SERVER_DOWN';
+            console.error("[NGSSAI] API 2xx non-JSON response — proxy/backend misconfigured:", {
+                url, status: res.status, contentType,
+            });
             throw err;
         }
 

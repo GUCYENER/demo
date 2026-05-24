@@ -410,6 +410,10 @@ def partition_rotate(cur) -> dict:
                 PARTITION OF dbsmart_interactions
                 FOR VALUES FROM ('{start_date}') TO ('{end_date}')
             """)
+            # FIX10 S4 (NIKE+HEPHAESTUS+ARES): defansif RLS ENABLE+FORCE
+            # (parent'tan auto-inherit olur ama yine de explicit garanti)
+            cur.execute(f"ALTER TABLE {part_name} ENABLE ROW LEVEL SECURITY")
+            cur.execute(f"ALTER TABLE {part_name} FORCE ROW LEVEL SECURITY")
             # Re-apply RLS policy to child partition
             cur.execute(f"""
                 DO $$ BEGIN
@@ -423,7 +427,7 @@ def partition_rotate(cur) -> dict:
                 END $$
             """)
             created.append(part_name)
-            logger.info("[db_smart.lr] partition created: %s", part_name)
+            logger.info("[db_smart.lr] partition created + RLS reapply: %s", part_name)
         except Exception as e:
             logger.warning("[db_smart.lr] partition_rotate %s failed: %s", part_name, e)
             skipped.append(part_name)
