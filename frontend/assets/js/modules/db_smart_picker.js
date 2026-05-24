@@ -18,7 +18,8 @@
 (function () {
     'use strict';
 
-    const API_BASE = '/api/db-smart';
+    // v3.34.0: vyraFetch /api prefix'i kendi ekliyor — burada sadece path tutuyoruz.
+    const API_BASE = '/db-smart';
 
     // ---- Türkçe normalizasyon (frontend arama için) ----
     const _TR_MAP = { 'İ': 'i', 'I': 'i', 'ı': 'i', 'Ş': 's', 'ş': 's',
@@ -41,18 +42,9 @@
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    function _authHeaders() {
-        const token = localStorage.getItem('access_token') || '';
-        return { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' };
-    }
-
+    // v3.34.0: vyraFetch delegate — Auth + JSON + friendly error helper'da.
     async function _fetchJson(url) {
-        const res = await fetch(url, { headers: _authHeaders() });
-        if (!res.ok) {
-            const txt = await res.text().catch(() => '');
-            throw new Error(res.status + ': ' + (txt || res.statusText));
-        }
-        return res.json();
+        return window.vyraFetch(url);
     }
 
     // ---- State ----

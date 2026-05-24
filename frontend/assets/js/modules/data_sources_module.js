@@ -7,6 +7,8 @@ window.DataSourcesModule = (function () {
     'use strict';
 
     const API_BASE = (window.API_BASE_URL || '') + '/api/data-sources';
+    // v3.34.0: vyraFetch /api prefix'i kendi ekliyor — path bu prefix'ten başlar.
+    const VF_BASE = '/data-sources';
     let sources = [];
 
     // Kaynak Tipi Etiketleri
@@ -37,16 +39,10 @@ window.DataSourcesModule = (function () {
 
     async function load(companyId) {
         try {
-            const token = localStorage.getItem('access_token') || '';
-            let url = API_BASE;
-            if (companyId) url += `?company_id=${companyId}`;
-
-            const res = await fetch(url, {
-                headers: { 'Authorization': 'Bearer ' + token }
-            });
-            if (!res.ok) throw new Error('Kaynak listesi alınamadı');
-
-            sources = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            let path = VF_BASE;
+            if (companyId) path += `?company_id=${companyId}`;
+            sources = await window.vyraFetch(path);
             renderGrid();
         } catch (error) {
             console.error('[DataSources] Load error:', error);
@@ -57,29 +53,15 @@ window.DataSourcesModule = (function () {
 
     async function save(formData) {
         try {
-            const token = localStorage.getItem('access_token') || '';
             const isEdit = !!formData.id;
-            const url = isEdit ? `${API_BASE}/${formData.id}` : API_BASE;
+            const path = isEdit ? `${VF_BASE}/${formData.id}` : VF_BASE;
             const method = isEdit ? 'PUT' : 'POST';
 
             const body = { ...formData };
             delete body.id; // ID body'de olmamalı
 
-            const res = await fetch(url, {
-                method,
-                headers: {
-                    'Authorization': 'Bearer ' + token,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(body)
-            });
-
-            if (!res.ok) {
-                const err = await res.json();
-                throw new Error(err.detail || 'Kaydetme hatası');
-            }
-
-            const result = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const result = await window.vyraFetch(path, { method, body });
             if (typeof showToast === 'function') {
                 showToast(isEdit ? 'Kaynak güncellendi' : 'Yeni kaynak eklendi', 'success');
             }
@@ -106,15 +88,8 @@ window.DataSourcesModule = (function () {
             cancelText: 'İptal',
             onConfirm: async () => {
                 try {
-                    const token = localStorage.getItem('access_token') || '';
-                    const res = await fetch(`${API_BASE}/${id}`, {
-                        method: 'DELETE',
-                        headers: { 'Authorization': 'Bearer ' + token }
-                    });
-                    if (!res.ok) {
-                        const err = await res.json();
-                        throw new Error(err.detail || 'Silme hatası');
-                    }
+                    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                    await window.vyraFetch(`${VF_BASE}/${id}`, { method: 'DELETE' });
                     if (typeof showToast === 'function') {
                         showToast(`"${name}" silindi`, 'success');
                     }
@@ -810,18 +785,13 @@ window.DataSourcesModule = (function () {
 
         // Veri yükle (subjects + current permissions paralel)
         try {
-            const token = localStorage.getItem('access_token') || '';
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
             const companyId = _getSelectedCompanyId();
-            const subjectsUrl = `${API_BASE}/permissions/subjects${companyId ? '?company_id=' + companyId : ''}`;
-            const [subjectsRes, permsRes] = await Promise.all([
-                fetch(subjectsUrl, { headers: { 'Authorization': 'Bearer ' + token } }),
-                fetch(`${API_BASE}/${sourceId}/permissions`, { headers: { 'Authorization': 'Bearer ' + token } })
+            const subjectsPath = `${VF_BASE}/permissions/subjects${companyId ? '?company_id=' + companyId : ''}`;
+            const [subjects, perms] = await Promise.all([
+                window.vyraFetch(subjectsPath),
+                window.vyraFetch(`${VF_BASE}/${sourceId}/permissions`)
             ]);
-            if (!subjectsRes.ok) throw new Error('Kullanıcı/org listesi alınamadı');
-            if (!permsRes.ok) throw new Error('Yetki listesi alınamadı');
-
-            const subjects = await subjectsRes.json();
-            const perms = await permsRes.json();
             permState.users = subjects.users || [];
             permState.orgs = subjects.orgs || [];
             permState.viewUserIds = new Set(perms.user_ids || []);
@@ -943,7 +913,6 @@ window.DataSourcesModule = (function () {
             saveBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Kaydediliyor...';
         }
         try {
-            const token = localStorage.getItem('access_token') || '';
             // FIX (v3.27.5): NaN/non-integer guard — JSON.stringify NaN'ı null'a çevirir,
             // backend 422 "Input should be a valid integer" verirdi.
             const _toIntArr = (s) => Array.from(s).filter(v => Number.isInteger(v));
@@ -953,15 +922,15 @@ window.DataSourcesModule = (function () {
                 can_execute_user_ids: _toIntArr(permState.execUserIds),
                 can_execute_org_ids: _toIntArr(permState.execOrgIds),
             };
-            const res = await fetch(`${API_BASE}/${permState.sourceId}/permissions`, {
-                method: 'PUT',
-                headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
-            });
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                // FastAPI 422 → detail = [{loc,msg,type},...]; tek satıra düzleştir
-                let msg = err.detail || err.message || 'Yetkiler kaydedilemedi';
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            // FastAPI 422 detail array'i için manuel flattening korunur.
+            try {
+                await window.vyraFetch(`${VF_BASE}/${permState.sourceId}/permissions`, {
+                    method: 'PUT',
+                    body
+                });
+            } catch (vfErr) {
+                let msg = (vfErr && vfErr.data && (vfErr.data.detail || vfErr.data.message)) || vfErr.message || 'Yetkiler kaydedilemedi';
                 if (Array.isArray(msg)) {
                     msg = msg.map(d => (d && d.msg) ? `${(d.loc || []).slice(-1)[0] || '?'}: ${d.msg}` : JSON.stringify(d)).join('; ');
                 } else if (typeof msg === 'object') {
@@ -993,18 +962,10 @@ window.DataSourcesModule = (function () {
         }
 
         try {
-            const token = localStorage.getItem('access_token') || '';
-            const res = await fetch(`${API_BASE}/${id}/test-connection`, {
-                method: 'POST',
-                headers: { 'Authorization': 'Bearer ' + token }
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const result = await window.vyraFetch(`${VF_BASE}/${id}/test-connection`, {
+                method: 'POST'
             });
-
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                throw new Error(err.detail || 'Bağlantı testi başarısız');
-            }
-
-            const result = await res.json();
             _showTestResultModal(name, result);
 
         } catch (error) {

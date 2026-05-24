@@ -96,6 +96,7 @@
             history: history || [],
         });
 
+        // raw fetch: SSE streaming (text/event-stream) + AbortController — vyraFetch not applicable.
         const promise = fetch(ENDPOINT, {
             method: 'POST', headers, body, signal: controller.signal,
         }).then(async (res) => {

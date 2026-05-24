@@ -24,13 +24,11 @@
         var currentUrl = window.location.href;
 
         try {
-            var response = await fetch(API_BASE + '/api/companies/by-url?url=' + encodeURIComponent(currentUrl));
-            if (!response.ok) {
-                hideBlock(container);
-                return;
-            }
-
-            var data = await response.json();
+            // v3.34.0: vyraFetch — public endpoint (auth:false).
+            var data = await window.vyraFetch(
+                '/companies/by-url?url=' + encodeURIComponent(currentUrl),
+                { auth: false }
+            );
 
             if (!data.found || !data.company) {
                 hideBlock(container);

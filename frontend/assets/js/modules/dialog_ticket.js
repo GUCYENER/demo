@@ -85,17 +85,22 @@ window.DialogTicketModule = (function () {
         modal.classList.remove('hidden');
 
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${API_BASE}/dialogs/${currentDialogId}/generate-ticket-summary`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-
-            if (response.ok) {
-                const data = await response.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            let data;
+            try {
+                data = await window.vyraFetch(`/dialogs/${currentDialogId}/generate-ticket-summary`, {
+                    method: 'POST'
+                });
+            } catch (vfErr) {
+                summaryText.innerHTML = `
+                    <div class="ticket-error">
+                        <i class="fa-solid fa-exclamation-triangle"></i>
+                        <span>Çağrı metni oluşturulamadı. Lütfen tekrar deneyin.</span>
+                    </div>
+                `;
+                return;
+            }
+            {
                 const rawSummary = data.summary || '';
 
                 // v2.49.0: Konu ve Sorun Tanımı'nı parse et
@@ -142,13 +147,6 @@ window.DialogTicketModule = (function () {
                             </div>
                             <div class="ticket-field-value ticket-sorun">${escapeHtml(sorunTanimi).replace(/\n/g, '<br>')}</div>
                         </div>
-                    </div>
-                `;
-            } else {
-                summaryText.innerHTML = `
-                    <div class="ticket-error">
-                        <i class="fa-solid fa-exclamation-triangle"></i>
-                        <span>Çağrı metni oluşturulamadı. Lütfen tekrar deneyin.</span>
                     </div>
                 `;
             }
@@ -221,26 +219,13 @@ window.DialogTicketModule = (function () {
             if (parent?.showTypingIndicator) parent.showTypingIndicator();
 
             try {
-                const token = localStorage.getItem('access_token');
-                const response = await fetch(`${API_BASE}/dialogs/${currentDialogId}/ask-corpix`, {
+                // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                const data = await window.vyraFetch(`/dialogs/${currentDialogId}/ask-corpix`, {
                     method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ query: query })
+                    body: { query: query }
                 });
-
                 if (parent?.hideTypingIndicator) parent.hideTypingIndicator();
-
-                if (response.ok) {
-                    const data = await response.json();
-                    if (parent?.addAssistantMessage) parent.addAssistantMessage(data);
-                } else {
-                    const errorData = await response.json().catch(() => ({}));
-                    console.error('[DialogChat] LLM hatası:', errorData);
-                    if (parent?.addSystemMessage) parent.addSystemMessage('❌ LLM yanıt veremedi.');
-                }
+                if (parent?.addAssistantMessage) parent.addAssistantMessage(data);
             } catch (error) {
                 if (parent?.hideTypingIndicator) parent.hideTypingIndicator();
                 console.error('[DialogChat] LLM bağlantı hatası:', error);
@@ -261,45 +246,34 @@ window.DialogTicketModule = (function () {
         const parent = getParent();
 
         try {
-            const token = localStorage.getItem('access_token');
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
             let currentDialogId = parent?._getDialogId?.();
 
             // Dialog yoksa oluştur
             if (!currentDialogId) {
-                const dialogRes = await fetch(`${API_BASE}/dialogs`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ title: null })
-                });
-                if (dialogRes.ok) {
-                    const dialog = await dialogRes.json();
+                try {
+                    const dialog = await window.vyraFetch('/dialogs', {
+                        method: 'POST',
+                        body: { title: null }
+                    });
                     currentDialogId = dialog.id;
                     if (parent?._setDialogId) parent._setDialogId(dialog.id);
-                }
+                } catch (_) { /* dialog oluşturulamadıysa LLM çağrısı zaten patlayacak */ }
             }
 
             // LLM API'ye gönder (eski ask-corpix endpoint’i)
             const startTime = performance.now();
-            const response = await fetch(`${API_BASE}/dialogs/${currentDialogId}/ask-corpix`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ query: content })
-            });
-
-            if (parent?.hideTypingIndicator) parent.hideTypingIndicator();
-            const responseTime = ((performance.now() - startTime) / 1000).toFixed(2);
-
-            if (response.ok) {
-                const data = await response.json();
+            try {
+                const data = await window.vyraFetch(`/dialogs/${currentDialogId}/ask-corpix`, {
+                    method: 'POST',
+                    body: { query: content }
+                });
+                if (parent?.hideTypingIndicator) parent.hideTypingIndicator();
+                const responseTime = ((performance.now() - startTime) / 1000).toFixed(2);
                 if (parent?.addAssistantMessage) parent.addAssistantMessage(data, null, true, responseTime);
-            } else {
-                const errorData = await response.json().catch(() => ({}));
+            } catch (vfErr) {
+                if (parent?.hideTypingIndicator) parent.hideTypingIndicator();
+                const errorData = (vfErr && vfErr.data) || {};
                 console.error('[DialogChat] LLM hatası:', errorData);
 
                 // VPN hatası kontrolü

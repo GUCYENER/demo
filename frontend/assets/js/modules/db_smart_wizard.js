@@ -16,7 +16,8 @@
 (function () {
     'use strict';
 
-    const API_BASE = '/api/db-smart';
+    // v3.34.0: vyraFetch /api prefix'i kendi ekliyor — burada sadece path tutuyoruz.
+    const API_BASE = '/db-smart';
     const TOTAL_STEPS = 5;
 
     // v3.30.0 FAZ 5 P34 — i18n helper (VyraI18n yüklü değilse key passthrough)
@@ -63,23 +64,17 @@
         el.setAttribute('aria-busy', busy ? 'true' : 'false');
     }
 
-    function _authHeaders() {
-        const token = localStorage.getItem('access_token') || '';
-        return {
-            'Authorization': 'Bearer ' + token,
-            'Content-Type': 'application/json',
-        };
-    }
-
+    // v3.34.0: vyraFetch delegate — Auth + JSON + friendly error helper'da.
+    // Eski caller'lar `body: JSON.stringify(...)` geçiyor; vyraFetch'in tekrar
+    // stringify etmemesi için string body'i geri parse ederiz (org_utils paterni).
     async function _fetchJson(url, opts) {
         opts = opts || {};
-        const headers = Object.assign({}, _authHeaders(), opts.headers || {});
-        const res = await fetch(url, Object.assign({}, opts, { headers }));
-        if (!res.ok) {
-            const text = await res.text().catch(() => '');
-            throw new Error(res.status + ': ' + (text || res.statusText));
+        const method = (opts.method || 'GET').toUpperCase();
+        let body = opts.body != null ? opts.body : null;
+        if (typeof body === 'string') {
+            try { body = JSON.parse(body); } catch (_) { /* binary/text → ignore */ }
         }
-        return res.json();
+        return window.vyraFetch(url, { method, body, auth: true });
     }
 
     // ============================================

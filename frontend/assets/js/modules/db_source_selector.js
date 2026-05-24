@@ -167,14 +167,8 @@
 
         loadPromise = (async () => {
             try {
-                const token = localStorage.getItem('access_token');
-                const res = await fetch(`${API_BASE}/data-sources/`, {
-                    headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-                });
-                if (!res.ok) {
-                    throw new Error(`HTTP ${res.status}`);
-                }
-                const data = await res.json();
+                // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                const data = await window.vyraFetch('/data-sources/');
                 sources = Array.isArray(data) ? data : [];
                 lastError = null;
 

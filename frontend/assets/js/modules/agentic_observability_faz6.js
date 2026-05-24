@@ -36,6 +36,7 @@
     }
 
     async function _fetchJson(url, signal) {
+        // raw fetch: AbortController signal (tab-switch cancellation) — vyraFetch not applicable.
         const resp = await fetch(url, { headers: _authHeaders(), signal });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         return resp.json();
