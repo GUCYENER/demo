@@ -295,14 +295,9 @@ window.DialogChatModule = (function () {
             }
 
             // 1️⃣ Aktif dialog'u kontrol et (F5/refresh durumlarında devam için)
-            const checkResponse = await fetch(`${API_BASE}/dialogs/active`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-
-            if (checkResponse.ok) {
-                const existingDialog = await checkResponse.json();
-
-                if (existingDialog.id) {
+            try {
+                const existingDialog = await window.vyraFetch('/dialogs/active');
+                if (existingDialog && existingDialog.id) {
                     // 2️⃣ v2.25.1: Aktif dialog varsa DEVAM ET (Strict Mode kaldırıldı)
                     console.log(`[DialogChat] Aktif dialog #${existingDialog.id} bulundu, devam ediliyor...`);
                     currentDialogId = existingDialog.id;
@@ -311,6 +306,8 @@ window.DialogChatModule = (function () {
                     await loadDialogById(existingDialog.id);
                     return;
                 }
+            } catch (_e) {
+                // Aktif dialog bulunmazsa (404 vb.) yeni dialog akışına düş
             }
 
             // 3️⃣ Aktif dialog yoksa yeni oluştur
@@ -330,18 +327,11 @@ window.DialogChatModule = (function () {
      */
     async function createInitialDialogBackground() {
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${API_BASE}/dialogs`, {
+            const dialog = await window.vyraFetch('/dialogs', {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ title: null })
+                body: { title: null }
             });
-
-            if (response.ok) {
-                const dialog = await response.json();
+            if (dialog && dialog.id) {
                 currentDialogId = dialog.id;
                 console.log(`[DialogChat] Yeni dialog #${dialog.id} oluşturuldu`);
             }
@@ -372,44 +362,34 @@ window.DialogChatModule = (function () {
 
     async function startNewDialog() {
         try {
-            const token = localStorage.getItem('access_token');
-
             // v3.15.1: Önce devam eden uzun DB sorgularını iptal et — sistemi yormayalım.
             // Fire-and-forget: hata olsa bile yeni dialog açma işlemini bloklamasın.
             if (activeJobs.size > 0 && currentDialogId) {
                 console.log(`[DialogChat] ${activeJobs.size} aktif DB sorgu iptal ediliyor...`);
                 const jobsToCancel = Array.from(activeJobs);
                 activeJobs.clear();
-                const cancelHeaders = token ? { 'Authorization': `Bearer ${token}` } : {};
                 jobsToCancel.forEach((jId) => {
-                    fetch(`${API_BASE}/dialogs/${currentDialogId}/jobs/${encodeURIComponent(jId)}/cancel`, {
-                        method: 'POST',
-                        headers: cancelHeaders,
-                    }).catch(() => { /* sessiz başarısızlık — registry'de yoksa zaten bitmiştir */ });
+                    window.vyraFetch(
+                        `/dialogs/${currentDialogId}/jobs/${encodeURIComponent(jId)}/cancel`,
+                        { method: 'POST' }
+                    ).catch(() => { /* sessiz başarısızlık — registry'de yoksa zaten bitmiştir */ });
                 });
             }
 
             // v2.25.1: Önce mevcut aktif dialog'u kapat
             if (currentDialogId) {
                 console.log(`[DialogChat] Mevcut dialog #${currentDialogId} kapatılıyor (Yeni Sohbet)...`);
-                await fetch(`${API_BASE}/dialogs/${currentDialogId}/close`, {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
+                try {
+                    await window.vyraFetch(`/dialogs/${currentDialogId}/close`, { method: 'POST' });
+                } catch (_e) { /* zaten kapalı olabilir */ }
             }
 
             // Yeni dialog oluştur
-            const response = await fetch(`${API_BASE}/dialogs`, {
+            const dialog = await window.vyraFetch('/dialogs', {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ title: null })
+                body: { title: null }
             });
-
-            if (response.ok) {
-                const dialog = await response.json();
+            if (dialog && dialog.id) {
                 currentDialogId = dialog.id;
                 clearMessages();
                 resetNewDialogButtonHighlight(); // Animasyonu kaldır
@@ -422,7 +402,7 @@ window.DialogChatModule = (function () {
             }
         } catch (error) {
             console.error('[DialogChat] Yeni dialog oluşturulamadı:', error);
-            showToast('error', 'Dialog başlatılamadı');
+            showToast('error', error && error.message ? error.message : 'Dialog başlatılamadı');
         }
     }
 
@@ -451,22 +431,11 @@ window.DialogChatModule = (function () {
         setTicketButtonEnabled(true);
 
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${API_BASE}/dialogs/${dialogId}/messages`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-
-            if (response.ok) {
-                const messages = await response.json();
-                console.log(`[DialogChat] Dialog #${dialogId} - ${messages.length} mesaj yüklendi`);
-
-                if (messages.length > 0) {
-                    renderMessages(messages);
-                } else {
-                    addSystemMessage('👋 Merhaba! Size nasıl yardımcı olabilirim?');
-                }
+            const messages = await window.vyraFetch(`/dialogs/${dialogId}/messages`);
+            console.log(`[DialogChat] Dialog #${dialogId} - ${messages.length} mesaj yüklendi`);
+            if (messages.length > 0) {
+                renderMessages(messages);
             } else {
-                console.error('[DialogChat] Dialog mesajları alınamadı');
                 addSystemMessage('👋 Merhaba! Size nasıl yardımcı olabilirim?');
             }
         } catch (error) {
@@ -482,24 +451,17 @@ window.DialogChatModule = (function () {
         if (!currentDialogId) return;
 
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${API_BASE}/dialogs/${currentDialogId}/messages`, {
-                headers: { 'Authorization': `Bearer ${token}` }
+            const messages = await window.vyraFetch(`/dialogs/${currentDialogId}/messages`);
+            console.log('[DialogChat] Mesajlar yüklendi:', messages.length, 'adet');
+
+            // Debug: Her mesajın metadata'sını kontrol et
+            messages.forEach((msg, i) => {
+                if (msg.role === 'assistant' && msg.metadata?.quick_reply) {
+                    console.log(`[DialogChat] Mesaj #${i} quick_reply var:`, msg.metadata.quick_reply.type);
+                }
             });
 
-            if (response.ok) {
-                const messages = await response.json();
-                console.log('[DialogChat] Mesajlar yüklendi:', messages.length, 'adet');
-
-                // Debug: Her mesajın metadata'sını kontrol et
-                messages.forEach((msg, i) => {
-                    if (msg.role === 'assistant' && msg.metadata?.quick_reply) {
-                        console.log(`[DialogChat] Mesaj #${i} quick_reply var:`, msg.metadata.quick_reply.type);
-                    }
-                });
-
-                renderMessages(messages);
-            }
+            renderMessages(messages);
         } catch (error) {
             console.error('[DialogChat] Mesajlar yüklenemedi:', error);
         }
@@ -572,22 +534,20 @@ window.DialogChatModule = (function () {
 
             // Dialog yoksa oluştur
             if (!currentDialogId) {
-                const dialogRes = await fetch(`${API_BASE}/dialogs`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ title: null })
-                });
-                if (dialogRes.ok) {
-                    const dialog = await dialogRes.json();
-                    currentDialogId = dialog.id;
-                    console.log(`[DialogChat] Mesaj için yeni dialog #${dialog.id} oluşturuldu`);
-                }
+                try {
+                    const dialog = await window.vyraFetch('/dialogs', {
+                        method: 'POST',
+                        body: { title: null }
+                    });
+                    if (dialog && dialog.id) {
+                        currentDialogId = dialog.id;
+                        console.log(`[DialogChat] Mesaj için yeni dialog #${dialog.id} oluşturuldu`);
+                    }
+                } catch (_e) { /* aşağıdaki SSE fetch hata akışına düşer */ }
             }
 
             // 🆕 v2.50.0: Streaming SSE endpoint
+            // v3.34.0: raw fetch — text/event-stream (vyraFetch JSON-only, body.getReader() gerekli)
             const response = await fetch(`${API_BASE}/dialogs/${currentDialogId}/messages/stream`, {
                 method: 'POST',
                 headers: {
@@ -1002,16 +962,13 @@ window.DialogChatModule = (function () {
                                                 cancelBtn.textContent = '⚠️ Diyalog bulunamadı';
                                                 return;
                                             }
-                                            const token = localStorage.getItem('access_token');
-                                            const headers = { 'Content-Type': 'application/json' };
-                                            if (token) headers['Authorization'] = `Bearer ${token}`;
-                                            const resp = await fetch(`/api/dialogs/${dlgId}/jobs/${encodeURIComponent(activeJobId)}/cancel`, {
-                                                method: 'POST',
-                                                headers,
-                                            });
-                                            if (resp.ok) {
+                                            try {
+                                                await window.vyraFetch(
+                                                    `/dialogs/${dlgId}/jobs/${encodeURIComponent(activeJobId)}/cancel`,
+                                                    { method: 'POST' }
+                                                );
                                                 cancelBtn.textContent = '✓ İptal sinyali gönderildi';
-                                            } else {
+                                            } catch (_err) {
                                                 cancelBtn.textContent = '⚠️ İptal başarısız';
                                                 cancelBtn.disabled = false;
                                             }
@@ -1472,6 +1429,7 @@ window.DialogChatModule = (function () {
         if (reportTemplate) body.report_template = reportTemplate;
 
         try {
+            // v3.34.0: raw fetch — text/event-stream (vyraFetch JSON-only, body.getReader() gerekli)
             const response = await fetch(`${API_BASE}/dialogs/${currentDialogId}/messages/stream`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
@@ -1748,26 +1706,16 @@ window.DialogChatModule = (function () {
         showTypingIndicator();
 
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${API_BASE}/dialogs/${currentDialogId}/quick-reply`, {
+            const message = await window.vyraFetch(`/dialogs/${currentDialogId}/quick-reply`, {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
+                body: {
                     action: 'multi_select',
                     selection_ids: selectedCardIds,
                     message_id: targetMessageId
-                })
+                }
             });
-
             hideTypingIndicator();
-
-            if (response.ok) {
-                const message = await response.json();
-                addAssistantMessage(message);
-            }
+            if (message) addAssistantMessage(message);
         } catch (error) {
             hideTypingIndicator();
             console.error('[DialogChat] Multi-select hatası:', error);
@@ -1910,26 +1858,16 @@ window.DialogChatModule = (function () {
             : null;
 
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${API_BASE}/dialogs/${currentDialogId}/quick-reply`, {
+            const message = await window.vyraFetch(`/dialogs/${currentDialogId}/quick-reply`, {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
+                body: {
                     action,
                     selection_id: selectionId,
                     message_id: targetMessageId  // 🔒 Direkt mesaj ID ile al
-                })
+                }
             });
-
             hideTypingIndicator();
-
-            if (response.ok) {
-                const message = await response.json();
-                addAssistantMessage(message);
-            }
+            if (message) addAssistantMessage(message);
         } catch (error) {
             hideTypingIndicator();
             console.error('[DialogChat] Quick reply hatası:', error);
@@ -1938,14 +1876,9 @@ window.DialogChatModule = (function () {
 
     async function sendFeedback(messageId, feedbackType, btn = null) {
         try {
-            const token = localStorage.getItem('access_token');
-            await fetch(`${API_BASE}/dialogs/${currentDialogId}/feedback`, {
+            await window.vyraFetch(`/dialogs/${currentDialogId}/feedback`, {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ message_id: messageId, feedback_type: feedbackType })
+                body: { message_id: messageId, feedback_type: feedbackType }
             });
 
             // Butonu seçili hale getir
@@ -1994,29 +1927,24 @@ window.DialogChatModule = (function () {
                 btn.textContent = '⏳ Yükleniyor...';
             }
 
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${API_BASE}/dialogs/${currentDialogId}/messages`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    content: `Sonraki kategori[${shownCount}]: ${query}`
-                })
-            });
+            let data;
+            try {
+                data = await window.vyraFetch(`/dialogs/${currentDialogId}/messages`, {
+                    method: 'POST',
+                    body: { content: `Sonraki kategori[${shownCount}]: ${query}` }
+                });
+            } catch (httpErr) {
+                hideTypingIndicator();
+                showToast('error', (httpErr && httpErr.message) || 'Sunucu hatası');
+                throw httpErr;
+            }
 
             hideTypingIndicator();
 
-            if (response.ok) {
-                const data = await response.json();
-                if (data.message) {
-                    // Duplicate önleme: ÖNCE ID'yi kaydet
-                    lastAddedMessageId = data.message.id;
-                    addAssistantMessage(data.message);
-                }
-            } else {
-                showToast('error', 'Sunucu hatası');
+            if (data && data.message) {
+                // Duplicate önleme: ÖNCE ID'yi kaydet
+                lastAddedMessageId = data.message.id;
+                addAssistantMessage(data.message);
             }
         } catch (error) {
             hideTypingIndicator();
@@ -2654,17 +2582,9 @@ window.DialogChatModule = (function () {
         if (!messageId || !currentDialogId) return;
 
         try {
-            const token = localStorage.getItem('access_token');
-            await fetch(`${API_BASE}/dialogs/${currentDialogId}/response-time`, {
+            await window.vyraFetch(`/dialogs/${currentDialogId}/response-time`, {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    message_id: messageId,
-                    response_time: responseTime
-                })
+                body: { message_id: messageId, response_time: responseTime }
             });
         } catch (error) {
             console.warn('[DialogChat] Response time kaydedilemedi:', error);
@@ -2731,6 +2651,7 @@ window.DialogChatModule = (function () {
             showToast('Dosya indiriliyor...', 'info');
 
             // Auth token ile fetch yap
+            // v3.34.0: raw fetch — response.blob() download (vyraFetch JSON döner)
             const token = localStorage.getItem('access_token');
             const response = await fetch(`${window.API_BASE_URL || 'http://localhost:8002'}${url}`, {
                 method: 'GET',
@@ -2819,16 +2740,16 @@ window.DialogChatModule = (function () {
                 return;
             }
 
-            const response = await fetch(`${window.API_BASE_URL || 'http://localhost:8002'}/api/dialogs/${dialogId}/messages/enhance`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${localStorage.getItem('access_token')}`
-                },
-                body: JSON.stringify({ query: query, message_id: messageId })
-            });
-
-            const data = await response.json();
+            let data;
+            try {
+                data = await window.vyraFetch(`/dialogs/${dialogId}/messages/enhance`, {
+                    method: 'POST',
+                    body: { query: query, message_id: messageId }
+                });
+            } catch (httpErr) {
+                container.innerHTML = `<span class="vyra-enhance-error">${(httpErr && httpErr.message) || 'Enhance hatası'}</span>`;
+                return;
+            }
 
             if (data.success && data.content) {
                 // Mesaj içeriğini güncelle
@@ -3063,6 +2984,7 @@ window.DBExportHandler = (function () {
             const btn = document.querySelector(`#${barId} .db-export-btn.${format}`);
             if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
 
+            // v3.34.0: raw fetch — export endpoint blob (xlsx/docx/pdf) döner; vyraFetch JSON-only
             const resp = await fetch(endpoint, {
                 method: 'POST',
                 headers: {

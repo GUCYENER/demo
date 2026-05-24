@@ -277,20 +277,20 @@
         };
 
         try {
-            const apiBase = (window.VYRA_API_BASE || '');
-            const resp = await fetch(`${apiBase}/api/query-state/preview`, {
-                method: 'POST',
-                credentials: 'include',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(window.getAuthHeader ? window.getAuthHeader() : {}),
-                },
-                body: JSON.stringify(body),
-            });
-            const data = await resp.json().catch(() => ({}));
+            // v3.34.0: vyraFetch — auth header + JSON parse + Türkçe error mesajı helper'dan
+            let data;
+            try {
+                data = await window.vyraFetch('/query-state/preview', { method: 'POST', body });
+            } catch (httpErr) {
+                statusEl.removeAttribute('aria-busy');
+                const fallback = (httpErr && httpErr.data && (httpErr.data.detail || (httpErr.data.warnings || []).join('; '))) || (httpErr && httpErr.message) || 'Bilinmeyen hata';
+                statusEl.textContent = `Hata: ${fallback}`;
+                statusEl.classList.add('qb-status-error');
+                return;
+            }
             statusEl.removeAttribute('aria-busy');
 
-            if (!resp.ok || !data.valid) {
+            if (!data.valid) {
                 const errs = (data.warnings || [data.detail || 'Bilinmeyen hata']).join('; ');
                 statusEl.textContent = `Hata: ${errs}`;
                 statusEl.classList.add('qb-status-error');
@@ -407,24 +407,19 @@
         resultMeta.textContent = '';
 
         try {
-            const apiBase = (window.VYRA_API_BASE || '');
-            const resp = await fetch(`${apiBase}/api/query-state/preview`, {
-                method: 'POST',
-                credentials: 'include',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(window.getAuthHeader ? window.getAuthHeader() : {}),
-                },
-                body: JSON.stringify(body),
-            });
-            const data = await resp.json().catch(() => ({}));
-            statusEl.removeAttribute('aria-busy');
-
-            if (!resp.ok) {
+            // v3.34.0: vyraFetch — execute=true preview ucu
+            let data;
+            try {
+                data = await window.vyraFetch('/query-state/preview', { method: 'POST', body });
+            } catch (httpErr) {
+                statusEl.removeAttribute('aria-busy');
                 statusEl.classList.add('qb-status-error');
-                statusEl.textContent = `HTTP ${resp.status}: ${(data && (data.detail || data.execute_error)) || 'Hata'}`;
+                const detail = (httpErr && httpErr.data && (httpErr.data.detail || httpErr.data.execute_error)) || (httpErr && httpErr.message) || 'Hata';
+                const stat = httpErr && httpErr.status ? `HTTP ${httpErr.status}: ` : '';
+                statusEl.textContent = `${stat}${detail}`;
                 return;
             }
+            statusEl.removeAttribute('aria-busy');
             if (data.success === false) {
                 resultSection.removeAttribute('hidden');
                 resultMeta.textContent = '⚠ Çalıştırma hatası';
