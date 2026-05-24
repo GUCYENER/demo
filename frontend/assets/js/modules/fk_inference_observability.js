@@ -19,22 +19,11 @@
     let _sourcesLoaded = false;
     let _currentSourceId = null;
 
-    function _authHeaders() {
-        const h = { 'Accept': 'application/json' };
-        try {
-            const t = global.localStorage && global.localStorage.getItem('access_token');
-            if (t) h['Authorization'] = `Bearer ${t}`;
-        } catch (_e) { /* sessiz */ }
-        return h;
-    }
-
-    async function _fetchJson(url) {
-        const r = await fetch(url, { headers: _authHeaders(), credentials: 'include' });
-        if (!r.ok) {
-            const txt = await r.text().catch(() => '');
-            throw new Error(`HTTP ${r.status}: ${txt.slice(0, 200)}`);
-        }
-        return r.json();
+    // v3.34.0: vyraFetch delegate — Auth + JSON + friendly error helper'da.
+    async function _fetchJson(path) {
+        // vyraFetch otomatik /api prefix ekler — '/api/...' geçilirse strip et
+        const p = path.startsWith('/api/') ? path.slice(4) : path;
+        return window.vyraFetch(p);
     }
 
     function _escape(s) {

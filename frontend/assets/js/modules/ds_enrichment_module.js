@@ -350,12 +350,11 @@ const DSEnrichmentModule = (() => {
         if (!_currentSourceId || _isPolling) return;
         _isPolling = true;
         try {
-            const [statsRes, allRes] = await Promise.all([
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const [stats, allData] = await Promise.all([
                 _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`),
                 _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-all`)
             ]);
-            const stats = await statsRes.json();
-            const allData = await allRes.json();
             const newPending = (allData.tables || []).map(x => ({
                 ...x, id: x.object_id, is_approved: !!x.admin_approved
             }));
@@ -855,7 +854,8 @@ const DSEnrichmentModule = (() => {
         // donuyor; aynisi bulk endpoint'inde de mevcut. UX: data.message toast'a
         // backend'den geliyor.
         try {
-            const res = await _authFetch(
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await _authFetch(
                 `/api/data-sources/${_currentSourceId}/enrichment-approve/${enrichmentId}`,
                 {
                     method: 'POST',
@@ -863,7 +863,6 @@ const DSEnrichmentModule = (() => {
                     body: JSON.stringify({})
                 }
             );
-            const data = await res.json();
 
             if (data.success) {
                 const existing = _pendingData.find(p => p.id === objectId);
@@ -965,7 +964,8 @@ const DSEnrichmentModule = (() => {
         const notes = document.getElementById('dsEditNotes')?.value?.trim() || null;
 
         try {
-            const res = await _authFetch(
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await _authFetch(
                 `/api/data-sources/${_currentSourceId}/enrichment-approve/${realEnrichmentId}`,
                 {
                     method: 'POST',
@@ -976,7 +976,6 @@ const DSEnrichmentModule = (() => {
                     })
                 }
             );
-            const data = await res.json();
 
             if (data.success) {
                 const existing = _pendingData.find(p => p.id === objectId);
@@ -1020,15 +1019,15 @@ const DSEnrichmentModule = (() => {
                 _showToast('Bu tablo henüz keşfedilmedi', 'warning');
                 return;
             }
-            const res = await _authFetch(`/api/data-sources/enrichment/${enrichmentId}/columns`);
-
-            if (!res.ok) {
-                console.error('[DSEnrich] Sütun API hatası:', res.status, res.statusText);
-                _showToast(`Sütun verisi alınamadı (HTTP ${res.status})`, 'error');
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            let data;
+            try {
+                data = await _authFetch(`/api/data-sources/enrichment/${enrichmentId}/columns`);
+            } catch (httpErr) {
+                console.error('[DSEnrich] Sütun API hatası:', httpErr.status, httpErr.message);
+                _showToast(`Sütun verisi alınamadı (HTTP ${httpErr.status || '?'})`, 'error');
                 return;
             }
-
-            const data = await res.json();
             console.log('[DSEnrich] showColumns enrichmentId=', enrichmentId, 'response=', data);
 
             if (!data.success || !data.columns || data.columns.length === 0) {
@@ -1226,12 +1225,12 @@ const DSEnrichmentModule = (() => {
         }
 
         try {
-            const res = await _authFetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await _authFetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ object_ids: toDiscover })
             });
-            const data = await res.json();
             if (data.success) {
                 _showToast(data.message || `${toDiscover.length} tablo için arkada keşif başlatıldı. Birazdan liste yeşillenecek.`, 'success');
                 // v3.14.0: Seçili satırların İŞLEM kolonunu "Devam Ediyor" olarak güncelle
@@ -1269,12 +1268,12 @@ const DSEnrichmentModule = (() => {
         }
 
         try {
-            const res = await _authFetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await _authFetch(`/api/data-sources/${_currentSourceId}/enrich-selected`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ object_ids: unprocessed })
             });
-            const data = await res.json();
             if (data.success) {
                 _showToast(data.message || `${unprocessed.length} tablo için keşif başlatıldı. Liste otomatik güncellenecek.`, 'success');
                 // v3.14.0: Tüm satırların İŞLEM kolonunu "Devam Ediyor" olarak güncelle
@@ -1333,7 +1332,8 @@ const DSEnrichmentModule = (() => {
             // Per-item SAVEPOINT, partial success (stop_on_error=false), 5 worker
             // post-commit paralel schema_record. ~5x daha hizli + transactional.
             const enrichmentIds = approvableIds.map(oid => objectToEnrichMap[oid]);
-            const res = await _authFetch(
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await _authFetch(
                 `/api/data-sources/${_currentSourceId}/enrichment-approve-bulk`,
                 {
                     method: 'POST',
@@ -1345,7 +1345,6 @@ const DSEnrichmentModule = (() => {
                     })
                 }
             );
-            const data = await res.json();
 
             // approved_ids -> objectId map'i tersle
             const approvedEnrichSet = new Set((data.approved_ids || []).map(String));
@@ -1422,7 +1421,8 @@ const DSEnrichmentModule = (() => {
         try {
             // v3.31.0: Tek POST -> backend bulk endpoint (transactional + paralel)
             const enrichmentIds = toApprove.map(x => x.enrichment_id);
-            const res = await _authFetch(
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await _authFetch(
                 `/api/data-sources/${_currentSourceId}/enrichment-approve-bulk`,
                 {
                     method: 'POST',
@@ -1434,7 +1434,6 @@ const DSEnrichmentModule = (() => {
                     })
                 }
             );
-            const data = await res.json();
 
             const approvedSet = new Set((data.approved_ids || []).map(String));
             // Frontend state'i guncelle
@@ -1477,8 +1476,8 @@ const DSEnrichmentModule = (() => {
     // ============================================
 
     function _updateStatsAfterApprove() {
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
         _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`)
-            .then(r => r.json())
             .then(stats => _renderStats(stats))
             .catch(() => {});
 

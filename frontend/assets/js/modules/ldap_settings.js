@@ -7,7 +7,7 @@
 window.LdapSettingsModule = (function () {
     'use strict';
 
-    const API_BASE = window.API_BASE_URL || 'http://localhost:8002';
+    // v3.34.0: vyraFetch /api + API_BASE_URL prefix'ini kendi ekliyor — burada sadece path tutuyoruz.
     let editingId = null;
     let domainOrgData = []; // domain_org_permissions cache
 
@@ -22,29 +22,14 @@ window.LdapSettingsModule = (function () {
     }
 
     // ---------------------------------------------------------
-    //  Helper: Auth header
-    // ---------------------------------------------------------
-    function authHeaders() {
-        const token = localStorage.getItem('access_token');
-        return {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-        };
-    }
-
-    // ---------------------------------------------------------
     //  Load LDAP Settings List
     // ---------------------------------------------------------
     async function load(companyId) {
         try {
-            let url = `${API_BASE}/api/ldap-settings`;
-            if (companyId) url += `?company_id=${companyId}`;
-            const response = await fetch(url, {
-                headers: authHeaders()
-            });
-            if (!response.ok) throw new Error('LDAP ayarları yüklenemedi');
-
-            const data = await response.json();
+            let path = `/ldap-settings`;
+            if (companyId) path += `?company_id=${companyId}`;
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch(path);
             renderTable(data.settings || []);
         } catch (err) {
             console.error('[LDAP] Load error:', err);
@@ -101,11 +86,8 @@ window.LdapSettingsModule = (function () {
     // ---------------------------------------------------------
     async function fetchDomainOrgs() {
         try {
-            const resp = await fetch(`${API_BASE}/api/domain-org-permissions`, {
-                headers: authHeaders()
-            });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            domainOrgData = await resp.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            domainOrgData = await window.vyraFetch(`/domain-org-permissions`);
         } catch (err) {
             console.warn('[LDAP] domain-org-permissions yukleme hatasi:', err);
             domainOrgData = [];
@@ -209,10 +191,8 @@ window.LdapSettingsModule = (function () {
             await fetchDomainOrgs();
 
             // Listedeki verileri kullan
-            const response = await fetch(`${API_BASE}/api/ldap-settings`, {
-                headers: authHeaders()
-            });
-            const data = await response.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch(`/ldap-settings`);
             const setting = (data.settings || []).find(s => s.id === id);
 
             if (!setting) {
@@ -320,21 +300,12 @@ window.LdapSettingsModule = (function () {
 
         try {
             const method = editingId ? 'PUT' : 'POST';
-            const endpoint = editingId
-                ? `${API_BASE}/api/ldap-settings/${editingId}`
-                : `${API_BASE}/api/ldap-settings`;
+            const path = editingId
+                ? `/ldap-settings/${editingId}`
+                : `/ldap-settings`;
 
-            const response = await fetch(endpoint, {
-                method,
-                headers: authHeaders(),
-                body: JSON.stringify(body)
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                throw new Error(data.detail || 'İşlem başarısız');
-            }
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch(path, { method, body });
 
             if (window.showToast) window.showToast(data.message || 'Başarılı', 'success');
             closeModal();
@@ -356,14 +327,8 @@ window.LdapSettingsModule = (function () {
             cancelText: 'İptal',
             onConfirm: async () => {
                 try {
-                    const response = await fetch(`${API_BASE}/api/ldap-settings/${id}`, {
-                        method: 'DELETE',
-                        headers: authHeaders()
-                    });
-
-                    const data = await response.json();
-                    if (!response.ok) throw new Error(data.detail || 'Silme başarısız');
-
+                    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                    const data = await window.vyraFetch(`/ldap-settings/${id}`, { method: 'DELETE' });
                     if (window.showToast) window.showToast(data.message || 'Silindi', 'success');
                     load();
                 } catch (err) {
@@ -381,12 +346,8 @@ window.LdapSettingsModule = (function () {
         if (window.showToast) window.showToast('Bağlantı testi yapılıyor...', 'info');
 
         try {
-            const response = await fetch(`${API_BASE}/api/ldap-settings/${id}/test`, {
-                method: 'POST',
-                headers: authHeaders()
-            });
-
-            const data = await response.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const data = await window.vyraFetch(`/ldap-settings/${id}/test`, { method: 'POST' });
 
             if (data.success) {
                 let stepsHtml = (data.steps || []).map(s =>

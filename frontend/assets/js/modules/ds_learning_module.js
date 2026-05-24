@@ -33,36 +33,27 @@ window.DSLearningModule = (function () {
     }
 
     // API helper
+    // v3.34.0: vyraFetch delegasyonu. Eski kontrat korunur — non-2xx'te friendly
+    // mesajla {success: false, message} döner, throw etmez. Bu sayede mevcut
+    // caller'lar `data.success` desenini değiştirmeden çalışır.
     async function apiCall(endpoint, method = 'GET', body = null) {
-        const token = localStorage.getItem('access_token');
-        const options = {
-            method,
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-            }
-        };
-        if (body) options.body = JSON.stringify(body);
-
-        const response = await fetch(`${API_BASE}/api/data-sources${endpoint}`, options);
-
-        // Response body'yi text olarak oku, sonra JSON parse dene
-        const text = await response.text();
-        let data;
         try {
-            data = JSON.parse(text);
-        } catch (_parseErr) {
-            // Backend düzgün JSON dönmedi — anlamlı hata objesi üret
-            console.error('[DSLearning] JSON parse hatası:', text.substring(0, 200));
-            return { success: false, message: `Sunucu hatası (HTTP ${response.status})` };
+            return await window.vyraFetch(`/data-sources${endpoint}`, {
+                method,
+                body: body || undefined,
+            });
+        } catch (err) {
+            // Backend JSON `success:false` döndürdüyse onu olduğu gibi geri ver.
+            const payload = err && err.data;
+            if (payload && typeof payload === 'object' && payload.success !== undefined) {
+                return payload;
+            }
+            return {
+                success: false,
+                message: (err && err.message) ||
+                    `Sunucu hatası (HTTP ${err && err.status})`,
+            };
         }
-
-        // HTTP hata durumunda success: false dön
-        if (!response.ok && data.success === undefined) {
-            return { success: false, message: data.detail || data.message || `HTTP ${response.status}` };
-        }
-
-        return data;
     }
 
     // ============================================
@@ -2208,12 +2199,8 @@ window.DSLearningModule = (function () {
                 approvedBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Başlatılıyor...';
 
                 try {
-                    const token = localStorage.getItem('access_token');
-                    const res = await fetch(`/api/data-sources/${sourceId}/run-approved-learning`, {
-                        method: 'POST',
-                        headers: { 'Authorization': `Bearer ${token}` }
-                    });
-                    const data = await res.json();
+                    // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+                    const data = await window.vyraFetch(`/data-sources/${sourceId}/run-approved-learning`, { method: 'POST' });
                     if (data.success) {
                         if (typeof showToast === 'function') showToast(data.message || 'Onaylıları öğrenme başlatıldı!', 'success');
                         setTimeout(() => loadHistory(sourceId), 2000);
@@ -2272,20 +2259,16 @@ window.DSLearningModule = (function () {
 
         const params = new URLSearchParams({ table, limit: '5' });
         if (schema) params.append('schema', schema);
-        const url = `/api/data-sources/${encodeURIComponent(sourceId)}/samples?${params.toString()}`;
-        const token = localStorage.getItem('access_token');
+        const path = `/data-sources/${encodeURIComponent(sourceId)}/samples?${params.toString()}`;
 
-        fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-            .then(async (res) => {
-                if (res.status === 404) {
-                    const body = await res.json().catch(() => ({}));
-                    throw new Error(body.detail || 'Cache boş — örnek veri toplanmamış.');
-                }
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                return res.json();
-            })
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+        window.vyraFetch(path)
             .then((data) => _renderSampleInSlot(slot, data))
             .catch((err) => {
+                if (err && err.status === 404) {
+                    const detail = (err.data && err.data.detail) || 'Cache boş — örnek veri toplanmamış.';
+                    err = new Error(detail);
+                }
                 slot.innerHTML = `
                     <div class="ds-lr-sample-empty">
                         <i class="fa-solid fa-triangle-exclamation"></i>

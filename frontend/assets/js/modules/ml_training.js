@@ -11,8 +11,7 @@
 window.MLTrainingModule = (function () {
     'use strict';
 
-    // API Base URL (Backend - Port 8002)
-    const API_BASE = window.API_BASE_URL || 'http://localhost:8002';
+    // v3.34.0: vyraFetch /api + API_BASE_URL prefix'ini kendi ekliyor — base sabiti kaldırıldı.
 
     // State
     let isTraining = false;
@@ -74,22 +73,10 @@ window.MLTrainingModule = (function () {
     // API Calls
     // ============================================
 
+    // v3.34.0: vyraFetch delegate — Auth + JSON + friendly error helper'da.
+    // Not: vyraFetch non-2xx'te throw eder; callsite'lardaki try/catch zaten bunu yakalıyor.
     async function apiCall(endpoint, method = 'GET', body = null) {
-        const token = localStorage.getItem('access_token');
-        const options = {
-            method,
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-            }
-        };
-
-        if (body) {
-            options.body = JSON.stringify(body);
-        }
-
-        const response = await fetch(`${API_BASE}/api/system${endpoint}`, options);
-        return response.json();
+        return window.vyraFetch(`/system${endpoint}`, { method, body });
     }
 
     // ============================================

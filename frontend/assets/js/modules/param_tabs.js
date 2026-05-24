@@ -216,12 +216,13 @@ window.ParamTabsModule = (function () {
                       && getComputedStyle(companiesTab).display !== "none";
 
         try {
-            const token = localStorage.getItem('access_token') || '';
-            const res = await fetch(API_BASE + '/api/companies/', {
-                headers: { 'Authorization': 'Bearer ' + token }
-            });
-            if (!res.ok) return;
-            const companies = await res.json();
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            let companies;
+            try {
+                companies = await window.vyraFetch('/companies/');
+            } catch (_e) {
+                return;
+            }
 
             if (isAdmin) {
                 // Admin: dropdown göster, span gizle
@@ -293,14 +294,14 @@ if (document.readyState === 'loading') {
  */
 async function populateCompanySelect(selectEl, selectedId) {
     if (!selectEl) return;
-    const API_BASE = window.API_BASE_URL || '';
     try {
-        const token = localStorage.getItem('access_token') || '';
-        const res = await fetch(API_BASE + '/api/companies/', {
-            headers: { 'Authorization': 'Bearer ' + token }
-        });
-        if (!res.ok) return;
-        const companies = await res.json();
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+        let companies;
+        try {
+            companies = await window.vyraFetch('/companies/');
+        } catch (_e) {
+            return;
+        }
         selectEl.innerHTML = '<option value="">Firma seçin...</option>';
         companies.forEach(c => {
             const opt = document.createElement('option');

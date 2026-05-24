@@ -141,6 +141,7 @@ const MaturityScoreModal = {
             const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 saniye
 
             const token = localStorage.getItem('access_token');
+            // raw fetch: FormData multipart upload + AbortController/signal — vyraFetch not applicable
             const response = await fetch(`${this.API_BASE}/rag/analyze-maturity`, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${token}` },
