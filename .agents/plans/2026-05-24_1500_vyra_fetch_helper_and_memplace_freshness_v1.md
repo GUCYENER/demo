@@ -2,15 +2,15 @@
 plan_id: vyra_fetch_helper_and_memplace_freshness
 created: 2026-05-24
 branch: hira
-status: in_progress
+status: completed
 version_target: v3.34.0
 council_mod: 3
 hebe_gate_required: true
 owner_zeus: true
 last_commit_at_start: 6588a5e
-last_commit_at_update: 897e62c
+last_commit_at_update: 5c192ef
 last_updated: 2026-05-24
-wip_stash: "stash@{0}: WIP previous session: dialog_chat + deep_think + query_state + query_builder"
+wip_stash: "popped + committed: 1235796 (v3.33.1 fix bundle)"
 parallel_agents:
   - 2026-05-24_A1-bug-picker-limit
   - 2026-05-24_A2-vyrafetch-helper-and-login
@@ -20,7 +20,7 @@ phase_status:
   G1_vyrafetch_helper: completed       # bf4e11f
   G2_login_migration: completed         # bf4e11f (login.js + login.html a11y)
   G3_main_modules: completed            # f172836 — 5 dosya, -140 satır net
-  G4_modules_phase_b: blocked           # WIP stash@{0} kullanıcı kararı bekliyor
+  G4_modules_phase_b: completed         # 5c192ef — dialog_chat + query_builder, 17 site migre / 4 raw (SSE+blob); WIP stash pop+commit (1235796 v3.33.1 fix bundle)
   G5_side_modules: completed            # 7d10e2d + c1285e6 + 0bb0f7d + 897e62c — 42 dosya, ~108 site migre
   G6_workflow_update: completed         # 2aead30 (vyrazeus.md +28/-5)
   G7_mcp_server_mine_fix: completed     # mcp_servers.py B+A — HEAD-hash short-circuit + timeout 300→600s; backup: mcp_servers.py.bak-2026-05-24; helpers verify edildi (vyra HEAD=897e62c)
