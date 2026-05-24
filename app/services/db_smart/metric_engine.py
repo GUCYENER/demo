@@ -29,6 +29,14 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+
+def _col(row: Any, key: str, idx: int) -> Any:
+    """RealDictCursor + tuple cursor uyumu — kolon adıyla eriş."""
+    if row is None:
+        return None
+    return row[key] if isinstance(row, dict) else row[idx]
+
+
 # Skor ağırlıkları — plan G1.4 (pattern × 0.5 + usage_norm × 0.3 + user_pref × 0.2)
 W_PATTERN = 0.5
 W_USAGE = 0.3
@@ -128,7 +136,11 @@ def load_table_signature(
     row = cur.fetchone()
     if not row:
         return None
-    tid, schema_name, object_name, row_count, columns_json = row
+    tid = _col(row, 'id', 0)
+    schema_name = _col(row, 'schema_name', 1)
+    object_name = _col(row, 'object_name', 2)
+    row_count = _col(row, 'row_count_estimate', 3)
+    columns_json = _col(row, 'columns_json', 4)
     cols_raw: List[Dict[str, Any]] = []
     if isinstance(columns_json, list):
         cols_raw = columns_json
@@ -149,12 +161,15 @@ def load_table_signature(
               FROM ds_column_enrichments ce
               JOIN ds_table_enrichments te ON te.id = ce.table_enrichment_id
              WHERE te.source_id = %s
-               AND te.schema_name = %s
-               AND te.object_name = %s
+               AND LOWER(COALESCE(te.schema_name, '')) = LOWER(COALESCE(%s, ''))
+               AND LOWER(te.table_name) = LOWER(%s)
             """,
             (source_id, schema_name, object_name),
         )
-        for cn, st, bn in cur.fetchall() or []:
+        for er in cur.fetchall() or []:
+            cn = _col(er, 'column_name', 0)
+            st = _col(er, 'semantic_type', 1)
+            bn = _col(er, 'business_name_tr', 2)
             enrich_map[(cn or "").lower()] = {
                 "semantic_type": (st or "other").lower(),
                 "business_name_tr": bn,
@@ -298,7 +313,7 @@ def list_eligible(
         """
         SELECT metric_key, name_tr, category, sub_category, description_tr,
                default_viz, applicable_when, sql_templates,
-               COALESCE(usage_count, 0), success_rate
+               COALESCE(usage_count, 0) AS usage_count, success_rate
           FROM dbsmart_metric_library
          WHERE is_active IS TRUE OR is_active IS NULL
          ORDER BY category, metric_key
@@ -313,7 +328,16 @@ def list_eligible(
 
     out: List[Dict[str, Any]] = []
     for r in rows:
-        metric_key, name_tr, category, sub_cat, desc, default_viz, applicable_when, sql_templates, usage, _success = r
+        metric_key = _col(r, 'metric_key', 0)
+        name_tr = _col(r, 'name_tr', 1)
+        category = _col(r, 'category', 2)
+        sub_cat = _col(r, 'sub_category', 3)
+        desc = _col(r, 'description_tr', 4)
+        default_viz = _col(r, 'default_viz', 5)
+        applicable_when = _col(r, 'applicable_when', 6)
+        sql_templates = _col(r, 'sql_templates', 7)
+        usage = _col(r, 'usage_count', 8)
+        # _success = _col(r, 'success_rate', 9)  # currently unused
         aw = applicable_when if isinstance(applicable_when, dict) else _safe_json(applicable_when)
         matches, strength, bindings = _check_applicable(aw or {}, table_signature)
         if not matches:
@@ -340,6 +364,59 @@ def list_eligible(
     return out
 
 
+def list_all_active(
+    cur: Any,
+    limit: int = 60,
+) -> List[Dict[str, Any]]:
+    """Tüm aktif metric library girdilerini döndür (fallback path).
+
+    list_eligible() boş döndüğünde (örn. tablo enrichment yok, default skor < min_score)
+    çağıran tarafın "tüm library'yi göster" davranışına geçebilmesi için kullanılır.
+
+    Her item'a `fallback=True` flag eklenir. Skor / bindings hesaplanmaz; shape
+    list_eligible'ın döndürdüğü item'larla aynı anahtarlara sahiptir.
+    """
+    cur.execute(
+        """
+        SELECT metric_key, name_tr, category, sub_category, description_tr,
+               default_viz, applicable_when, sql_templates
+          FROM dbsmart_metric_library
+         WHERE is_active IS TRUE OR is_active IS NULL
+         ORDER BY category, metric_key
+         LIMIT %s
+        """,
+        (max(int(limit), 1),),
+    )
+    rows = cur.fetchall() or []
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        metric_key = _col(r, 'metric_key', 0)
+        name_tr = _col(r, 'name_tr', 1)
+        category = _col(r, 'category', 2)
+        sub_cat = _col(r, 'sub_category', 3)
+        desc = _col(r, 'description_tr', 4)
+        default_viz = _col(r, 'default_viz', 5)
+        applicable_when = _col(r, 'applicable_when', 6)
+        sql_templates = _col(r, 'sql_templates', 7)
+        aw = applicable_when if isinstance(applicable_when, dict) else _safe_json(applicable_when)
+        tpl = sql_templates if isinstance(sql_templates, dict) else _safe_json(sql_templates)
+        out.append({
+            "metric_key": metric_key,
+            "name_tr": name_tr,
+            "category": category,
+            "sub_category": sub_cat,
+            "description_tr": desc,
+            "default_viz": default_viz,
+            "applicable_when": aw or {},
+            "sql_templates": tpl or {},
+            "score": 0.0,
+            "pattern_strength": 0.0,
+            "bindings": {},
+            "fallback": True,
+        })
+    return out
+
+
 def _safe_json(v: Any) -> Optional[Dict[str, Any]]:
     if isinstance(v, dict):
         return v
@@ -353,11 +430,23 @@ def _safe_json(v: Any) -> Optional[Dict[str, Any]]:
 
 
 def _load_user_pref_metrics(cur: Any, user_ctx: Dict[str, Any]) -> set:
-    """dbsmart_user_preferences.frequent_metrics içinden set döner. Hata → boş set."""
+    """dbsmart_user_preferences.frequent_metrics içinden set döner. Hata → boş set.
+
+    FIX15 (B13): SAVEPOINT pattern — `dbsmart_user_preferences` tablosu yok/RLS
+    deny/şema uyumsuzluğu hallerinde SELECT başarısız olduğunda
+    `InFailedSqlTransaction` ile sonraki sorguların patlamasını engeller. Hatayı
+    yalnızca SAVEPOINT'e kadar geri alır; çağıranın transaction'ı sağlam kalır.
+
+    Not: autocommit=False (get_db_context default'u) gerektirir — autocommit=True
+    altında SAVEPOINT komutu kendi başına başarısız olur. Bu yüzden iç try/except
+    ROLLBACK TO SAVEPOINT'i de güvenlikle sarar.
+    """
     uid = user_ctx.get("id")
     if not uid:
         return set()
+    sp = "sp_user_pref"
     try:
+        cur.execute(f"SAVEPOINT {sp}")
         cur.execute(
             """
             SELECT frequent_metrics
@@ -368,16 +457,27 @@ def _load_user_pref_metrics(cur: Any, user_ctx: Dict[str, Any]) -> set:
             (uid,),
         )
         row = cur.fetchone()
+        cur.execute(f"RELEASE SAVEPOINT {sp}")
         if not row:
             return set()
-        fm = row[0]
+        fm = _col(row, 'frequent_metrics', 0)
         if isinstance(fm, list):
             return {m for m in fm if isinstance(m, str)}
         parsed = _safe_json(fm)
         if isinstance(parsed, list):
             return {m for m in parsed if isinstance(m, str)}
     except Exception as e:
-        logger.debug("[metric_engine] user_pref lookup skipped: %s", e)
+        logger.warning(
+            "[metric_engine] user_pref load failed (savepoint rollback): %s", e
+        )
+        try:
+            cur.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+        except Exception:
+            # SAVEPOINT hiç oluşmadıysa (örn. autocommit=True altında ilk
+            # cur.execute SAVEPOINT zaten patladıysa) — sessizce geç. Bu
+            # durumda transaction zaten aborted, caller'ın conn.rollback()
+            # etmesi gerekir, ama biz tek SAVEPOINT'i temizleyebilirsek temizleriz.
+            pass
     return set()
 
 
@@ -400,7 +500,9 @@ def get_template(cur: Any, metric_key: str, dialect: str) -> Optional[Dict[str, 
     r = cur.fetchone()
     if not r:
         return None
-    _, default_viz, applicable_when, sql_templates = r
+    default_viz = _col(r, 'default_viz', 1)
+    applicable_when = _col(r, 'applicable_when', 2)
+    sql_templates = _col(r, 'sql_templates', 3)
     tpl = sql_templates if isinstance(sql_templates, dict) else _safe_json(sql_templates) or {}
     sql = tpl.get(dialect)
     if not sql:

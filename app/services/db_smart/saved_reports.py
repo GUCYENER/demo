@@ -39,6 +39,18 @@ _MAX_NAME_LEN = 200
 _MAX_TAGS = 20
 _MAX_LIMIT = 200
 
+# P0-1 defense-in-depth: update() SET clause yalnız bu whitelist'ten kolon
+# adı kabul eder. Liste dışı her şey sessizce düşürülür; f-string sadece
+# hardcoded üye için kullanılır → SQL injection yüzeyi kapalı.
+_UPDATE_COLS_WHITELIST: Dict[str, str] = {
+    "name": "name = %s",
+    "description": "description = %s",
+    "wizard_state": "wizard_state = %s::jsonb",
+    "last_sql": "last_sql = %s",
+    "last_dialect": "last_dialect = %s",
+    "tags": "tags = %s",
+}
+
 
 def _require_user_ctx(user_ctx: Dict[str, Any]) -> Tuple[int, int]:
     uid = user_ctx.get("id") if user_ctx else None
@@ -114,7 +126,10 @@ def save(
         created = row[1] if not isinstance(row, dict) else row.get("created_at")
         return {"id": int(rid), "created_at": created}
     except Exception as e:
-        logger.warning("[db_smart.sr] save INSERT failed: %s", e)
+        # F16 (HEBE+ARES+POSEIDON): logger.exception → full traceback.
+        # Önceki logger.warning(%s, e) sadece "TypeError: ..." stringi yazıyordu,
+        # 500 diagnostiği için psycopg/RLS hata zinciri görünmüyordu.
+        logger.exception("[db_smart.sr] save INSERT failed: %s", e)
         return None
 
 
@@ -130,40 +145,60 @@ def update(
     last_dialect: Optional[str] = None,
     tags: Optional[List[str]] = None,
 ) -> bool:
-    """Patch update. None alanlar dokunulmaz. RLS policy user_id eşliyor."""
+    """Patch update. None alanlar dokunulmaz. RLS policy user_id eşliyor.
+
+    SQL injection defense-in-depth (P0-1): SET clause parçaları yalnız
+    `_UPDATE_COLS_WHITELIST` üyelerinden seçilir; değerler her zaman %s
+    placeholder ile bind edilir. `updated_at = NOW()` statik literal.
+    """
     _require_user_ctx(user_ctx)
-    fields: List[str] = []
-    params: List[Any] = []
+
+    # (col_key, value) çiftleri — None olanlar zaten dışarıda.
+    candidate_updates: List[Tuple[str, Any]] = []
     if name is not None:
         n = name.strip()
         if not n:
             raise ValueError("name boş olamaz")
-        fields.append("name = %s")
-        params.append(n[:_MAX_NAME_LEN])
+        candidate_updates.append(("name", n[:_MAX_NAME_LEN]))
     if description is not None:
-        fields.append("description = %s")
-        params.append(description)
+        candidate_updates.append(("description", description))
     if wizard_state is not None:
-        fields.append("wizard_state = %s::jsonb")
-        params.append(json.dumps(wizard_state, default=str))
-    if last_sql is not None:
-        fields.append("last_sql = %s")
-        params.append(last_sql)
-    if last_dialect is not None:
-        fields.append("last_dialect = %s")
-        params.append(last_dialect)
-    if tags is not None:
-        fields.append("tags = %s")
-        params.append(_normalize_tags(tags))
-    if not fields:
-        return False
-    fields.append("updated_at = NOW()")
-    params.append(int(report_id))
-    try:
-        cur.execute(
-            f"UPDATE dbsmart_saved_reports SET {', '.join(fields)} WHERE id = %s",
-            tuple(params),
+        candidate_updates.append(
+            ("wizard_state", json.dumps(wizard_state, default=str))
         )
+    if last_sql is not None:
+        candidate_updates.append(("last_sql", last_sql))
+    if last_dialect is not None:
+        candidate_updates.append(("last_dialect", last_dialect))
+    if tags is not None:
+        candidate_updates.append(("tags", _normalize_tags(tags)))
+
+    set_parts: List[str] = []
+    params: List[Any] = []
+    for col, val in candidate_updates:
+        clause = _UPDATE_COLS_WHITELIST.get(col)
+        if clause is None:
+            # Whitelist dışı — sessizce düşür (defense-in-depth).
+            continue
+        set_parts.append(clause)
+        params.append(val)
+
+    if not set_parts:
+        return False
+
+    # Statik literal — kullanıcı girdisi yok.
+    set_parts.append("updated_at = NOW()")
+    params.append(int(report_id))
+
+    # SET fragmanları yalnız hardcoded whitelist string'lerinden oluşur,
+    # dolayısıyla join() sonucu SQL injection açısından güvenlidir.
+    sql = (
+        "UPDATE dbsmart_saved_reports SET "
+        + ", ".join(set_parts)
+        + " WHERE id = %s"
+    )
+    try:
+        cur.execute(sql, tuple(params))
         rowcount = getattr(cur, "rowcount", 0) or 0
         return rowcount > 0
     except Exception as e:

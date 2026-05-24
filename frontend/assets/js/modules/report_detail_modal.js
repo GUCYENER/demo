@@ -391,29 +391,118 @@
         }
 
         try {
-            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
-            // 1) yeni session
-            const sess = await window.vyraFetch('/sessions', { method: 'POST', body: {} });
+            // F21c (ARES+HERMES 2026-05-25): /sessions/{uid}/execute backend'de
+            // stub (rows:[]) — bu yüzden "Sonuç boş." görünüyordu. Gerçek runner
+            // /sessions/{uid}/execute/stream (SSE). Saved report'taki last_sql +
+            // source_id (wizard_state'ten) + last_dialect ile direkt yeniden çalıştır.
+            const ws = _report.wizard_state || {};
+            const sourceId = _report.source_id || ws.source_id || ws.sourceId;
+            const lastSql = _report.last_sql || '';
+            // F21c+F22c (ARES 2026-05-25): dialect HER ZAMAN omit → backend
+            // source.db_type'tan resolve eder. Eski raporlarda last_dialect
+            // bazen yanlış literal değer ("db_type") veya wizard'ın
+            // hard-coded "postgresql" default'u olarak kaydedilmiş; rerun
+            // sırasında mismatch/whitelist hatası üretiyordu. FE asla
+            // dialect tahmininde bulunmasın.
+            const dialect = null;
+            if (!sourceId) throw new Error('Veri kaynağı (source_id) yok — rapor eksik kaydedilmiş.');
+            if (!lastSql) throw new Error('Saklanan SQL yok — raporu wizard ile yeniden oluşturup kaydedin.');
+
+            // 1) Yeni session aç (source_id zorunlu — CreateSessionRequest).
+            const sess = await window.vyraFetch('/db-smart/sessions', {
+                method: 'POST',
+                body: { source_id: Number(sourceId) },
+            });
             const uid = sess.session_uid || sess.uid || sess.id;
             if (!uid) throw new Error('Session UID alınamadı');
 
-            // 2) execute wizard_state
-            const wizardState = _report.wizard_state || {};
-            const result = await window.vyraFetch(
-                '/sessions/' + encodeURIComponent(uid) + '/execute',
-                { method: 'POST', body: wizardState }
+            // 2) /execute/stream — SSE consume; columns + rows event'lerini topla.
+            const token = localStorage.getItem('access_token');
+            const apiBase = (window.API_BASE_URL || 'http://localhost:8002') + '/api';
+            const streamRes = await fetch(
+                apiBase + '/db-smart/sessions/' + encodeURIComponent(uid) + '/execute/stream',
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'text/event-stream',
+                        'Authorization': token ? ('Bearer ' + token) : '',
+                    },
+                    body: JSON.stringify(Object.assign(
+                        {
+                            sql: lastSql,
+                            source_id: Number(sourceId),
+                            batch_size: 200,
+                            max_rows: 1000,
+                        },
+                        dialect ? { dialect: dialect } : {}
+                    )),
+                }
             );
+            if (!streamRes.ok) {
+                let detail = '';
+                try { detail = await streamRes.text(); } catch (_) { /* noop */ }
+                throw new Error('HTTP ' + streamRes.status + (detail ? (': ' + detail.slice(0, 200)) : ''));
+            }
+
+            const columnsAgg = [];
+            const rowsAgg = [];
+            let totalCount = 0;
+            let truncated = false;
+            let sseError = null;
+
+            const reader = streamRes.body.getReader();
+            const decoder = new TextDecoder('utf-8');
+            let buffer = '';
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                // SSE event blocks separated by \n\n
+                let idx;
+                while ((idx = buffer.indexOf('\n\n')) !== -1) {
+                    const block = buffer.slice(0, idx);
+                    buffer = buffer.slice(idx + 2);
+                    let evtName = 'message';
+                    let dataStr = '';
+                    block.split('\n').forEach((line) => {
+                        if (line.startsWith('event:')) evtName = line.slice(6).trim();
+                        else if (line.startsWith('data:')) dataStr += line.slice(5).trim();
+                    });
+                    if (!dataStr) continue;
+                    let payload = null;
+                    try { payload = JSON.parse(dataStr); } catch (_) { continue; }
+                    if (evtName === 'columns' && Array.isArray(payload.columns)) {
+                        columnsAgg.length = 0;
+                        payload.columns.forEach((c) => columnsAgg.push(c));
+                    } else if (evtName === 'rows' && Array.isArray(payload.rows)) {
+                        payload.rows.forEach((r) => rowsAgg.push(r));
+                    } else if (evtName === 'end') {
+                        totalCount = Number(payload.row_count || rowsAgg.length) || rowsAgg.length;
+                        truncated = !!payload.truncated;
+                    } else if (evtName === 'error') {
+                        sseError = payload.message || 'Stream hata';
+                    }
+                }
+            }
+
+            if (sseError) throw new Error(sseError);
 
             // 3) mark-run (best-effort)
             window.vyraFetch(
-                '/saved-reports/' + encodeURIComponent(_reportId) + '/mark-run',
+                '/db-smart/saved-reports/' + encodeURIComponent(_reportId) + '/mark-run',
                 { method: 'POST' }
             ).catch(() => { /* noop */ });
 
-            // render result
+            const result = {
+                columns: columnsAgg,
+                rows: rowsAgg,
+                row_count: totalCount || rowsAgg.length,
+                truncated: truncated,
+            };
             if (resultMount) _renderRunResult(resultMount, result);
 
-            _toast('Sorgu çalıştırıldı', 'success');
+            _toast('Sorgu çalıştırıldı (' + result.row_count + ' satır)', 'success');
             if (typeof _opts.onRan === 'function') {
                 try { _opts.onRan(result); } catch (err) { console.error('[ReportDetailModal] onRan error:', err); }
             }
@@ -486,7 +575,7 @@
         _openRenameMini((newName) => {
             // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
             window.vyraFetch(
-                '/saved-reports/' + encodeURIComponent(_reportId) + '/duplicate',
+                '/db-smart/saved-reports/' + encodeURIComponent(_reportId) + '/duplicate',
                 { method: 'POST', body: { name: newName } }
             )
                 .then((data) => {
@@ -574,7 +663,7 @@
     function _onShare() {
         // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
         window.vyraFetch(
-            '/saved-reports/' + encodeURIComponent(_reportId) + '/share',
+            '/db-smart/saved-reports/' + encodeURIComponent(_reportId) + '/share',
             { method: 'POST', body: { ttl_hours: 168 } }
         )
             .then((data) => {
@@ -608,7 +697,7 @@
             onConfirm: () => {
                 // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
                 window.vyraFetch(
-                    '/saved-reports/' + encodeURIComponent(_reportId),
+                    '/db-smart/saved-reports/' + encodeURIComponent(_reportId),
                     { method: 'DELETE' }
                 )
                     .then(() => {
@@ -688,7 +777,7 @@
     // ─── Fetch detail ───
     async function _fetchDetail(id) {
         // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
-        return await window.vyraFetch('/saved-reports/' + encodeURIComponent(id));
+        return await window.vyraFetch('/db-smart/saved-reports/' + encodeURIComponent(id));
     }
 
     // ─── Public ───

@@ -1,17 +1,15 @@
 {
   "wizard.title": "Akıllı Veri Keşfi",
-  "wizard.subtitle": "5 adımda veriye ulaşın",
+  "wizard.subtitle": "4 adımda veriye ulaşın",
 
   "wizard.step.1.title": "Tablo Seçimi",
   "wizard.step.1.help": "İhtiyacınız olan veriye sahip tabloyu arayın ve seçin.",
-  "wizard.step.2.title": "İlişkiler",
-  "wizard.step.2.help": "FK ile bağlı tabloları keşfedin.",
-  "wizard.step.3.title": "Metrik",
-  "wizard.step.3.help": "Hazır metrik kütüphanesinden seçin veya özel sorgu yazın.",
-  "wizard.step.4.title": "Filtre",
-  "wizard.step.4.help": "Kolon bazlı filtreler uygulayın.",
-  "wizard.step.5.title": "Önizleme",
-  "wizard.step.5.help": "Üretilen SQL'i ve maliyet tahminini gözden geçirin.",
+  "wizard.step.2.title": "Metrik",
+  "wizard.step.2.help": "Hazır metrik kütüphanesinden seçin veya özel sorgu yazın.",
+  "wizard.step.3.title": "Filtre",
+  "wizard.step.3.help": "Kolon bazlı filtreler uygulayın.",
+  "wizard.step.4.title": "Önizleme",
+  "wizard.step.4.help": "Üretilen SQL'i ve maliyet tahminini gözden geçirin.",
 
   "wizard.step.indicator": "Adım {current} / {total}",
 

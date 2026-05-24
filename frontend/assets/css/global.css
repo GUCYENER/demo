@@ -364,6 +364,20 @@ body {
     animation: fadeIn 0.3s ease;
 }
 
+/* ---- R013 (v3.34.1) — global [disabled] cursor convention ----
+   Browser default for [disabled] inputs/buttons is `default` (arrow).
+   VYRA UX convention is `not-allowed` for any disabled interactive
+   element. Bulk action butonları zaten inline cursor set ediyor; bu
+   blok kapsam dışında kalan tüm interactive elementler (checkbox,
+   select, textarea, radio, file input vb.) için fallback. */
+button[disabled],
+input[disabled],
+select[disabled],
+textarea[disabled],
+[aria-disabled="true"] {
+    cursor: not-allowed;
+}
+
 .animate-pulse {
     animation: pulse 2s infinite;
 }

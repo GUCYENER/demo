@@ -326,44 +326,91 @@ def call_llm_api(messages: list, temperature: Optional[float] = None) -> str:
         "max_tokens": config.get('max_tokens', 4096)
     }
 
-    try:
-        log_system_event("INFO", f"LLM API çağrısı: {config['model_name']}", "llm")
-        
-        # Timeout config'den okunuyor (varsayılan 60 saniye)
-        timeout_seconds = config.get('timeout_seconds', 60)
-        
-        # SSL verification devre dışı (kurumsal proxy için)
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        
-        response = requests.post(config['api_url'], headers=headers, json=payload, timeout=timeout_seconds, verify=False)
-        response.raise_for_status()
-        data = response.json()
-        
-        if "choices" in data and len(data["choices"]) > 0:
-            result = data["choices"][0]["message"]["content"]
-            log_system_event("INFO", f"LLM yanıt alındı: {len(result)} karakter", "llm")
-            return result
-        else:
-            error_msg = f"API Cevabı beklenmedik formatta: {str(data)}"
-            log_error("LLM API beklenmedik format", "llm", error_detail=str(data))
-            raise LLMResponseError(error_msg)
-            
-    except requests.exceptions.Timeout:
-        error_msg = f"LLM Bağlantı Hatası: İstek zaman aşımına uğradı ({timeout_seconds} saniye)"
-        log_error("LLM API timeout", "llm")
-        raise LLMConnectionError(error_msg)
-    except requests.exceptions.RequestException as e:
-        error_msg = f"LLM Bağlantı Hatası: {str(e)}"
-        log_error(f"LLM API request hatası: {str(e)}", "llm", error_detail=str(e))
-        raise LLMConnectionError(error_msg)
-    except (LLMConnectionError, LLMResponseError, LLMConfigError):
-        # Özel exception'ları tekrar fırlat
-        raise
-    except Exception as e:
-        error_msg = f"LLM Beklenmeyen Hata: {str(e)}"
-        log_error(f"LLM beklenmeyen hata: {str(e)}", "llm", error_detail=str(e))
-        raise LLMConnectionError(error_msg)
+    # FIX11 L3 (METIS+NIKE): 5xx/429/timeout için exponential backoff retry
+    # (full multi-provider chain + cost guard → REFACTOR_BACKLOG R-fy LLM resilience)
+    timeout_seconds = config.get('timeout_seconds', 60)
+    max_retries = int(config.get('max_retries', 3))
+    base_backoff = float(config.get('retry_backoff_seconds', 0.5))
+
+    # SSL verification devre dışı (kurumsal proxy için)
+    import urllib3
+    import time as _time
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    last_err: Optional[Exception] = None
+    for attempt in range(max_retries):
+        try:
+            log_system_event(
+                "INFO",
+                f"LLM API çağrısı: {config['model_name']} (deneme {attempt + 1}/{max_retries})",
+                "llm",
+            )
+            response = requests.post(
+                config['api_url'], headers=headers, json=payload,
+                timeout=timeout_seconds, verify=False,
+            )
+            status = response.status_code
+            # 4xx (5xx hariç) → kullanıcı/prompt hatası, retry yok
+            if 400 <= status < 500 and status != 429:
+                response.raise_for_status()
+            # 5xx veya 429 → retry edilebilir
+            if status >= 500 or status == 429:
+                last_err = LLMConnectionError(
+                    f"LLM provider transient error: HTTP {status}"
+                )
+                if attempt < max_retries - 1:
+                    backoff = base_backoff * (2 ** attempt)
+                    log_system_event(
+                        "WARNING",
+                        f"LLM transient {status}, retry {attempt + 1} in {backoff:.2f}s",
+                        "llm",
+                    )
+                    _time.sleep(backoff)
+                    continue
+                response.raise_for_status()
+            data = response.json()
+
+            if "choices" in data and len(data["choices"]) > 0:
+                result = data["choices"][0]["message"]["content"]
+                log_system_event("INFO", f"LLM yanıt alındı: {len(result)} karakter", "llm")
+                return result
+            else:
+                error_msg = f"API Cevabı beklenmedik formatta: {str(data)}"
+                log_error("LLM API beklenmedik format", "llm", error_detail=str(data))
+                raise LLMResponseError(error_msg)
+
+        except requests.exceptions.Timeout:
+            last_err = LLMConnectionError(
+                f"LLM Bağlantı Hatası: İstek zaman aşımına uğradı ({timeout_seconds} saniye)"
+            )
+            if attempt < max_retries - 1:
+                backoff = base_backoff * (2 ** attempt)
+                log_system_event("WARNING", f"LLM timeout, retry {attempt + 1} in {backoff:.2f}s", "llm")
+                _time.sleep(backoff)
+                continue
+            log_error("LLM API timeout", "llm")
+            raise last_err
+        except requests.exceptions.RequestException as e:
+            # Connection-level errors → retry edilebilir
+            last_err = LLMConnectionError(f"LLM Bağlantı Hatası: {str(e)}")
+            if attempt < max_retries - 1:
+                backoff = base_backoff * (2 ** attempt)
+                log_system_event("WARNING", f"LLM request err, retry {attempt + 1} in {backoff:.2f}s: {e}", "llm")
+                _time.sleep(backoff)
+                continue
+            log_error(f"LLM API request hatası: {str(e)}", "llm", error_detail=str(e))
+            raise last_err
+        except (LLMConnectionError, LLMResponseError, LLMConfigError):
+            raise
+        except Exception as e:
+            error_msg = f"LLM Beklenmeyen Hata: {str(e)}"
+            log_error(f"LLM beklenmeyen hata: {str(e)}", "llm", error_detail=str(e))
+            raise LLMConnectionError(error_msg)
+
+    # All retries exhausted
+    if last_err is not None:
+        raise last_err
+    raise LLMConnectionError("LLM API: all retries exhausted (unknown reason)")
 
 
 # ============================================

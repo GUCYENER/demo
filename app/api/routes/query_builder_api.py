@@ -187,22 +187,55 @@ class PreviewRequest(BaseModel):
 # Helpers
 # ──────────────────────────────────────────
 
-def _resolve_dialect_and_source(source_id: int) -> Dict[str, Any]:
-    """data_sources'tan dialect + bağlantı dict'i döner."""
+def _resolve_dialect_and_source(source_id: int, company_id: int) -> Dict[str, Any]:
+    """data_sources'tan dialect + bağlantı dict'i döner — TENANT-SCOPED.
+
+    R018 (v3.34.1): company_id ZORUNLU parametre. WHERE clause `id=%s AND
+    company_id=%s` ile cross-tenant data_source erişimi engellenir
+    (IDOR fix). Caller'ın tenant'ına ait olmayan source_id için
+    `{"dialect": <fallback>, "source": None}` döner; caller HTTPException(404)
+    çevirmelidir (existence-oracle vermemek için 403 değil 404).
+    """
     with get_db_context() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT id, db_type, host, port, db_name, db_username, db_password, "
-                "extra_config FROM data_sources WHERE id = %s",
-                (source_id,),
+                "extra_config FROM data_sources WHERE id = %s AND company_id = %s",
+                (source_id, company_id),
             )
             row = cur.fetchone()
             if not row:
+                logger.warning(
+                    "[query-builder] data_source not in caller tenant: "
+                    "source_id=%s company_id=%s",
+                    source_id, company_id,
+                )
                 return {"dialect": "postgresql", "source": None}
             cols = [d[0] for d in cur.description]
             src = dict(zip(cols, row))
             dialect = (src.get("db_type") or "postgresql").lower()
             return {"dialect": dialect, "source": src}
+
+
+def _assert_source_owned(source_id: int, company_id: int) -> None:
+    """R018: source_id'nin caller'ın tenant'ına ait olduğunu doğrular.
+
+    Sadece existence kontrolü (kimlik bilgisi okumaz). Yetkisizse
+    HTTPException(404) — existence-oracle vermemek için 403 değil 404.
+    """
+    with get_db_context() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM data_sources WHERE id = %s AND company_id = %s",
+                (source_id, company_id),
+            )
+            if cur.fetchone() is None:
+                logger.warning(
+                    "[query-builder] cross-tenant source_id rejected: "
+                    "source_id=%s company_id=%s",
+                    source_id, company_id,
+                )
+                raise HTTPException(404, "data_source bulunamadı")
 
 
 def _build_multi_table_sql(req: PreviewRequest, dialect: str) -> Dict[str, Any]:
@@ -374,14 +407,16 @@ def suggest_path(
     if not company_id:
         raise HTTPException(400, "company_id eksik")
 
+    # R018 (v3.34.1): tenant ownership doğrulaması — IDOR fix.
+    _assert_source_owned(req.source_id, company_id)
+
     with get_db_context() as conn:
         with conn.cursor() as cur:
-            # Multi-tenant scope (apply_company_scope mevcut pattern)
-            try:
-                from app.api.routes.agentic_query_api import apply_company_scope
-                apply_company_scope(cur, company_id=company_id)
-            except Exception:
-                pass
+            # R006/R018 (v3.34.1): apply_company_scope artık fail-loud
+            # (core/db.py:309). Eski `try/except: pass` silent RLS bypass
+            # riskliydi — kaldırıldı. Hata propagate edilir.
+            from app.core.db import apply_company_scope
+            apply_company_scope(cur, company_id=company_id)
 
             try:
                 result = resolve_best_path(
@@ -415,16 +450,20 @@ def preview_query(
     if not company_id:
         raise HTTPException(400, "company_id eksik")
 
-    # Dialect resolve
+    # Dialect resolve — R018 (v3.34.1): tenant-scoped lookup.
     dialect = (req.dialect or "postgresql").lower()
     source_info: Optional[Dict[str, Any]] = None
     if req.source_id:
         try:
-            info = _resolve_dialect_and_source(req.source_id)
-            dialect = req.dialect or info["dialect"]
-            source_info = info["source"]
+            info = _resolve_dialect_and_source(req.source_id, company_id)
         except Exception as exc:
             logger.warning("[query-builder/preview] dialect lookup: %s", exc)
+        else:
+            if info["source"] is None:
+                # Cross-tenant veya silinmiş source — 404 (existence-oracle yok).
+                raise HTTPException(404, "data_source bulunamadı")
+            dialect = req.dialect or info["dialect"]
+            source_info = info["source"]
 
     # SQL inşa
     try:

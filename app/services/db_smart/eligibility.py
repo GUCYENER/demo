@@ -136,9 +136,11 @@ def search_domains(
                 (int(user_id),),
             )
             row = cur.fetchone()
-            if row and row[0]:
-                # frequent_tables: INTEGER[]
-                frequent_table_ids = list(row[0])
+            if row:
+                # frequent_tables: INTEGER[] — RealDictCursor + tuple cursor uyumu
+                ft = row['frequent_tables'] if isinstance(row, dict) else row[0]
+                if ft:
+                    frequent_table_ids = list(ft)
         except Exception as e:
             logger.debug("[eligibility] user_preferences lookup skipped: %s", e)
 
@@ -272,31 +274,42 @@ def search_domains(
                     """,
                     (query_embedding,),
                 )
-            # mapped_table → similarity
+            # mapped_table → similarity (RealDictCursor + tuple cursor uyumu)
+            def _gcol(row, key, idx):
+                return row[key] if isinstance(row, dict) else row[idx]
             glossary_sim: Dict[str, float] = {
-                (r[0] or "").lower(): float(r[1] or 0.0)
+                (_gcol(r, 'mapped_table', 0) or "").lower(): float(_gcol(r, 'sim', 1) or 0.0)
                 for r in cur.fetchall()
             }
             # Object_name eşleşmesiyle skoru tablolara propagate et
             for r in rows:
-                obj_lc = (r[2] or "").lower()
+                obj_lc = (_gcol(r, 'object_name', 2) or "").lower()
                 if obj_lc in glossary_sim:
-                    semantic_map[r[0]] = glossary_sim[obj_lc]
+                    semantic_map[_gcol(r, 'table_id', 0)] = glossary_sim[obj_lc]
         except Exception as e:
             logger.debug("[eligibility] semantic ranking skipped: %s", e)
 
     # 4) Final skor + breakdown
-    max_row_cnt = max((r[4] or 0) for r in rows) or 1
+    # RealDictCursor + tuple cursor uyumu — kolon adıyla eriş.
+    def _col(row, key, idx):
+        return row[key] if isinstance(row, dict) else row[idx]
+
+    max_row_cnt = max((_col(r, 'row_cnt', 4) or 0) for r in rows) or 1
     import math
     log_max = math.log10(max_row_cnt + 10)
 
     results: List[Dict[str, Any]] = []
     for r in rows:
-        table_id = r[0]
-        lex_hits = (r[9] or 0) + (r[10] or 0) + (r[11] or 0) + (r[12] or 0)
+        table_id = _col(r, 'table_id', 0)
+        lex_hits = (
+            (_col(r, 'm_obj', 9) or 0)
+            + (_col(r, 'm_bizname', 10) or 0)
+            + (_col(r, 'm_desc', 11) or 0)
+            + (_col(r, 'm_cat', 12) or 0)
+        )
         lex_score = min(1.0, lex_hits / 4.0)  # 4 alandan kaçında eşleşti
 
-        row_cnt = r[4] or 0
+        row_cnt = _col(r, 'row_cnt', 4) or 0
         card_score = math.log10(row_cnt + 10) / log_max if log_max > 0 else 0.0
 
         freq_score = 1.0 if table_id in frequent_table_ids else 0.0
@@ -322,14 +335,14 @@ def search_domains(
 
         results.append({
             "table_id": table_id,
-            "schema_name": r[1],
-            "object_name": r[2],
-            "object_type": r[3],
+            "schema_name": _col(r, 'schema_name', 1),
+            "object_name": _col(r, 'object_name', 2),
+            "object_type": _col(r, 'object_type', 3),
             "row_count_estimate": row_cnt,
-            "business_name_tr": r[5],
-            "description_tr": r[6],
-            "category": r[7],
-            "enrichment_score": r[8],
+            "business_name_tr": _col(r, 'business_name_tr', 5),
+            "description_tr": _col(r, 'description_tr', 6),
+            "category": _col(r, 'category', 7),
+            "enrichment_score": _col(r, 'enrichment_score', 8),
             "score": round(total, 4),
             "score_breakdown": {
                 "lexical": round(lex_score, 3),

@@ -388,8 +388,14 @@ class SafeSQLExecutor:
             )
 
         # 2. Tablo whitelist kontrolü
+        # F15: case-insensitive normalize — Oracle metadata UPPERCASE,
+        # PG/MySQL lowercase saklayabilir; parser quote'ları soyup .lower() yapar.
+        # Whitelist'i de baştan lower'a indirgeyerek defense-in-depth sağlıyoruz.
         if allowed_tables:
-            is_allowed, table_error = check_table_whitelist(sql, allowed_tables, dialect)
+            normalized_allowed = [
+                str(t).strip().lower() for t in allowed_tables if t
+            ]
+            is_allowed, table_error = check_table_whitelist(sql, normalized_allowed, dialect)
             if not is_allowed:
                 log_warning(f"Tablo whitelist reddi: {table_error}", "hybrid_router")
                 return SQLResult(
@@ -504,7 +510,11 @@ class SafeSQLExecutor:
             return holder, evt, None, threading.Event()
 
         if allowed_tables:
-            is_allowed, table_error = check_table_whitelist(sql, allowed_tables, dialect)
+            # F15: case-insensitive normalize (bkz. execute() yorumu)
+            normalized_allowed = [
+                str(t).strip().lower() for t in allowed_tables if t
+            ]
+            is_allowed, table_error = check_table_whitelist(sql, normalized_allowed, dialect)
             if not is_allowed:
                 holder = {"result": SQLResult(success=False, error=table_error, sql_executed=sql[:200])}
                 evt = threading.Event()

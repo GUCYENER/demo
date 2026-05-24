@@ -114,12 +114,26 @@
         const tools = document.createElement('div');
         tools.className = 'srg-tools';
 
+        const searchWrap = document.createElement('div');
+        searchWrap.className = 'srg-search-wrap';
+
         const search = document.createElement('input');
         search.type = 'search';
         search.className = 'srg-search';
         search.placeholder = 'Rapor ara...';
         search.setAttribute('aria-label', 'Rapor arama');
-        tools.appendChild(search);
+        searchWrap.appendChild(search);
+
+        const searchClear = document.createElement('button');
+        searchClear.type = 'button';
+        searchClear.className = 'srg-search-clear';
+        searchClear.setAttribute('aria-label', 'Aramayı temizle');
+        searchClear.setAttribute('tabindex', '-1');
+        searchClear.hidden = true;
+        searchClear.textContent = '\u00D7'; // ×
+        searchWrap.appendChild(searchClear);
+
+        tools.appendChild(searchWrap);
 
         const newBtn = document.createElement('button');
         newBtn.type = 'button';
@@ -173,10 +187,41 @@
         _root.appendChild(wrap);
 
         // events
+        const _syncClearVisibility = () => {
+            const hasValue = !!(search.value && search.value.length > 0);
+            searchClear.hidden = !hasValue;
+            searchWrap.classList.toggle('is-filled', hasValue);
+        };
+
         search.addEventListener('input', () => {
+            _syncClearVisibility();
             if (_searchTimer) clearTimeout(_searchTimer);
             _searchTimer = setTimeout(() => { refresh(); }, 300);
         });
+
+        search.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && search.value) {
+                e.preventDefault();
+                search.value = '';
+                _syncClearVisibility();
+                if (_searchTimer) clearTimeout(_searchTimer);
+                refresh();
+                search.focus();
+            }
+        });
+
+        searchClear.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (!search.value) return;
+            search.value = '';
+            _syncClearVisibility();
+            if (_searchTimer) clearTimeout(_searchTimer);
+            refresh();
+            search.focus();
+        });
+
+        // initial state (input başlangıçta boş)
+        _syncClearVisibility();
 
         newBtn.addEventListener('click', () => {
             if (typeof _opts.onNewReport === 'function') {
@@ -390,7 +435,11 @@
         params.set('limit', '24');
         if (q) params.set('q', q);
         // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
-        const data = await window.vyraFetch('/saved-reports?' + params.toString());
+        // v3.34.1 BUG-4.2: Endpoint backend'de `/api/db-smart/saved-reports`
+        // altında mount edildi (db_smart_api router prefix). vyraFetch zaten
+        // `/api` ekliyor → burada `/db-smart/saved-reports` kullanılmalı.
+        // Önceki `/saved-reports` 404 dönüyordu.
+        const data = await window.vyraFetch('/db-smart/saved-reports?' + params.toString());
         return Array.isArray(data && data.items) ? data.items : [];
     }
 

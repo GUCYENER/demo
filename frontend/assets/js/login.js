@@ -86,6 +86,46 @@
         });
     }
 
+    // ---- FIX12 (v3.34.3): Auth error → friendly TR mesaj mapping ----
+    // vyraFetch zaten Türkçe mesaj üretir; ancak login UX için spec'e bire bir
+    // hizalı sabit metinler istiyoruz. error.code + error.status üzerinden
+    // mapping yapıyoruz, böylece api_client.js mesaj metni değişimine duyarsız.
+    //
+    // Güvenlik: raw HTML/JSON SyntaxError sızıntısı için scrub guard — `<`,
+    // "JSON", "token", "Unexpected" pattern'ları içeren ham mesaj asla
+    // kullanıcıya gösterilmez, generic catch-all'a düşer.
+    function mapAuthError(error) {
+        if (!error) return "Giriş yapılamadı. Lütfen tekrar deneyin.";
+        const code = error.code;
+        const status = error.status;
+
+        // Network failure veya backend non-JSON (SERVER_DOWN tag)
+        if (code === 'SERVER_DOWN') {
+            return "Sunucu şu anda yanıt vermiyor. Sistem ayağa kalkana kadar lütfen bekleyip tekrar deneyin.";
+        }
+        // Belirsiz network durumu (status yok, AbortError de değil)
+        if (!status && error.name !== 'AbortError' && error instanceof Error && /failed to fetch|networkerror/i.test(error.message || '')) {
+            return "Sunucu şu anda yanıt vermiyor. Sistem ayağa kalkana kadar lütfen bekleyip tekrar deneyin.";
+        }
+        if (status === 502 || status === 503 || status === 504) {
+            return "Sunucu geçici olarak erişilemiyor. Lütfen 30 saniye sonra tekrar deneyin.";
+        }
+        if (status === 401) {
+            return "Kullanıcı adı veya şifre hatalı.";
+        }
+        if (status === 500) {
+            return "Sunucuda beklenmeyen bir hata oluştu. Sistem yöneticinizle iletişime geçin.";
+        }
+        // Backend'den gelen JSON detail varsa (4xx başka kodlar, validation vs.) ve
+        // scrub guard'dan geçiyorsa kullan; aksi halde catch-all.
+        const raw = (error && typeof error.message === 'string') ? error.message : '';
+        const looksLikeLeakage = /<\s*html|<\s*body|Unexpected token|is not valid JSON|SyntaxError|JSON\.parse/i.test(raw);
+        if (raw && !looksLikeLeakage && raw.length < 240) {
+            return raw;
+        }
+        return "Giriş yapılamadı. Lütfen tekrar deneyin.";
+    }
+
     // ---- LDAP Domain Loading (Polling) ----
     let _domainPollTimer = null;
 
@@ -193,8 +233,8 @@
 
         } catch (error) {
             console.error("[Login] Error:", error);
-            // vyraFetch zaten Türkçe mesaj üretiyor — error.message doğrudan kullanılabilir.
-            showError("login-error", error.message || "Giriş başarısız");
+            // FIX12 (v3.34.3): spec-aligned TR mapping + raw JSON/HTML scrub.
+            showError("login-error", mapAuthError(error));
         } finally {
             submitBtn.classList.remove("loading");
             submitBtn.disabled = false;
@@ -302,8 +342,9 @@
 
         } catch (error) {
             console.error("[Register] Error:", error);
-            // vyraFetch zaten Türkçe mesaj üretiyor.
-            showError("register-error", error.message || "Kayıt başarısız");
+            // FIX12 (v3.34.3): aynı mapping helper'ı register flow için de kullan
+            // — kayıt sırasında backend down olursa raw JSON sızıntısı engellenir.
+            showError("register-error", mapAuthError(error));
         } finally {
             submitBtn.classList.remove("loading");
             submitBtn.disabled = false;

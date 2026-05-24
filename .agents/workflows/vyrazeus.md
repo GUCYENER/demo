@@ -553,6 +553,48 @@ Faz/Gate     : G1, G2, … (özet)
 
 > **Çakışma denetimi:** Brief'leri yazarken hedef dosya listesi kesişiyorsa ya birleştir ya birinden çıkar. Brief'in frontmatter'ında `target_files:` listesi zorunlu.
 
+### 5e.2b Konsey Uzmanlığı Eşleştirme Kuralı (ZORUNLU)
+
+> **Kural:** Her plan/brief'te ilgili **konsey üyesi (ATHENA/HEBE/HERMES/ORACLE/ARES/NIKE/TYCHE/METIS/PROMETHEUS/HEPHAESTUS/POSEIDON/APOLLO/HERA/ARTEMIS-ML/CRAZYMEMPLC)** açıkça belirtilmelidir. Kullanıcı geri bildirimi (2026-05-24): "işleri planlarken ekip uzmanlıklarını plana dahil ediyor muyuz? bunu kural olarak ekle."
+
+**Plan dosyasında** (`.agents/plans/*.md`):
+- Her gate başlığına `(Konsey: X + Y)` etiketi → örn. `G3. CSS update (HEBE + ATHENA)`
+- ≥3 gate'li plan'larda **gate-konsey tablosu** zorunlu (plan başına ekle):
+  ```
+  | Gate | Sorumlu Konsey | Brief |
+  |---|---|---|
+  | G1 | ATHENA + HEBE | agentA_brief.md |
+  | G2 | HERMES + ORACLE | agentB_brief.md |
+  ```
+
+**Brief dosyasında** (`.agents/in_flight/*.md`):
+- Brief başlığı **mutlaka** parantez içinde konsey kimliğini içerir → örn. `# AGENT-D — Source Select Fix (HEBE primary, ATHENA + HERA review)`
+- "primary" (sahibi) ve "review" (kontrol eden) ayrımı uygulanabilir.
+
+**Council Gate review** raporunda (commit message veya brief sonu):
+- Hangi konsey üyesinin OK/NOK verdiği belirtilmeli → örn. `Council review: ATHENA ✅, HEBE ✅, ARES ✅`
+
+**Konsey-rol eşleştirme rehberi** (sık karşılaşılan):
+| Görev tipi | Primary | Review |
+|---|---|---|
+| Frontend wizard/picker/modal | ATHENA | HEBE |
+| A11y/aria/keyboard/focus/marka | HEBE | ATHENA |
+| Backend FastAPI route | HERMES | ARES |
+| Text-to-SQL / dialect | ORACLE | HERMES |
+| LLM/Deep Think/agent | METIS | PROMETHEUS |
+| Embedding/vectorstore | PROMETHEUS | METIS |
+| DB schema/migration/RLS | HEPHAESTUS | ARES |
+| SQL injection / XSS / auth | ARES | HERMES |
+| Cache/perf/Nginx/Docker | NIKE | POSEIDON |
+| Test/regresyon | TYCHE | (görev sahibi) |
+| ML pipeline/CatBoost | ARTEMIS-ML | NIKE |
+| Multi-DB driver/Nginx proxy | POSEIDON | NIKE |
+| İş kuralı / Türkçe terminoloji | APOLLO | (PM yok, ZEUS hakem) |
+| README/CHANGELOG/release | HERA | ZEUS |
+| MemPalace freshness/mine | CRAZYMEMPLC | (otomatik) |
+
+> **Disjoint kapsam + disjoint konsey eşliği:** İki ajan aynı dosyayı değiştirmez (5e.2) **ve** iki konsey üyesi aynı alanın primary'si değildir. Aynı üye birden fazla ajanda **review** rolünde olabilir.
+
 ### 5e.3 Brief Yazma — `.agents/in_flight/<tarih>_<slug>.md`
 
 Her ajan dispatch edilmeden ÖNCE diskte brief yaz. Schema:

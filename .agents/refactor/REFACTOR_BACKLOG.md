@@ -1,6 +1,6 @@
 # VYRA Refactor Backlog
 
-Last updated: 2026-05-24 (v3.34.0 KAP 11 audit — R016/R017 added; P0 escalation: query_builder_api IDOR)
+Last updated: 2026-05-24 (v3.34.1 refactor sprint — R007/R008/R009/R010/R013/R014/R016/R017/R018 closed)
 
 > **BAŞLA Gate Tetikleyici (vyrazeus.md §3.7):** `Status: open` AND
 > (`Priority: P1` AND `Target <= current_version`) OR (`Risk: critical`)
@@ -14,17 +14,20 @@ Last updated: 2026-05-24 (v3.34.0 KAP 11 audit — R016/R017 added; P0 escalatio
 | R004 | P3       | single-file | low  | XS     | —       | 2026-04-15 | `_runConcurrent` worker return-type inconsistency  | frontend/assets/js/modules/ds_enrichment_module.js | wontfix    | bulkApprove + bulkApproveAll v3.31.0'da bulk endpoint'e gecti -> _runConcurrent callsite kalmadi. Helper utility olarak korundu (plan kararı), inconsistency moot |
 | R005 | P1       | single-file | medium | S    | v3.33.0 | 2026-05-10 | RLS USING clause order drift from mig 017 canonical pattern | migrations/versions/043_v3320_bulk_phase2.py | done       | mig 044 — canonical USING order restored + IS NULL branch added (drop+create) |
 | R006 | P1       | cross-file  | medium | M    | v3.33.0 | 2026-05-10 | Missing explicit `WITH CHECK` clause on `FOR ALL` policy (mig 043) | migrations/versions/043_v3320_bulk_phase2.py, app/core/db.py, app/api/routes/data_sources_api.py | done       | mig 044 strict WITH CHECK; `apply_company_scope` fail-loud; BG warning INSERT scope'lu; non-superuser RLS test 4/4 PASS |
-| R007 | P2       | single-file | low  | S      | v3.35.0 | 2026-05-10 | No index on `ds_schema_record_warnings.enrichment_id` FK-equivalent | migrations/versions/043_v3320_bulk_phase2.py | open | M1 — HEPHAESTUS audit; seq-scan on per-enrichment admin filter; add with admin warning panel endpoint |
-| R008 | P3       | cross-file  | low  | XS     | v3.35.0 | 2026-05-10 | Index naming inconsistency: `idx_ds_table_enrich_*` vs convention `idx_table_enrich_*` | migrations/versions/043_v3320_bulk_phase2.py, migrations/versions/004_ds_enrichment_tables.py | open | M2 — HEPHAESTUS audit; ALTER INDEX non-breaking rename |
-| R009 | P3       | cross-file  | low  | XS     | v3.35.0 | 2026-05-10 | `detail TEXT` uncapped at DB layer — only app-layer cap enforced | migrations/versions/043_v3320_bulk_phase2.py, app/api/routes/data_sources_api.py | open | L1 — HEPHAESTUS audit; VARCHAR(1000) or CHECK constraint |
-| R010 | P3       | single-file | low  | XS     | v3.35.0 | 2026-05-10 | BackgroundTasks SIGTERM loss — operational runbook note missing | app/api/routes/data_sources_api.py | open | L2 — HEPHAESTUS audit; approve UPDATE already committed, only embedding gap; DOC-only fix |
+| R007 | P2       | single-file | low  | S      | v3.34.1 | 2026-05-10 | No index on `ds_schema_record_warnings.enrichment_id` FK-equivalent | migrations/versions/045_v3341_audit_index_cap_rename.py | done       | mig 045 — `CREATE INDEX IF NOT EXISTS idx_schema_warn_enrich`; verified via pg_indexes |
+| R008 | P3       | cross-file  | low  | XS     | v3.34.1 | 2026-05-10 | Index naming inconsistency: `idx_ds_table_enrich_*` vs convention `idx_table_enrich_*` | migrations/versions/045_v3341_audit_index_cap_rename.py | done       | mig 045 — `ALTER INDEX RENAME` (guard for partial-apply); verified `idx_table_enrich_source_id_pk` |
+| R009 | P3       | cross-file  | low  | XS     | v3.34.1 | 2026-05-10 | `detail TEXT` uncapped at DB layer — only app-layer cap enforced | migrations/versions/045_v3341_audit_index_cap_rename.py, app/api/routes/data_sources_api.py | done       | mig 045 — `CHECK (detail IS NULL OR char_length(detail) <= 1000)`; app 500-cap stays inside 1000 headroom |
+| R010 | P3       | single-file | low  | XS     | v3.34.1 | 2026-05-10 | BackgroundTasks SIGTERM loss — operational runbook note missing | app/api/routes/data_sources_api.py | done       | docstring at `_generate_schema_records_background` extended w/ operational note + triage cmd |
 | R011 | P1       | cross-file  | medium | M    | v3.33.0 | 2026-05-20 | Tooltip clipping in table cells — portal or fixed-position variant needed | frontend/assets/css/modules/ui_tooltip.css, frontend/assets/js/modules/ui_tooltip.js, frontend/assets/js/modules/ds_enrichment_module.js, frontend/build.mjs | done       | Yeni `ui_tooltip.js` portal helper (data-tt-portal); 3 clipped hücreye (schema/table/desc) bağlandı; bundle.mjs'e eklendi |
 | R012 | P2       | single-file | low  | S      | v3.33.0 | 2026-05-20 | Tooltip vertical auto-flip missing — hard-pinned `bottom` clips near viewport top | frontend/assets/js/modules/ui_tooltip.js | done       | Portal helper auto-flip içeriyor (top<8px → alt; viewport içine clamp) |
-| R013 | P3       | cross-file  | low  | XS     | v3.35.0 | 2026-05-20 | `[disabled]` checkbox missing `cursor: not-allowed` — UX consistency gap | frontend/assets/css/modules/ui_tooltip.css, frontend/assets/js/modules/ds_enrichment_module.js | open | O3 — ATHENA audit; bulk buttons OK (inline cursor), `.ds-bulk-chk[disabled]` uncovered; global CSS fix |
-| R014 | P3       | single-file | low  | M      | v3.35.0 | 2026-05-20 | `_runningJobPoll` unconditional re-render — state-unchanged renders on every 3s tick | frontend/assets/js/modules/ds_enrichment_module.js | open | D3 — ATHENA audit; `applyFilterAndRender()` line 244 called regardless of state change; state-hash guard needed |
+| R013 | P3       | single-file | low  | XS     | v3.34.1 | 2026-05-20 | `[disabled]` checkbox missing `cursor: not-allowed` — UX consistency gap | frontend/assets/css/global.css | done       | global selector `button/input/select/textarea[disabled], [aria-disabled="true"]`; covers checkbox + select + textarea + ARIA disabled |
+| R014 | P3       | single-file | low  | M      | v3.35.0 | 2026-05-20 | `_runningJobPoll` unconditional re-render — state-unchanged renders on every 3s tick | frontend/assets/js/modules/ds_enrichment_module.js | done(superseded) | Already addressed by v3.32.0 TYCHE Y2 fix (line 257 `if (wasRunning !== nowRunning)` guard); current code re-renders only on transition — backlog row was stale |
 | R015 | P3       | single-file | low  | XS     | v3.33.0 | 2026-05-20 | Dark surface token drift — tooltip bg hard-coded, not using `--tt-bg` CSS variable | frontend/assets/css/modules/ui_tooltip.css | done       | Bonus — R011/R012 ile aynı sprintte: `:root` tokens (`--tt-bg/--tt-color/--tt-border`) + literal'ler `var()`'a taşındı |
-| R016 | P2       | repo-wide   | low  | L      | v3.35.0 | 2026-05-24 | vyraFetch SSE/blob variant missing — 4 raw fetch calls anchored in dialog_chat.js | frontend/assets/js/modules/dialog_chat.js, frontend/assets/js/api_client.js | open | v3.34.0 migration bıraktı; SSE×2 (lines 551, 1433) + blob×2 (lines 2656, 2988); intentional at time of migration; refactor unblocked only when vyraFetch gains SSE-stream + blob-download variant |
-| R017 | P2       | repo-wide   | low  | M      | v3.35.0 | 2026-05-24 | try/catch + vyraFetch boilerplate repeated across 28 modules — no shared error-display utility | frontend/assets/js/modules/* (28 files), frontend/assets/js/api_client.js | open | 96 try/catch blocks wrapping vyraFetch calls; catch bodies vary (showError, showToast, console.error); a shared `vyraFetchUI(path, opts, { onError })` wrapper or a module-private `_handleApiError()` convention would halve boilerplate; low risk given vyraFetch already centralises HTTP errors |
+| R016 | P2       | repo-wide   | low  | L      | v3.34.1 | 2026-05-24 | vyraFetch SSE/blob variant missing — 4 raw fetch calls anchored in dialog_chat.js | frontend/assets/js/api_client.js | done(api-side)   | api_client.js — `responseType: 'json' \| 'stream' \| 'blob'` + `signal`; non-2xx friendly error 3 path'te tek helper'da; default JSON path bit-for-bit aynı. Call-site migration (4 dialog_chat.js call'ı) ayrı PR — R019 |
+| R017 | P2       | repo-wide   | low  | M      | v3.34.1 | 2026-05-24 | try/catch + vyraFetch boilerplate repeated across 28 modules — no shared error-display utility | frontend/assets/js/api_client.js | done(wrapper)    | `window.vyraFetchUI(path, opts, { onSuccess, onError, loadingEl })` eklendi; loading-state toggle + ARIA busy + callback exception isolation; opt-in additive (mevcut 28 modülde call-site adoption ayrı PR — R020) |
+| R018 | P0       | single-file | critical | S  | v3.34.1 | 2026-05-24 | IDOR — query_builder_api `_resolve_dialect_and_source` + `/preview` + `/suggest-path` cross-tenant data_source access | app/api/routes/query_builder_api.py | done       | `_resolve_dialect_and_source(source_id, company_id)` — WHERE company_id eklendi + warn-log on miss. `_assert_source_owned` helper + `/suggest-path` invoke. `apply_company_scope` `try/except: pass` kaldırıldı → fail-loud (mirrors R006 v3.33.0 pattern). 404 on cross-tenant miss (existence-oracle değil). Syntax OK. |
+| R019 | P2       | single-file | low  | M      | v3.35.0 | 2026-05-24 | dialog_chat.js — 4 raw fetch call-site migration to new vyraFetch SSE/blob variants (follow-up to R016) | frontend/assets/js/modules/dialog_chat.js | open | R016 api-side ready; refactor SSE×2 (lines 551, 1433) → `responseType:'stream'` + AbortController; blob×2 (lines 2656, 2988) → `responseType:'blob'`. Defer to a focused PR to keep diff reviewable; needs SSE happy-path manual smoke (send-message round-trip) |
+| R020 | P2       | repo-wide   | low  | M      | v3.35.0 | 2026-05-24 | vyraFetchUI adoption across 28 modules (follow-up to R017) | frontend/assets/js/modules/* (28 files) | open | R017 wrapper ready. Adoption strategy: migrate per-module in batches of 4-5; assert behaviour parity (toast text, loading-state) per module. Boilerplate save ~50-60% per call-site; no functional change expected |
 
 ---
 
@@ -384,3 +387,66 @@ Option 1 is cleaner long-term; option 2 is lower risk for the existing 28 module
 **Tests:** Unit test for `vyraFetchUI` wrapper: assert onError called with err on throw, assert onSuccess called with data on resolve, assert loadingEl hidden/shown correctly.
 
 **Dependencies:** none — additive; existing direct `vyraFetch` callers need not change.
+
+---
+
+## v3.34.0 KAP 11 audit — security P0 (2026-05-24)
+
+### R018 — IDOR in query_builder_api: cross-tenant data_source access + SQL execution
+
+**Files:** `app/api/routes/query_builder_api.py`
+
+**Severity:** P0 / critical. Authenticated user from tenant A can read tenant B's database connection credentials AND execute arbitrary SQL against tenant B's data source.
+
+**Evidence — three distinct defects in one file:**
+
+1. **`_resolve_dialect_and_source(source_id)` (lines 190-205)** — IDOR primary:
+   ```python
+   cur.execute(
+       "SELECT id, db_type, host, port, db_name, db_username, db_password, "
+       "extra_config FROM data_sources WHERE id = %s",
+       (source_id,),
+   )
+   ```
+   No `company_id` filter. Caller-supplied `source_id` returns full connection record (including `db_password`) for any tenant. Function is invoked from `/preview` (line 423) with `req.source_id` taken directly from the request body.
+
+2. **`/preview` endpoint (lines 404-480)** — IDOR exploit surface:
+   - Line 414-416: only validates `current_user.company_id` exists, not that `req.source_id` belongs to that company.
+   - Line 421-426: `source_info = _resolve_dialect_and_source(req.source_id)` — cross-tenant record fetched.
+   - Line 463-466: when `execute=true` and `built["params"]` is empty, `SafeSQLExecutor.execute(sql_with_params, source_info, ...)` opens a live connection to the foreign tenant's DB using leaked credentials and runs caller-controlled SQL (within SafeSQLExecutor's allowlist / 5s timeout — but still cross-tenant data exposure).
+
+3. **`/suggest-path` endpoint (lines 380-384)** — silent RLS bypass (R006 sibling):
+   ```python
+   try:
+       from app.api.routes.agentic_query_api import apply_company_scope
+       apply_company_scope(cur, company_id=company_id)
+   except Exception:
+       pass
+   ```
+   If `apply_company_scope` import or call fails, RLS context stays unset → `resolve_best_path` runs against the global `fk_graph` rows. Same fail-loud requirement as R006.
+
+**Why now (P0 reasoning):**
+- Multi-tenant isolation is the contract floor; any IDOR is by definition a release-blocker.
+- Cred leak goes beyond a single query — leaked DB password enables out-of-band access for the lifetime of that credential (no rotation guarantee).
+- `/preview` accepted in normal user flow (query builder UI) — no admin-only guard.
+
+**Suggested approach (hotfix v3.34.1):**
+
+1. **`_resolve_dialect_and_source`:** take `company_id` argument; change SELECT to `WHERE id = %s AND company_id = %s`; return `None` (or raise `HTTPException(404)`) on miss. Caller must never see a record outside its tenant.
+2. **`/preview` and `/suggest-path`:** pass `company_id = current_user["company_id"]` into the helper; raise 404 (not 403, to avoid existence oracle) if the resolver returns nothing.
+3. **`/suggest-path`:** mirror R006 fix — remove `try/except: pass`; let `apply_company_scope` raise. If `fk_graph` ever gets `company_id`-scoped, RLS becomes the second line of defence; until then, the explicit WHERE filter in the resolver is the primary guard.
+4. **Defensive logging:** WARN-log every resolver miss with `(user_id, company_id, requested_source_id)` so cross-tenant probes are observable.
+
+**Tests:**
+- Unit: `_resolve_dialect_and_source(source_id=foreign_id, company_id=local_id)` returns `None`.
+- Integration: user A's JWT → `/preview` with `source_id` owned by tenant B → expect 404, no `source_info` echoed, no DB connection attempted.
+- Integration: user A → `/suggest-path` with `source_id` owned by tenant B → expect 404.
+- Regression: same-tenant happy path still returns dialect + (filtered) source.
+
+**Dependencies:** R006 pattern (already done in v3.33.0 for `apply_company_scope`). Apply the same `fail-loud` convention here.
+
+**Out-of-scope (defer to v3.35.0):**
+- Audit other endpoints that resolve `data_sources` by id without tenant filter (sweep candidates: agentic_query_api, schema_browse_api, db_smart_api). Track as R019+ after KAP-12 audit pass.
+- Credential rotation policy if any source_password was ever exposed in logs / responses.
+
+

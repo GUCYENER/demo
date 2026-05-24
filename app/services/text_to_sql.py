@@ -45,6 +45,7 @@ SQL yazmadan ÖNCE aşağıdaki adımları kısaca analiz et:
 
 KRİTİK KURALLAR:
 1. SADECE SELECT sorguları yaz. INSERT, UPDATE, DELETE, DROP, ALTER, CREATE gibi komutlar KESİNLİKLE YASAK.
+1a. TÜRKÇE SEMANTİK NOTU (önemli): Kullanıcı sorusunda geçen "ekle / ekleyerek / detay ekle / sütun ekle / kolon ekle / JOIN ekle / filtre ekle / alan ekle" gibi ifadeler **veritabanına kayıt eklemek DEĞİL**, yalnızca **sonuç setine yeni sütun / JOIN / WHERE koşulu eklemek** anlamına gelir. Bu ifadeler ASLA INSERT/UPDATE üretme gerekçesi olamaz — daima SELECT (gerekirse JOIN'li) sorgu üret. Örnek: "Abonelikler tablosunda Fatura tablosu ile JOIN yaparak detay ekle" → `SELECT a.*, f.* FROM Abonelikler a JOIN Fatura f ON ...` şeklinde SELECT yazılır.
 2. Kullanıcının isteğini karşılamak için şemada verilen tablolar arasından en uygun tabloyu veya tabloları seç. Eğer soru birden fazla tablodaki veriyi ilgilendiriyorsa, tabloları birbiriyle uygun alanlar (ID) üzerinden JOIN ile birleştirerek sorguyu oluştur. Eğer kullanıcının isteğini çözecek (örn: "son giriş tarihi") sütun/tablolar şemada HİÇ YOKSA, KESİNLİKLE SQL üretme ve sadece Nedenini 'DIAGNOSTIC:' başlığı ile açıkla.
 3. KRİTİK HALÜSİNASYON YASAĞI: Yalnızca şemada YAZILI olan gerçek tablo ve sütun adlarını kullan. Şemada OLMAYAN kolon adı ASLA kullanma — tahmin etme, uydurma, benzer isim türetme. Eğer uygun sütun bulamıyorsan SQL üretme, DIAGNOSTIC yaz. Örneğin şemada "VALUE" yazıyorsa "USAGE_AMOUNT" veya "TOPLAM_KULLANIM" gibi isim UYDURMA, doğrudan "VALUE" kullan.
 4. Metin aramasında büyük/küçük harf duyarsız karşılaştırma kullan (PostgreSQL: ILIKE, Oracle: UPPER(), MSSQL: COLLATE). KESİNLİKLE eşittir (=) kullanma.
@@ -465,6 +466,50 @@ def generate_sql(
             "explanation": llm_response[:500],
             "error": error_msg,
         }
+
+    # 3b. Defansif düzeltme — LLM Türkçe "ekle" semantiğini yanlış yorumlayıp
+    # INSERT/UPDATE/DELETE üretmişse, kullanıcıyı reddetmeden önce TEK bir
+    # düzeltici retry dene. Bu, BUG-2 ("JOIN yaparak detay ekle" → "Yalnızca
+    # SELECT" reddi) için hedeflenmiştir. DML güvenliği bozulmaz — retry
+    # sonrası hâlâ non-SELECT ise validate_sql aşağıda yine reddeder.
+    _non_select_prefix = re.compile(
+        r'^\s*(INSERT|UPDATE|DELETE|MERGE|TRUNCATE|DROP|ALTER|CREATE|GRANT|REVOKE)\b',
+        re.IGNORECASE,
+    )
+    if sql and _non_select_prefix.match(sql):
+        log_system_event(
+            "INFO",
+            f"Text-to-SQL non-SELECT tespit edildi ({sql[:30]}...), Türkçe 'ekle' düzeltme retry'ı tetikleniyor",
+            "hybrid_router",
+        )
+        try:
+            correct_messages = messages.copy()
+            correct_messages.append({"role": "assistant", "content": llm_response})
+            correct_messages.append({
+                "role": "user",
+                "content": (
+                    "DURDUR. Yazdığın sorgu SELECT ile başlamıyor. "
+                    "Kullanıcının sorusundaki 'ekle' / 'detay ekle' / 'JOIN ekle' / "
+                    "'sütun ekle' / 'filtre ekle' gibi ifadeler veritabanına KAYIT "
+                    "eklemek DEĞİL, **sonuç setine yeni sütun / JOIN / WHERE eklemek** "
+                    "anlamına gelir. Lütfen aynı isteği SELECT (gerekirse JOIN'li) "
+                    "olarak yeniden yaz. Sadece ```sql ... ``` bloğu içinde SELECT "
+                    "sorgusu döndür, açıklama ekleme."
+                ),
+            })
+            correct_response = call_llm_api(correct_messages, temperature=0.05)
+            if correct_response:
+                corrected_sql = parse_sql_from_llm(correct_response)
+                if corrected_sql and not _non_select_prefix.match(corrected_sql):
+                    log_system_event(
+                        "INFO",
+                        f"Text-to-SQL düzeltme retry başarılı: {corrected_sql[:100]}",
+                        "hybrid_router",
+                    )
+                    sql = corrected_sql
+                    llm_response = correct_response
+        except Exception as correct_err:
+            log_warning(f"Text-to-SQL düzeltme retry hatası: {correct_err}", "hybrid_router")
 
     # 4. Güvenlik doğrulaması
     is_valid, validation_error = validate_sql(sql)

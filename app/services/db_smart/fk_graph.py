@@ -22,12 +22,50 @@ NOT:
 """
 from __future__ import annotations
 
+import hashlib
 import logging
+import threading
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from app.services.db_learning import fk_graph_resolver as _fkr
 
 logger = logging.getLogger(__name__)
+
+# FIX10 S1 (NIKE+HEPHAESTUS+ARES): Redis cache for expand_with_fk
+_FK_CACHE = None
+_FK_CACHE_LOCK = threading.Lock()
+_FK_CACHE_TTL = 3600  # 1 saat
+
+
+def _get_fk_cache():
+    """Singleton RedisCache accessor (graceful fallback to None)."""
+    global _FK_CACHE
+    if _FK_CACHE is not None:
+        return _FK_CACHE
+    with _FK_CACHE_LOCK:
+        if _FK_CACHE is not None:
+            return _FK_CACHE
+        try:
+            from app.core.config import settings
+            from app.core.redis_cache import RedisCache
+            url = getattr(settings, "REDIS_URL", "redis://localhost:6379/1")
+            _FK_CACHE = RedisCache(
+                redis_url=url,
+                default_ttl=_FK_CACHE_TTL,
+                key_prefix="vyra:fk_expand:",
+            )
+        except Exception as e:
+            logger.info("[db_smart.fk] cache init failed (graceful): %s", e)
+            _FK_CACHE = False  # sentinel: tried+failed
+    return _FK_CACHE or None
+
+
+def _fk_cache_key(source_id: int, table_ids: List[int], depth: int) -> str:
+    """Deterministic cache key — tenant-aware via source_id."""
+    ids_sig = ",".join(str(int(t)) for t in sorted(table_ids))
+    raw = f"{int(source_id)}|{depth}|{ids_sig}"
+    h = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+    return f"s{int(source_id)}:d{int(depth)}:{h}"
 
 try:
     import networkx as nx  # type: ignore
@@ -39,6 +77,16 @@ except Exception:
 
 
 Node = Tuple[str, str]   # (schema, table) lowercased
+
+
+# ─────────────────────────────────────────────────────────────
+# RealDictCursor ↔ tuple cursor uyumu (eligibility.py ile aynı pattern)
+# Connection pool RealDictCursor döndürdüğü için satırlar dict; integer
+# indeksleme KeyError fırlatır. Bu helper iki tip için de güvenli erişim sağlar.
+# ─────────────────────────────────────────────────────────────
+
+def _col(row, key, idx):
+    return row[key] if isinstance(row, dict) else row[idx]
 
 
 # ─────────────────────────────────────────────────────────────
@@ -65,7 +113,13 @@ def _lookup_nodes_by_ids(
         """,
         (int(source_id), [int(t) for t in table_ids]),
     )
-    return {row[0]: (_norm(row[1]), _norm(row[2])) for row in cur.fetchall()}
+    return {
+        _col(row, 'id', 0): (
+            _norm(_col(row, 'schema_name', 1)),
+            _norm(_col(row, 'object_name', 2)),
+        )
+        for row in cur.fetchall()
+    }
 
 
 def _lookup_ids_by_nodes(
@@ -80,7 +134,9 @@ def _lookup_ids_by_nodes(
     tables = [n[1] for n in nodes]
     cur.execute(
         """
-        SELECT id, LOWER(COALESCE(schema_name,'')), LOWER(object_name)
+        SELECT id AS table_id,
+               LOWER(COALESCE(schema_name,'')) AS schema_lc,
+               LOWER(object_name) AS object_lc
         FROM ds_db_objects
         WHERE source_id = %s
           AND LOWER(COALESCE(schema_name,'')) = ANY(%s)
@@ -90,9 +146,9 @@ def _lookup_ids_by_nodes(
     )
     out: Dict[Node, int] = {}
     for row in cur.fetchall():
-        key = (row[1] or "", row[2] or "")
+        key = (_col(row, 'schema_lc', 1) or "", _col(row, 'object_lc', 2) or "")
         if key in nodes:
-            out[key] = row[0]
+            out[key] = _col(row, 'table_id', 0)
     return out
 
 
@@ -241,8 +297,10 @@ def _fallback_build_subgraph(
             """
             SELECT from_schema, from_table, from_column,
                    to_schema, to_table, to_column,
-                   COALESCE(cardinality_from,'N'), COALESCE(cardinality_to,'1'),
-                   COALESCE(is_junction, FALSE), COALESCE(confidence_score, 0.5)
+                   COALESCE(cardinality_from,'N') AS cardinality_from,
+                   COALESCE(cardinality_to,'1')   AS cardinality_to,
+                   COALESCE(is_junction, FALSE)   AS is_junction,
+                   COALESCE(confidence_score, 0.5) AS confidence_score
             FROM ds_db_relationships
             WHERE source_id = %s
               AND (
@@ -263,18 +321,28 @@ def _fallback_build_subgraph(
     edges: List[Dict[str, Any]] = []
     junctions: Set[Node] = set()
     for r in rows:
-        u = (_norm(r[0]), _norm(r[1]))
-        v = (_norm(r[3]), _norm(r[4]))
+        from_schema = _col(r, 'from_schema', 0)
+        from_table = _col(r, 'from_table', 1)
+        from_column = _col(r, 'from_column', 2)
+        to_schema = _col(r, 'to_schema', 3)
+        to_table = _col(r, 'to_table', 4)
+        to_column = _col(r, 'to_column', 5)
+        cardinality_from = _col(r, 'cardinality_from', 6)
+        cardinality_to = _col(r, 'cardinality_to', 7)
+        is_junction = _col(r, 'is_junction', 8)
+        confidence_score = _col(r, 'confidence_score', 9)
+        u = (_norm(from_schema), _norm(from_table))
+        v = (_norm(to_schema), _norm(to_table))
         all_nodes.add(u)
         all_nodes.add(v)
-        if r[8]:
+        if is_junction:
             junctions.add(u)
             junctions.add(v)
         edges.append({
             "from": _node_str(u), "to": _node_str(v),
-            "from_column": r[2], "to_column": r[5],
-            "cardinality_from": r[6], "cardinality_to": r[7],
-            "is_junction": bool(r[8]), "confidence_score": float(r[9] or 0.5),
+            "from_column": from_column, "to_column": to_column,
+            "cardinality_from": cardinality_from, "cardinality_to": cardinality_to,
+            "is_junction": bool(is_junction), "confidence_score": float(confidence_score or 0.5),
         })
     node_to_id = _lookup_ids_by_nodes(cur, source_id, all_nodes)
     node_payloads = [
@@ -311,6 +379,17 @@ def expand_with_fk(
           inbound_count, outbound_count, is_junction}, ...]
         Distance 0 = seed (filtrelenir; sadece komşular).
     """
+    # FIX10 S1 (NIKE+HEPHAESTUS+ARES): Redis cache check
+    cache = _get_fk_cache()
+    cache_key = None
+    if cache is not None and table_ids:
+        cache_key = _fk_cache_key(source_id, table_ids, depth)
+        try:
+            cached = cache.get(cache_key)
+            if cached is not None:
+                return cached
+        except Exception as e:
+            logger.debug("[db_smart.fk] cache read failed: %s", e)
     sub = build_subgraph(cur, source_id, table_ids, {}, depth=depth)
     seeds: Set[Node] = {
         (n["schema"], n["table"]) for n in sub["nodes"] if n["is_seed"]
@@ -343,6 +422,12 @@ def expand_with_fk(
         })
     # Daha fazla ilişkili → daha üstte
     out.sort(key=lambda x: x["via_relationship_count"], reverse=True)
+    # FIX10 S1: cache write (best-effort)
+    if cache is not None and cache_key is not None:
+        try:
+            cache.set(cache_key, out, ttl=_FK_CACHE_TTL)
+        except Exception as e:
+            logger.debug("[db_smart.fk] cache write failed: %s", e)
     return out
 
 

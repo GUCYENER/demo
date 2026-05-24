@@ -1,17 +1,15 @@
 {
   "wizard.title": "Smart Data Discovery",
-  "wizard.subtitle": "Reach your data in 5 steps",
+  "wizard.subtitle": "Reach your data in 4 steps",
 
   "wizard.step.1.title": "Table Selection",
   "wizard.step.1.help": "Search and pick the table that holds the data you need.",
-  "wizard.step.2.title": "Relationships",
-  "wizard.step.2.help": "Discover tables linked via foreign keys.",
-  "wizard.step.3.title": "Metric",
-  "wizard.step.3.help": "Pick from the metric library or write a custom query.",
-  "wizard.step.4.title": "Filter",
-  "wizard.step.4.help": "Apply column-level filters.",
-  "wizard.step.5.title": "Preview",
-  "wizard.step.5.help": "Review the generated SQL and estimated cost.",
+  "wizard.step.2.title": "Metric",
+  "wizard.step.2.help": "Pick from the metric library or write a custom query.",
+  "wizard.step.3.title": "Filter",
+  "wizard.step.3.help": "Apply column-level filters.",
+  "wizard.step.4.title": "Preview",
+  "wizard.step.4.help": "Review the generated SQL and estimated cost.",
 
   "wizard.step.indicator": "Step {current} of {total}",
 

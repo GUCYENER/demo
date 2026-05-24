@@ -195,8 +195,8 @@ def _resolve_source_info(source_id: int, company_id: Optional[int]) -> Dict[str,
                 apply_company_scope(cur, company_id=company_id)
                 cur.execute(
                     """
-                    SELECT id, db_type, db_host, db_port, db_name,
-                           db_username, db_password_encrypted, schema_name,
+                    SELECT id, db_type, host, port, db_name,
+                           db_user, db_password_encrypted,
                            company_id
                     FROM data_sources
                     WHERE id = %s AND company_id = %s
@@ -218,16 +218,32 @@ def _resolve_source_info(source_id: int, company_id: Optional[int]) -> Dict[str,
                             source_id,
                         )
                         return {"ok": False, "reason": "not_found"}
+                    # v3.34.1 BUG-4.1: RealDictCursor → row dict; `other[0]`
+                    # KeyError fırlatıp dış except'e düşüyor, cross_tenant
+                    # senaryosu lookup_error gibi görünüyordu.
+                    _other_co = (
+                        other.get("company_id") if isinstance(other, dict)
+                        else other[0]
+                    )
                     logger.warning(
                         "[query_state] source_id=%s farklı tenant'a ait "
                         "(source.company_id=%s, user.company_id=%s) — cross-tenant reddi",
-                        source_id, other[0], company_id,
+                        source_id, _other_co, company_id,
                     )
                     return {"ok": False, "reason": "cross_tenant"}
+                if isinstance(row, dict):
+                    return {"ok": True, "data": dict(row)}
                 cols = [d[0] for d in cur.description]
                 return {"ok": True, "data": dict(zip(cols, row))}
     except Exception as e:
-        logger.warning("[query_state] source lookup exception (source=%s): %s", source_id, e)
+        # v3.34.1 BUG-4.1: exc_info=True — önceden traceback yutuluyordu,
+        # operator "lookup_error" mesajını görüp root cause'u (apply_company_scope
+        # set_config fail, RealDictCursor cur.description tutarsızlığı vb.)
+        # tespit edemiyordu. Reason mapping korunur; sadece log zenginleştirildi.
+        logger.warning(
+            "[query_state] source lookup exception (source=%s): %s",
+            source_id, e, exc_info=True,
+        )
         return {"ok": False, "reason": "lookup_error"}
 
 
@@ -239,8 +255,15 @@ def _resolve_dialect(source_id: Optional[int], requested: Optional[str]) -> str:
                 with conn.cursor() as cur:
                     cur.execute("SELECT db_type FROM data_sources WHERE id = %s", (source_id,))
                     row = cur.fetchone()
-                    if row and row[0]:
-                        return str(row[0]).lower()
+                    # v3.35.x B12: RealDictCursor → row dict; eski `row[0]` KeyError
+                    # fırlatıp dış except'e düşüyor, Oracle source'lar 'postgresql'
+                    # fallback'ine oturuyor → AST renderer LIMIT 100 üretip Oracle XE
+                    # tarafından reddediliyordu. _resolve_source_info pattern'i mirror.
+                    if row:
+                        _db_type = row.get('db_type') if isinstance(row, dict) else (row[0] if row else None)
+                        if _db_type:
+                            logger.debug("[query_state] resolved dialect for source %s: %s", source_id, _db_type)
+                            return str(_db_type).lower()
         except Exception as e:
             logger.warning("[query_state] dialect lookup failed for source %s: %s", source_id, e)
     return (requested or "postgresql").lower()

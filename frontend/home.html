@@ -807,33 +807,33 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
     </div>
     <div class="dialog-messages-wrap" id="dialogMessages"></div>
 
-    <!-- v3.30.0: Akıllı Veri Keşfi (Wizard) — 5 adım iskelet (FAZ 1 G1.6) -->
-    <div id="dbSmartWizardPanel" class="db-smart-wizard hidden" role="region" aria-label="Akıllı Veri Keşfi Sihirbazı" aria-busy="false" hidden>
+    <!-- v3.35.0: Akıllı Veri Keşfi (Wizard) — 4 adım (İlişkiler step kaldırıldı, FK seçimi step 1 picker'da yapılıyor) -->
+    <div id="dbSmartWizardPanel" class="db-smart-wizard hidden" role="region" aria-label="Akıllı Veri Keşfi Sihirbazı" aria-busy="false" data-i18n-scope="smart-discovery" data-i18n-ready="true" hidden>
       <div class="dsw-header">
         <h3 id="dswTitle">Akıllı Veri Keşfi</h3>
         <div class="dsw-stepper" id="dswStepper" role="tablist" aria-label="Sihirbaz adımları">
           <button type="button" class="dsw-step active" data-step="0" role="tab" id="dswTab0" aria-selected="true" aria-controls="dswStep0" tabindex="0">1 · Tablo Seç</button>
-          <button type="button" class="dsw-step" data-step="1" role="tab" id="dswTab1" aria-selected="false" aria-controls="dswStep1" tabindex="-1">2 · İlişkiler</button>
-          <button type="button" class="dsw-step" data-step="2" role="tab" id="dswTab2" aria-selected="false" aria-controls="dswStep2" tabindex="-1">3 · Metrik</button>
-          <button type="button" class="dsw-step" data-step="3" role="tab" id="dswTab3" aria-selected="false" aria-controls="dswStep3" tabindex="-1">4 · Filtre</button>
-          <button type="button" class="dsw-step" data-step="4" role="tab" id="dswTab4" aria-selected="false" aria-controls="dswStep4" tabindex="-1">5 · Önizleme</button>
+          <button type="button" class="dsw-step" data-step="2" role="tab" id="dswTab2" aria-selected="false" aria-controls="dswStep2" tabindex="-1">2 · Metrik</button>
+          <button type="button" class="dsw-step" data-step="3" role="tab" id="dswTab3" aria-selected="false" aria-controls="dswStep3" tabindex="-1">3 · Filtre</button>
+          <button type="button" class="dsw-step" data-step="4" role="tab" id="dswTab4" aria-selected="false" aria-controls="dswStep4" tabindex="-1">4 · Önizleme</button>
         </div>
       </div>
       <div class="dsw-body" id="dswBody">
         <div class="dsw-step-panel" data-step="0" id="dswStep0" role="tabpanel" aria-labelledby="dswTab0">
-          <p class="dsw-hint">Aramak istediğiniz veriyi açıklayın (örn. "açık talepler", "müşteri siparişleri").</p>
-          <div class="dsw-search-row">
-            <input type="text" id="dswSearchQ" class="dsw-input" placeholder="Doğal dil ile arayın..." aria-label="Arama metni" />
-            <select id="dswSourceSelect" class="dsw-input" aria-label="Veri kaynağı"></select>
-            <button id="dswSearchBtn" class="dsw-btn dsw-icon-btn" type="button" aria-label="Tablo seçici aç" title="Tablo seçici aç">
+          <!-- F21a (HEBE 2026-05-25): "Kayıtlı Raporlarım" panel'i wizard'dan kaldırıldı —
+               ana ekran (SavedReportsGrid) zaten gösteriyor; modal içinde tekrarlamak gereksiz. -->
+          <!-- v3.34.0 — Sadeleştirilmiş step 1: tek "Ara" butonu DbSmartPicker'ı açar. -->
+          <!-- v3.34.2 — dswSourceSelect .dsw-ara-block içine taşındı; >1 source varsa JS koşullu açar. -->
+          <div class="dsw-ara-block">
+            <p class="dsw-ara-desc">Keşfetmek istediğiniz tabloları seçmek için <strong>Ara</strong> butonuna tıklayınız.</p>
+            <select id="dswSourceSelect" class="dsw-input dsw-ara-source-select" aria-label="Veri kaynağı" hidden></select>
+            <span id="dswSourceLabel" class="dsw-ara-source-label" hidden aria-live="polite"></span>
+            <button id="dswSearchBtn" class="dsw-btn dsw-ara-btn" type="button" aria-label="Tablo seçici aç" title="Tablo seçici aç">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-              <span class="dsw-icon-btn-label">Tablo Seç</span>
+              <span class="dsw-ara-btn-label">Ara</span>
             </button>
           </div>
-          <div class="dsw-results" id="dswResults" role="listbox" aria-label="Tablo arama sonuçları" aria-live="polite" aria-busy="false"></div>
-        </div>
-        <div class="dsw-step-panel hidden" data-step="1" id="dswStep1" role="tabpanel" aria-labelledby="dswTab1" aria-live="polite" aria-busy="false" hidden>
-          <p class="dsw-hint">FK ilişkili tablolar otomatik önerilecek. (Yükleniyor...)</p>
+          <div class="dsw-results" id="dswResults" role="listbox" aria-label="Seçilen tablolar" aria-live="polite" aria-busy="false"></div>
         </div>
         <div class="dsw-step-panel hidden" data-step="2" id="dswStep2" role="tabpanel" aria-labelledby="dswTab2" aria-live="polite" aria-busy="false" hidden>
           <p class="dsw-hint">Metrik kütüphanesinden seçin veya özel metrik tanımlayın. (Yükleniyor...)</p>
@@ -846,12 +846,43 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
           <div id="dswAstEditor" class="dsw-ast-region" role="region" aria-label="AST düzenleyici" hidden></div>
           <span id="dswAstLive" class="sr-only" aria-live="polite" aria-atomic="true"></span>
           <pre id="dswLegacyPreview" class="dsw-legacy" data-role="legacy-preview" hidden></pre>
+          <!-- F22 (HEBE 2026-05-25): step 4 CTA bandı kaldırıldı — "Raporu Kaydet"
+               artık sadece sonuç modal'ı (Rapor Sonucu) altında gösterilir;
+               step 4'te kullanıcı sadece "▶ Çalıştır" görsün, kayıt akışı sonuçtan
+               sonra mantıklı hale gelir. -->
         </div>
       </div>
       <div class="dsw-foot">
         <button id="dswPrevBtn" class="dsw-btn-ghost" type="button" disabled aria-label="Önceki adım">← Geri</button>
-        <span class="dsw-progress" id="dswProgress" aria-live="polite">Adım 1 / 5</span>
+        <span class="dsw-progress" id="dswProgress" aria-live="polite">Adım 1 / 4</span>
         <button id="dswNextBtn" class="dsw-btn" type="button" aria-label="Sonraki adım">İleri →</button>
+      </div>
+    </div>
+
+    <!-- v3.36.0 F10 — Raporu Kaydet modal'ı -->
+    <div id="dswSaveReportModal" class="dsw-save-modal hidden" role="dialog" aria-modal="true" aria-labelledby="dswSaveReportTitle" hidden>
+      <div class="dsw-save-modal-overlay" data-role="overlay"></div>
+      <div class="dsw-save-modal-dialog" role="document">
+        <button type="button" class="dsw-save-modal-close" data-action="cancel" aria-label="Kapat (Esc)" title="Kapat (Esc)">×</button>
+        <header class="dsw-save-modal-head">
+          <h3 id="dswSaveReportTitle">Raporu Kaydet</h3>
+          <p class="dsw-save-modal-sub">Bu sihirbaz oturumunu yeniden açılabilir bir rapor olarak kaydedin.</p>
+        </header>
+        <div class="dsw-save-modal-body">
+          <label class="dsw-save-field">
+            <span>Rapor Adı <em aria-hidden="true">*</em></span>
+            <input type="text" id="dswSaveReportName" class="dsw-input" maxlength="200" required autocomplete="off" placeholder="Örn: Aylık satış özeti" />
+          </label>
+          <label class="dsw-save-field">
+            <span>Açıklama (opsiyonel)</span>
+            <textarea id="dswSaveReportDesc" class="dsw-input dsw-save-desc" rows="3" maxlength="2000" placeholder="Bu raporun amacı / paylaşım bağlamı"></textarea>
+          </label>
+          <div id="dswSaveReportError" class="dsw-save-error" role="alert" hidden></div>
+        </div>
+        <footer class="dsw-save-modal-foot">
+          <button type="button" class="dsw-btn-ghost" data-action="cancel">İptal</button>
+          <button type="button" class="dsw-btn" id="dswSaveReportConfirm" data-action="confirm">Kaydet</button>
+        </footer>
       </div>
     </div>
 

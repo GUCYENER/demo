@@ -1,16 +1,28 @@
 // frontend/assets/js/api_client.js
 //
 // =============================================================================
-// vyraFetch helper (v3.34.0)
+// vyraFetch helper (v3.34.0 + R016/R017 v3.34.1)
 // -----------------------------------------------------------------------------
-// Public alias: `window.vyraFetch(path, { method, body, auth })`
-//   - path:    string, API_BASE_URL'e relative ("/auth/login" gibi)
-//   - method:  "GET" | "POST" | ... (default "GET")
-//   - body:    JS object → JSON.stringify (default null)
-//   - auth:    boolean — true ise Authorization: Bearer <access_token> ekler
-//              (default true). Login/register gibi public uçlar için false.
+// Public alias: `window.vyraFetch(path, { method, body, auth, responseType, signal })`
+//   - path:         string, API_BASE_URL'e relative ("/auth/login" gibi)
+//   - method:       "GET" | "POST" | ... (default "GET")
+//   - body:         JS object → JSON.stringify (default null)
+//   - auth:         boolean — true ise Authorization: Bearer <access_token> ekler
+//                   (default true). Login/register gibi public uçlar için false.
+//   - responseType: "json" (default) | "stream" | "blob" (R016)
+//                   - json:   parse edilmiş JS objesi döner.
+//                   - stream: raw Response döner; caller body.getReader() ile SSE/
+//                             streaming consume eder.
+//                   - blob:   Response.blob() döner (download/preview).
+//                   Auth + 4xx/5xx friendly-error kontratı 3 path'te de aynıdır.
+//   - signal:       AbortController.signal — özellikle stream iptali için.
 //
-// Dönüş: parse edilmiş JSON objesi.
+// Dönüş (default): parse edilmiş JSON objesi.
+//   stream → Response, blob → Blob.
+//
+// Ayrıca: `window.vyraFetchUI(path, opts, { onSuccess, onError, loadingEl })`
+//   R017 — try/catch + loading-state + error-display boilerplate'ini
+//   absorbe eder. Mevcut vyraFetch çağrıları değişmez (additive).
 //
 // Hata kontratı (Türkçe — kullanıcıya doğrudan gösterilebilir):
 //   - Ağ hatası (TypeError / "Failed to fetch") →
@@ -56,38 +68,117 @@
     }
 
     // ---- Friendly Turkish error builder ----
+    // FIX12 (v3.34.3): error metinleri login resilience plan F1 spec'ine hizalandı.
+    // Eski metinler ("Backend servisi yanıt vermiyor (HTTP {status})...") hard-coded
+    // olarak başka modülde tüketilmiyor; geriye dönük .message kontrol eden bir
+    // modül grep ile bulunmadı.
+    //
+    // Ek olarak ikinci dönüş değeri olarak bir "code" tag'i üretiyoruz; caller
+    // (login.js gibi UX-sensitive yerler) error.code üzerinden mapping yapabilir,
+    // mesajın exact-text değişimine duyarlı olmaz.
     function buildFriendlyMessage(status, isJson, data) {
         // 401 fast path
         if (status === 401) {
             const detail = data && (data.detail || data.message);
-            return detail || "Oturum sona erdi. Lütfen yeniden giriş yapın.";
+            return {
+                msg: detail || "Oturum sona erdi. Lütfen yeniden giriş yapın.",
+                code: 'AUTH_REQUIRED',
+            };
         }
         // 403 fast path
         if (status === 403) {
             const detail = data && (data.detail || data.message);
-            return detail || "Bu işlem için yetkiniz yok.";
+            return {
+                msg: detail || "Bu işlem için yetkiniz yok.",
+                code: 'FORBIDDEN',
+            };
         }
-        // JSON-formatlı hata: backend mesajını kullan
+        // JSON-formatlı hata: backend mesajını kullan (HTML/raw scrub: JSON
+        // değilse buraya hiç girmiyoruz — aşağıdaki path'ler devralır).
         if (isJson && data && (data.detail || data.message)) {
-            return data.detail || data.message;
+            return {
+                msg: data.detail || data.message,
+                code: status >= 500 ? 'SERVER_ERROR' : 'CLIENT_ERROR',
+            };
         }
         // 502/503/504 — proxy/backend down (genellikle HTML body)
         if (status === 502 || status === 503 || status === 504) {
-            return `Backend servisi yanıt vermiyor (HTTP ${status}). Lütfen sistem yöneticinize bildirin.`;
+            return {
+                msg: "Sunucu geçici olarak erişilemiyor. Lütfen 30 saniye sonra tekrar deneyin.",
+                code: 'SERVER_5XX',
+            };
+        }
+        // 500 generic
+        if (status === 500) {
+            return {
+                msg: "Sunucuda beklenmeyen bir hata oluştu. Sistem yöneticinizle iletişime geçin.",
+                code: 'SERVER_500',
+            };
         }
         // Diğer 5xx (non-JSON)
         if (status >= 500 && status < 600) {
-            return `Sunucu hatası (${status}). Lütfen tekrar deneyin.`;
+            return {
+                msg: "Sunucuda beklenmeyen bir hata oluştu. Sistem yöneticinizle iletişime geçin.",
+                code: 'SERVER_ERROR',
+            };
         }
         // Non-JSON 4xx
         if (status >= 400 && status < 500) {
-            return `İstek reddedildi (${status}).`;
+            return {
+                msg: `İstek reddedildi (${status}).`,
+                code: 'CLIENT_ERROR',
+            };
         }
         // Fallback
-        return `API error (${status})`;
+        return {
+            msg: `API error (${status})`,
+            code: 'UNKNOWN',
+        };
     }
 
-    async function request(path, { method = "GET", body = null, auth = true } = {}) {
+    // R016 (v3.34.1): non-2xx Response'tan friendly error fırlatma helper'ı —
+    // hem JSON hem stream/blob yolu tarafından paylaşılır (DRY).
+    // FIX12 (v3.34.3): {msg, code} unpacking + err.code propagation.
+    async function _throwFriendlyHttpError(res) {
+        let raw = "";
+        try { raw = await res.text(); } catch { /* body okunamadı */ }
+        let data = null;
+        let parsedAsJson = false;
+        if (raw) {
+            try { data = JSON.parse(raw); parsedAsJson = true; }
+            catch { data = { raw }; }
+        }
+        const { msg, code } = buildFriendlyMessage(res.status, parsedAsJson, parsedAsJson ? data : null);
+        const err = new Error(msg);
+        err.status = res.status;
+        err.data = data;
+        err.code = code;
+        console.error("[NGSSAI] API error:", err);
+        throw err;
+    }
+
+    /**
+     * Core fetch helper.
+     *
+     * Opts:
+     *   - method, body, auth — bkz. dosya başı dokümantasyonu.
+     *   - responseType (R016, v3.34.1):
+     *       'json'   (default) — parsed JSON object (geriye dönük uyum).
+     *       'stream' — raw Response döner; caller `res.body.getReader()` ile
+     *                  SSE/streaming consume eder. Auth header + non-2xx
+     *                  friendly error halen uygulanır.
+     *       'blob'   — `Response.blob()` döner; caller download/preview
+     *                  yapar. Auth header + non-2xx friendly error halen
+     *                  uygulanır.
+     *   - signal (R016) — AbortController.signal; stream iptali için pratiktir.
+     */
+    async function request(path, {
+        method = "GET",
+        body = null,
+        auth = true,
+        responseType = "json",
+        signal = undefined,
+    } = {}) {
         const url = `${API_BASE_URL}${path}`;
         const headers = {
             "Content-Type": "application/json",
@@ -100,7 +191,7 @@
             }
         }
 
-        console.log("[NGSSAI] API request:", method, url);
+        console.log("[NGSSAI] API request:", method, url, responseType !== "json" ? `(${responseType})` : "");
 
         // ---- Outer fetch try/catch: ağ hatasını yakala ----
         let res;
@@ -110,18 +201,41 @@
                 headers,
                 credentials: 'include',
                 body: body ? JSON.stringify(body) : null,
+                signal,
             });
         } catch (netErr) {
+            // AbortError'ı friendly-wrap etmiyoruz — caller intent'i (signal.abort) bilinçli.
+            if (netErr && netErr.name === "AbortError") {
+                throw netErr;
+            }
             // TypeError = network failure / "Failed to fetch" (Nginx down, DNS, vb.)
-            const friendly = "Sunucuya bağlanılamadı. Proxy (Nginx) çalışmıyor olabilir veya ağ bağlantınızı kontrol edin.";
+            // FIX12 (v3.34.3): SERVER_DOWN code tag + spec-aligned mesaj.
+            const friendly = "Sunucu şu anda yanıt vermiyor. Sistem ayağa kalkana kadar lütfen bekleyip tekrar deneyin.";
             const err = new Error(friendly);
             err.status = undefined;
             err.data = null;
+            err.code = 'SERVER_DOWN';
             err.cause = netErr;
             console.error("[NGSSAI] API network error:", netErr);
             throw err;
         }
 
+        // R016: stream / blob path — JSON parse atla, ham Response'u döndür.
+        if (responseType === "stream") {
+            if (!res.ok) {
+                await _throwFriendlyHttpError(res);
+            }
+            return res;  // caller: res.body.getReader() / EventSource pattern
+        }
+
+        if (responseType === "blob") {
+            if (!res.ok) {
+                await _throwFriendlyHttpError(res);
+            }
+            return await res.blob();
+        }
+
+        // Default: JSON path (geriye dönük davranış).
         const text = await res.text();
         const contentType = (res.headers.get("content-type") || "").toLowerCase();
         const looksJson = contentType.includes("application/json");
@@ -135,17 +249,39 @@
             }
         } catch {
             // Parse başarısız — HTML/text response (Nginx 502 vb.)
+            // RAW HTML/text İÇERİĞİ ASLA kullanıcıya gösterilmez (login.js scrub eder),
+            // sadece console.error/debug için data.raw'da saklanır.
             data = { raw: text };
             parsedAsJson = false;
         }
 
         if (!res.ok) {
-            const isJson = parsedAsJson && looksJson !== false;
-            const msg = buildFriendlyMessage(res.status, parsedAsJson, parsedAsJson ? data : null);
+            const { msg, code } = buildFriendlyMessage(res.status, parsedAsJson, parsedAsJson ? data : null);
             const err = new Error(msg);
             err.status = res.status;
             err.data = data;
+            err.code = code;
             console.error("[NGSSAI] API error:", err);
+            throw err;
+        }
+
+        // FIX12 (v3.34.3): 2xx + non-JSON body (SPA fallback / proxy yanlış cevap).
+        // Eski davranış: {raw: "<html>..."} dön; caller `data.access_token` undefined
+        // alır, sessizce hatalı yola girer. Yeni: SERVER_DOWN tag'iyle throw.
+        //
+        // Tetikleme şartı: text non-boş VE JSON parse başarısız oldu. (Yalnız
+        // content-type yanlış ama parse başarılı olsaydı permissive davranıyoruz
+        // — bazı eski backend'ler text/plain header ile JSON gönderir.)
+        if (text && !parsedAsJson) {
+            const err = new Error(
+                "Sunucu şu anda yanıt vermiyor. Sistem ayağa kalkana kadar lütfen bekleyip tekrar deneyin."
+            );
+            err.status = res.status;
+            err.data = data;  // raw HTML burada; UI'ya gösterilmez.
+            err.code = 'SERVER_DOWN';
+            console.error("[NGSSAI] API 2xx non-JSON response — proxy/backend misconfigured:", {
+                url, status: res.status, contentType,
+            });
             throw err;
         }
 
@@ -220,6 +356,85 @@
     // VYRA_API.request'i kullanmaya devam edebilir (her ikisi de aynı kod yolu).
     window.vyraFetch = function (path, opts) {
         return window.VYRA_API.request(path, opts);
+    };
+
+    // R017 (v3.34.1): UI-aware vyraFetch wrapper.
+    // ----------------------------------------------------------------
+    // Mevcut 28 modülde tekrar eden boilerplate:
+    //
+    //     try {
+    //         const data = await vyraFetch(path, opts);
+    //         render(data);
+    //     } catch (err) {
+    //         showError(root, "Yükleme hatası: " + err.message);
+    //     }
+    //
+    // vyraFetchUI bunu absorbe eder:
+    //
+    //     await vyraFetchUI(path, opts, {
+    //         onSuccess: data => render(data),
+    //         onError:   err  => showError(root, err.message),
+    //         loadingEl: btn,            // optional — disabled toggle
+    //     });
+    //
+    // Opts ikinci argüman vyraFetch'inkiyle birebir aynı (method/body/auth/
+    // responseType/signal). Wrapper hiçbir varsayılan değiştirmez.
+    //
+    // ui-opts (üçüncü argüman):
+    //   - onSuccess(data)        — başarı (4xx/5xx atılmadıysa) callback.
+    //   - onError(err)           — vyraFetch friendly Error yakalandığında.
+    //                              Verilmezse hata RE-THROW edilir (caller
+    //                              kendi try/catch'inde yakalar).
+    //   - loadingEl              — opsiyonel DOM element; çağrı başında
+    //                              `disabled=true` + `aria-busy="true"`,
+    //                              sonunda restore.
+    //
+    // Dönüş: vyraFetch çıktısı (data) veya onError'dan dönen değer (varsa).
+    //
+    // Geriye dönük uyum: vyraFetch çağrıları HİÇ etkilenmez; bu helper
+    // saf opt-in additive. Mevcut 28 modül adoption için ayrı PR (R020).
+    window.vyraFetchUI = async function (path, opts, uiOpts) {
+        const { onSuccess, onError, loadingEl } = uiOpts || {};
+
+        // Loading-state on
+        let prevDisabled, prevAriaBusy;
+        if (loadingEl) {
+            prevDisabled = loadingEl.disabled;
+            prevAriaBusy = loadingEl.getAttribute("aria-busy");
+            loadingEl.disabled = true;
+            loadingEl.setAttribute("aria-busy", "true");
+        }
+
+        try {
+            const data = await window.vyraFetch(path, opts);
+            if (typeof onSuccess === "function") {
+                try { onSuccess(data); }
+                catch (cbErr) {
+                    console.error("[vyraFetchUI] onSuccess callback threw:", cbErr);
+                }
+            }
+            return data;
+        } catch (err) {
+            if (typeof onError === "function") {
+                try { return onError(err); }
+                catch (cbErr) {
+                    console.error("[vyraFetchUI] onError callback threw:", cbErr);
+                    throw err;  // orijinal hata baskın
+                }
+            } else {
+                throw err;
+            }
+        } finally {
+            // Loading-state off
+            if (loadingEl) {
+                loadingEl.disabled = prevDisabled || false;
+                if (prevAriaBusy === null) {
+                    loadingEl.removeAttribute("aria-busy");
+                } else {
+                    loadingEl.setAttribute("aria-busy", prevAriaBusy);
+                }
+            }
+        }
     };
 
     // v3.32.0: Canonical Authorization header helper.

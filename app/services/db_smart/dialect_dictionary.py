@@ -225,6 +225,9 @@ _FUNCTIONS: Mapping[str, Mapping[str, Optional[str]]] = MappingProxyType({
         "substring":    "SUBSTRING({arg0} FROM {arg1} FOR {arg2})",
         "now":          "NOW()",
         "regex_match":  "{arg0} ~ {arg1}",
+        # FIX4 B7 — cross-dialect parity (COALESCE SQL standard, ROW_NUMBER SQL:2003)
+        "coalesce":     "COALESCE({arg0}, {arg1})",
+        "row_number":   "ROW_NUMBER() OVER ({arg0})",
     }),
     "oracle": MappingProxyType({
         "string_agg":   "LISTAGG({arg0}, {sep}) WITHIN GROUP (ORDER BY {arg0})",
@@ -246,6 +249,9 @@ _FUNCTIONS: Mapping[str, Mapping[str, Optional[str]]] = MappingProxyType({
         "regexp_replace":        "REGEXP_REPLACE({arg0}, {arg1}, {arg2})",
         "to_char":      "TO_CHAR({arg0}, {arg1})",
         "to_date":      "TO_DATE({arg0}, {arg1})",
+        # FIX4 B7 — cross-dialect parity (COALESCE Oracle 9i+, ROW_NUMBER 9i+)
+        "coalesce":     "COALESCE({arg0}, {arg1})",
+        "row_number":   "ROW_NUMBER() OVER ({arg0})",
     }),
     "mssql": MappingProxyType({
         "string_agg":   "STRING_AGG({arg0}, {sep})",
@@ -265,6 +271,9 @@ _FUNCTIONS: Mapping[str, Mapping[str, Optional[str]]] = MappingProxyType({
         "format":       "FORMAT({arg0}, {arg1})",
         "isdate":       "ISDATE({arg0})",
         "isnull":       "ISNULL({arg0}, {arg1})",
+        # FIX4 B7 — cross-dialect parity (COALESCE ANSI, ROW_NUMBER 2005+)
+        "coalesce":     "COALESCE({arg0}, {arg1})",
+        "row_number":   "ROW_NUMBER() OVER ({arg0})",
     }),
     "mysql": MappingProxyType({
         "string_agg":   "GROUP_CONCAT({arg0} SEPARATOR {sep})",
@@ -285,6 +294,9 @@ _FUNCTIONS: Mapping[str, Mapping[str, Optional[str]]] = MappingProxyType({
         "json_extract": "JSON_EXTRACT({arg0}, {arg1})",
         "json_unquote": "JSON_UNQUOTE({arg0})",
         "regexp_replace": "REGEXP_REPLACE({arg0}, {arg1}, {arg2})",
+        # FIX4 B7 — cross-dialect parity (COALESCE 4.0+, ROW_NUMBER 8.0+)
+        "coalesce":     "COALESCE({arg0}, {arg1})",
+        "row_number":   "ROW_NUMBER() OVER ({arg0})",
     }),
 })
 
