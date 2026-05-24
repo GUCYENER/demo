@@ -209,21 +209,25 @@ const DSEnrichmentModule = (() => {
             return;
         }
         try {
-            const res = await _authFetch(
-                `/api/data-sources/${_currentSourceId}/check-running-job`
-            );
-            // v3.32.0 ARES Y1-recur fix: 403 -> ACL reddi (yanlış kaynak), poll'u durdur.
-            // 404 -> kaynak silinmiş, poll'u durdur.
-            if (res.status === 403 || res.status === 404) {
-                _stopRunningJobPoll();
-                _runningJob = null;
-                return;
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            let data;
+            try {
+                data = await _authFetch(
+                    `/api/data-sources/${_currentSourceId}/check-running-job`
+                );
+            } catch (httpErr) {
+                // v3.32.0 ARES Y1-recur fix: 403 -> ACL reddi (yanlış kaynak), poll'u durdur.
+                // 404 -> kaynak silinmiş, poll'u durdur.
+                if (httpErr && (httpErr.status === 403 || httpErr.status === 404)) {
+                    _stopRunningJobPoll();
+                    _runningJob = null;
+                    return;
+                }
+                // v3.32.0 TYCHE O1 fix: !res.ok (401/500 vb.) data.has_running'i okumadan
+                // hata olarak handle et — eski kod 500'de silently _runningJob=null yapıyor,
+                // spurious refreshData() + stop-poll tetikliyordu.
+                throw httpErr;
             }
-            // v3.32.0 TYCHE O1 fix: !res.ok (401/500 vb.) data.has_running'i okumadan
-            // hata olarak handle et — eski kod 500'de silently _runningJob=null yapıyor,
-            // spurious refreshData() + stop-poll tetikliyordu.
-            if (!res.ok) throw new Error('http_' + res.status);
-            const data = await res.json();
             // Backend hata bildirdiyse (success:false) — _runningJob state'ini DEĞİŞTİRME
             // (gate'i kazara açmamak için). Backoff ile devam.
             if (data && data.success === false) {
@@ -310,14 +314,11 @@ const DSEnrichmentModule = (() => {
 
     async function _loadData() {
         try {
-            const [statsRes, allRes] = await Promise.all([
+            // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+            const [stats, allData] = await Promise.all([
                 _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-stats`),
                 _authFetch(`/api/data-sources/${_currentSourceId}/enrichment-all`)
             ]);
-
-            if (!statsRes.ok || !allRes.ok) throw new Error(`Sunucu hatası (HTTP ${statsRes.ok ? allRes.status : statsRes.status})`);
-            const stats = await statsRes.json();
-            const allData = await allRes.json();
 
             _pendingData = (allData.tables || []).map(x => {
                 return {
@@ -1520,17 +1521,22 @@ const DSEnrichmentModule = (() => {
         });
     }
 
-    // v3.31.0 (R001): Auth header injection helper.
-    // Tüm modül-içi fetch çağrıları bunu kullanır — token okuma + Bearer header
-    // tek noktada. Caller method/body/content-type sorumluluğunda; biz sadece
-    // Authorization header'ı enjekte ederiz.
+    // v3.34.0: vyraFetch helper delegasyonu.
+    // Eski _authFetch (R001) bir Response döndürüyordu; vyraFetch parse edilmiş
+    // JSON datayı döndürür ve non-2xx'te Error fırlatır (.status, .data, .message).
+    // path: '/api/...' biçiminde verilebilir — vyraFetch zaten '/api' prefix'i
+    // ekler, bu yüzden '/api/' prefix'ini stripleriz. body opsiyonel objedir.
     async function _authFetch(url, opts = {}) {
-        const token = localStorage.getItem('access_token');
-        const headers = {
-            ...(opts.headers || {}),
-            'Authorization': `Bearer ${token}`
-        };
-        return fetch(url, { ...opts, headers });
+        const path = url.startsWith('/api/') ? url.slice(4) : url;
+        const callOpts = { method: opts.method || 'GET' };
+        if (opts.body) {
+            try {
+                callOpts.body = typeof opts.body === 'string' ? JSON.parse(opts.body) : opts.body;
+            } catch (_e) {
+                callOpts.body = opts.body;
+            }
+        }
+        return window.vyraFetch(path, callOpts);
     }
 
     function _showToast(message, type) {

@@ -406,6 +406,7 @@ const DocumentEnhancerModal = (function () {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), ENHANCEMENT_TIMEOUT_MS);
 
+        // raw fetch: multipart/FormData + AbortController — vyraFetch not applicable.
         return fetch(`${API_BASE}/api/rag/enhance-document`, {
             method: 'POST',
             headers: _authHeaders(),
@@ -465,6 +466,7 @@ const DocumentEnhancerModal = (function () {
             downloadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> İndiriliyor...';
         }
 
+        // raw fetch: blob download (res.blob()) — vyraFetch only handles JSON.
         fetch(url, {
             method: 'GET',
             headers: _authHeaders()
@@ -540,7 +542,7 @@ const DocumentEnhancerModal = (function () {
     }
 
     function _executeUpload(sessionId, approvedIndexes) {
-        let url = `${API_BASE}/api/rag/upload-enhanced/${sessionId}`;
+        let url = `/rag/upload-enhanced/${sessionId}`;
         const urlParams = [];
         if (approvedIndexes.length > 0) {
             urlParams.push(`sections=${approvedIndexes.join(',')}`);
@@ -569,26 +571,8 @@ const DocumentEnhancerModal = (function () {
 
         // v3.4.5: API yanıtını BEKLE (dosya DB'ye kaydedilsin)
         // Yanıt gelince HEMEN modal kapat — normal upload akışıyla tutarlı
-        fetch(url, {
-            method: 'POST',
-            headers: _authHeaders()
-        })
-            .then(res => {
-                if (!res.ok) {
-                    // v3.4.8: HTML error page (504 vb.) gelirse json() patlar — text ile güvenli oku
-                    return res.text().then(txt => {
-                        let detail = `HTTP ${res.status}`;
-                        try {
-                            const parsed = JSON.parse(txt);
-                            detail = parsed.detail || detail;
-                        } catch (_) {
-                            detail = `Sunucu hatası (HTTP ${res.status}). Lütfen tekrar deneyin.`;
-                        }
-                        throw new Error(detail);
-                    });
-                }
-                return res.json();
-            })
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+        window.vyraFetch(url, { method: 'POST' })
             .then(data => {
                 // ─── Dosya DB'ye kaydedildi, background processing başladı ───
                 // HEMEN modal kapat (bekleme yok)
@@ -700,10 +684,9 @@ const DocumentEnhancerModal = (function () {
     }
 
     function _cleanupSession(sessionId) {
-        fetch(`${API_BASE}/api/rag/cleanup-enhanced/${sessionId}`, {
-            method: 'DELETE',
-            headers: _authHeaders()
-        }).catch(() => { });
+        // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
+        window.vyraFetch(`/rag/cleanup-enhanced/${sessionId}`, { method: 'DELETE' })
+            .catch(() => { });
     }
 
     // ─────────────────────────────────────────
