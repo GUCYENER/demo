@@ -1019,6 +1019,29 @@ Claude Code'un dosya-tabanlı memory sistemi (`C:\Users\<user>\.claude\projects\
 
 > Mevcut backlog'a yeni `priority: high` madde EKLENMİŞSE bitiş raporu sessiz geçemez — kullanıcı tek bakışta görmeli.
 
+**📦 KAP 12 — Plan Auto-Archive Sweep (HERA — BITIR taraflı)**
+
+BASLA tarafindaki auto-archive sweep (Bolum 3) ile simetrik. BITIR'da da `.agents/plans/` taranir:
+
+1. **Kapsamli tarama:** `.agents/plans/*.md` (archive/ haric) icin her dosyanin frontmatter `status` ve `version_target`'i okunur.
+2. **Arsivleme kriterleri (herhangi biri):**
+   - `status: shipped|completed|done|archived` → arsivlenir
+   - `version_target` git log son 10 commit icinde `v3.YY` etiketiyle eslesti (orn. `feat(v3.36.0)`) → arsivlenir
+   - Plan dosyasi >7 gun once olusturuldu VE bu oturumda baska bir commit hash'i referans alindi → kullanici onayi (default arsivle)
+3. **Hedef:** `.agents/plans/archive/v3.YY/` (version_target'tan turetilir; yoksa son shipped commit'in versiyonu).
+4. **Audit:** bitiş raporunda `(housekeeping: N plan v3.YY arsivine tasindi)` notu.
+5. **Disjoint:** archive/ icindeki dosyalar tekrar tasinmaz; merge yapilirsa kullaniciya bildir.
+
+```
+📦 Plan Arsiv Raporu (BITIR):
+   Bekleyen plan          : [N -> 0/M]
+   Arsivlenen             : [K plan archive/vX.YY/ altina]
+   Skipped (gercek WIP)   : [W (status: in_progress + recent commit reference)]
+   Sonuc                  : [TEMIZ 🟢 / DIKKAT 🟡 (gercek WIP var)]
+```
+
+> **Neden BITIR'da da?** Sadece BASLA'da arsiv yapilirsa bir oturum sonunda biten planlar bir sonraki BASLA'ya kadar kirlilik yaratir. BITIR'da temizlemek = her commit sonrasi `plans/` sade kalir.
+
 ### Commit & Push
 ```
 git add [spesifik dosyalar]       ← git add -A YERİNE

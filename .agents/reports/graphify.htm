@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8" />
+<title>Graphify VYRA — Yapı Görseli</title>
+<style>
+  :root { --bg:#0e1117; --fg:#e6edf3; --muted:#7d8590; --border:#30363d;
+          --plan:#58a6ff; --decision:#d29922; --commit:#3fb950; --person:#bc8cff;
+          --file:#f85149; --bench:#ff8c00; --project:#39c5cf; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:14px 22px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:18px; flex-wrap:wrap; }
+  header h1 { margin:0; font-size:18px; }
+  .pill { display:inline-flex; align-items:center; padding:3px 10px; background:#161b22; border:1px solid var(--border); border-radius:999px; font-size:12px; }
+  .pill b { color:#58a6ff; margin-left:6px; }
+  main { display:grid; grid-template-columns: 320px 1fr; height:calc(100vh - 60px); }
+  aside { border-right:1px solid var(--border); padding:18px; overflow-y:auto; background:#0d1117; }
+  aside h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:18px 0 8px; }
+  aside h2:first-child { margin-top:0; }
+  table.stats { width:100%; border-collapse:collapse; font-size:13px; }
+  table.stats td { padding:4px 0; border-bottom:1px dashed var(--border); }
+  table.stats td:last-child { text-align:right; color:var(--muted); }
+  .legend { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  .legend span { display:inline-flex; align-items:center; gap:5px; padding:3px 8px; background:#161b22; border-radius:4px; font-size:11px; cursor:pointer; user-select:none; border:1px solid transparent; }
+  .legend span.off { opacity:.35; }
+  .legend i { width:10px; height:10px; border-radius:50%; display:inline-block; }
+  #graph { width:100%; height:100%; background:radial-gradient(ellipse at center,#0d1117 0%,#010409 100%); }
+  .node { stroke:#0d1117; stroke-width:1.2; cursor:pointer; }
+  .node:hover { stroke:#fff; stroke-width:2; }
+  .link { stroke:#30363d; stroke-opacity:.55; }
+  .label { font-size:9px; fill:#c9d1d9; pointer-events:none; }
+  .label-bg { fill:#0d1117; fill-opacity:.6; }
+  footer { padding:8px 22px; border-top:1px solid var(--border); font-size:12px; color:var(--muted); display:flex; justify-content:space-between; }
+  .tooltip { position:absolute; background:#161b22; border:1px solid var(--border); border-radius:6px; padding:8px 10px; font-size:12px; pointer-events:none; opacity:0; transition:opacity .15s; max-width:380px; box-shadow:0 4px 16px rgba(0,0,0,.5); }
+  code { font-family: ui-monospace,Consolas,monospace; font-size:12px; background:#161b22; padding:1px 5px; border-radius:3px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Graphify VYRA</h1>
+  <span class="pill">project<b>vyra</b></span>
+  <span class="pill">last commit<b id="lastCommit">…</b></span>
+  <span class="pill">entities<b id="totEnt">…</b></span>
+  <span class="pill">triples<b id="totTrip">…</b></span>
+  <span class="pill">db<b>1.15 MB</b></span>
+</header>
+
+<main>
+  <aside>
+    <h2>Entity Dağılımı</h2>
+    <table class="stats" id="typeTable"></table>
+
+    <h2>Predicate Dağılımı</h2>
+    <table class="stats" id="predTable"></table>
+
+    <h2>Filtre</h2>
+    <div class="legend" id="legend"></div>
+
+    <h2>Bilgi</h2>
+    <p style="font-size:12px;color:var(--muted);line-height:1.5">
+      Bu görsel <b>son 80 entity</b>'nin alt-grafiği (Plan / Decision / Commit / Person / Project).
+      Tam graf için <code>tools/visualize.py</code> mermaid/dot çıktısı kullanılır.<br/><br/>
+      <b>Sürükle</b> = düğüm taşı · <b>Scroll</b> = zoom · <b>Hover</b> = detay
+    </p>
+
+    <h2>Komutlar</h2>
+    <p style="font-size:11px;color:var(--muted);line-height:1.5">
+      <code>python -m core.cli status --project vyra</code><br/>
+      <code>python -m core.cli mine --project vyra</code><br/>
+      <code>python tools/visualize.py --project vyra --focus-entity &lt;id&gt;</code>
+    </p>
+  </aside>
+
+  <div style="position:relative">
+    <svg id="graph"></svg>
+    <div class="tooltip" id="tt"></div>
+  </div>
+</main>
+
+<footer>
+  <span>Graphify v1.0 · schema v4 · ontology v1.0</span>
+  <span>Generated 2026-05-25T23:48+03:00</span>
+</footer>
+
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+const DATA = {
+  stats: {"total_entities":676,"total_triples":1453,"last_commit":"8891f71","by_type":{"File":354,"Commit":101,"Plan":94,"Decision":87,"BenchProbe":30,"Person":9,"Project":1},"by_pred":{"refactors":672,"lives_in":354,"belongs_to":282,"has_status":95,"related_to":24,"has_version_target":17,"reviewed_by":9}},
+  nodes: [{"id":"5a9118ca","name":"2026-05-25_2359_graphify_workflow_integration_sist","type":"Plan"},{"id":"3eda4eba","name":"2026-05-25_2350_graphify_workflow_integration_vyra","type":"Plan"},{"id":"69106605","name":"feat:8891f71","type":"Decision"},{"id":"8085d1cd","name":"8891f71","type":"Commit"},{"id":"ddf47bf4","name":"refactor-tracker","type":"Plan"},{"id":"533ba87d","name":"vyrazeus","type":"Plan"},{"id":"9d5e383d","name":"mempalace_refresh_guard","type":"Plan"},{"id":"e8b9980d","name":"vyra_fetch_helper_and_memplace_freshness","type":"Plan"},{"id":"e29d439d","name":"refactor_sprint_r007_to_r018","type":"Plan"},{"id":"a15009ea","name":"aki_kesfi_modal_redesign","type":"Plan"},{"id":"9c558ec7","name":"fk_loop_v3320_improvements","type":"Plan"},{"id":"2253605f","name":"ux_modern_tooltips_concurrent_gate","type":"Plan"},{"id":"4601133a","name":"bulk_phase2_backgroundtasks","type":"Plan"},{"id":"8c5c7b4f","name":"bulk_enrichment_endpoints","type":"Plan"},{"id":"7a0e30ca","name":"v3.30.0_db_smart_wizard","type":"Plan"},{"id":"6670b7f1","name":"v3.29.9_fk_inference","type":"Plan"},{"id":"4d634cf7","name":"v3.29.8_signal_weight_tuner","type":"Plan"},{"id":"5d43c775","name":"v3.29.7_faz6_eksik_implementasyon","type":"Plan"},{"id":"98ee38ab","name":"v3.29.11_dedupe_pgvector_guard","type":"Plan"},{"id":"badd4334","name":"v3.29.10_housekeeping_ve_bug_fix","type":"Plan"},{"id":"d5631cb5","name":"ZEUS","type":"Person"},{"id":"e62eb61e","name":"CRAZYMEMPLC","type":"Person"},{"id":"12672fd4","name":"HERA","type":"Person"},{"id":"c864c08f","name":"NIKE","type":"Person"},{"id":"30253639","name":"TYCHE","type":"Person"},{"id":"ee977941","name":"ARES","type":"Person"},{"id":"e1ee133c","name":"HERMES","type":"Person"},{"id":"da946e56","name":"ARIADNE","type":"Person"},{"id":"34a8121b","name":"MNEMOSYNE","type":"Person"},{"id":"77862bda","name":"general_graphify_hybrid_setup","type":"Plan"},{"id":"2f981a31","name":"2026-05-24_2000_smart_discovery_mass_fix_v1","type":"Plan"},{"id":"88aa6dd3","name":"2026-05-24_1900_smart_discovery_audit_v1","type":"Plan"},{"id":"3ac3941f","name":"2026-05-24_1830_wizard_step1_source_select_conditi","type":"Plan"},{"id":"fb3d207a","name":"smart_discovery_picker_redesign","type":"Plan"},{"id":"5ceae884","name":"2026-05-25_agentEDIT_F13_picker_multihop_fk","type":"Plan"},{"id":"7ea6a597","name":"2026-05-24_explore4_sec_perf_audit","type":"Plan"},{"id":"7e3dd533","name":"2026-05-24_explore3_llm_audit","type":"Plan"},{"id":"58020f83","name":"2026-05-24_explore2_backend_audit","type":"Plan"},{"id":"01aade14","name":"2026-05-24_explore1_frontend_audit","type":"Plan"},{"id":"1ab14755","name":"2026-05-24_bug5_asistana_gonder_eski_sql","type":"Plan"},{"id":"a1518e1a","name":"2026-05-24_bug4_qb_veri_kaynagi_okunamadi","type":"Plan"},{"id":"8a908835","name":"2026-05-24_bug3_login_502_raw_json","type":"Plan"},{"id":"87f8c417","name":"2026-05-24_bug2_join_select_reject","type":"Plan"},{"id":"a723e0d3","name":"2026-05-24_bug1_aday_tablo_preset","type":"Plan"},{"id":"e71a6c0b","name":"2026-05-24_agentFIX9_tests","type":"Plan"},{"id":"957e6369","name":"2026-05-24_agentFIX8_css_polish","type":"Plan"},{"id":"ca4f205f","name":"2026-05-24_agentFIX7_filter_modal","type":"Plan"},{"id":"c22f7964","name":"2026-05-24_agentFIX6_picker_abort","type":"Plan"},{"id":"5fa4eac0","name":"2026-05-24_agentFIX5_wizard_state_cluster","type":"Plan"},{"id":"e562b629","name":"2026-05-24_agentFIX4_dialect_dictionary","type":"Plan"},{"id":"cb496157","name":"2026-05-24_agentFIX3_db_smart_api_cluster","type":"Plan"},{"id":"2a8884d7","name":"2026-05-24_agentFIX2_deep_think_p0_cluster","type":"Plan"},{"id":"8a4ea2d9","name":"2026-05-24_agentFIX1_saved_reports_sql","type":"Plan"},{"id":"dd47f355","name":"2026-05-24_agentFIX11_llm_resilience","type":"Plan"},{"id":"5da08ef2","name":"2026-05-24_agentFIX10_perf_infra","type":"Plan"},{"id":"6358b6df","name":"2026-05-24_agentD_wizard_source_select_conditional","type":"Plan"},{"id":"7fe92193","name":"2026-05-24_agentC_saved_reports_search_clear","type":"Plan"},{"id":"4f91bba0","name":"2026-05-24_agentB_picker_enhancements","type":"Plan"},{"id":"fa4c5f68","name":"2026-05-24_agentA_wizard_step1_simplify","type":"Plan"},{"id":"d8c346bf","name":"2026-05-24_A4-bug-wizard-empty-search-rca","type":"Plan"},{"id":"dc932b70","name":"2026-05-24_A3-workflow-mempalace-freshness","type":"Plan"},{"id":"a189148e","name":"2026-05-24_A2-vyrafetch-helper-and-login","type":"Plan"},{"id":"e2284f45","name":"2026-05-24_A1-bug-picker-limit","type":"Plan"},{"id":"be98de60","name":"2026-05-23_smart-J_fernet-rotation-mvp","type":"Plan"},{"id":"5db390ab","name":"2026-05-23_smart-I_error-pattern-review","type":"Plan"},{"id":"52a6d0ca","name":"2026-05-23_smart-H_sse-adaptive-heartbeat","type":"Plan"},{"id":"58d60e85","name":"2026-05-23_smart-G_cache-dashboard","type":"Plan"},{"id":"948afb39","name":"2026-05-23_smart-F_explain-mssql-oracle","type":"Plan"},{"id":"8d649cb3","name":"2026-05-23_smart-E_fk-join-hints","type":"Plan"},{"id":"88ff6c6a","name":"2026-05-23_plan_naming_steward","type":"Plan"},{"id":"c857f183","name":"2026-05-23_fk-loop-D_docker-compose","type":"Plan"},{"id":"d11775f1","name":"2026-05-23_fk-loop-C_tests","type":"Plan"},{"id":"f96b23df","name":"2026-05-23_fk-loop-B_frontend-progress","type":"Plan"},{"id":"27f0c0ec","name":"2026-05-23_fk-loop-A_backend-core","type":"Plan"},{"id":"e2cf8595","name":"2026-05-23_aki-kesfi-D_backend-sources-fix","type":"Plan"},{"id":"58c4d6f4","name":"2026-05-23_aki-kesfi-C_filter-modal","type":"Plan"},{"id":"aad77ab1","name":"2026-05-23_aki-kesfi-B_saved-reports-grid","type":"Plan"},{"id":"ad009540","name":"2026-05-21_p50_query-examples-fewshot","type":"Plan"},{"id":"f5b4daf7","name":"2026-05-21_p36_telemetry-otel-prom","type":"Plan"},{"id":"fbda5b27","name":"2026-05-21_p34_i18n-en","type":"Plan"}],
+  edges: [{"s":"77862bda","p":"reviewed_by","o":"34a8121b"},{"s":"77862bda","p":"reviewed_by","o":"da946e56"},{"s":"77862bda","p":"reviewed_by","o":"e1ee133c"},{"s":"77862bda","p":"reviewed_by","o":"ee977941"},{"s":"77862bda","p":"reviewed_by","o":"30253639"},{"s":"77862bda","p":"reviewed_by","o":"c864c08f"},{"s":"77862bda","p":"reviewed_by","o":"12672fd4"},{"s":"77862bda","p":"reviewed_by","o":"e62eb61e"},{"s":"77862bda","p":"reviewed_by","o":"d5631cb5"}]
+};
+
+const TYPE_COLOR = { Plan:"#58a6ff", Decision:"#d29922", Commit:"#3fb950", Person:"#bc8cff", File:"#f85149", BenchProbe:"#ff8c00", Project:"#39c5cf" };
+
+document.getElementById("lastCommit").textContent = DATA.stats.last_commit;
+document.getElementById("totEnt").textContent = DATA.stats.total_entities;
+document.getElementById("totTrip").textContent = DATA.stats.total_triples;
+
+const typeTbl = document.getElementById("typeTable");
+Object.entries(DATA.stats.by_type).forEach(([t,n]) => {
+  typeTbl.insertAdjacentHTML("beforeend", `<tr><td><i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${TYPE_COLOR[t]||"#777"};margin-right:6px"></i>${t}</td><td>${n}</td></tr>`);
+});
+const predTbl = document.getElementById("predTable");
+Object.entries(DATA.stats.by_pred).forEach(([p,n]) => {
+  predTbl.insertAdjacentHTML("beforeend", `<tr><td><code>${p}</code></td><td>${n}</td></tr>`);
+});
+
+const legend = document.getElementById("legend");
+const activeTypes = new Set(Object.keys(TYPE_COLOR));
+Object.entries(TYPE_COLOR).forEach(([t,c]) => {
+  const el = document.createElement("span");
+  el.innerHTML = `<i style="background:${c}"></i>${t}`;
+  el.onclick = () => { if (activeTypes.has(t)) { activeTypes.delete(t); el.classList.add("off"); } else { activeTypes.add(t); el.classList.remove("off"); } applyFilter(); };
+  legend.appendChild(el);
+});
+
+// d3 force graph
+const svg = d3.select("#graph");
+const W = svg.node().clientWidth, H = svg.node().clientHeight;
+svg.attr("viewBox", [0,0,W,H]);
+const g = svg.append("g");
+
+svg.call(d3.zoom().scaleExtent([0.25, 4]).on("zoom", e => g.attr("transform", e.transform)));
+
+const nodeById = Object.fromEntries(DATA.nodes.map(n => [n.id, {...n}]));
+const linkData = DATA.edges.map(e => ({source: nodeById[e.s], target: nodeById[e.o], p: e.p})).filter(l => l.source && l.target);
+const nodeData = Object.values(nodeById);
+
+const sim = d3.forceSimulation(nodeData)
+  .force("link", d3.forceLink(linkData).distance(80).strength(0.6))
+  .force("charge", d3.forceManyBody().strength(-180))
+  .force("center", d3.forceCenter(W/2, H/2))
+  .force("collide", d3.forceCollide(14));
+
+const link = g.append("g").attr("class","links")
+  .selectAll("line").data(linkData).join("line")
+  .attr("class","link").attr("stroke-width", 1.4);
+
+const node = g.append("g").attr("class","nodes")
+  .selectAll("circle").data(nodeData).join("circle")
+  .attr("class","node")
+  .attr("r", d => d.type === "Person" ? 8 : d.type === "Commit" ? 7 : d.type === "Decision" ? 7 : 6)
+  .attr("fill", d => TYPE_COLOR[d.type] || "#777")
+  .call(d3.drag()
+    .on("start", (e,d) => { if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+    .on("drag",  (e,d) => { d.fx = e.x; d.fy = e.y; })
+    .on("end",   (e,d) => { if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }));
+
+const label = g.append("g").attr("class","labels")
+  .selectAll("text").data(nodeData).join("text")
+  .attr("class","label")
+  .text(d => d.name.length > 24 ? d.name.slice(0,22)+"…" : d.name)
+  .attr("dx", 9).attr("dy", 3);
+
+const tt = document.getElementById("tt");
+node.on("mouseover", (e,d) => {
+  tt.innerHTML = `<b>${d.type}</b><br/><code>${d.id}</code><br/>${d.name}`;
+  tt.style.opacity = 1;
+  tt.style.left = (e.pageX + 12) + "px";
+  tt.style.top = (e.pageY + 12) + "px";
+}).on("mousemove", e => {
+  tt.style.left = (e.pageX + 12) + "px"; tt.style.top = (e.pageY + 12) + "px";
+}).on("mouseout", () => { tt.style.opacity = 0; });
+
+sim.on("tick", () => {
+  link.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+      .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+  node.attr("cx", d => d.x).attr("cy", d => d.y);
+  label.attr("x", d => d.x).attr("y", d => d.y);
+});
+
+function applyFilter() {
+  node.style("display", d => activeTypes.has(d.type) ? null : "none");
+  label.style("display", d => activeTypes.has(d.type) ? null : "none");
+  link.style("display", l => (activeTypes.has(l.source.type) && activeTypes.has(l.target.type)) ? null : "none");
+}
+</script>
+</body>
+</html>
