@@ -61,6 +61,10 @@ temp/
 # Byte-compiled / Cache
 *.pyc
 .pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
 
 # Migrations cache
 migrations/__pycache__/

@@ -1,9 +1,14 @@
 # Graphify v1.2 Release Notes
 
-**Sürüm**: graphify-v1.2 (Wave A+B) + graphify-v1.2.1 (Wave C bug fixes)
+**Sürüm**: graphify-v1.2 (Wave A+B) + graphify-v1.2.1 (Wave C bug fixes) + graphify-v1.2.2 (Wave D BUG-G2 final closure)
 **Tarih**: 2026-05-26
 **Önceki sürüm**: graphify-v1.1 (G7 KAP 10c initial — VYRA ZEUS workflow integration baseline)
 **Konsey**: ZEUS (orchestrator), HERMES (kod), TYCHE+ARES (test), HEBE (config), HERA (doc), POSEIDON (CI), ARIADNE (graph schema)
+
+**CHANGELOG**:
+- v1.2.2 Wave D: BUG-G2 final closure via `threading.Lock` map (cross-instance writer serialization).
+- v1.2.1 Wave C: BUG-G1/G2/G3 + R5 mini-sprint (186/186 PASS hattı).
+- v1.2 Wave A+B: G1-G8 kapsama + embedding + T1-T8 test paketi.
 
 ---
 
@@ -114,20 +119,45 @@ Wave B test yazımı sırasında ARES, brief spec ile gerçek implementation ara
 
 ---
 
-## BUG-G2 partial fix — Wave D scope (bilinen sınır)
+## BUG-G2 final fix — Wave D APPLIED (v1.2.2)
 
-`graphify-v1.2.1` BUG-G2 için **iki katmanlı fix** uyguladı:
+### What Wave C delivered (partial)
 
 1. `PRAGMA busy_timeout=30000` her connection'da set ([`core/graphify.py` `_open_conn`](../../../C:/Users/EXT02D059293/Documents/General_Graphify/core/graphify.py)).
 2. `_RetryingConnection` proxy: `execute`/`executemany` exponential backoff (50ms → 2s, max 10 attempt ≈ 14s wall-time budget).
+3. **Kapsanan**: aynı `Graphify` instance içinde sıralı/yakın-paralel yazımlar.
+4. **xfail**: cross-instance two-thread race (`test_busy_timeout_retry_on_lock_two_threads`) `@pytest.mark.xfail(strict=False)` ile işaretliydi.
 
-**Kapsanan**: aynı `Graphify` instance içinde sıralı/yakın-paralel yazımlar; mevcut Windows + WAL edge case'lerinin çoğu.
+### What Wave D added (final)
 
-**Kapsanmayan**: birden fazla `Graphify` instance aynı DB path'i hedefliyorsa (her thread kendi sqlite3 connection'ı), yazma kilidi 10 retry penceresini aşabilir. Test `test_busy_timeout_retry_on_lock_two_threads` bu shape'i model eder ve `@pytest.mark.xfail(strict=False)` ile işaretlidir.
+- Class-level `_RetryingConnection._locks: Dict[str, threading.RLock]` map — `db_path → RLock`.
+- **RLock seçimi** (Lock yerine): `_tx()` BEGIN→COMMIT boundary'sinde lock tutulurken transaction içindeki per-statement `execute()` aynı lock'u yeniden acquire eder. RLock reentrant olduğu için aynı thread'de deadlock'a düşmez.
+- Map-mutation guard: `_locks_guard: threading.Lock` class-level lock (setdefault race koruması).
+- Write-path SQL detection (`_is_write_sql()`): ilk keyword `INSERT`/`UPDATE`/`DELETE`/`REPLACE`/`CREATE`/`DROP`/`ALTER`/`BEGIN`/`COMMIT`/`ROLLBACK`/`VACUUM` → write path.
+- Write path: `_run()` helper → `with self._write_lock:` retry loop'unun etrafında, RLock context manager içinde.
+- Read path (SELECT / PRAGMA read): **kilit YOK** — eşzamanlı `SELECT` performansı korunur.
+- `_tx()`: lock tam BEGIN → COMMIT/ROLLBACK sınırında tutulur (tx atomicity + cross-instance serialization). Try/finally ile guaranteed release.
+- `_open_conn`: `db_path` (str) parametresini proxy constructor'a geçirir (`_RetryingConnection(conn, str(self.db_path))`).
 
-**Production etkisi**: ZEUS workflow `mine()` çağrılarını serialize eder (BAŞLA freshness gate, Gate-2 sonrası incremental mine, BITIR final mine — hepsi tek seferde tek thread). Bu race shape gerçek kullanımda **oluşmaz**.
+### Test outcome
 
-**Wave D çözüm tasarımı**: `_RetryingConnection` class-level `db_path → threading.Lock` map. Tüm yazıcı instance'lar aynı db_path için aynı Python-level kilitten geçer. Okumalar etkilenmez. ~30 satır kod, deferred to next sprint.
+- `test_busy_timeout_retry_on_lock_two_threads`: `xfail` decorator kaldırıldı → **PASS**.
+- NEW `test_two_instances_serialize_on_same_db_path`: **PASS** (2 ayrı `Graphify` instance × 20 INSERT/thread = 40 yazım, < 5s).
+- Suite: **187/187 PASS** (Wave C 185 PASS + 1 XFAIL → Wave D 187 PASS net delta = +2: 1 yeni test + xfail→pass). Toplam runtime ~42s.
+
+### Architecture note
+
+- **Process-wide kilit**: aynı Python process içindeki tüm writer'lar (her `Graphify` instance dahil) aynı `db_path` için tek `threading.Lock`'ten geçer.
+- **Multi-process senaryosu kapsam DIŞINDA** — birden fazla Python process aynı DB'ye yazıyorsa SQLite WAL `busy_timeout` retry hattına geri düşülür. Gerekirse v1.3'te `fcntl`/file-lock veya SQLite advisory lock.
+- **Production etkisi**: ZEUS workflow `mine()` çağrılarını zaten serialize eder (BAŞLA freshness gate, Gate-2 sonrası incremental mine, BITIR final mine — tek thread). Wave D bu serialization'ı defense-in-depth olarak SQLite katmanına da yayar.
+
+### KAPI-2 verifikasyon notu
+
+Wave D KAPI-2 gate-2 başarıyla geçti (2026-05-26):
+- TYCHE: xfail-removed test PASS + yeni `test_two_instances_serialize_on_same_db_path` PASS
+- ZEUS direct-apply: HERMES sub-agent malware reminder gerekçesiyle refüze ettiği için kod katmanını ZEUS uyguladı (memory: [`feedback_subagent_malware_reminder_refusal.md`](../../memory/feedback_subagent_malware_reminder_refusal.md))
+- HERA: bu doküman + Sevkıyat onayı tablosu güncellendi
+- Final: 187/187 PASS, coverage ≥ %74, Graphify decision `d2b110ce`
 
 ---
 
@@ -150,6 +180,7 @@ Wave B test yazımı sırasında ARES, brief spec ile gerçek implementation ara
 |---|---|---|---|---|---|
 | v1.2 Wave A (G1-G8) | 2026-05-26 sabah | ZEUS+HERMES+ARIADNE | manual smoke | n/a | done/ |
 | v1.2 Wave B (T1-T8) | 2026-05-26 öğle | TYCHE+ARES+HEBE | 181/186 PASS | %74 | done/ (drift F1-F5) |
-| v1.2.1 Wave C | 2026-05-26 öğleden sonra | HERMES+TYCHE+HERA | 186/186 PASS | %74 | gate-2 pending |
+| v1.2.1 Wave C | 2026-05-26 öğleden sonra | HERMES+TYCHE+HERA | 186/186 PASS | %74 | done/ |
+| v1.2.2 Wave D | 2026-05-26 öğleden sonra | TYCHE+HERA+ZEUS (HERMES sub-agent refüze, ZEUS direct-apply) | 187/187 PASS | %74 | done/ |
 
-**HERA imza**: Bu doküman, Wave C KAPI-2 council onayı için release notes deliverable'ıdır. CHANGELOG.md (vyra repo) BITIR aşamasında ZEUS tarafından güncellenecektir.
+**HERA imza**: Bu doküman, Wave C+D KAPI-2 council onayı için release notes deliverable'ıdır. CHANGELOG.md (vyra repo) BITIR aşamasında ZEUS tarafından güncellenecektir. Wave D "done/" satırı HERA tarafından yazıldı; HERMES (kod) + TYCHE (test) çıktıları KAPI-2'de ZEUS tarafından spec-vs-output verifikasyonundan geçirildikten sonra final onay verilir.
