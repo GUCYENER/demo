@@ -1016,6 +1016,21 @@ c) **Commit Mesajı:**
 4. Per-instance DB izolasyonu dogrula: `graphify_status` cikti'sinda sadece `vyra` projesi gozukmeli (cross-project leak yok)
 5. Disk size delta: `graphify_status` `db_size_mb` alani; soft cap 100MB, asarsa prune planlamasi acilir (ARIADNE v1.1)
 
+### KAP 10c.3 — Coverage Threshold Assert
+
+BITIR commit ÖNCESİ:
+```bash
+python -m core.cli coverage-report --project vyra --threshold 0.95
+```
+
+Exit code 1 (FAIL) ise:
+- Eksik metrik(ler)i raporla (örn: `embedded_entities/total < 0.95`)
+- Console'a uyar: "Graphify coverage threshold altında — BITIR commit'i durdur, root cause araştır"
+- Commit ATMA — TYCHE/HERMES'i çağır
+- Threshold geçici düşürülebilir (örn: 0.80) **sadece** zorunluysa; bir sonraki sprintte refactor backlog'a girer
+
+Not: `coverage-report` komutu Graphify v1.2 (G8) ile geldi; eski sürümde fallback olarak `python -m core.cli status --project vyra` çıktısından manuel parse.
+
 **🗂️ KAP 10b — Auto-Memory Hijyeni (YENİ)**
 
 Claude Code'un dosya-tabanlı memory sistemi (`C:\Users\<user>\.claude\projects\d--demo-vyra\memory\`):
