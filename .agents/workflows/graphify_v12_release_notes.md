@@ -69,15 +69,15 @@ Graphify v1.2, **Wave A** (G1-G8 kapsama + embedding düzeltme paketi, 2026-05-2
 
 ---
 
-## Bilinen uyumsuzluklar (spec drift — ARES F1-F5)
+## Resolved spec drifts (ARES F1-F5)
 
-Wave B test yazımı sırasında ARES, brief spec ile gerçek implementation arasında 5 noktada drift tespit etti. Testler **impl'i** assert eder (production behavior), brief spec **revize** sayılır:
+Wave B test yazımı sırasında ARES 5 noktada brief-spec/impl drift tespit etti; Wave C+D döneminde resolve edildi. F1-F3 impl baseline'a adopt edildi; F4-F5 v1.3 backlog brief'lerine devredildi.
 
-- **F1** — `tool_mine` result keys: brief'te `entities_added/triples_added`, impl `entities_created/triples_created`. Tests: impl.
-- **F2** — CLI JSON keys: brief `coverage/passed`, impl `ratio_embedded/ok`. Tests: impl.
-- **F3** — CLI empty project exit: brief 1, impl 1 (DB var ama 0 entity) veya 2 (DB yok). Tests: impl ayırımını saygılar.
-- **F4** — `GRAPHIFY_HOME` env var **YOK** — CLI ve `Graphify.__init__` sadece `Path.home()` kullanır (Windows'ta `USERPROFILE`, Unix'te `HOME` üzerinden). Future v1.3 aday.
-- **F5** — `tool_mine` 50-token cap — production'da geniş projelerde result clip'lenebilir; future revisit (dinamik cap veya pagination).
+- **F1 — RESOLVED (impl baseline)** — `tool_mine` result keys: brief'te `entities_added/triples_added`, impl `entities_created/triples_created`. Tests: impl.
+- **F2 — RESOLVED (impl baseline)** — CLI JSON keys: brief `coverage/passed`, impl `ratio_embedded/ok`. Tests: impl.
+- **F3 — RESOLVED (impl ayrımı adopt)** — CLI empty project exit: brief 1, impl 1 (DB var ama 0 entity) veya 2 (DB yok). Tests: impl ayırımını saygılar.
+- **F4 — DEFERRED → v1.3 (brief: [`v1.3_graphify_home_env.md`](../plans/v1.3_graphify_home_env.md))** — `GRAPHIFY_HOME` env var **YOK** — CLI ve `Graphify.__init__` sadece `Path.home()` kullanır (Windows'ta `USERPROFILE`, Unix'te `HOME` üzerinden). Future v1.3 aday.
+- **F5 — DEFERRED → v1.3 (brief: [`v1.3_token_cap_dynamic.md`](../plans/v1.3_token_cap_dynamic.md))** — `tool_mine` 50-token cap — production'da geniş projelerde result clip'lenebilir; future revisit (dinamik cap veya pagination).
 
 **ARIADNE schema notu**: Class definitions `type='Function', kind='class'` olarak yazılır (AST `ClassDef` node Function adapter pipeline'ından geçer). R5 fix bu konvansiyona uyumlu — UNION ile her iki gösterim de sayılır.
 

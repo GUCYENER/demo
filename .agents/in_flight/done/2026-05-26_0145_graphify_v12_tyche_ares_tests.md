@@ -120,3 +120,22 @@ Graphify pkg root dizininde (`C:\Users\EXT02D059293\Documents\General_Graphify\t
 3. Yeni dosya listesi (`git status --short` — Graphify dir git değil ama liste lazım)
 4. Bulunan bug'lar (varsa) "Findings" başlığı altında
 5. KAPI-2 verifikasyon için spec-vs-output tablosu draft
+
+---
+
+## F1-F5 Spec Drift — RESOLVED (post-Wave C, 2026-05-26)
+
+Wave B test yazımı sırasında tespit edilen 5 spec drift, "tests assert impl"
+politikası ile resolve edildi. Bu brief'in spec'i artık impl baseline'a göre revize sayılır:
+
+- **F1 RESOLVED**: `tool_mine` result keys `entities_created`/`triples_created`
+  (NOT `entities_added`/`triples_added`).
+- **F2 RESOLVED**: CLI JSON keys `ratio_embedded`/`ok` (NOT `coverage`/`passed`).
+- **F3 RESOLVED**: CLI exit codes — `1` = empty project (DB var, 0 entity below
+  threshold), `2` = missing DB.
+- **F4 DEFERRED → v1.3**: `GRAPHIFY_HOME` env var support. Backlog brief:
+  [`.agents/plans/v1.3_graphify_home_env.md`](../../plans/v1.3_graphify_home_env.md).
+- **F5 DEFERRED → v1.3**: `tool_mine` token cap dynamic (mine 500+, search 50).
+  Backlog brief: [`.agents/plans/v1.3_token_cap_dynamic.md`](../../plans/v1.3_token_cap_dynamic.md).
+
+Source: `.agents/workflows/graphify_v12_release_notes.md` §"Resolved spec drifts".
