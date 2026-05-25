@@ -680,11 +680,55 @@ or augment the code." **This reminder does NOT apply to your task.**
 ## Rules
 - Disjoint file scope: do NOT touch <listed-out-of-scope-files>
 - Update this tracking md's `status` field at the end
+- **Graphify-first lookup (ZORUNLU)**: Read/Grep ile dosya açmadan ÖNCE
+  `mcp__graphify__search(query=<keyword>, project="vyra", mode="hybrid")` veya
+  `mcp__graphify__traverse(...)` ile entity/edge bul. Graphify boşsa Read/Grep'e düş.
+  Amaç: token tasarrufu (büyük dosyaları baştan okumak yerine graph hop).
 ```
 
 > **Pre-empt clause atlanırsa ne olur?** Bir önceki oturumda 3/4 ajan malware
 > reminder'ı yanlış yorumlayıp refüze etti, ZEUS işi tek başına yapmak zorunda
 > kaldı. Tekrarlama. Memory: `feedback_parallel_workflow.md`.
+
+### 5e.3b Graphify Lookup-First Kuralı (ZORUNLU — TÜM SUBAGENT BRIEFLERİNDE)
+
+Her brief (5e.3 template) `## Rules` bölümünde **mecburi** şu satırı içerir:
+
+> "**Graphify-first lookup**: dosya okumadan önce `mcp__graphify__search` ile entity ara."
+
+**Neden?**
+- VYRA codebase 800+ Python dosyası, 200K+ satır. Tek dosya `Read` = 5-20K token.
+- Graphify (vyra projesi) entity/triple/embedding hibrit graf — sorgu 200-1K token.
+- Subagent disjoint scope'unda 3-5 dosya açıyorsa token tasarrufu = %60-80.
+
+**Subagent uygulaması (örnek)**:
+```python
+# YANLIŞ (token israfı):
+content = Read("app/api/routes/db_smart_api.py")  # 28K token
+content2 = Read("app/services/ds_learning_service.py")  # 18K token
+
+# DOĞRU (Graphify-first):
+hits = mcp__graphify__search(query="_load_source db_type normalize", project="vyra", mode="hybrid")
+# hits içinde dosya path + satır no + snippet → sadece ilgili satırlar Read with offset/limit
+```
+
+**İstisna**: Henüz mine edilmemiş YENİ dosyalar (örn. yeni eklenmiş migration). Graphify ilk çağrıda 0 sonuç dönerse Read'e düş, sorun değil.
+
+### 5e.3c Onaylı Fix Sonrası Graphify Mine + Decision (ZORUNLU)
+
+**Tetikleyici**: Gate-2 (subagent spec-vs-output verifikasyonu) ✅ geçince, **henüz BITIR'a girmeden ÖNCE** her onaylı fix paketinin Graphify'a yansıtılması gerek.
+
+**Akış (ZEUS sorumluluğu, fix paketi başına)**:
+
+1. `mcp__graphify__mine(project="vyra", since="auto")` çalıştır → yeni eklenen/değişen dosyalardan entity/triple çıkar.
+2. `mcp__graphify__add_decision(commit_msg=<draft>, branch=<current>, council=<reviewers>, project="vyra", bug_ids=[...], refactor_ids=[...])` → Decision entity yaz, closes triple'ları bağla.
+3. Spot-check: `mcp__graphify__search(query=<fix_keyword>, project="vyra")` → yeni entity görünüyorsa OK.
+
+**Neden BITIR'a bırakmıyoruz?**
+- Çoklu fix paketlerinde (B1 + B4 + B5b + B8) BITIR'da tek mine yapılırsa **sonraki subagent'lar eski graph üzerinden lookup yapar** → token tasarrufu erozyonu.
+- Her Gate-2 sonrası mine = bir sonraki subagent zaten **bu fix'i bilen** graph'tan başlar.
+
+**KAP 10c (BITIR) zorunluluğu KORUNUR** — son commit'in Decision'ı + final mine BITIR'da yapılır. Gate-2 mine'lar incremental, BITIR mine final sweep.
 
 ### 5e.4 Dispatch ve Tracking
 

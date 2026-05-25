@@ -928,6 +928,11 @@ def _load_source(
             source_id, rec.get("db_type"),
         )
         dialect = "postgresql"
+    # B1 fix v3.37.0: normalize db_type for downstream consumers
+    # (ds_learning_service._get_db_connector saved-report rerun yolunda
+    # source_dict["db_type"] değerini okur; alias/whitelist normalize'i
+    # burada uygulanmazsa literal "db_type" gibi bozuk değerler hata verir).
+    source_dict["db_type"] = dialect
     return source_dict, password_plain, dialect
 
 
