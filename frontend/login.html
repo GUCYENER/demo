@@ -1201,7 +1201,8 @@ body::before {
   };
 
   function loadVersion() {
-    fetch(API_BASE + '/api/health')
+    // v3.36.0: cache: 'no-store' — stale versiyon badge fix (defensive client-side; server da no-store gönderiyor)
+    fetch(API_BASE + '/api/health', { cache: 'no-store' })
       .then(function(r) { return r.json(); })
       .then(function(data) {
         if (data.version) {

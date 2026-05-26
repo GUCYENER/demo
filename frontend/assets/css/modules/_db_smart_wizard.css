@@ -2757,3 +2757,253 @@ body[data-dsw-locked="true"] {
         font-size: 13px;
     }
 }
+
+/* ====================================================================
+   v3.37.0 (HEBE-FE 2026-05-25) — Smart Discovery Wizard UX bundle
+   --------------------------------------------------------------------
+   B6/B7a sticky footer, B7b ORDER BY chips, B4/B5b/B8 LLM butonları.
+   ==================================================================== */
+
+/* Sticky footer (user_intent + Çalıştır + Format Öner) */
+.wizard-sticky-footer {
+    position: sticky;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    margin-top: 12px;
+    background: var(--bg-elevated, #14172b);
+    border-top: 1px solid var(--border-default, #2a3050);
+    border-radius: 0 0 10px 10px;
+    box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.18);
+}
+.wizard-sticky-footer textarea#user-intent {
+    width: 100%;
+    min-height: 56px;
+    max-height: 120px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-default, #2a3050);
+    border-radius: 6px;
+    background: var(--bg-input, #0e1124);
+    color: var(--text-primary, #e6ecff);
+    font: inherit;
+    resize: vertical;
+}
+.wizard-sticky-footer-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    justify-content: flex-end;
+}
+.wizard-run-btn {
+    padding: 10px 22px;
+    font-weight: 600;
+    background: linear-gradient(180deg, #3b82f6, #2563eb);
+    color: #fff;
+    border: 0;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.wizard-run-btn:hover { filter: brightness(1.08); }
+.wizard-run-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* ORDER BY chip bar */
+.dsw-orderby-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 10px;
+    margin: 8px 0;
+    border: 1px dashed var(--border-default, #2a3050);
+    border-radius: 6px;
+    background: var(--bg-elevated, #14172b);
+}
+.dsw-orderby-label {
+    font-size: 12px;
+    color: var(--text-secondary, #98a4bd);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-right: 4px;
+}
+.dsw-orderby-empty {
+    font-size: 12px;
+    color: var(--text-secondary, #98a4bd);
+    font-style: italic;
+}
+.order-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border: 1px solid var(--border-default, #2a3050);
+    border-radius: 14px;
+    background: var(--bg-input, #0e1124);
+    cursor: grab;
+    user-select: none;
+}
+.order-chip.dragging { opacity: 0.5; }
+.order-chip-col {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+}
+.order-chip-toggle,
+.order-chip-remove {
+    display: inline-flex;
+    align-items: center;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-size: 11px;
+}
+.order-chip-toggle:hover,
+.order-chip-remove:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+.order-chip-remove { color: var(--danger, #ef4444); font-weight: bold; }
+.dsw-orderby-add-wrap { margin-left: auto; }
+.dsw-orderby-add-select {
+    padding: 4px 8px;
+    border: 1px solid var(--border-default, #2a3050);
+    border-radius: 6px;
+    background: var(--bg-input, #0e1124);
+    color: var(--text-primary, #e6ecff);
+    font-size: 12px;
+}
+
+/* LLM buton bar + chip + cache hint */
+.dsw-llm-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    flex-wrap: wrap;
+}
+.dsw-llm-btn {
+    padding: 6px 12px;
+    border: 1px solid var(--accent, #8b5cf6);
+    background: rgba(139, 92, 246, 0.08);
+    color: var(--accent-fg, #c4b5fd);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+}
+.dsw-llm-btn:hover:not(:disabled) {
+    background: rgba(139, 92, 246, 0.16);
+}
+.dsw-llm-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+.dsw-llm-btn[aria-busy="true"] {
+    background: rgba(139, 92, 246, 0.2);
+}
+.dsw-cache-hint {
+    font-size: 11px;
+    color: var(--text-secondary, #98a4bd);
+    font-style: italic;
+}
+.dsw-llm-suggest-panel {
+    width: 100%;
+    margin-top: 8px;
+}
+.dsw-llm-section {
+    margin-bottom: 10px;
+}
+.dsw-llm-section h6 {
+    margin: 0 0 6px 0;
+    font-size: 12px;
+    color: var(--text-secondary, #98a4bd);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.dsw-llm-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.dsw-llm-chip {
+    padding: 4px 10px;
+    border: 1px solid var(--border-default, #2a3050);
+    background: var(--bg-input, #0e1124);
+    color: var(--text-primary, #e6ecff);
+    border-radius: 14px;
+    font-size: 12px;
+    cursor: pointer;
+}
+.dsw-llm-chip:hover {
+    border-color: var(--accent, #8b5cf6);
+}
+.dsw-llm-conf {
+    opacity: 0.7;
+    font-size: 11px;
+}
+
+/* Format Öner panel (sticky footer altında) */
+.dsw-format-suggest-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+    max-height: 220px;
+    overflow-y: auto;
+}
+.dsw-format-card {
+    padding: 10px 12px;
+    border: 1px solid var(--border-default, #2a3050);
+    border-radius: 8px;
+    background: var(--bg-input, #0e1124);
+}
+.dsw-format-card.active {
+    border-color: var(--accent, #8b5cf6);
+    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.18);
+}
+.dsw-format-card-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+.dsw-format-icon { font-size: 18px; }
+.dsw-format-card-title { font-size: 13px; }
+.dsw-format-card-type {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-secondary, #98a4bd);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.dsw-format-card-rationale {
+    margin: 4px 0 8px 0;
+    font-size: 12px;
+    color: var(--text-secondary, #98a4bd);
+}
+.dsw-format-apply-btn {
+    padding: 4px 10px;
+    border: 1px solid var(--accent, #8b5cf6);
+    background: transparent;
+    color: var(--accent-fg, #c4b5fd);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+}
+.dsw-format-apply-btn:hover {
+    background: rgba(139, 92, 246, 0.12);
+}
+
+/* B5a — Next butonu boş kolon guard görsel ipucu */
+.dsw-next-empty-guard {
+    cursor: not-allowed !important;
+    opacity: 0.55;
+}

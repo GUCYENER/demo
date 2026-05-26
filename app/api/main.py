@@ -397,6 +397,15 @@ def create_app() -> FastAPI:
     app.include_router(query_builder_api.router)  # v3.29.7 G3 - Multi-table Query Builder (suggest-path + preview)
     app.include_router(signal_weight_api.router)  # v3.29.8 L3 - multi_signal_rank weight tuner admin API
     app.include_router(db_smart_api.router)  # v3.30.0 - Akıllı Veri Keşfi (DB Smart Wizard)
+
+    # v3.37.0: LLM Smart Discovery Routers (METIS — METRIC + COLUMN + FORMAT)
+    from app.api.routes.llm_metric_api import router as llm_metric_router
+    from app.api.routes.llm_column_api import router as llm_column_router
+    from app.api.routes.llm_format_api import router as llm_format_router
+    app.include_router(llm_metric_router)
+    app.include_router(llm_column_router)
+    app.include_router(llm_format_router)
+
     app.include_router(prom_metrics_route.router, tags=["observability"])  # v3.30.0 FAZ 5 P36 - /metrics
 
     # v3.30.0 FAZ 5 P36 — Observability init (OTel + Prometheus).

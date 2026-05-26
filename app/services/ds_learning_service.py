@@ -37,6 +37,17 @@ def _get_db_connector(source: dict, password: str):
     db_name = source.get("db_name", "")
     db_user = source.get("db_user", "")
 
+    # B1 guard v3.37.0 (ATHENA-BE defensive): _load_source upstream'inde
+    # db_type normalize edilmeden gelen değerler (None / "" / literal "db_type")
+    # downstream'de "Desteklenmeyen veritabanı tipi" mesajı veriyordu;
+    # bu mesaj caller'ın gerçek hatasını gizliyor (kayıtlı rapor rerun yolu
+    # için B1 root cause). Açıklayıcı hata mesajına çevir.
+    if db_type in (None, "", "db_type"):
+        raise ValueError(
+            f"Geçersiz/normalleştirilmemiş db_type değeri: {db_type!r} — "
+            "_load_source çağrısı kontrol edin"
+        )
+
     if db_type == "postgresql":
         import psycopg2
         import psycopg2.extras

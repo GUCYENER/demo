@@ -40,6 +40,17 @@ Write-Host "         VYRA L1 Support API v$Version" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 
+# 0. MCP On-Isindirma (MemPalace + Graphify) — PG'den ONCE
+#    Bat HER ZAMAN exit 0 doner; failure servisleri bloklamaz.
+Write-Host "[0/7] MCP on-isindirma (MemPalace + Graphify)..." -ForegroundColor Yellow
+$mcpBat = "$ProjectRoot\mcp_warmup.bat"
+if (Test-Path $mcpBat) {
+    & cmd.exe /c "`"$mcpBat`"" *> $null
+    Write-Host "   [OK] MCP isindirma tamamlandi (detay: mcp_warmup.bat ciktisi gizli)" -ForegroundColor Green
+} else {
+    Write-Host "   [--] mcp_warmup.bat yok - atlandi (MCP fallback devreye girecek)" -ForegroundColor DarkGray
+}
+
 # 1. PostgreSQL
 Write-Host "[1/7] PostgreSQL baslatiliyor..." -ForegroundColor Yellow
 $pgBin = "$ProjectRoot\pgsql\bin"

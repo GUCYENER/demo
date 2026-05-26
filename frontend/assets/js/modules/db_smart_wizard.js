@@ -216,6 +216,37 @@
         }
         // v3.30.0 P2: adım data fetch (lazy)
         if (typeof _onStepEnter === 'function') _onStepEnter(n);
+        // v3.37.0 B5a (HEBE-FE 2026-05-25): Step 3'te kolon boşsa Next disable.
+        try { _updateNextGuard(); } catch (e) { /* defansif */ }
+    }
+
+    // v3.37.0 B5a — Step 3 (Filtre / kolon seçimi) için Next butonu disable/enable.
+    // Çağrı: _setStep sonrası + _addReportColumn / _removeReportColumn sonrası.
+    function _updateNextGuard() {
+        const next = document.getElementById('dswNextBtn');
+        if (!next) return;
+        // Step 4 son adımda Next zaten hidden (F22) → karışma.
+        if (_state.currentStep !== 3) return;
+        const empty = !Array.isArray(_state.reportColumns) || _state.reportColumns.length === 0;
+        next.disabled = empty;
+        next.classList.toggle('dsw-next-empty-guard', empty);
+        next.setAttribute('aria-disabled', empty ? 'true' : 'false');
+        if (empty) {
+            next.setAttribute('title', 'En az bir kolon seçin');
+        } else {
+            next.removeAttribute('title');
+        }
+        // Hover/click handler — disabled butonda click event fire etmez (native),
+        // bu yüzden ek bir mousedown listener idempotent ekliyoruz.
+        if (!next._b5aBound) {
+            next.addEventListener('mousedown', function (ev) {
+                if (next.disabled || next.getAttribute('aria-disabled') === 'true') {
+                    ev.preventDefault();
+                    _notify('En az bir kolon seçin', 'warning');
+                }
+            });
+            next._b5aBound = true;
+        }
     }
 
     // v3.35.0: prev/next "step 1" skipliyor — _STEPS sırasını kullan.
@@ -998,11 +1029,15 @@
             table_id: cat.table_id,
         }]);
         _renderReportColumns();
+        // v3.37.0 B5a: kolon eklenince Next guard refresh
+        try { _updateNextGuard(); } catch (e) { /* defansif */ }
     }
 
     function _removeReportColumn(colName) {
         _state.reportColumns = (_state.reportColumns || []).filter(c => c.column_name !== colName);
         _renderReportColumns();
+        // v3.37.0 B5a: kolon listesi boşalırsa Next guard refresh
+        try { _updateNextGuard(); } catch (e) { /* defansif */ }
     }
 
     function _moveReportColumn(fromIdx, toIdx) {
@@ -1413,11 +1448,16 @@
                     ' · akış: ' + strategyLabel;
             }
             // P20-D: SQL legacy <pre> slot'una yazılır — AST editor mount edildiyse gizli.
+            // v3.37.0 B2 (HEBE-FE 2026-05-25): SQL'i manuel pretty-print formatla.
             if (legacy) {
-                legacy.textContent = sql;
+                legacy.textContent = _prettyPrintSql(sql);
                 legacy.setAttribute('aria-label', 'Üretilen SQL');
                 if (!_astEditorMounted) legacy.removeAttribute('hidden');
             }
+            // v3.37.0 B7b: ORDER BY chip render
+            try { _renderOrderByChips(); } catch (e) { /* defansif */ }
+            // v3.37.0 B6/B7a: Çalıştır footer mount (idempotent)
+            try { _ensureRunFooter(panel); } catch (e) { /* defansif */ }
         } catch (e) {
             if (hint) hint.textContent = 'Hata: ' + e.message;
             _notify('Önizleme oluşturulamadı: ' + e.message, 'error');
@@ -1611,6 +1651,8 @@
         const errorMsg = data.error || (errorObj ? (errorObj.message || String(errorObj)) : '');
 
         // SQL preview (collapsible)
+        // v3.37.0 B2 (HEBE-FE 2026-05-25): SQL'i pretty-print et — kullanıcı
+        // anahtar kelimeleri net görsün.
         if (data.sql) {
             const sqlWrap = document.createElement('details');
             sqlWrap.className = 'dsw-result-sql-wrap';
@@ -1618,7 +1660,7 @@
             sqlSummary.textContent = '📝 Üretilen SQL' + (fallback ? '  (fallback)' : '');
             const sqlPre = document.createElement('pre');
             sqlPre.className = 'dsw-result-sql';
-            sqlPre.textContent = data.sql;
+            sqlPre.textContent = _prettyPrintSql(data.sql);
             sqlWrap.appendChild(sqlSummary);
             sqlWrap.appendChild(sqlPre);
             body.appendChild(sqlWrap);
@@ -1874,6 +1916,10 @@
             _loadPreview();
             _mountAstEditor();
         }
+        // v3.37.0 (HEBE-FE): LLM/UX butonlarını ilgili step'te mount et.
+        try {
+            if (typeof _v337StepHook === 'function') _v337StepHook(n);
+        } catch (e) { /* defansif */ }
     }
 
     // ============================================
@@ -2420,22 +2466,25 @@
     }
 
     async function _confirmDeleteSavedReport(reportId, cardEl) {
+        // v3.37.0 B3 (HEBE-FE 2026-05-25): onay sonrası tüm gridi yeniden yükle —
+        // tek kart DOM remove + inline empty state yerine `_loadSavedReportsList()`
+        // çağrısı ile pagination/state senkron kalır.
         if (!window.confirm('Bu rapor silinsin mi? Bu işlem geri alınamaz.')) return;
         try {
             await _fetchJson(API_BASE + '/saved-reports/' + encodeURIComponent(reportId), { method: 'DELETE' });
-            if (cardEl && cardEl.parentNode) cardEl.parentNode.removeChild(cardEl);
-            _notify('Rapor silindi.', 'success');
-            // Liste boşaldıysa empty state göster
-            const list = document.getElementById('dswSavedReportsList');
-            if (list && !list.querySelector('.dsw-saved-report-card')) {
-                list.innerHTML = '<div class="dsw-saved-reports-empty">Henüz kayıtlı rapor yok. Akıllı Keşif ile oluşturup kaydedebilirsiniz.</div>';
-                const hint = document.getElementById('dswSavedReportsHint');
-                if (hint) hint.textContent = '';
-            }
+            _notify('Rapor silindi', 'success');
+            // Grid refresh — backend canlı veriyi tekrar listeler.
+            await loadSavedReports();
         } catch (e) {
             console.warn('[db_smart_wizard] delete failed:', e);
             _notify('Rapor silinemedi: ' + (e && e.message ? e.message : 'bilinmeyen hata'), 'error');
         }
+    }
+
+    // v3.37.0 B3: dış aliyas — brief signature `loadSavedReports()` ile uyumlu;
+    // mevcut `_loadSavedReportsList()` private helper'ı sarar.
+    async function loadSavedReports() {
+        return _loadSavedReportsList();
     }
 
     // ----- Save modal -----
@@ -2624,6 +2673,566 @@
         openChart();
     });
 
+    // ====================================================================
+    // v3.37.0 (HEBE-FE 2026-05-25) — Smart Discovery Wizard UX bundle
+    // --------------------------------------------------------------------
+    //   B2  — SQL pretty-print (anahtar kelime newline + 2-space indent)
+    //   B6  — "Bu rapordan ne bekliyorsunuz?" sticky footer (user_intent)
+    //   B7a — "▶️ Çalıştır" butonu footer'ın sağ tarafında
+    //   B7b — ORDER BY editable chip listesi (ASC/DESC toggle + remove + DnD)
+    //   B4  — "✨ Metrik Öner" LLM butonu  (POST /api/db-smart/llm/metric-suggest)
+    //   B5b — "✨ Kolon Öner"  LLM butonu  (POST /api/db-smart/llm/column-suggest)
+    //   B8  — "✨ Hazır Format Öner" butonu (POST /api/db-smart/llm/format-suggest)
+    // ====================================================================
+
+    // ── B2: SQL pretty-print ────────────────────────────────────────────
+    // Manuel formatter (3rd-party lib YOK). Anahtar kelimelerden önce
+    // newline; SELECT listesi içinde virgül sonrası newline; indent 2 space.
+    function _prettyPrintSql(sql) {
+        if (sql == null) return '';
+        let s = String(sql).trim();
+        if (!s) return '';
+        // Çoklu whitespace → tek space.
+        s = s.replace(/\s+/g, ' ');
+        const breakKeywords = [
+            'SELECT', 'FROM', 'WHERE', 'GROUP BY', 'ORDER BY',
+            'HAVING', 'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN',
+            'FULL JOIN', 'OUTER JOIN', 'JOIN', 'LIMIT', 'OFFSET',
+            'UNION ALL', 'UNION',
+        ];
+        // Önce uzun kelimeleri eşle ("LEFT JOIN" > "JOIN") — yukarıdaki sıra
+        // bunu garanti ediyor.
+        breakKeywords.forEach(function (kw) {
+            const re = new RegExp('(\\s|^)' + kw.replace(/ /g, '\\s+') + '(\\s|$)', 'gi');
+            s = s.replace(re, function (_, pre, post) {
+                return '\n' + kw + (post === ' ' ? ' ' : post);
+            });
+        });
+        // SELECT listesindeki virgülleri yeni satıra al — sadece
+        // SELECT…FROM aralığında.
+        const lines = s.split('\n').map(function (ln) {
+            const trimmed = ln.trim();
+            if (/^SELECT\b/i.test(trimmed)) {
+                // SELECT kısmı içinde virgül + space → virgül + newline + indent.
+                return trimmed.replace(/,\s*/g, ',\n  ');
+            }
+            return trimmed;
+        });
+        // Indent: alt satırlardaki devamları 2 space ile gir.
+        const out = [];
+        lines.forEach(function (ln) {
+            if (!ln) return;
+            // İlk anahtar kelime satırın başında zaten — ek indent yok.
+            // Çok satırlı SELECT'in 2-N satırları zaten "  col" şeklinde.
+            out.push(ln);
+        });
+        return out.join('\n');
+    }
+
+    // ── B7b: ORDER BY editable chips ───────────────────────────────────
+    // _state.order_by: [{ column_name, direction: 'ASC'|'DESC' }]
+    if (!Array.isArray(_state.order_by)) _state.order_by = [];
+
+    function _renderOrderByChips() {
+        const panel = document.getElementById('dswStep4');
+        if (!panel) return;
+        let host = panel.querySelector('[data-dsw-orderby]');
+        if (!host) {
+            host = document.createElement('div');
+            host.setAttribute('data-dsw-orderby', '1');
+            host.className = 'dsw-orderby-bar';
+            // Pre öncesine (mümkünse) yerleştir.
+            const legacy = document.getElementById('dswLegacyPreview');
+            if (legacy && legacy.parentNode === panel) {
+                panel.insertBefore(host, legacy);
+            } else {
+                panel.appendChild(host);
+            }
+        }
+        const items = Array.isArray(_state.order_by) ? _state.order_by : [];
+        // Sol etiket + chip listesi + "+ ORDER BY ekle" buton.
+        const cols = Array.isArray(_state.reportColumns) ? _state.reportColumns : [];
+        const colOptions = cols.map(function (c) {
+            return '<option value="' + _escape(c.column_name) + '">' +
+                _escape(c.label || c.column_name) + '</option>';
+        }).join('');
+        let chipsHtml = '<span class="dsw-orderby-label">Sıralama:</span>';
+        if (!items.length) {
+            chipsHtml += '<span class="dsw-orderby-empty">Henüz sıralama yok.</span>';
+        } else {
+            chipsHtml += items.map(function (it, idx) {
+                const col = it.column_name || '';
+                const dir = (it.direction === 'DESC') ? 'DESC' : 'ASC';
+                const arrow = (dir === 'ASC') ? '▲' : '▼';
+                return '<span class="order-chip" draggable="true" data-order-idx="' + idx + '">' +
+                    '<span class="order-chip-col">' + _escape(col) + '</span>' +
+                    '<button type="button" class="order-chip-toggle" data-order-toggle="' + idx + '" ' +
+                      'aria-label="ASC/DESC değiştir">' + arrow + ' ' + dir + '</button>' +
+                    '<button type="button" class="order-chip-remove" data-order-remove="' + idx + '" ' +
+                      'aria-label="Sıralamadan çıkar">×</button>' +
+                    '</span>';
+            }).join('');
+        }
+        chipsHtml += '<span class="dsw-orderby-add-wrap">' +
+            '<select class="dsw-orderby-add-select" data-order-add-select' +
+            (cols.length ? '' : ' disabled') + '>' +
+            '<option value="">+ Kolon seç</option>' + colOptions + '</select>' +
+            '</span>';
+        host.innerHTML = chipsHtml;
+        _bindOrderByEvents(host);
+    }
+
+    function _bindOrderByEvents(host) {
+        host.querySelectorAll('[data-order-toggle]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                const idx = parseInt(btn.getAttribute('data-order-toggle'), 10);
+                if (isNaN(idx)) return;
+                const it = _state.order_by[idx];
+                if (!it) return;
+                it.direction = (it.direction === 'ASC') ? 'DESC' : 'ASC';
+                _renderOrderByChips();
+            });
+        });
+        host.querySelectorAll('[data-order-remove]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                const idx = parseInt(btn.getAttribute('data-order-remove'), 10);
+                if (isNaN(idx)) return;
+                _state.order_by.splice(idx, 1);
+                _renderOrderByChips();
+            });
+        });
+        const addSel = host.querySelector('[data-order-add-select]');
+        if (addSel) {
+            addSel.addEventListener('change', function () {
+                const v = addSel.value;
+                if (!v) return;
+                const exists = _state.order_by.some(function (it) { return it.column_name === v; });
+                if (!exists) {
+                    _state.order_by.push({ column_name: v, direction: 'ASC' });
+                }
+                addSel.value = '';
+                _renderOrderByChips();
+            });
+        }
+        // HTML5 native drag-reorder
+        let dragIdx = -1;
+        host.querySelectorAll('[data-order-idx]').forEach(function (chip) {
+            chip.addEventListener('dragstart', function (ev) {
+                dragIdx = parseInt(chip.getAttribute('data-order-idx'), 10);
+                if (ev.dataTransfer) {
+                    ev.dataTransfer.effectAllowed = 'move';
+                    try { ev.dataTransfer.setData('text/plain', String(dragIdx)); } catch (_) {}
+                }
+                chip.classList.add('dragging');
+            });
+            chip.addEventListener('dragend', function () { chip.classList.remove('dragging'); });
+            chip.addEventListener('dragover', function (ev) { ev.preventDefault(); });
+            chip.addEventListener('drop', function (ev) {
+                ev.preventDefault();
+                const target = parseInt(chip.getAttribute('data-order-idx'), 10);
+                let src = dragIdx;
+                if ((src < 0 || isNaN(src)) && ev.dataTransfer) {
+                    try { src = parseInt(ev.dataTransfer.getData('text/plain'), 10); } catch (_) {}
+                }
+                if (isNaN(src) || src < 0 || src === target) return;
+                const arr = _state.order_by.slice();
+                const [moved] = arr.splice(src, 1);
+                arr.splice(target, 0, moved);
+                _state.order_by = arr;
+                _renderOrderByChips();
+            });
+        });
+    }
+
+    // ── B6 + B7a: Sticky footer (user_intent + Çalıştır + LLM Format Öner) ─
+    // user_intent state alanı (varsayılan boş)
+    if (typeof _state.user_intent !== 'string') _state.user_intent = '';
+
+    function _ensureRunFooter(panel) {
+        if (!panel) return;
+        let footer = panel.querySelector('.wizard-sticky-footer');
+        if (footer) {
+            // user_intent textarea değerini state ile senkron tut
+            const ta = footer.querySelector('#user-intent');
+            if (ta && ta.value !== (_state.user_intent || '')) {
+                ta.value = _state.user_intent || '';
+            }
+            return;
+        }
+        footer = document.createElement('div');
+        footer.className = 'wizard-sticky-footer';
+        footer.innerHTML =
+            '<textarea id="user-intent" placeholder="Bu rapordan ne bekliyorsunuz?" maxlength="500" ' +
+              'aria-label="Bu rapordan ne bekliyorsunuz?"></textarea>' +
+            '<div class="wizard-sticky-footer-actions">' +
+              '<button type="button" id="dswFormatSuggestBtn" class="dsw-llm-btn dsw-llm-btn-format" ' +
+                'aria-label="Hazır format öner">✨ Hazır Format Öner</button>' +
+              '<span id="dswFormatCacheHint" class="dsw-cache-hint" hidden></span>' +
+              '<button type="button" id="run-btn" class="wizard-run-btn" ' +
+                'aria-label="Raporu çalıştır">▶️ Çalıştır</button>' +
+            '</div>' +
+            '<div id="dswFormatSuggestPanel" class="dsw-format-suggest-panel" hidden ' +
+              'role="region" aria-label="LLM format önerileri"></div>';
+        panel.appendChild(footer);
+
+        const ta = footer.querySelector('#user-intent');
+        if (ta) {
+            ta.value = _state.user_intent || '';
+            ta.addEventListener('input', function () {
+                _state.user_intent = ta.value || '';
+                // Geriye uyum: mevcut backend `user_note`/`userNote` kullanıyor.
+                _state.userNote = ta.value || '';
+            });
+        }
+        const runBtn = footer.querySelector('#run-btn');
+        if (runBtn) {
+            runBtn.addEventListener('click', _runGeneratedReport);
+        }
+        const fmtBtn = footer.querySelector('#dswFormatSuggestBtn');
+        if (fmtBtn) {
+            fmtBtn.addEventListener('click', _onFormatSuggestClick);
+        }
+    }
+
+    // ── B4/B5b/B8 — LLM endpoint wrappers ──────────────────────────────
+    // Ortak yardımcılar: spinner state, cache hint, error toast + re-enable.
+    function _llmSetBusy(btn, busy, busyLabel) {
+        if (!btn) return;
+        if (busy) {
+            if (!btn.dataset._origLabel) btn.dataset._origLabel = btn.textContent;
+            btn.disabled = true;
+            btn.setAttribute('aria-busy', 'true');
+            btn.textContent = busyLabel || '⏳ Düşünüyor…';
+        } else {
+            btn.disabled = false;
+            btn.removeAttribute('aria-busy');
+            if (btn.dataset._origLabel) {
+                btn.textContent = btn.dataset._origLabel;
+                delete btn.dataset._origLabel;
+            }
+        }
+    }
+
+    function _showCacheHint(hintEl, cacheHit) {
+        if (!hintEl) return;
+        if (cacheHit) {
+            hintEl.textContent = '(önbellek)';
+            hintEl.hidden = false;
+        } else {
+            hintEl.textContent = '';
+            hintEl.hidden = true;
+        }
+    }
+
+    function _llmError(prefix, e, btn) {
+        const msg = (e && e.message) ? e.message : 'bilinmeyen hata';
+        _notify(prefix + ': ' + msg, 'error');
+        _llmSetBusy(btn, false);
+    }
+
+    // ── B4: Metrik Öner ────────────────────────────────────────────────
+    async function _onMetricSuggestClick() {
+        const btn = document.getElementById('dswMetricSuggestBtn');
+        const hint = document.getElementById('dswMetricCacheHint');
+        if (!_state.sourceId || !_state.selectedTableId) {
+            _notify('Önce kaynak ve tablo seçin', 'warning');
+            return;
+        }
+        const tableName = _state.selectedTableObjectName ||
+            (_state.selectedTableLabel || '').split('.').pop() || null;
+        const columns = (_state._columnCatalog || []).map(function (c) {
+            return { name: c.name, semantic_type: c.semantic_type, table: c.table_name };
+        });
+        const payload = {
+            source_id: _state.sourceId,
+            table: tableName,
+            columns: columns,
+            user_intent: _state.user_intent || '',
+        };
+        _llmSetBusy(btn, true);
+        try {
+            const data = await _fetchJson(API_BASE + '/llm/metric-suggest', {
+                method: 'POST',
+                body: JSON.stringify(payload),
+            });
+            _showCacheHint(hint, !!(data && data.cache_hit));
+            _renderMetricSuggestions(data);
+        } catch (e) {
+            console.warn('[db_smart_wizard] metric-suggest failed:', e);
+            _llmError('AI önerisi alınamadı', e, btn);
+            return;
+        }
+        _llmSetBusy(btn, false);
+    }
+
+    function _renderMetricSuggestions(data) {
+        const host = document.getElementById('dswMetricSuggestPanel');
+        if (!host) return;
+        const items = (data && Array.isArray(data.suggestions)) ? data.suggestions : [];
+        if (!items.length) {
+            host.innerHTML = '<p class="dsw-hint">Öneri dönmedi.</p>';
+            host.hidden = false;
+            return;
+        }
+        host.innerHTML = items.map(function (s) {
+            const key = s.metric_key || s.key || '';
+            const name = s.metric_name || s.name || key;
+            const conf = (typeof s.confidence === 'number')
+                ? Math.round(s.confidence * 100) + '%' : '';
+            const rationale = s.rationale || '';
+            return '<button type="button" class="dsw-llm-chip" ' +
+                'data-metric-key="' + _escape(key) + '" ' +
+                'title="' + _escape(rationale) + '">' +
+                _escape(name) + (conf ? ' <span class="dsw-llm-conf">(' + conf + ')</span>' : '') +
+                '</button>';
+        }).join('');
+        host.hidden = false;
+        host.querySelectorAll('[data-metric-key]').forEach(function (chip) {
+            chip.addEventListener('click', function () {
+                const mk = chip.getAttribute('data-metric-key');
+                if (!mk) return;
+                _state.selectedMetrics.add(mk);
+                if (!_state._metricsIndex[mk]) {
+                    _state._metricsIndex[mk] = { metric_key: mk };
+                }
+                _state.metric = _state._metricsIndex[mk];
+                // Eğer step 2'deki ilgili checkbox varsa işaretle
+                const cb = document.querySelector(
+                    '.dsw-metric-checkbox[data-metric-key="' + mk.replace(/"/g, '\\"') + '"]');
+                if (cb) { cb.checked = true; cb.dispatchEvent(new Event('change')); }
+                _notify('Metrik eklendi: ' + mk, 'success');
+            });
+        });
+    }
+
+    // Step 2 paneline "✨ Metrik Öner" butonunu mount et (idempotent).
+    function _ensureMetricSuggestButton() {
+        const panel = document.getElementById('dswStep2');
+        if (!panel) return;
+        if (panel.querySelector('#dswMetricSuggestBtn')) return;
+        const bar = document.createElement('div');
+        bar.className = 'dsw-llm-bar dsw-llm-bar-metric';
+        bar.innerHTML =
+            '<button type="button" id="dswMetricSuggestBtn" class="dsw-llm-btn dsw-llm-btn-metric" ' +
+              'aria-label="Metrik öner">✨ Metrik Öner</button>' +
+            '<span id="dswMetricCacheHint" class="dsw-cache-hint" hidden></span>' +
+            '<div id="dswMetricSuggestPanel" class="dsw-llm-suggest-panel" hidden ' +
+              'role="region" aria-label="LLM metrik önerileri"></div>';
+        panel.insertBefore(bar, panel.firstChild);
+        const btn = bar.querySelector('#dswMetricSuggestBtn');
+        // Disabled mantığı: tablo seçili değilse kapalı.
+        btn.disabled = !_state.selectedTableId;
+        btn.addEventListener('click', _onMetricSuggestClick);
+    }
+
+    // ── B5b: Kolon Öner ────────────────────────────────────────────────
+    async function _onColumnSuggestClick() {
+        const btn = document.getElementById('dswColumnSuggestBtn');
+        const hint = document.getElementById('dswColumnCacheHint');
+        if (!_state.sourceId || !_state.selectedTableId) {
+            _notify('Önce kaynak ve tablo seçin', 'warning');
+            return;
+        }
+        if (!_state.metric || !_state.metric.metric_key) {
+            _notify('Önce bir metrik seçin', 'warning');
+            return;
+        }
+        const tableName = _state.selectedTableObjectName ||
+            (_state.selectedTableLabel || '').split('.').pop() || null;
+        const payload = {
+            source_id: _state.sourceId,
+            table: tableName,
+            metric_key: _state.metric.metric_key,
+            columns: (_state._columnCatalog || []).map(function (c) {
+                return { name: c.name, semantic_type: c.semantic_type, table: c.table_name };
+            }),
+            user_intent: _state.user_intent || '',
+        };
+        _llmSetBusy(btn, true);
+        try {
+            const data = await _fetchJson(API_BASE + '/llm/column-suggest', {
+                method: 'POST',
+                body: JSON.stringify(payload),
+            });
+            _showCacheHint(hint, !!(data && data.cache_hit));
+            _renderColumnSuggestions(data);
+        } catch (e) {
+            console.warn('[db_smart_wizard] column-suggest failed:', e);
+            _llmError('AI önerisi alınamadı', e, btn);
+            return;
+        }
+        _llmSetBusy(btn, false);
+    }
+
+    function _renderColumnSuggestions(data) {
+        const host = document.getElementById('dswColumnSuggestPanel');
+        if (!host) return;
+        const metricCols = (data && Array.isArray(data.metric_columns)) ? data.metric_columns : [];
+        const dimCols = (data && Array.isArray(data.dimensions)) ? data.dimensions : [];
+        if (!metricCols.length && !dimCols.length) {
+            host.innerHTML = '<p class="dsw-hint">Öneri dönmedi.</p>';
+            host.hidden = false;
+            return;
+        }
+        function chipHtml(c) {
+            const name = c.column_name || c.name || '';
+            const label = c.label || name;
+            const rationale = c.rationale || '';
+            return '<button type="button" class="dsw-llm-chip" ' +
+                'data-col-name="' + _escape(name) + '" ' +
+                'title="' + _escape(rationale) + '">' + _escape(label) + '</button>';
+        }
+        host.innerHTML =
+            '<div class="dsw-llm-section" data-section="metric-cols">' +
+              '<h6>Metriğe Bağlı Kolonlar</h6>' +
+              '<div class="dsw-llm-chip-row">' +
+                (metricCols.length ? metricCols.map(chipHtml).join('') :
+                  '<span class="dsw-hint">Yok</span>') +
+              '</div>' +
+            '</div>' +
+            '<div class="dsw-llm-section" data-section="dimensions">' +
+              '<h6>İlgili Boyutlar</h6>' +
+              '<div class="dsw-llm-chip-row">' +
+                (dimCols.length ? dimCols.map(chipHtml).join('') :
+                  '<span class="dsw-hint">Yok</span>') +
+              '</div>' +
+            '</div>';
+        host.hidden = false;
+        // Chip click → reportColumns'a ekle
+        host.querySelectorAll('[data-col-name]').forEach(function (chip) {
+            chip.addEventListener('click', function () {
+                const name = chip.getAttribute('data-col-name');
+                if (!name) return;
+                _addReportColumn(name, null);
+            });
+        });
+    }
+
+    function _ensureColumnSuggestButton() {
+        const panel = document.getElementById('dswStep3');
+        if (!panel) return;
+        if (panel.querySelector('#dswColumnSuggestBtn')) return;
+        const bar = document.createElement('div');
+        bar.className = 'dsw-llm-bar dsw-llm-bar-column';
+        bar.innerHTML =
+            '<button type="button" id="dswColumnSuggestBtn" class="dsw-llm-btn dsw-llm-btn-column" ' +
+              'aria-label="Kolon öner">✨ Kolon Öner</button>' +
+            '<span id="dswColumnCacheHint" class="dsw-cache-hint" hidden></span>' +
+            '<div id="dswColumnSuggestPanel" class="dsw-llm-suggest-panel" hidden ' +
+              'role="region" aria-label="LLM kolon önerileri"></div>';
+        panel.insertBefore(bar, panel.firstChild);
+        const btn = bar.querySelector('#dswColumnSuggestBtn');
+        btn.disabled = !(_state.metric && _state.metric.metric_key);
+        btn.addEventListener('click', _onColumnSuggestClick);
+    }
+
+    // ── B8: Format Öner ────────────────────────────────────────────────
+    async function _onFormatSuggestClick() {
+        const btn = document.getElementById('dswFormatSuggestBtn');
+        const hint = document.getElementById('dswFormatCacheHint');
+        if (!_state.sourceId || !_state.selectedTableId) {
+            _notify('Önce kaynak ve tablo seçin', 'warning');
+            return;
+        }
+        const cols = (Array.isArray(_state.reportColumns) ? _state.reportColumns : [])
+            .map(function (c) {
+                return { name: c.column_name, semantic_type: c.semantic_type };
+            });
+        const payload = {
+            source_id: _state.sourceId,
+            metric_key: (_state.metric && _state.metric.metric_key) || null,
+            columns: cols,
+            user_intent: _state.user_intent || '',
+        };
+        _llmSetBusy(btn, true);
+        try {
+            const data = await _fetchJson(API_BASE + '/llm/format-suggest', {
+                method: 'POST',
+                body: JSON.stringify(payload),
+            });
+            _showCacheHint(hint, !!(data && data.cache_hit));
+            _renderFormatSuggestions(data);
+        } catch (e) {
+            console.warn('[db_smart_wizard] format-suggest failed:', e);
+            _llmError('AI önerisi alınamadı', e, btn);
+            return;
+        }
+        _llmSetBusy(btn, false);
+    }
+
+    function _renderFormatSuggestions(data) {
+        const host = document.getElementById('dswFormatSuggestPanel');
+        if (!host) return;
+        const items = (data && Array.isArray(data.formats)) ? data.formats : [];
+        if (!items.length) {
+            host.innerHTML = '<p class="dsw-hint">Öneri dönmedi.</p>';
+            host.hidden = false;
+            return;
+        }
+        const iconOf = function (ct) {
+            const k = String(ct || '').toLowerCase();
+            if (k === 'bar') return '📊';
+            if (k === 'line') return '📈';
+            if (k === 'pie') return '🥧';
+            if (k === 'table') return '📋';
+            if (k === 'scatter') return '🔵';
+            return '✨';
+        };
+        host.innerHTML = items.map(function (f, idx) {
+            const title = f.title || ('Format ' + (idx + 1));
+            const ct = f.chart_type || 'table';
+            const rationale = f.rationale || '';
+            return '<div class="dsw-format-card" data-format-idx="' + idx + '">' +
+                '<div class="dsw-format-card-head">' +
+                  '<span class="dsw-format-icon" aria-hidden="true">' + iconOf(ct) + '</span>' +
+                  '<strong class="dsw-format-card-title">' + _escape(title) + '</strong>' +
+                  '<span class="dsw-format-card-type">' + _escape(ct) + '</span>' +
+                '</div>' +
+                '<p class="dsw-format-card-rationale">' + _escape(rationale) + '</p>' +
+                '<button type="button" class="dsw-format-apply-btn" ' +
+                  'data-format-apply="' + idx + '">Uygula</button>' +
+                '</div>';
+        }).join('');
+        host.hidden = false;
+        host.querySelectorAll('[data-format-apply]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                const idx = parseInt(btn.getAttribute('data-format-apply'), 10);
+                if (isNaN(idx)) return;
+                const card = items[idx];
+                if (!card) return;
+                _state.format = card;
+                _notify('Format uygulandı: ' + (card.title || card.chart_type || ''), 'success');
+                // Mark active
+                host.querySelectorAll('.dsw-format-card').forEach(function (el) {
+                    el.classList.remove('active');
+                });
+                const target = host.querySelector('[data-format-idx="' + idx + '"]');
+                if (target) target.classList.add('active');
+            });
+        });
+    }
+
+    // Step enter hook'larına LLM butonlarını mount et — `_onStepEnter`
+    // function declaration olduğu için reassign yerine `_setStep` sonrası
+    // tetiklenen `_onStepEnter` zaten içinde lazy fetch yapıyor; biz LLM
+    // butonlarını ilgili load fonksiyonları sonrası mount eden bir
+    // MutationObserver yerine doğrudan _onStepEnter'a ek hook çağrısı
+    // koyamadığımız için, _renderStep2/3 ve _loadPreview'ye dışarıdan
+    // çağırılan helper'ları zaten ekledik. Burası rezerve no-op.
+    function _v337StepHook(n) {
+        if (n === 2) {
+            try { _ensureMetricSuggestButton(); } catch (e) { /* defansif */ }
+        } else if (n === 3) {
+            try { _ensureColumnSuggestButton(); } catch (e) { /* defansif */ }
+        } else if (n === 4) {
+            try { _renderOrderByChips(); } catch (e) { /* defansif */ }
+            const panel = document.getElementById('dswStep4');
+            try { _ensureRunFooter(panel); } catch (e) { /* defansif */ }
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+
     window.DbSmartWizardModule = {
         init: init,
         close: _closeWizard,
@@ -2635,5 +3244,8 @@
         openChart: openChart,
         setLastReportResult: setLastReportResult,
         getState: function () { return Object.assign({}, _state); },
+        // v3.37.0 (HEBE-FE) — testability
+        loadSavedReports: loadSavedReports,
+        _prettyPrintSql: _prettyPrintSql,
     };
 })();

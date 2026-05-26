@@ -6,7 +6,7 @@ v2.30.1: Basit health → comprehensive health check
 """
 
 import time
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 
 from app.core.config import settings
 from app.services.logging_service import log_warning
@@ -15,7 +15,7 @@ router = APIRouter()
 
 
 @router.get("/health")
-async def health():
+async def health(response: Response):
     """
     Sistem sağlık kontrolü ve detaylı durum bilgisi.
     
@@ -74,7 +74,12 @@ async def health():
         overall_status = "degraded"
     
     elapsed_ms = round((time.time() - start) * 1000, 1)
-    
+
+    # Tarayıcının versiyon/health yanıtını cache'lemesini engelle
+    # (login.html versiyon badge'i stale değer gösteriyordu — bkz. v3.36.0 fix)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+
     return {
         "status": overall_status,
         "version": _get_db_version(),
