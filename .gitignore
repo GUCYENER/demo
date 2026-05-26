@@ -25,6 +25,9 @@ share/
 # MCP server config (local machine paths)
 .mcp.json
 
+# Agent runtime state (hook-managed, changes every session)
+.agents/state/
+
 # IDE
 .vscode/
 .idea/
