@@ -40,24 +40,15 @@ Write-Host "         VYRA L1 Support API v$Version" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# 0. MCP On-Isindirma (MemPalace + Graphify) — PG'den ONCE
+# 0. Graphify MCP On-Isindirma (tek hafiza katmani) — PG'den ONCE
 #    Bat HER ZAMAN exit 0 doner; failure servisleri bloklamaz.
-#    OPTIMIZASYON: ikisi de zaten ayaktaysa warmup'i atla (gereksiz I/O yok).
-Write-Host "[0/7] MCP on-isindirma (MemPalace + Graphify)..." -ForegroundColor Yellow
+#    OPTIMIZASYON: Graphify zaten ayaktaysa warmup'i atla (gereksiz I/O yok).
+Write-Host "[0/7] Graphify MCP on-isindirma..." -ForegroundColor Yellow
 
 # Liveness check — hizli, sessiz, hatayi yutar.
-$mempalaceExe = "C:\Users\EXT02D059293\AppData\Local\Programs\Python\Python313\Scripts\mempalace.exe"
 $graphifyDir  = "C:\Users\EXT02D059293\Documents\General_Graphify"
 $venvPy       = $VenvPython  # PG bloku oncesi tanimli; system python yoksa burada da kullaniriz
 $sysPy        = (Get-Command python -ErrorAction SilentlyContinue).Source
-
-$mempalaceAlive = $false
-if (Test-Path $mempalaceExe) {
-    try {
-        & $mempalaceExe status *> $null
-        if ($LASTEXITCODE -eq 0) { $mempalaceAlive = $true }
-    } catch {}
-}
 
 $graphifyAlive = $false
 $gfCli = Join-Path $graphifyDir "core\cli.py"
@@ -73,17 +64,14 @@ if (Test-Path $gfCli) {
     }
 }
 
-if ($mempalaceAlive -and $graphifyAlive) {
-    Write-Host "   [SKIP] MemPalace + Graphify zaten ayakta - warmup atlandi" -ForegroundColor DarkGreen
+if ($graphifyAlive) {
+    Write-Host "   [SKIP] Graphify zaten ayakta - warmup atlandi" -ForegroundColor DarkGreen
 } else {
     $mcpBat = "$ProjectRoot\mcp_warmup.bat"
     if (Test-Path $mcpBat) {
-        $missing = @()
-        if (-not $mempalaceAlive) { $missing += "MemPalace" }
-        if (-not $graphifyAlive)  { $missing += "Graphify" }
-        Write-Host ("   [WARM] Isindirma gerekli ({0})..." -f ($missing -join ", ")) -ForegroundColor Yellow
+        Write-Host "   [WARM] Graphify isindirma gerekli..." -ForegroundColor Yellow
         & cmd.exe /c "`"$mcpBat`"" *> $null
-        Write-Host "   [OK] MCP isindirma tamamlandi (detay: mcp_warmup.bat ciktisi gizli)" -ForegroundColor Green
+        Write-Host "   [OK] Graphify isindirma tamamlandi (detay: mcp_warmup.bat ciktisi gizli)" -ForegroundColor Green
     } else {
         Write-Host "   [--] mcp_warmup.bat yok - atlandi (MCP fallback devreye girecek)" -ForegroundColor DarkGray
     }
