@@ -48,6 +48,20 @@ def _get_db_connector(source: dict, password: str):
             "_load_source çağrısı kontrol edin"
         )
 
+    # v3.37.1 Brief A (HERMES→ZEUS direct-apply 2026-05-26):
+    # port int defensive — saved-report rerun yolunda literal "port" string'i
+    # sızıyordu; psycopg2/oracledb ham hatası "invalid integer value 'port'
+    # for connection option 'port'" kafa karıştırıcıydı. Açıklayıcı mesajla
+    # erkenden raise et.
+    if not isinstance(port, int):
+        try:
+            port = int(port)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"Geçersiz port değeri: {port!r} — int bekleniyor "
+                f"(source_id={source.get('id')}, db_type={db_type!r})"
+            )
+
     if db_type == "postgresql":
         import psycopg2
         import psycopg2.extras

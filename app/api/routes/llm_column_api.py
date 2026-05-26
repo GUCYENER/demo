@@ -21,10 +21,11 @@ from pydantic import BaseModel, Field, validator
 
 from app.api.routes.auth import get_current_user
 from app.services import llm_column_service
+from app.services import llm_column_filter_service
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/db/smart/llm", tags=["llm-smart-discovery"])
+router = APIRouter(prefix="/api/db-smart/llm", tags=["llm-smart-discovery"])
 
 
 # ─────────────────────────────────────────────────────────────
@@ -116,4 +117,85 @@ def column_suggest(
         related_dimensions=[SuggestedColumn(**x) for x in result.get("related_dimensions", [])],
         cache_hit=bool(result.get("cache_hit", False)),
         model=str(result.get("model", "unknown")),
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# v3.37.1 — Bulgu D: Metric-Aware Column Filter (POSEIDON)
+# ─────────────────────────────────────────────────────────────
+
+class ColumnCandidate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=128)
+    semantic_type: Optional[str] = Field(default=None, max_length=64)
+    table_id: Optional[int] = Field(default=None)
+
+
+class ColumnFilterSuggestRequest(BaseModel):
+    source_id: int = Field(..., ge=1)
+    metric_key: Optional[str] = Field(default=None, max_length=200)
+    metric_kind: Optional[str] = Field(default=None, max_length=40)
+    candidates: List[ColumnCandidate] = Field(..., min_items=1, max_items=300)
+    user_intent: Optional[str] = Field(default=None, max_length=500)
+    top_n: int = Field(default=10, ge=1, le=50)
+
+
+class RecommendedColumn(BaseModel):
+    column_name: str
+    table_id: Optional[int] = None
+    rationale: str = ""
+    relevance: float = 0.0
+    semantic_bucket: str = "unknown"
+
+
+class WarnColumn(BaseModel):
+    column_name: str
+    reason: str
+    table_id: Optional[int] = None
+
+
+class ColumnFilterSuggestResponse(BaseModel):
+    ok: bool = True
+    metric_key: Optional[str] = None
+    metric_kind_inferred: str = "unknown"
+    recommended: List[RecommendedColumn]
+    warn_columns: List[WarnColumn]
+    cache_hit: bool = False
+
+
+@router.post("/column-filter-suggest", response_model=ColumnFilterSuggestResponse)
+def column_filter_suggest(
+    body: ColumnFilterSuggestRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> ColumnFilterSuggestResponse:
+    """v3.37.1 — Metric ile uyumlu kolonları öner + uyumsuzları uyar.
+
+    Deterministik POSEIDON kuralları (LLM yok, < 1ms response).
+    """
+    _require_user_id(current_user)
+
+    try:
+        result = llm_column_filter_service.suggest_metric_aware_columns(
+            source_id=body.source_id,
+            metric_key=body.metric_key,
+            metric_kind=body.metric_kind,
+            candidates=[c.dict() for c in body.candidates],
+            user_intent=body.user_intent,
+            top_n=body.top_n,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("[llm_column_api] column_filter_suggest failed: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Metrik-uyumlu kolon önerisi alınamadı: {e}",
+        )
+
+    return ColumnFilterSuggestResponse(
+        ok=True,
+        metric_key=body.metric_key,
+        metric_kind_inferred=str(result.get("metric_kind_inferred", "unknown")),
+        recommended=[RecommendedColumn(**x) for x in result.get("recommended", [])],
+        warn_columns=[WarnColumn(**x) for x in result.get("warn_columns", [])],
+        cache_hit=bool(result.get("cache_hit", False)),
     )

@@ -989,6 +989,23 @@ def post_execute_stream(
             errs = "; ".join(out.get("errors") or [])
             raise HTTPException(status_code=400, detail=f"SQL üretilemedi: {errs}")
 
+    # v3.37.1 Brief A (HERMES→ZEUS direct-apply 2026-05-26):
+    # body.source_id None ve body.wizard_state.source_id var ise fallback.
+    # Saved-report rerun yolunda dbsmart_saved_reports.source_id NULL ise
+    # frontend body.source_id göndermeyebilir; wizard_state snapshot her
+    # zaman source_id taşır (v3.30+ yazma yolu garanti eder).
+    if not src_id and isinstance(body.wizard_state, dict):
+        ws_sid = body.wizard_state.get("source_id")
+        if ws_sid:
+            try:
+                src_id = int(ws_sid)
+                logger.debug(
+                    "[db_smart.stream] source_id wizard_state fallback: %s",
+                    src_id,
+                )
+            except (TypeError, ValueError):
+                pass
+
     if not src_id:
         raise HTTPException(status_code=400, detail="source_id gerekli.")
 
@@ -1001,6 +1018,35 @@ def post_execute_stream(
         # 404 vs 403 ayırmıyoruz — varlık vs yetki sızıntısını önler
         raise HTTPException(status_code=404, detail="Veri kaynağı bulunamadı veya erişim yok.")
     src_dict, src_password, src_dialect = loaded_src
+    # v3.37.1 Brief A (HERMES→ZEUS direct-apply 2026-05-26):
+    # port defensive — psycopg2/oracledb literal "port" string'i sızarsa ham
+    # "invalid integer value 'port' for connection option 'port'" yerine
+    # anlaşılır Türkçe mesaj. data_sources kolonu integer ama snapshot
+    # path'lerde literal sızabilir; explicit cast + raise.
+    try:
+        src_dict["port"] = int(src_dict.get("port"))
+    except (TypeError, ValueError) as _port_err:
+        logger.error(
+            "[db_smart.stream] invalid port literal source_id=%s value=%r: %s",
+            src_id, src_dict.get("port"), _port_err,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Source port literal değil int olmalı "
+                f"(source_id={src_id}): {src_dict.get('port')!r}"
+            ),
+        )
+    # v3.37.1 Brief A — wizard_state.dialect ile data_sources.db_type mismatch
+    # ise DEBUG log (data_sources yetkili olur; aşağıdaki F21c bloğu zaten
+    # src_dialect'i adopte ediyor).
+    if isinstance(body.wizard_state, dict):
+        ws_dialect = body.wizard_state.get("dialect")
+        if ws_dialect and src_dialect and ws_dialect != src_dialect:
+            logger.debug(
+                "[db_smart.stream] dialect mismatch wizard=%r db=%r — db_type yetkili",
+                ws_dialect, src_dialect,
+            )
     # FIX3 P1 B1 (ORACLE): dialect mismatch artık silent downgrade DEĞİL.
     # Caller'ın yanlış dialect ile SQL render ettiği query'yi sessizce başka
     # bir engine'de çalıştırmak data corruption / syntax error riski yaratır.

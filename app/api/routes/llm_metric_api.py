@@ -30,7 +30,7 @@ from app.services.llm_metric_service import suggest_metrics
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/db/smart/llm", tags=["llm-smart-discovery"])
+router = APIRouter(prefix="/api/db-smart/llm", tags=["llm-smart-discovery"])
 
 
 # -------------------------------------------------------------

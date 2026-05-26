@@ -52,6 +52,84 @@
 
     function _clear(el) { while (el && el.firstChild) el.removeChild(el.firstChild); }
 
+    // v3.37.1 C (ATHENA-FE): SQL pretty-print (B2 helper local mirror).
+    // Anahtar kelime tabanli newline + 2-space JOIN indent. String literal
+    // ve cift tirnak identifier'lar token mask edilir (icindeki keyword'ler
+    // kirilmaz). 3rd-party lib yok. Refactor R021 (v3.38.0) ile db_smart_wizard
+    // ile ortak helper olarak cikarilacak.
+    function _prettyPrintSql(sql) {
+        if (sql == null) return '';
+        if (typeof sql !== 'string') return String(sql);
+        // JOIN tek basina vs compound (LEFT JOIN vs.) — compound'lari once
+        // marker ile sabitle, sonra standalone JOIN'i ayri pass'te isle.
+        const COMPOUND_JOINS = [
+            'INNER JOIN',
+            'LEFT OUTER JOIN', 'RIGHT OUTER JOIN', 'FULL OUTER JOIN',
+            'LEFT JOIN', 'RIGHT JOIN', 'FULL JOIN', 'CROSS JOIN'
+        ];
+        const OTHER_KEYWORDS = [
+            'SELECT', 'FROM', 'WHERE', 'GROUP BY', 'HAVING', 'ORDER BY',
+            'LIMIT', 'OFFSET', 'FETCH FIRST',
+            'UNION ALL', 'UNION', 'INTERSECT', 'EXCEPT',
+            'WITH'
+        ];
+        // 1) String literal ve cift tirnak identifier'larini token mask et.
+        const strings = [];
+        let masked = sql.replace(/'(?:[^']|'')*'/g, function (m) {
+            strings.push(m);
+            return '\u0000S' + (strings.length - 1) + '\u0000';
+        });
+        const idents = [];
+        masked = masked.replace(/"(?:[^"]|"")*"/g, function (m) {
+            idents.push(m);
+            return '\u0000I' + (idents.length - 1) + '\u0000';
+        });
+        // 2) Whitespace normalize.
+        masked = masked.replace(/\s+/g, ' ').trim();
+        // 3a) Compound JOIN'leri once isle, ic bosluklari \u0002 marker'ina cevir
+        //     ki standalone 'JOIN' regex'i icinde tekrar match etmesin.
+        const JOIN_MARK = '\u0002';
+        COMPOUND_JOINS.forEach(function (kw) {
+            const re = new RegExp('(\\s|^)(' + kw.replace(/ /g, '\\s+') + ')\\b', 'gi');
+            masked = masked.replace(re, function (full, lead, k) {
+                return '\n' + k.toUpperCase().replace(/\s+/g, JOIN_MARK);
+            });
+        });
+        // 3b) Standalone JOIN (compound bagi olmayan)
+        masked = masked.replace(/(\s|^)(JOIN)\b/gi, function (full, lead, k) {
+            return '\n' + k.toUpperCase();
+        });
+        // 3c) Marker'i tekrar space'e cevir
+        masked = masked.split(JOIN_MARK).join(' ');
+        // 3d) Diger keyword'ler
+        OTHER_KEYWORDS.forEach(function (kw) {
+            const re = new RegExp('(\\s|^)(' + kw.replace(/ /g, '\\s+') + ')\\b', 'gi');
+            masked = masked.replace(re, function (full, lead, k) {
+                return '\n' + k.toUpperCase();
+            });
+        });
+        masked = masked.replace(/^\n+/, '');
+        // 4) JOIN satirlarini 2-space indent et.
+        masked = masked.split('\n').map(function (line) {
+            const trimmed = line.trim();
+            if (/^(SELECT|FROM|WHERE|GROUP BY|HAVING|ORDER BY|LIMIT|OFFSET|FETCH FIRST|UNION|INTERSECT|EXCEPT|WITH)\b/i.test(trimmed)) {
+                return trimmed;
+            }
+            if (/^(INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|JOIN)\b/i.test(trimmed)) {
+                return '  ' + trimmed;
+            }
+            return trimmed;
+        }).join('\n');
+        // 5) Token'lari geri yerlestir.
+        masked = masked.replace(/\u0000S(\d+)\u0000/g, function (_, i) {
+            return strings[parseInt(i, 10)];
+        });
+        masked = masked.replace(/\u0000I(\d+)\u0000/g, function (_, i) {
+            return idents[parseInt(i, 10)];
+        });
+        return masked;
+    }
+
     function _svg(d) {
         const ns = 'http://www.w3.org/2000/svg';
         const svg = document.createElementNS(ns, 'svg');
@@ -313,7 +391,8 @@
             details.appendChild(summary);
             const pre = document.createElement('pre');
             pre.className = 'rdm-sql-pre';
-            pre.textContent = String(_report.last_sql);
+            // v3.37.1 C (ATHENA-FE): keyword bazli pretty-print — multi-line goster.
+            pre.textContent = _prettyPrintSql(_report.last_sql);
             details.appendChild(pre);
             body.appendChild(details);
         }
