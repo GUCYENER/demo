@@ -2,7 +2,7 @@
 plan_id: data_sources_validation
 created: 2026-05-28
 branch: hira
-status: in_progress
+status: completed
 version_target: v3.37.7
 council_mod: 2
 hebe_gate_required: true
