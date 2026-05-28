@@ -212,23 +212,46 @@ def list_for_user(
     *,
     limit: int = 50,
     offset: int = 0,
+    name_exact: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """RLS policy izolasyonu (user_id eşliyor). Yeniden eskiye sıralı."""
+    """RLS policy izolasyonu (user_id eşliyor). Yeniden eskiye sıralı.
+
+    v3.37.3 (bulgular-2 / Bulgu 7b risk): ``name_exact`` verilirse case-insensitive
+    tam eşleşme filtresi uygulanır — frontend duplicate-name kontrolü 200-rapor
+    listesi yerine doğrudan bu endpoint'i kullanabilir.
+    """
     _require_user_ctx(user_ctx)
     n = max(1, min(int(limit or 50), _MAX_LIMIT))
     o = max(0, int(offset or 0))
+    name_needle: Optional[str] = None
+    if name_exact is not None:
+        n_str = str(name_exact).strip()
+        if n_str:
+            name_needle = n_str[:_MAX_NAME_LEN]
+    # Bulgular3 / Review fix #2: wizard_state JSONB'den table_label + object_name
+    # extract et — frontend Saved Reports kart subtitle satiri (Bulgu 9) bu alanlara
+    # ihtiyac duyuyor; yeni kolon eklemeden JSON path ile cekiyoruz (zero-migration).
+    base_select = """
+        SELECT id, name, description, source_id, last_dialect,
+               tags, run_count, last_run_at, is_shared,
+               created_at, updated_at,
+               wizard_state->>'selectedTableLabel'      AS table_label,
+               wizard_state->>'selectedTableObjectName' AS table_object_name
+        FROM dbsmart_saved_reports
+    """
     try:
-        cur.execute(
-            """
-            SELECT id, name, description, source_id, last_dialect,
-                   tags, run_count, last_run_at, is_shared,
-                   created_at, updated_at
-            FROM dbsmart_saved_reports
-            ORDER BY updated_at DESC
-            LIMIT %s OFFSET %s
-            """,
-            (n, o),
-        )
+        if name_needle is not None:
+            cur.execute(
+                base_select
+                + " WHERE LOWER(name) = LOWER(%s) ORDER BY updated_at DESC LIMIT %s OFFSET %s",
+                (name_needle, n, o),
+            )
+        else:
+            cur.execute(
+                base_select
+                + " ORDER BY updated_at DESC LIMIT %s OFFSET %s",
+                (n, o),
+            )
         rows = cur.fetchall() or []
     except Exception as e:
         logger.warning("[db_smart.sr] list failed: %s", e)
@@ -243,6 +266,7 @@ def list_for_user(
             "source_id": r[3], "last_dialect": r[4], "tags": list(r[5] or []),
             "run_count": r[6], "last_run_at": r[7], "is_shared": r[8],
             "created_at": r[9], "updated_at": r[10],
+            "table_label": r[11], "table_object_name": r[12],
         })
     return out
 

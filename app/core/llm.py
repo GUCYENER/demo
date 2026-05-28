@@ -36,6 +36,50 @@ class LLMResponseError(Exception):
 
 
 # ============================================
+# JSON extraction helper (shared)
+# ============================================
+
+def extract_json_obj(text: str):
+    """Bulgular3 / Review fix #3: balanced-brace JSON parser for LLM outputs.
+
+    Replaces the greedy ``re.search(r"\\{.*\\}", DOTALL)`` pattern previously
+    duplicated in llm_metric_service, llm_report_meta_service,
+    llm_column_order, llm_generate_report. Greedy regex captured first ``{``
+    through last ``}`` and silently failed when the LLM produced multi-object
+    responses or surrounding commentary; non-greedy is unsafe for nested
+    objects. ``json.JSONDecoder().raw_decode()`` parses string-aware (handles
+    quoted braces) and returns the first valid object.
+
+    Returns the first JSON object found, or ``None``.
+    """
+    import json as _json
+    import re as _re
+    if not text:
+        return None
+    s = str(text).strip()
+    if s.startswith("```"):
+        s = _re.sub(r"^```(?:json)?\s*", "", s, count=1)
+        s = _re.sub(r"\s*```\s*$", "", s, count=1)
+    try:
+        obj = _json.loads(s)
+        if isinstance(obj, dict):
+            return obj
+    except Exception:
+        pass
+    decoder = _json.JSONDecoder()
+    start = s.find("{")
+    while start != -1:
+        try:
+            obj, _end = decoder.raw_decode(s[start:])
+            if isinstance(obj, dict):
+                return obj
+        except _json.JSONDecodeError:
+            pass
+        start = s.find("{", start + 1)
+    return None
+
+
+# ============================================
 # Data Classes
 # ============================================
 

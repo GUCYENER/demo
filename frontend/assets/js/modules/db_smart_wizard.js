@@ -3128,21 +3128,26 @@
         const nameIn = document.getElementById('dswSaveReportName');
         const descIn = document.getElementById('dswSaveReportDesc');
         const err = document.getElementById('dswSaveReportError');
-        if (nameIn) nameIn.value = '';
-        if (descIn) descIn.value = '';
+        if (nameIn) { nameIn.value = ''; nameIn._userTouched = false; }
+        if (descIn) { descIn.value = ''; descIn._userTouched = false; }
         if (err) { err.hidden = true; err.textContent = ''; }
         modal.classList.remove('hidden');
         modal.removeAttribute('hidden');
         setTimeout(function () { if (nameIn) nameIn.focus(); }, 0);
         // Bulgular3 / Bulgu 8: arka planda LLM'den baslik+aciklama oner.
         // Kullanici inputlara dokunduysa override etme — sadece bos kalanlari doldur.
-        _suggestReportMetaIntoModal(nameIn, descIn);
+        // Review fix #9: bekleyen LLM cagrisi varsa iptal et (modal her acilista yeni).
+        if (_state._saveMetaAbort) {
+            try { _state._saveMetaAbort.abort(); } catch (_) { /* ignore */ }
+        }
+        _state._saveMetaAbort = new AbortController();
+        _suggestReportMetaIntoModal(nameIn, descIn, _state._saveMetaAbort.signal);
     }
 
     // Bulgular3 / Bulgu 8: save-modal acildiginda LLM ile baslik+aciklama oner.
     // Kullanici islerine dokunmayalim: input value bos VE _userTouched bayragi
     // yoksa value'yu LLM yanitiyla doldur. Tekrar oner butonu da var.
-    async function _suggestReportMetaIntoModal(nameIn, descIn) {
+    async function _suggestReportMetaIntoModal(nameIn, descIn, abortSignal) {
         const hintEl = document.getElementById('dswSaveReportLlmHint');
         const setHint = function (txt, cls) {
             if (!hintEl) return;
@@ -3150,10 +3155,12 @@
             hintEl.className = 'dsw-save-llm-hint' + (cls ? ' ' + cls : '');
             hintEl.hidden = !txt;
         };
-        // Kullanici input'a dokununca override koruma bayragi
+        // Kullanici input'a dokununca override koruma bayragi.
+        // Review fix: her _openSaveModal'da _userTouched sifirlanir (yukarida);
+        // listener once:true ile bir kez fire eder ve self-remove olur — flag
+        // mantigi gerekmez. Sonraki modal acilisinda yeniden bind ederiz.
         const markTouched = function (el) {
-            if (!el || el._dswTouchedBound) return;
-            el._dswTouchedBound = true;
+            if (!el) return;
             el.addEventListener('input', function () { el._userTouched = true; }, { once: true });
         };
         markTouched(nameIn);
@@ -3164,6 +3171,7 @@
             return;
         }
         // Payload: tablo + secili metrikler + raporda gorunen kolonlar + user_intent
+        // Review fix #4: backend Pydantic max_length=20/50 — slice ile guvende kal.
         const idx = _state._metricsIndex || {};
         const metric_names = [];
         if (_state.selectedMetrics && _state.selectedMetrics.forEach) {
@@ -3178,10 +3186,12 @@
         const columns = (Array.isArray(_state.reportColumns) ? _state.reportColumns : [])
             .map(function (c) { return c.label || c.column_name || ''; })
             .filter(function (n) { return !!n; });
+        const metricNamesCapped = metric_names.slice(0, 20);
+        const columnsCapped = columns.slice(0, 50);
         const payload = {
             table_label: _state.selectedTableLabel || null,
-            metric_names: metric_names,
-            columns: columns,
+            metric_names: metricNamesCapped,
+            columns: columnsCapped,
             filters_count: Array.isArray(_state.filters) ? _state.filters.length : 0,
             user_intent: _state.user_intent || _state.userNote || '',
         };
@@ -3190,6 +3200,7 @@
             const data = await _fetchJson(API_BASE + '/llm/report-meta-suggest', {
                 method: 'POST',
                 body: JSON.stringify(payload),
+                signal: abortSignal,
             });
             const suggestedTitle = (data && data.title) ? String(data.title) : '';
             const suggestedDesc = (data && data.description) ? String(data.description) : '';
@@ -3202,14 +3213,26 @@
             const cached = data && data.cache_hit ? ' (önbellek)' : '';
             setHint('✨ AI önerdi — istediğin gibi düzenleyebilirsin' + cached, 'is-ok');
         } catch (e) {
+            // Review fix #9: iptal edildiyse sessizce gec (kullanici modal'i kapatti/yeniden acti)
+            if (e && (e.name === 'AbortError' || (abortSignal && abortSignal.aborted))) {
+                return;
+            }
             console.warn('[db_smart_wizard] report-meta-suggest failed:', e);
-            setHint('AI öneri alınamadı — başlığı ve açıklamayı manuel girin', 'is-error');
+            // Review fix #7: backend HTTPException.detail'i ekrana yansit.
+            const detail = (e && (e.detail || e.message)) ? String(e.detail || e.message).slice(0, 160) : '';
+            const tail = detail ? (' — ' + detail) : ' — başlığı ve açıklamayı manuel girin';
+            setHint('AI öneri alınamadı' + tail, 'is-error');
         }
     }
 
     function _closeSaveModal() {
         const modal = document.getElementById('dswSaveReportModal');
         if (!modal) return;
+        // Review fix #9: bekleyen LLM meta-suggest cagrisi varsa iptal et.
+        if (_state._saveMetaAbort) {
+            try { _state._saveMetaAbort.abort(); } catch (_) { /* ignore */ }
+            _state._saveMetaAbort = null;
+        }
         modal.classList.add('hidden');
         modal.setAttribute('hidden', '');
     }

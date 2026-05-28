@@ -32,6 +32,7 @@ from app.core.llm import (
     LLMConnectionError,
     LLMResponseError,
     call_llm_api,
+    extract_json_obj,
 )
 from app.services.db_smart import fk_graph
 from app.services.db_smart.rls_context import apply_vyra_user_context
@@ -192,42 +193,8 @@ def _heuristic_order_pairs(columns: List[Dict[str, Any]]) -> List[Dict[str, Any]
     return out
 
 
-# ─────────────────────────────────────────────────────────────
-# LLM JSON parsing — defensive
-# ─────────────────────────────────────────────────────────────
-
-_JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
-
-
-def _extract_json_obj(text: str) -> Optional[Dict[str, Any]]:
-    """Pull the first {...} JSON object from an LLM response string.
-
-    Handles ```json fences, leading prose, etc. Returns None if no valid JSON.
-    """
-    if not text:
-        return None
-    s = text.strip()
-    # Strip leading code fences.
-    if s.startswith("```"):
-        # remove starting ``` or ```json line
-        s = re.sub(r"^```(?:json)?\s*", "", s, count=1)
-        s = re.sub(r"\s*```\s*$", "", s, count=1)
-    # First try whole string.
-    try:
-        obj = json.loads(s)
-        if isinstance(obj, dict):
-            return obj
-    except Exception:
-        pass
-    # Fallback: greedy first {...}.
-    m = _JSON_BLOCK_RE.search(s)
-    if not m:
-        return None
-    try:
-        obj = json.loads(m.group(0))
-        return obj if isinstance(obj, dict) else None
-    except Exception:
-        return None
+# Bulgular3 / Review fix #3: shared balanced-brace parser (app.core.llm).
+_extract_json_obj = extract_json_obj
 
 
 # ─────────────────────────────────────────────────────────────

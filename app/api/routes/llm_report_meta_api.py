@@ -9,8 +9,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from app.api._llm_error_handling import handle_llm_errors
 from app.api.routes.auth import get_current_user
-from app.core.llm import LLMConfigError, LLMConnectionError, LLMResponseError
 from app.core.rate_limiter import limiter
 from app.services.llm_report_meta_service import suggest_report_meta
 
@@ -36,6 +36,7 @@ class ReportMetaSuggestResponse(BaseModel):
 
 @router.post("/report-meta-suggest", response_model=ReportMetaSuggestResponse)
 @limiter.limit("15/minute")
+@handle_llm_errors(logger)
 def post_report_meta_suggest(
     request: Request,
     response: Response,
@@ -44,26 +45,13 @@ def post_report_meta_suggest(
 ) -> ReportMetaSuggestResponse:
     if not current_user.get("id"):
         raise HTTPException(status_code=401, detail="Kullanici kimligi belirlenemedi.")
-    try:
-        result = suggest_report_meta(
-            table_label=body.table_label,
-            metric_names=body.metric_names or [],
-            columns=body.columns or [],
-            filters_count=int(body.filters_count or 0),
-            user_intent=body.user_intent,
-        )
-    except (LLMConnectionError, LLMConfigError) as e:
-        logger.warning("[llm_report_meta_api] LLM connection/config error: %s", e)
-        raise HTTPException(status_code=503, detail=f"LLM servisine ulasilamadi: {e}")
-    except LLMResponseError as e:
-        logger.warning("[llm_report_meta_api] LLM response parse error: %s", e)
-        raise HTTPException(status_code=502, detail=f"LLM gecersiz cevap dondu: {e}")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("[llm_report_meta_api] unexpected error: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Baslik onerisi uretilemedi.")
-
+    result = suggest_report_meta(
+        table_label=body.table_label,
+        metric_names=body.metric_names or [],
+        columns=body.columns or [],
+        filters_count=int(body.filters_count or 0),
+        user_intent=body.user_intent,
+    )
     return ReportMetaSuggestResponse(
         title=str(result.get("title") or ""),
         description=str(result.get("description") or ""),

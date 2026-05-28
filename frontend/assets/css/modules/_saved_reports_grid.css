@@ -237,6 +237,8 @@
 /* ---- Card (Bulgular3 / Bulgu 9: SaaS modern refresh) ---- */
 .srg-card {
     position: relative;
+    /* Review fix #8: color-mix CSS4 fallback — eski tarayicilarda single-color */
+    background: var(--bg-2, #161b2e);
     background: linear-gradient(180deg, var(--bg-2, #161b2e), color-mix(in srgb, var(--bg-2, #161b2e) 92%, transparent));
     border: 1px solid var(--border, #2a3550);
     border-radius: 14px;
@@ -260,6 +262,8 @@
     transition: opacity .18s ease;
 }
 .srg-card:hover {
+    /* Review fix #8: color-mix fallback */
+    border-color: var(--accent, #4f8cff);
     border-color: color-mix(in srgb, var(--accent, #4f8cff) 50%, var(--border, #2a3550));
     transform: translateY(-3px);
     box-shadow: 0 8px 24px rgba(79, 140, 255, 0.18), 0 2px 6px rgba(0, 0, 0, 0.25);
@@ -280,6 +284,8 @@
 .srg-card-metric-badge {
     background: rgba(79, 140, 255, 0.12);
     color: var(--accent, #4f8cff);
+    /* Review fix #8: color-mix fallback */
+    border: 1px solid rgba(79, 140, 255, 0.3);
     border: 1px solid color-mix(in srgb, var(--accent, #4f8cff) 30%, transparent);
     border-radius: 999px;
     padding: 3px 10px;
@@ -372,6 +378,8 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
+    /* Review fix #8: color-mix fallback */
+    border-top: 1px solid var(--border, #2a3550);
     border-top: 1px solid color-mix(in srgb, var(--border, #2a3550) 60%, transparent);
     padding-top: 10px;
     font-size: 0.72rem;

@@ -30,8 +30,10 @@ from app.core.llm import (
     LLMConnectionError,
     LLMResponseError,
     call_llm_api,
+    extract_json_obj,
     get_active_llm,
 )
+from app.services._llm_cache_util import LlmRedisCache, sha256_short
 
 logger = logging.getLogger(__name__)
 
@@ -45,46 +47,8 @@ MAX_SUGGESTIONS = 5
 ALLOWED_AGGS = {"SUM", "AVG", "COUNT", "MIN", "MAX", "COUNT_DISTINCT"}
 
 
-# -------------------------------------------------------------
-# Lazy Redis cache singleton (graceful fallback)
-# -------------------------------------------------------------
-
-_CACHE = None
-_CACHE_LOCK = threading.Lock()
-_CACHE_INIT_FAILED = False
-
-
-def _get_cache():
-    """Lazy singleton — Redis yoksa None doner, caller fallback yapar."""
-    global _CACHE, _CACHE_INIT_FAILED
-    if _CACHE is not None:
-        return _CACHE
-    if _CACHE_INIT_FAILED:
-        return None
-    with _CACHE_LOCK:
-        if _CACHE is not None:
-            return _CACHE
-        if _CACHE_INIT_FAILED:
-            return None
-        try:
-            from app.core.config import settings
-            from app.core.redis_cache import RedisCache
-            url = getattr(settings, "REDIS_URL", "redis://localhost:6379/1")
-            _CACHE = RedisCache(
-                redis_url=url,
-                default_ttl=_CACHE_TTL_SECONDS,
-                key_prefix=_CACHE_KEY_PREFIX,
-            )
-        except Exception as e:
-            logger.info("[llm_metric] cache init skipped: %s", e)
-            _CACHE_INIT_FAILED = True
-            _CACHE = None
-    return _CACHE
-
-
-def _sha256_short(text: str) -> str:
-    """Sabit uzunluk hash — cache key icin."""
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+# Bulgular3 / Review fix #5: shared LlmRedisCache facade (DRY)
+_CACHE = LlmRedisCache(prefix=_CACHE_KEY_PREFIX, ttl_seconds=_CACHE_TTL_SECONDS)
 
 
 def _make_cache_key(
@@ -108,34 +72,16 @@ def _make_cache_key(
     label_norm = (table_label or "").strip()
     return (
         f"{int(source_id)}:{table}:"
-        f"{_sha256_short(cols_canonical)}:{_sha256_short(intent_norm + '|' + label_norm)}"
+        f"{sha256_short(cols_canonical)}:{sha256_short(intent_norm + '|' + label_norm)}"
     )
 
 
 def _cache_get(key: str) -> Optional[Dict[str, Any]]:
-    cache = _get_cache()
-    if cache is None:
-        return None
-    try:
-        raw = cache.get_raw(key)
-        if not raw:
-            return None
-        data = json.loads(raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw)
-        return data if isinstance(data, dict) else None
-    except Exception as e:
-        logger.debug("[llm_metric] cache_get failed key=%s: %s", key, e)
-        return None
+    return _CACHE.get(key)
 
 
 def _cache_set(key: str, payload: Dict[str, Any]) -> None:
-    cache = _get_cache()
-    if cache is None:
-        return
-    try:
-        raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        cache.set_raw(key, raw, ttl=_CACHE_TTL_SECONDS)
-    except Exception as e:
-        logger.debug("[llm_metric] cache_set failed key=%s: %s", key, e)
+    _CACHE.set(key, payload)
 
 
 # -------------------------------------------------------------
@@ -215,34 +161,11 @@ def _build_prompt(
 
 
 # -------------------------------------------------------------
-# LLM JSON parsing — defensive
+# LLM JSON parsing — Bulgular3 Review fix #3: app.core.llm.extract_json_obj
+# delegated (balanced-brace, string-aware) — greedy regex kaldirildi.
 # -------------------------------------------------------------
 
-_JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
-
-
-def _extract_json_obj(text: str) -> Optional[Dict[str, Any]]:
-    """LLM cevabindan ilk {...} JSON nesnesini cek. ```json fence'i temizle."""
-    if not text:
-        return None
-    s = text.strip()
-    if s.startswith("```"):
-        s = re.sub(r"^```(?:json)?\s*", "", s, count=1)
-        s = re.sub(r"\s*```\s*$", "", s, count=1)
-    try:
-        obj = json.loads(s)
-        if isinstance(obj, dict):
-            return obj
-    except Exception:
-        pass
-    m = _JSON_BLOCK_RE.search(s)
-    if not m:
-        return None
-    try:
-        obj = json.loads(m.group(0))
-        return obj if isinstance(obj, dict) else None
-    except Exception:
-        return None
+_extract_json_obj = extract_json_obj
 
 
 def _validate_suggestions(raw_suggestions: Any) -> List[Dict[str, Any]]:
