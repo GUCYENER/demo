@@ -118,17 +118,26 @@ Aşağıdaki komutlar **büyük/küçük harf duyarsızdır** (başla=BAŞLA=Ba�
      5. **TAZE ise:** "🌳 graphify son commit indexed" notu, devam
    - Proje `vyra` hedefleniyor mu? Degilse hata ver
 
-2. **Servis Durumu Kontrol & Otomatik Başlatma:**
+2. **Servis Durumu Kontrol & Otomatik Başlatma (platform-aware):**
 
-   Tüm servisleri tek komutla başlat:
+   Tüm servisleri tek komutla başlat — ortama göre doğru girişi seç:
 
    ```powershell
+   # Windows (PowerShell):
    powershell -NoProfile -ExecutionPolicy Bypass -File D:\demo_vyra\start.ps1
    ```
 
-   `start.ps1` sırayla PG (5005) → Redis (6379) → Backend (8002) → Nginx (8000) → Oracle (1521) → Frontend (5500) kontrolü ve başlatmasını yapar; sonunda tarayıcıyı `http://localhost:8000/login.html` ile açar.
+   ```bash
+   # WSL/Linux (bash):
+   bash /mnt/d/demo_vyra/start.sh
+   ```
 
-   > **Hata:** Script çıkış kodu ≠ 0 ise → kullanıcıya bildir, oturumu engelleme.
+   Her iki giriş de PG (5005) → Redis (6379) → Backend (8002) → Nginx (8000) → Oracle (1521) → Frontend (5500) kontrolü ve başlatmasını yapar.
+
+   - **`start.ps1` (Windows-native):** doğrudan tüm servisleri başlatır, sonunda `http://localhost:8000/login.html` ile tarayıcıyı açar. Graphify warmup (v3.37.5+) iki katmanlı liveness check: DB var + son commit indexed. Yalnız her ikisi YES ise SKIP, aksi halde `mine + wakeup` zorla.
+   - **`start.sh` (WSL wrapper):** `powershell.exe` ile `start.ps1`'i çağırır, sonra WSL-tarafı port healthcheck (yalan söylemeyen rapor — `/dev/tcp` ile gerçek port testi, başarısız port `FAIL=N` exit 2).
+
+   > **Hata:** Script çıkış kodu ≠ 0 ise → kullanıcıya bildir, oturumu engelleme. WSL'den `start.sh` exit 2 verdiyse hangi port kapalı raporu kullanıcıya iletilir.
 
 3. **Git Durumu:**
    - Branch, status, son 5 commit

@@ -75,6 +75,22 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.37.5 (2026-05-28) - WSL BAŞLA rutini + Graphify liveness fix (HERMES + NIKE + MNEMOSYNE-GRAPH)
+> **WSL/Linux ortamında BAŞLA rutini ayağa kaldırılamıyor + yalancı "SKIP Graphify ayakta" mesajları temizlendi.** Kullanıcı geri bildirimi (2026-05-28): WSL'de `start.ps1` doğrudan çalışmıyor; Graphify warmup'ı her seferinde DB var diye atlıyor ama MCP gerçekten bağlanmıyor.
+
+**Yapılanlar:**
+- 🆕 **`start.sh` (HERMES + NIKE):** WSL/Linux başlatma köprüsü. `powershell.exe` ile Windows tarafındaki `start.ps1`'i çağırır, sonra WSL-tarafı `/dev/tcp` port healthcheck yapar (yalan söylemeyen rapor — başarısız port `FAIL=N` exit 2). `WSL_DISTRO_NAME` + `wslpath` + `powershell.exe` PATH check, eksikse non-zero exit.
+- 🛡️ **`start.ps1` Graphify liveness sertleştirme (MNEMOSYNE-GRAPH + HERMES):** Yalancı `[SKIP] zaten ayakta` düzeltildi. İki katmanlı check:
+  - Katman 1: `core.cli status --project vyra` exit 0 (DB var mı?)
+  - Katman 2: `core.cli search "<son_commit_short_hash>" --project vyra --limit 1` çıktı son commit'i içeriyor mu? (gerçek freshness)
+  - Sadece her ikisi YES → `[OK] Graphify taze - son commit (X) indexed`
+  - Katman 1 YES, Katman 2 NO → `[STALE] mine + wakeup` zorla
+  - İkisi de NO → `[WARM] mcp_warmup.bat` çalıştır
+- 🌳 **`.mcp.json` dual-environment köprüsü (MNEMOSYNE-GRAPH):** `command` doğrudan Windows Python path'i yerine `cmd.exe /c "cd /d <gf_dir> && python.exe -m mcp.mcp_server"` köprüsü. WSL Claude Code ve Windows Claude Code aynı dosyadan MCP başlatabiliyor (her ikisinde de `cmd.exe` PATH'te). `PYTHONUTF8=1` env eklendi. **Not:** `.mcp.json` `.gitignore` kapsamında ("MCP server config — local machine paths"), commit'e dahil edilmez; bu pattern'i diğer ortamlarda yeniden uygulamak için bu README entry'sini referans alın.
+- 📜 **`vyrazeus.md` Bölüm 3 Adım 2 platform-aware (HERA):** Hem `start.ps1` (Windows) hem `start.sh` (WSL) komutu sunulur; iki yolun davranış farkı açıklandı.
+
+**Plan dosyası:** `.agents/plans/2026-05-28_2152_wsl_basla_rutini_v1.md` (G1-G6 + risk tablosu + verification senaryoları).
+
 ### 🆕 v3.34.0 (2026-05-24) - vyraFetch helper + Frontend HTTP migrasyonu + MemPalace Freshness Gate
 > **Defansif HTTP katmanı + workflow housekeeping:** Tüm modüllerde tutarlı Türkçe hata kontratı (502/503/504, network failure, 401/403), MemPalace freshness gate ile bağlam çürümesi önlendi.
 
@@ -3852,7 +3868,11 @@ netstat -an | findstr "5005"
 
 **Geliştirici:** Yasın Fazlıoğlu  
 **E-posta:** yasin.fazlioglu@consultant.turkcell.com.tr  
-**Versiyon:** 3.36.0 (Smart Discovery Completion — Akıllı Veri Keşfi v3.36 sprint: **F6** WHERE AST fix + **F7** multi-column endpoint + **F8/F8b** LLM suggestion slots (max 3 LRU, `table_id` round-trip) + **F9** `generate-report` LLM endpoint + Çalıştır SSE popup + **F10b** `post_save_report_flat` flat fallback route (silent 404 fix) + **F11/F11b** `DbSmartChart` popup + Oracle `DD-MON-YY` date detection + chart z-index 11050 + **F13** picker FK multi-hop graph (adjacency BFS + abort controller) + **F14** metric step accordion+arama+multi-checkbox + **F15** allowed_tables case-insensitive + **F16** save modal z-index 11100 + INSERT 500 root cause + **F17** AST `/explain` + `/patch` graceful 422 + **F19-F21** retro (report_detail_modal route prefix, edit-mode hydration step1 chips, SSE Çalıştır, AST undo/redo + last-step Next + Maliyet badge removal) + **F22** saved-report rerun dialect resolution (FE omit + BE alias map) + edit-mode `source_id` snake/camel hydration + picker `initialSelection` round-trip (primary+joins) + cost badge UI removal)  
+**Versiyon:** 3.37.5 (WSL BAŞLA rutini + Graphify liveness fix — bkz. Versiyon Geçmişi v3.37.5)
+
+**Geçmiş versiyon notları:**
+
+3.36.0 (Smart Discovery Completion — Akıllı Veri Keşfi v3.36 sprint: **F6** WHERE AST fix + **F7** multi-column endpoint + **F8/F8b** LLM suggestion slots (max 3 LRU, `table_id` round-trip) + **F9** `generate-report` LLM endpoint + Çalıştır SSE popup + **F10b** `post_save_report_flat` flat fallback route (silent 404 fix) + **F11/F11b** `DbSmartChart` popup + Oracle `DD-MON-YY` date detection + chart z-index 11050 + **F13** picker FK multi-hop graph (adjacency BFS + abort controller) + **F14** metric step accordion+arama+multi-checkbox + **F15** allowed_tables case-insensitive + **F16** save modal z-index 11100 + INSERT 500 root cause + **F17** AST `/explain` + `/patch` graceful 422 + **F19-F21** retro (report_detail_modal route prefix, edit-mode hydration step1 chips, SSE Çalıştır, AST undo/redo + last-step Next + Maliyet badge removal) + **F22** saved-report rerun dialect resolution (FE omit + BE alias map) + edit-mode `source_id` snake/camel hydration + picker `initialSelection` round-trip (primary+joins) + cost badge UI removal)  
 **Önceki:** 3.34.0 (vyraFetch helper + Frontend HTTP migrasyonu — `window.vyraFetch` public alias, ~30 modülde tutarlı Türkçe hata kontratı (502/503/504, network failure, 401/403); MemPalace freshness gate — HEAD-hash short-circuit + MINE_TIMEOUT 600s; v3.33.1 fix bundle: rapor şablonu prompt, display SQL, multi-tenant RLS tanılaması, picker limit cap 500, wizard tablo arama % escape; archive housekeeping (v3.30 agentic_master + v3.34 paketi))
 
 ---

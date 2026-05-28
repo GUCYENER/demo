@@ -47,36 +47,77 @@ Write-Host ""
 
 # 0. Graphify MCP On-Isindirma (tek hafiza katmani) — PG'den ONCE
 #    Bat HER ZAMAN exit 0 doner; failure servisleri bloklamaz.
-#    OPTIMIZASYON: Graphify zaten ayaktaysa warmup'i atla (gereksiz I/O yok).
+#    LIVENESS (v3.37.5): Iki katmanli check — yalanci SKIP yasak.
+#      Katman 1: DB var mi? (core.cli status exit 0)
+#      Katman 2: Son git commit Graphify'da indexed mi? (core.cli search)
+#    Sadece her ikisi de YES ise SKIP. Aksi halde mine + wakeup zorla.
 Write-Host "[0/7] Graphify MCP on-isindirma..." -ForegroundColor Yellow
 
-# Liveness check — hizli, sessiz, hatayi yutar.
 $graphifyDir  = "C:\Users\EXT02D059293\Documents\General_Graphify"
 $venvPy       = $VenvPython  # PG bloku oncesi tanimli; system python yoksa burada da kullaniriz
 $sysPy        = (Get-Command python -ErrorAction SilentlyContinue).Source
 
-$graphifyAlive = $false
+$graphifyAlive   = $false   # Katman 1: DB var
+$graphifyIndexed = $false   # Katman 2: son commit indexed
+$shortHash       = ""
 $gfCli = Join-Path $graphifyDir "core\cli.py"
+
 if (Test-Path $gfCli) {
     $pyForGf = if ($sysPy) { $sysPy } else { $venvPy }
     if (Test-Path $pyForGf) {
         try {
             Push-Location $graphifyDir
+
+            # Katman 1: DB liveness
             & $pyForGf -m core.cli status --project vyra *> $null
-            if ($LASTEXITCODE -eq 0) { $graphifyAlive = $true }
+            if ($LASTEXITCODE -eq 0) {
+                $graphifyAlive = $true
+
+                # Katman 2: son commit indexed mi?
+                $shortHash = (& git -C $ProjectRoot log -1 --format="%h" 2>$null)
+                if ($shortHash -is [array]) { $shortHash = $shortHash[0] }
+                if ($shortHash) { $shortHash = $shortHash.Trim() }
+
+                if ($shortHash) {
+                    $searchOut = & $pyForGf -m core.cli search "$shortHash" --project vyra --limit 1 2>$null
+                    if ($searchOut -and ($searchOut -join "`n") -match [regex]::Escape($shortHash)) {
+                        $graphifyIndexed = $true
+                    }
+                }
+            }
             Pop-Location
-        } catch { try { Pop-Location } catch {} }
+        } catch {
+            try { Pop-Location } catch {}
+        }
     }
 }
 
-if ($graphifyAlive) {
-    Write-Host "   [SKIP] Graphify zaten ayakta - warmup atlandi" -ForegroundColor DarkGreen
-} else {
-    $mcpBat = "$ProjectRoot\mcp_warmup.bat"
+$mcpBat = "$ProjectRoot\mcp_warmup.bat"
+
+if ($graphifyAlive -and $graphifyIndexed) {
+    Write-Host "   [OK] Graphify taze - son commit ($shortHash) indexed, warmup atlandi" -ForegroundColor DarkGreen
+} elseif ($graphifyAlive) {
+    # DB var ama son commit indexed degil -> stale, mine zorla
+    Write-Host "   [STALE] Graphify ayakta ama son commit ($shortHash) indexed degil - mine + wakeup tetikleniyor..." -ForegroundColor Yellow
     if (Test-Path $mcpBat) {
-        Write-Host "   [WARM] Graphify isindirma gerekli..." -ForegroundColor Yellow
         & cmd.exe /c "`"$mcpBat`"" *> $null
-        Write-Host "   [OK] Graphify isindirma tamamlandi (detay: mcp_warmup.bat ciktisi gizli)" -ForegroundColor Green
+    }
+    try {
+        Push-Location $graphifyDir
+        $pyForGf = if ($sysPy) { $sysPy } else { $venvPy }
+        & $pyForGf -m core.cli mine --project vyra --quiet *> $null
+        Pop-Location
+        Write-Host "   [OK] Graphify mine + wakeup tamamlandi" -ForegroundColor Green
+    } catch {
+        try { Pop-Location } catch {}
+        Write-Host "   [WARN] Graphify mine basarisiz - devam" -ForegroundColor DarkYellow
+    }
+} else {
+    # DB yok veya status hata -> tam warmup
+    if (Test-Path $mcpBat) {
+        Write-Host "   [WARM] Graphify DB yok veya status hata - warmup baslatiliyor..." -ForegroundColor Yellow
+        & cmd.exe /c "`"$mcpBat`"" *> $null
+        Write-Host "   [OK] Graphify warmup tamamlandi" -ForegroundColor Green
     } else {
         Write-Host "   [--] mcp_warmup.bat yok - atlandi (MCP fallback devreye girecek)" -ForegroundColor DarkGray
     }
