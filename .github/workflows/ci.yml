@@ -1,0 +1,153 @@
+# VYRA CI — KAP 8b enforcement (vyrazeus §8)
+#
+# Four jobs in parallel: lint, audit, test, build. Each is a hard gate
+# for PRs targeting main; on feature branches they run informationally
+# so devs see the same signal without blocking work-in-progress pushes.
+#
+# Bootstrap-phase note (v3.39.0): until the v3.38.0 dev-tooling install
+# has happened in CI's Python image, lint/audit jobs use `continue-on-error`
+# so a green check is achievable while the team adopts ruff/pip-audit.
+# Flip those to hard failures once the first clean baseline lands —
+# tracked as REFACTOR_BACKLOG R-id to be filed after baseline.
+#
+# Branch protection (manual GitHub UI step, repo admin):
+#   Settings → Branches → main → Require status checks to pass before
+#   merging → tick: lint, audit, test, build
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs for the same ref when a newer push arrives —
+# saves CI minutes on rapid iterations.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: '3.13'
+  NODE_VERSION: '20'
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    # Bootstrap-phase soft gate — remove `continue-on-error` after first
+    # clean ruff baseline lands (KAP 1 adoption).
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      - name: Install dev tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: ruff check
+        run: ruff check app/ core/ tests/
+      - name: ruff format --check
+        run: ruff format --check app/ core/ tests/
+
+  audit:
+    name: Dependency audit (pip-audit + npm audit)
+    runs-on: ubuntu-latest
+    # Bootstrap-phase soft gate — flip after baseline triage.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dev tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: pip-audit (OSV)
+        run: pip-audit -r requirements.txt --strict --vulnerability-service osv
+      - name: npm audit (frontend, high+)
+        working-directory: frontend
+        run: |
+          npm ci --omit=optional
+          npm audit --omit=dev --audit-level=high
+
+  test:
+    name: Tests + coverage (pytest)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: vyra
+          POSTGRES_PASSWORD: vyra
+          POSTGRES_DB: vyra_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U vyra"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      PG_HOST: localhost
+      PG_PORT: '5432'
+      PG_USER: vyra
+      PG_PASSWORD: vyra
+      PG_DBNAME: vyra_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      - name: Install runtime + dev deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+      - name: pytest with coverage
+        run: |
+          pytest \
+            --cov=app --cov=core \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            --cov-fail-under=75 \
+            tests/
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          retention-days: 7
+
+  build:
+    name: Frontend bundle (esbuild)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        working-directory: frontend
+        run: npm ci --omit=optional
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+      - name: Verify bundle exists and is non-empty
+        run: |
+          test -s frontend/dist/bundle.min.js \
+            || (echo "::error::bundle missing or empty"; exit 1)
