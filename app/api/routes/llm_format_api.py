@@ -1,7 +1,7 @@
 """VYRA v3.37.0 — LLM Format Suggest API (B8 / METIS-FORMAT).
 
 Endpoint:
-    POST /api/db/smart/llm/format-suggest
+    POST /api/db-smart/llm/format-suggest  (v3.37.4 fix — prefix alignment)
 
 Step 4 (Önizleme) → "Hazır rapor formatı öner" butonu → LLM 3-5 hazır
 rapor kartı (chart_type + title + group_by) önerir.
@@ -28,7 +28,11 @@ from app.services.llm_format_service import suggest_formats
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/db/smart/llm", tags=["llm-smart-discovery"])
+# v3.37.4 fix: prefix alignment — diğer tüm db_smart endpoint'leri
+# /api/db-smart altında (db_smart_api.py:65); frontend API_BASE = '/db-smart'.
+# Eski prefix /api/db/smart/llm route'u 405/404 üretiyordu ("Hazır Format Öner"
+# butonu kırık). HERMES + ARES + POSEIDON cross-check 2026-05-28.
+router = APIRouter(prefix="/api/db-smart/llm", tags=["llm-smart-discovery"])
 
 
 # ──────────────────────────────────────────────────────────────────
