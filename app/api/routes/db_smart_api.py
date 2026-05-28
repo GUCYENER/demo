@@ -934,22 +934,30 @@ def _load_source(
                                  "db_user", "db_password_encrypted", "id"}
 
     def _data_corruption_500(field_name: str, raw_value, hint: str) -> "HTTPException":
-        # One construction site for the message so every field gets the same
-        # admin-actionable shape; logger.error captures the type for the
-        # post-mortem trail.
+        # v3.37.7 (ARES + HEBE): 500 → 400 + structured error_code. Admin
+        # mesajı (UPDATE komutu, tablo adı) detail dict'inde `admin_detail`
+        # alanında — FE log'a basabilir, son-kullanıcıya generic mesaj
+        # gösterir. Bilgi sızıntısı azalır + FE branch'leyebilir.
+        admin_msg = (
+            f"Veri kaynağı '{field_name}' alanı bozuk "
+            f"(source_id={source_id}, değer={raw_value!r}). {hint} "
+            f"Düzeltme: UPDATE data_sources SET {field_name}=<doğru-değer> "
+            f"WHERE id={source_id};"
+        )
         logger.error(
             "[db_smart._load_source] data_sources.%s corrupted source_id=%s "
             "raw=%r type=%s",
             field_name, source_id, raw_value, type(raw_value).__name__,
         )
         return HTTPException(
-            status_code=500,
-            detail=(
-                f"Veri kaynağı '{field_name}' alanı bozuk "
-                f"(source_id={source_id}, değer={raw_value!r}). {hint} "
-                f"Düzeltme: UPDATE data_sources SET {field_name}=<doğru-değer> "
-                f"WHERE id={source_id};"
-            ),
+            status_code=400,
+            detail={
+                "error_code": "source_corrupted",
+                "field": field_name,
+                "source_id": source_id,
+                "message": "Veri kaynağı bilgisi bozuk veya eksik. Lütfen yöneticiye bildirin veya raporu yeniden oluşturup kaydedin.",
+                "admin_detail": admin_msg,
+            },
         )
 
     raw_host = rec.get("host")

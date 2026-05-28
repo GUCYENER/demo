@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 
 from fastapi import APIRouter, HTTPException, Depends, Query, Body, BackgroundTasks
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.api.routes.auth import get_current_user
 from app.core.db import get_db_context
@@ -20,6 +20,39 @@ from app.services.permission_audit import log_permission_change
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/data-sources", tags=["data_sources"])
+
+
+# v3.37.7 (ARES + HERMES): yazma yolunda semantik validation — kullanıcının
+# kolon adı (placeholder) değerlerini gerçek host/port yerine girmesini
+# engelle. `_load_source` defansif okuma yolundaki canary set'i (db_smart_api
+# `_DATA_CORRUPTION_CANARIES`) ile aynı kelimeler — single source of truth
+# için duplicate; ileride dialect_constants.py'ye taşınabilir. Şu an
+# data_sources_api lokal kopya (circular import yok).
+_HOST_VALUE_CANARIES = frozenset({
+    "host", "port", "db_type", "db_name", "db_user",
+    "db_password", "db_password_encrypted", "id",
+})
+
+
+def _validate_host_value(v: Optional[str]) -> Optional[str]:
+    """host alanı için ortak Pydantic validator helper.
+
+    - None → None (Optional)
+    - whitespace-only → None (boş kabul edilir)
+    - canary kelimesi (`'host'`, `'port'` vb.) → ValueError (Pydantic 422)
+    - geçerli → strip edilmiş hâli
+    """
+    if v is None:
+        return None
+    s = v.strip()
+    if not s:
+        return None
+    if s.lower() in _HOST_VALUE_CANARIES:
+        raise ValueError(
+            f"host alanı kolon adı ('{s}') değil sunucu adresi olmalı "
+            f"(örn. localhost, 10.0.0.5, mssql.firma.local)"
+        )
+    return s
 
 
 # --- Pydantic Models ---
@@ -38,6 +71,11 @@ class DataSourceCreate(BaseModel):
     description: Optional[str] = None
     is_active: bool = True
 
+    @field_validator("host")
+    @classmethod
+    def _check_host(cls, v):
+        return _validate_host_value(v)
+
 
 class DataSourceUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=200)
@@ -51,6 +89,11 @@ class DataSourceUpdate(BaseModel):
     file_server_path: Optional[str] = Field(None, max_length=1000)
     description: Optional[str] = None
     is_active: Optional[bool] = None
+
+    @field_validator("host")
+    @classmethod
+    def _check_host(cls, v):
+        return _validate_host_value(v)
 
 
 class CollectSamplesRequest(BaseModel):

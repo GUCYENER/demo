@@ -11,6 +11,17 @@ window.DataSourcesModule = (function () {
     const VF_BASE = '/data-sources';
     let sources = [];
 
+    // v3.37.7 (HEBE+ARES): host alanında kolon-adı placeholder reddet.
+    // BE'deki `_HOST_VALUE_CANARIES` ile aynı set — defense-in-depth (BE primary).
+    const _HOST_VALUE_CANARIES = [
+        'host', 'port', 'db_type', 'db_name', 'db_user',
+        'db_password', 'db_password_encrypted', 'id',
+    ];
+    function _isInvalidHostValue(v) {
+        if (typeof v !== 'string') return false;
+        return _HOST_VALUE_CANARIES.indexOf(v.trim().toLowerCase()) !== -1;
+    }
+
     // Kaynak Tipi Etiketleri
     const SOURCE_TYPE_LABELS = {
         'database': 'Veri Tabanı',
@@ -616,6 +627,7 @@ window.DataSourcesModule = (function () {
 
             if (!dbType) { showToast('Veritabanı tipi seçin', 'warning'); return; }
             if (!host) { showToast('Sunucu adresi zorunludur', 'warning'); return; }
+            if (_isInvalidHostValue(host)) { showToast('Sunucu adresi kolon adı olamaz (örn. localhost, 10.0.0.5, mssql.firma.local)', 'warning'); return; }
             if (!port) { showToast('Port numarası zorunludur', 'warning'); return; }
             if (!dbName) { showToast('Veritabanı adı zorunludur', 'warning'); return; }
             if (!dbUser) { showToast('Kullanıcı adı zorunludur', 'warning'); return; }
@@ -645,6 +657,7 @@ window.DataSourcesModule = (function () {
             const dbPassword = document.getElementById('dsDbPassword')?.value;
 
             if (!host) { showToast('Sunucu adresi zorunludur', 'warning'); return; }
+            if (_isInvalidHostValue(host)) { showToast('Sunucu adresi kolon adı olamaz (örn. ftp.firma.com, 10.0.0.5)', 'warning'); return; }
             if (!port) { showToast('Port numarası zorunludur', 'warning'); return; }
             if (!dbUser) { showToast('Kullanıcı adı zorunludur', 'warning'); return; }
             if (!existingSource?.id && !dbPassword) { showToast('Şifre zorunludur', 'warning'); return; }
@@ -665,6 +678,7 @@ window.DataSourcesModule = (function () {
 
             if (!siteUrl) { showToast('Site URL zorunludur', 'warning'); return; }
             if (!tenantId) { showToast('Tenant ID zorunludur', 'warning'); return; }
+            if (_isInvalidHostValue(tenantId)) { showToast('Tenant ID kolon adı olamaz (Azure AD tenant GUID veya domain)', 'warning'); return; }
             if (!clientId) { showToast('Client ID zorunludur', 'warning'); return; }
             if (!existingSource?.id && !clientSecret) { showToast('Client Secret zorunludur', 'warning'); return; }
 

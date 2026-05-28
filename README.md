@@ -75,6 +75,27 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.37.7 (2026-05-28) - data_sources yazma validation + saved-report rerun resilience (HERMES + ATHENA + HEBE + ARES)
+> **Kayıtlı rapor çalıştır HTTP 500 zinciri kalıcı çözüldü.** İki bağımsız bug birleşince hata bütünleşiyordu: kullanıcı görseli `"host alani bozuk (source_id=1, deger='host')"`.
+
+**Bulgular (kullanıcı raporu + kod karşılaştırma):**
+- **B2 (kök):** `data_sources` CREATE/UPDATE Pydantic doğrulaması sadece `max_length=500`; FE `data_sources_module.js` sadece boş kontrol. Kullanıcı literal `"host"`, `"port"` gibi kolon-adı-değerlerini girip kaydedebiliyor; DB'ye bozuk satır yazılıyor.
+- **B1 (knock-on):** `report_detail_modal.js:478` saved-report rerun `_report.source_id || ws.source_id || ws.sourceId` — wizard_state snapshot fallback'i B2'den gelen bozuk source_id veya orphan reference yakalanıp `_load_source` → HTTP 500 (data_corruption_500).
+
+**Yapılanlar:**
+- 🐍 **`data_sources_api.py` (HERMES + ARES):** Pydantic `field_validator('host')` eklendi. Canary set `_HOST_VALUE_CANARIES = {host, port, db_type, db_name, db_user, db_password, db_password_encrypted, id}` — case-insensitive reddedilir, whitespace strip+None. DataSourceCreate + DataSourceUpdate ikisinde.
+- 🌐 **`data_sources_module.js` (ATHENA + HEBE):** FE defense-in-depth — `_isInvalidHostValue()` helper + 3 form yolunda (database, ftp, sharepoint) ek `_HOST_VALUE_CANARIES` kontrolü. Türkçe friendly toast.
+- 🌐 **`report_detail_modal.js` (ATHENA + ARES):** wizard_state snapshot fallback **kaldırıldı**. `_report.source_id` (kolon) tek otorite — yoksa friendly hata "Bu rapor eski formatta — veri kaynağı bilgisi eksik. Lütfen raporu wizard ile yeniden oluşturup kaydedin."
+- 🔐 **`db_smart_api.py _data_corruption_500` (ARES + HEBE):** HTTP 500 → **HTTP 400** + structured `detail: {error_code: "source_corrupted", field, source_id, message, admin_detail}`. Admin UPDATE komutu detail içinde korundu (post-mortem), son-kullanıcıya generic mesaj. FE `report_detail_modal` `errBody.detail.error_code === 'source_corrupted'` branch'ler — friendly toast.
+
+**TYCHE manuel test (6/6 PASS):** `host="host"` REJECT · `host="port"` REJECT · `host="Host"` case-insensitive REJECT · `host="localhost"` ACCEPT · `host="   "` (whitespace) ACCEPT (→None) · `host="10.0.0.5"` ACCEPT.
+
+**Council review:** HERMES ✅ · ATHENA ✅ · HEBE ✅ · ARES ✅ · APOLLO ✅ · HEPHAESTUS ✅ · TYCHE ✅ (7/7).
+
+**Plan:** `.agents/plans/2026-05-28_2303_data_sources_validation_v1.md`
+
+**Not (out-of-scope):** Mevcut DB'de bozuk satırların temizlik migration'ı opsiyonel — kullanıcı talep ederse ayrı sprintte (audit query → backfill veya orphan işaretle).
+
 ### 🆕 v3.37.6 (2026-05-28) - WSL healthcheck IP fix + Oracle gerçek liveness (HERMES + NIKE + POSEIDON)
 > **v3.37.5 follow-up patch.** İlk start.sh çalıştırmasında 2 bulgu açığa çıktı: start.sh WSL'den localhost ile Windows portlarına ulaşamıyor, start.ps1 Oracle "Up" raporladığı halde 1521 dinlemiyor olabiliyor.
 
@@ -3881,7 +3902,7 @@ netstat -an | findstr "5005"
 
 **Geliştirici:** Yasın Fazlıoğlu  
 **E-posta:** yasin.fazlioglu@consultant.turkcell.com.tr  
-**Versiyon:** 3.37.6 (WSL healthcheck IP fix + Oracle gerçek liveness — bkz. Versiyon Geçmişi v3.37.6)
+**Versiyon:** 3.37.7 (data_sources yazma validation + saved-report rerun resilience — bkz. Versiyon Geçmişi v3.37.7)
 
 **Geçmiş versiyon notları:**
 

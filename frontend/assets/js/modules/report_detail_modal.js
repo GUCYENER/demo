@@ -472,10 +472,15 @@
         try {
             // F21c (ARES+HERMES 2026-05-25): /sessions/{uid}/execute backend'de
             // stub (rows:[]) — bu yüzden "Sonuç boş." görünüyordu. Gerçek runner
-            // /sessions/{uid}/execute/stream (SSE). Saved report'taki last_sql +
-            // source_id (wizard_state'ten) + last_dialect ile direkt yeniden çalıştır.
-            const ws = _report.wizard_state || {};
-            const sourceId = _report.source_id || ws.source_id || ws.sourceId;
+            // /sessions/{uid}/execute/stream (SSE).
+            //
+            // v3.37.7 (HEBE+ATHENA+ARES 2026-05-28): wizard_state.source_id
+            // SNAPSHOT FALLBACK KALDIRILDI. Eski mantık snapshot içinden
+            // dangling/orphan source_id alıp `_load_source` 500'üne (literal
+            // 'host', silinmiş source) sebep oluyordu. Saved-report'un kendi
+            // source_id'si (kolon) tek otorite — yoksa rapor eski format
+            // sayılır, kullanıcıdan wizard'da yeniden kaydetmesi istenir.
+            const sourceId = _report.source_id;
             const lastSql = _report.last_sql || '';
             // F21c+F22c (ARES 2026-05-25): dialect HER ZAMAN omit → backend
             // source.db_type'tan resolve eder. Eski raporlarda last_dialect
@@ -484,7 +489,7 @@
             // sırasında mismatch/whitelist hatası üretiyordu. FE asla
             // dialect tahmininde bulunmasın.
             const dialect = null;
-            if (!sourceId) throw new Error('Veri kaynağı (source_id) yok — rapor eksik kaydedilmiş.');
+            if (!sourceId) throw new Error('Bu rapor eski formatta — veri kaynağı bilgisi eksik. Lütfen raporu wizard ile yeniden oluşturup kaydedin.');
             if (!lastSql) throw new Error('Saklanan SQL yok — raporu wizard ile yeniden oluşturup kaydedin.');
 
             // 1) Yeni session aç (source_id zorunlu — CreateSessionRequest).
@@ -519,8 +524,22 @@
                 }
             );
             if (!streamRes.ok) {
+                // v3.37.7: BE structured error → error_code branch'leme.
+                // {detail: {error_code, message, admin_detail, ...}} formatı
+                // backend `_data_corruption_500` tarafından dönülür.
                 let detail = '';
-                try { detail = await streamRes.text(); } catch (_) { /* noop */ }
+                let errBody = null;
+                try {
+                    detail = await streamRes.text();
+                    try { errBody = JSON.parse(detail); } catch (_) { /* not json */ }
+                } catch (_) { /* noop */ }
+                const errDetail = errBody && errBody.detail;
+                if (errDetail && typeof errDetail === 'object' && errDetail.error_code === 'source_corrupted') {
+                    if (errDetail.admin_detail) {
+                        console.warn('[report_detail_modal] source corruption (admin):', errDetail.admin_detail);
+                    }
+                    throw new Error(errDetail.message || 'Veri kaynağı bozuk');
+                }
                 throw new Error('HTTP ' + streamRes.status + (detail ? (': ' + detail.slice(0, 200)) : ''));
             }
 
