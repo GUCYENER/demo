@@ -237,27 +237,60 @@ if (Test-Path $nginxExe) {
 # 5. Oracle Test DB (Docker container — varsa)
 $dockerExe = "C:\Program Files\Docker\Docker\resources\bin\docker.exe"
 $composeFile = "$ProjectRoot\oracle_local_test\docker-compose.yml"
+
+# v3.37.6: gerçek port liveness — "container Up" ≠ "1521 dinliyor"
+# Oracle DB initialize 30s-3dk sürebilir; ayrı warn state ile raporla.
+function Test-Port-Quick {
+    param([int]$Port, [int]$TimeoutSec = 5)
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        $t = Test-NetConnection -ComputerName 127.0.0.1 -Port $Port -InformationLevel Quiet -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        if ($t) { return $true }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
+
 if (Test-Path $dockerExe) {
     Write-Host "[5/7] Oracle Test DB kontrol ediliyor..." -ForegroundColor Yellow
     $dockerOk = & $dockerExe info 2>$null | Select-String "Server Version"
     if ($dockerOk) {
         $oraStatus = & $dockerExe ps -a --filter "name=vyra-oracle-test" --format "{{.Status}}" 2>$null
         if ($oraStatus -match "Up") {
-            Write-Host "   [OK] Oracle Test DB zaten calisiyor" -ForegroundColor Green
+            # Container Up — port gerçekten dinliyor mu?
+            if (Test-Port-Quick -Port 1521 -TimeoutSec 5) {
+                Write-Host "   [OK] Oracle Test DB ayakta (port 1521 dinliyor)" -ForegroundColor Green
+            } else {
+                Write-Host "   [WARN] Oracle container Up ama port 1521 dinlemiyor (initialize devam, 1-3 dk surebilir)" -ForegroundColor DarkYellow
+            }
         } elseif ($oraStatus) {
             # Container var ama durmus — start dene, hata verirse sil+yeniden olustur
             $startResult = & $dockerExe start vyra-oracle-test 2>&1
             if ($LASTEXITCODE -eq 0) {
-                Write-Host "   [OK] Oracle Test DB baslatildi" -ForegroundColor Green
+                if (Test-Port-Quick -Port 1521 -TimeoutSec 15) {
+                    Write-Host "   [OK] Oracle Test DB baslatildi (port 1521 dinliyor)" -ForegroundColor Green
+                } else {
+                    Write-Host "   [WARN] Oracle baslatildi ama port 1521 henuz dinlemiyor (initialize 1-3 dk surebilir)" -ForegroundColor DarkYellow
+                }
             } elseif (Test-Path $composeFile) {
                 Write-Host "   [*] Container hasarli, yeniden olusturuluyor..." -ForegroundColor DarkYellow
                 & $dockerExe rm -f vyra-oracle-test 2>$null | Out-Null
                 & $dockerExe compose -f $composeFile up -d 2>$null | Out-Null
-                Write-Host "   [OK] Oracle Test DB yeniden olusturuldu" -ForegroundColor Green
+                if (Test-Port-Quick -Port 1521 -TimeoutSec 30) {
+                    Write-Host "   [OK] Oracle Test DB yeniden olusturuldu (port 1521 dinliyor)" -ForegroundColor Green
+                } else {
+                    Write-Host "   [WARN] Oracle yeniden olusturuldu, port 1521 henuz dinlemiyor (initialize 1-3 dk surebilir)" -ForegroundColor DarkYellow
+                }
+            } else {
+                Write-Host "   [HATA] Oracle start hata: $startResult" -ForegroundColor Red
             }
         } elseif (Test-Path $composeFile) {
             & $dockerExe compose -f $composeFile up -d 2>$null | Out-Null
-            Write-Host "   [OK] Oracle Test DB olusturuldu" -ForegroundColor Green
+            if (Test-Port-Quick -Port 1521 -TimeoutSec 30) {
+                Write-Host "   [OK] Oracle Test DB olusturuldu (port 1521 dinliyor)" -ForegroundColor Green
+            } else {
+                Write-Host "   [WARN] Oracle olusturuldu, port 1521 henuz dinlemiyor (initialize 1-3 dk surebilir)" -ForegroundColor DarkYellow
+            }
         } else {
             Write-Host "   [--] Oracle compose dosyasi bulunamadi" -ForegroundColor DarkGray
         }

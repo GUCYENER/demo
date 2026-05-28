@@ -75,6 +75,19 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.37.6 (2026-05-28) - WSL healthcheck IP fix + Oracle gerçek liveness (HERMES + NIKE + POSEIDON)
+> **v3.37.5 follow-up patch.** İlk start.sh çalıştırmasında 2 bulgu açığa çıktı: start.sh WSL'den localhost ile Windows portlarına ulaşamıyor, start.ps1 Oracle "Up" raporladığı halde 1521 dinlemiyor olabiliyor.
+
+**Bulgular (v3.37.5 sonrası canlı test):**
+- **A. WSL `/dev/tcp/localhost/PORT` yanılgısı:** WSL2 default NAT mode'da `localhost` distro'nun kendi loopback'idir, Windows host'un değil. Sonuç: PG/Redis/Backend/Nginx Windows'ta gerçekten AÇIKKEN, start.sh "KAPALI" raporladı (false negative). `Test-NetConnection` Windows'tan tüm portları OPEN doğruladı.
+- **B. start.ps1 Oracle yalancı `[OK]`:** `docker ps --filter "name=vyra-oracle-test"` `Up` dönüyor ama Oracle DB initialize süresi 30s-3dk olabiliyor; port 1521 dinlemiyor. Container "Up" raporu yeterli garanti değil.
+
+**Yapılanlar:**
+- 🔧 **`start.sh` (HERMES + NIKE):** Default gateway tespiti (`ip route | awk '/^default/'`) — Windows host IP'sini bulup `localhost OR $WIN_HOST` ikili check. Mirrored mode'da localhost zaten çalışır, NAT mode'da WIN_HOST devreye girer.
+- 🌊 **`start.ps1` (POSEIDON + NIKE):** Yeni `Test-Port-Quick` fonksiyonu — `Test-NetConnection` ile gerçek port liveness. Oracle bloğundaki 4 `[OK]` noktası `[OK port dinliyor]` veya `[WARN initialize devam ediyor]` state'lerine ayrıldı. Yalancı `[OK]` kalmadı; `[HATA]` branch'i de start sonrası başarısızlık için eklendi.
+
+**Plan:** v3.37.5 follow-up — ayrı plan dosyası açılmadı (vyrazeus.md §5d istisnası: tek atımlık 2 dosyalık patch).
+
 ### 🆕 v3.37.5 (2026-05-28) - WSL BAŞLA rutini + Graphify liveness fix (HERMES + NIKE + MNEMOSYNE-GRAPH)
 > **WSL/Linux ortamında BAŞLA rutini ayağa kaldırılamıyor + yalancı "SKIP Graphify ayakta" mesajları temizlendi.** Kullanıcı geri bildirimi (2026-05-28): WSL'de `start.ps1` doğrudan çalışmıyor; Graphify warmup'ı her seferinde DB var diye atlıyor ama MCP gerçekten bağlanmıyor.
 
@@ -3868,7 +3881,7 @@ netstat -an | findstr "5005"
 
 **Geliştirici:** Yasın Fazlıoğlu  
 **E-posta:** yasin.fazlioglu@consultant.turkcell.com.tr  
-**Versiyon:** 3.37.5 (WSL BAŞLA rutini + Graphify liveness fix — bkz. Versiyon Geçmişi v3.37.5)
+**Versiyon:** 3.37.6 (WSL healthcheck IP fix + Oracle gerçek liveness — bkz. Versiyon Geçmişi v3.37.6)
 
 **Geçmiş versiyon notları:**
 

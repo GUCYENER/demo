@@ -59,13 +59,25 @@ echo "============================================================"
 echo "  WSL-tarafı sağlık kontrolü (yalan söylemeyen rapor)"
 echo "============================================================"
 
+# WSL2 default networking'de `localhost` distro'nun kendi loopback'idir,
+# Windows host'a değil. Default gateway = Windows host IP. Mirrored mode'da
+# `localhost` zaten Windows'a forward eder — her iki hedefi de dener (OR).
+WIN_HOST=$(ip route 2>/dev/null | awk '/^default/ {print $3}' | head -1)
+if [ -z "$WIN_HOST" ]; then
+    WIN_HOST="127.0.0.1"
+    echo "  uyarı: Windows host IP belirlenemedi, sadece localhost denenecek"
+else
+    echo "  Healthcheck hedefleri: localhost + $WIN_HOST (Windows host)"
+fi
+
 check_port() {
     local name=$1
     local port=$2
     local timeout_s=${3:-15}
     local i=0
     while [ $i -lt $timeout_s ]; do
-        if (echo > /dev/tcp/localhost/$port) 2>/dev/null; then
+        if (echo > /dev/tcp/localhost/$port) 2>/dev/null \
+           || (echo > /dev/tcp/$WIN_HOST/$port) 2>/dev/null; then
             echo "  ✅  $name (port $port) — AÇIK"
             return 0
         fi
