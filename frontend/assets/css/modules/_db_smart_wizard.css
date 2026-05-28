@@ -2628,6 +2628,23 @@ body[data-dsw-locked="true"] {
     border-color: var(--vyra-accent, #4f8cff);
     color: var(--vyra-accent, #4f8cff);
 }
+/* Bulgular3 / Bulgu 3: standart kütüphane görünürlük toggle */
+.dsw-metric-static-toggle {
+    padding: 7px 14px;
+    border: 1px dashed var(--vyra-border, #2a3550);
+    background: transparent;
+    color: var(--text-secondary, #98a4bd);
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: border-color .15s ease, color .15s ease;
+    white-space: nowrap;
+}
+.dsw-metric-static-toggle:hover {
+    border-color: var(--vyra-accent, #4f8cff);
+    border-style: solid;
+    color: var(--vyra-accent, #4f8cff);
+}
 .dsw-metric-selected-count {
     font-size: 12px;
     color: var(--vyra-accent, #4f8cff);
@@ -2973,6 +2990,70 @@ body[data-dsw-locked="true"] {
     opacity: 0.7;
     font-size: 11px;
 }
+/* Bulgular3 / Bulgu 4: chip içi "Tablo: <TR ad>" satırı */
+.dsw-llm-chip-metric {
+    text-align: left;
+    line-height: 1.35;
+}
+.dsw-llm-chip-table {
+    display: inline-block;
+    margin-top: 2px;
+    font-size: 11px;
+    opacity: 0.75;
+    color: var(--text-secondary, #98a4bd);
+    font-style: italic;
+}
+.dsw-llm-chip-table-inline {
+    margin-left: 4px;
+    font-size: 11px;
+    opacity: 0.75;
+    color: var(--text-secondary, #98a4bd);
+}
+/* Bulgular3 / Bulgu 5: bulk-add (toplu rapora ekle) */
+.dsw-llm-bulk-bar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 6px;
+}
+.dsw-llm-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 4px 0 6px;
+}
+.dsw-llm-section-head h6 {
+    margin: 0;
+}
+.dsw-llm-bulk-add {
+    padding: 5px 10px;
+    border: 1px solid var(--vyra-accent, #4f8cff);
+    background: transparent;
+    color: var(--vyra-accent, #4f8cff);
+    border-radius: 6px;
+    font-size: 11px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background .15s ease, color .15s ease;
+}
+.dsw-llm-bulk-add:hover {
+    background: var(--vyra-accent, #4f8cff);
+    color: #fff;
+}
+.dsw-llm-bulk-add-small {
+    padding: 3px 8px;
+    font-size: 10px;
+}
+.dsw-llm-chip-added {
+    opacity: 0.5;
+    pointer-events: none;
+    position: relative;
+}
+.dsw-llm-chip-added::after {
+    content: ' ✓';
+    color: var(--success, #4ade80);
+    font-weight: bold;
+}
 
 /* Format Öner panel (sticky footer altında) */
 .dsw-format-suggest-panel {
@@ -3030,4 +3111,113 @@ body[data-dsw-locked="true"] {
 .dsw-next-empty-guard {
     cursor: not-allowed !important;
     opacity: 0.55;
+}
+
+/* v3.37.2 B2 — Step 4 LLM önerileri chip header */
+.dsw-llm-chips-header {
+    margin: 0 0 12px 0;
+    padding: 8px 12px;
+    background: rgba(124, 92, 255, 0.08);
+    border-left: 3px solid var(--vyra-accent, #7c5cff);
+    border-radius: 4px;
+}
+.dsw-llm-chips-title {
+    margin: 0 0 6px 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--vyra-text-secondary, #b8bdc9);
+}
+.dsw-llm-chips-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.dsw-llm-chips-header .dsw-llm-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    background: rgba(124, 92, 255, 0.18);
+    color: var(--vyra-text-primary, #e8eaed);
+    font-size: 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(124, 92, 255, 0.3);
+    cursor: default;
+}
+.dsw-llm-chips-header .dsw-llm-chip-conf {
+    font-size: 10px;
+    opacity: 0.75;
+    font-variant-numeric: tabular-nums;
+}
+
+/* v3.37.2 F2 — Step 4 önizleme: hint + run-btn aynı satır, run-btn sağ-üstte */
+/* v3.37.3 (bulgular-2 / Bulgu 4b-i) — sticky header: scroll'da Çalıştır butonu
+   gözden kaybolmasın. dsw-body scroll'lanırken header en üstte yapışık kalır. */
+.dsw-step4-headerbar {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 0 0 12px 0;
+    padding: 8px 0;
+    background: var(--bg-elevated, #14172b);
+    border-bottom: 1px solid var(--border-default, #2a3050);
+}
+.dsw-step4-headerbar .dsw-hint {
+    margin: 0;
+    flex: 1 1 auto;
+}
+.dsw-step4-headerbar .dsw-runbar {
+    margin: 0;
+    flex-shrink: 0;
+}
+
+/* v3.37.3 (bulgular-2 / Bulgu 3) — "Bu rapordan ne bekliyorsunuz?" altındaki
+   boşluğu kaldır.
+   Kökler:
+   1) `.dsw-format-suggest-panel { display: flex; ... }` `[hidden]` attribute'unu
+      specificity ile override ediyordu → gizliyken bile yer kaplıyordu.
+   2) `.dsw-body` padding-bottom değeri footer'ı modal altından yukarıda tutuyor,
+      footer ile modal altı arasında boş şerit kalıyordu. */
+.dsw-format-suggest-panel[hidden] {
+    display: none !important;
+}
+.dsw-modal-dialog .dsw-in-modal .dsw-body {
+    padding-bottom: 0;
+}
+.wizard-sticky-footer {
+    margin-top: 12px;
+    margin-bottom: 0;
+}
+.wizard-sticky-footer-actions:empty {
+    display: none;
+}
+
+/* PR-5/R4 — LLM fallback banner (inline-style yerine class). 2. adımda LLM
+   önerisi üretilemediğinde Bulgu 2 için büyük harfli amber kutu. */
+.dsw-llm-fallback-banner {
+    margin: 8px 0;
+    padding: 10px 12px;
+    background: #fff3cd;
+    border-left: 4px solid #f0ad4e;
+    color: #664d03;
+    border-radius: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.dsw-llm-fallback-banner-reason {
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .3px;
+    font-size: 13px;
+}
+.dsw-llm-fallback-banner-subtitle {
+    font-weight: 400;
+    text-transform: none;
+    font-size: 12px;
+    opacity: .9;
 }

@@ -92,17 +92,23 @@ def _make_cache_key(
     table: str,
     columns: List[Dict[str, Any]],
     user_intent: Optional[str],
+    table_label: Optional[str] = None,
 ) -> str:
-    """llm:metric:{source_id}:{table}:{sha256(columns)}:{sha256(intent)} formatinda key."""
+    """llm:metric:{source_id}:{table}:{sha256(columns)}:{sha256(intent+label)} formatinda key.
+
+    Bulgular3 / Bulgu 4: table_label hash'e dahil edilir — TR ad degisirse
+    eski cache yanlis rationale dondurmesin.
+    """
     cols_canonical = json.dumps(
         [{"name": c.get("name"), "type": c.get("type")} for c in columns],
         sort_keys=True,
         ensure_ascii=False,
     )
     intent_norm = (user_intent or "").strip()
+    label_norm = (table_label or "").strip()
     return (
         f"{int(source_id)}:{table}:"
-        f"{_sha256_short(cols_canonical)}:{_sha256_short(intent_norm)}"
+        f"{_sha256_short(cols_canonical)}:{_sha256_short(intent_norm + '|' + label_norm)}"
     )
 
 
@@ -140,8 +146,15 @@ def _build_prompt(
     table: str,
     columns: List[Dict[str, Any]],
     user_intent: Optional[str],
+    table_label: Optional[str] = None,
 ) -> List[Dict[str, str]]:
-    """Sistem + user mesajlarini olusturur."""
+    """Sistem + user mesajlarini olusturur.
+
+    Bulgular3 / Bulgu 4: table_label (TR ad) verilirse promptta "Tablo (TR adi):
+    X (SQL adi: Y)" formatinda gosterilir; LLM rationale icinde TR adi kullanmasi
+    icin sistem prompt'una talimat eklenir. formula SQL adlarini kullanmaya devam
+    eder (calistirilabilir).
+    """
     cols_lines: List[str] = []
     for c in columns[:MAX_COLUMNS_FOR_PROMPT]:
         name = (c.get("name") or "").strip()
@@ -154,6 +167,9 @@ def _build_prompt(
     if user_intent and user_intent.strip():
         intent_block = f"\n\nKullanici niyeti: {user_intent.strip()}"
 
+    label_norm = (table_label or "").strip()
+    use_tr_label = bool(label_norm) and label_norm.upper() != table.upper()
+
     system_prompt = (
         "Sen veri analisti METIS'sin. Verilen kolonlar uzerinden BI metrikleri "
         "onerirsin. Cevabin SADECE JSON olmali, baska metin EKLEME. "
@@ -162,9 +178,20 @@ def _build_prompt(
         "formula (SQL ifadesi), rationale (kisa Turkce gerekce), "
         "confidence (0-1 arasi float)."
     )
+    if use_tr_label:
+        system_prompt += (
+            " rationale icinde tablo adini ANARKEN Turkce ogrenilmis adi "
+            "(table_label) kullan. formula icindeki tablo/kolon adlarini "
+            "SQL identifier'i ile (orijinal isimler) yaz, calistirilabilir kalsin."
+        )
+
+    if use_tr_label:
+        table_line = f"Tablo (TR adi): {label_norm} (SQL adi: {table})"
+    else:
+        table_line = f"Tablo: {table}"
 
     user_prompt = (
-        f"Tablo: {table}\n"
+        f"{table_line}\n"
         f"Kolonlar:\n{cols_block}"
         f"{intent_block}\n\n"
         "Cikti SADECE su JSON formatinda olsun:\n"
@@ -264,6 +291,7 @@ def suggest_metrics(
     table: str,
     columns: List[Dict[str, Any]],
     user_intent: Optional[str] = None,
+    table_label: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Verilen kolonlar icin maks 5 metrik onerisi uretir.
 
@@ -283,14 +311,24 @@ def suggest_metrics(
         # Defensive — caller (API) zaten 400 firlatir; servis seviyesinde bos liste = bos cevap.
         return {"suggestions": [], "cache_hit": False, "model": "unknown"}
 
-    cache_key = _make_cache_key(source_id, table, columns, user_intent)
+    cache_key = _make_cache_key(source_id, table, columns, user_intent, table_label=table_label)
 
     # 1) Cache lookup (Redis dustugunde sessizce gec)
     cached = _cache_get(cache_key)
     if cached and isinstance(cached.get("suggestions"), list):
         logger.info("[llm_metric] cache HIT key=%s", cache_key)
+        cached_sugs = cached.get("suggestions", [])
+        # Bulgular3 / Bulgu 4: eski cache item'larinda table_name_tr/object_name
+        # alanlari olmayabilir — defansif enrich.
+        label_norm_cached = (table_label or "").strip()
+        tr_label_cached = label_norm_cached if (label_norm_cached and label_norm_cached.upper() != table.upper()) else None
+        for s in cached_sugs:
+            if isinstance(s, dict):
+                s.setdefault("table_object_name", table)
+                if "table_name_tr" not in s:
+                    s["table_name_tr"] = tr_label_cached
         return {
-            "suggestions": cached.get("suggestions", []),
+            "suggestions": cached_sugs,
             "cache_hit": True,
             "model": cached.get("model", "unknown"),
         }
@@ -308,7 +346,9 @@ def suggest_metrics(
         pass
 
     # 3) LLM cagrisi
-    messages = _build_prompt(table=table, columns=columns, user_intent=user_intent)
+    messages = _build_prompt(
+        table=table, columns=columns, user_intent=user_intent, table_label=table_label,
+    )
     try:
         raw_response = call_llm_api(messages, temperature=0.2)
     except (LLMConnectionError, LLMConfigError):
@@ -326,6 +366,15 @@ def suggest_metrics(
         raise LLMResponseError("LLM cevabi JSON formatinda degil.")
 
     suggestions = _validate_suggestions(parsed.get("suggestions"))
+
+    # Bulgular3 / Bulgu 4: her oneriye TR + SQL tablo adi propagate et.
+    # Frontend chip ust kismina table_name_tr basar, tooltip'e table_object_name.
+    label_norm = (table_label or "").strip()
+    tr_label = label_norm if (label_norm and label_norm.upper() != table.upper()) else None
+    for s in suggestions:
+        s["table_object_name"] = table
+        s["table_name_tr"] = tr_label
+
     payload = {
         "suggestions": suggestions,
         "model": model_label,

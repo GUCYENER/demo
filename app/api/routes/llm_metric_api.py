@@ -46,6 +46,10 @@ class ColumnInfo(BaseModel):
 class MetricSuggestRequest(BaseModel):
     source_id: int = Field(..., ge=1)
     table: str = Field(..., min_length=1, max_length=200)
+    # Bulgular3 / Bulgu 4: TR'de öğrenilmiş tablo adı. LLM rationale ve metric_name
+    # için bu adı kullanır; frontend chip'inde TR ad gösterilir, SQL identifier
+    # tooltip'te kalır. None ise eski davranış (table SQL adıyla render).
+    table_label: Optional[str] = Field(default=None, max_length=200)
     columns: List[ColumnInfo] = Field(default_factory=list, max_length=50)
     user_intent: Optional[str] = Field(default=None, max_length=500)
 
@@ -56,6 +60,9 @@ class MetricSuggestionItem(BaseModel):
     formula: str
     rationale: str = ""
     confidence: float = 0.5
+    # Bulgular3 / Bulgu 4: frontend "Table:" üstüne TR ad, tooltip'e orijinal.
+    table_name_tr: Optional[str] = None
+    table_object_name: Optional[str] = None
 
 
 class MetricSuggestResponse(BaseModel):
@@ -99,6 +106,7 @@ def post_metric_suggest(
             table=body.table,
             columns=[c.model_dump() for c in body.columns],
             user_intent=body.user_intent,
+            table_label=body.table_label,
         )
     except (LLMConnectionError, LLMConfigError) as e:
         logger.warning("[llm_metric_api] LLM connection/config error: %s", e)

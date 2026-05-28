@@ -165,7 +165,12 @@ def _sanitize_cards(raw_cards: Any) -> List[Dict[str, Any]]:
         if not isinstance(card, dict):
             continue
         chart_type = str(card.get("chart_type", "")).strip().lower()
-        if chart_type not in CHART_TYPE_WHITELIST:
+        # Bulgular3 / Bulgu 6: chart_type bos geldiyse 'table' defaultu uygula
+        # (LLM bazen alanı atlıyor). Non-empty ama whitelist disi ise atla — yanlis
+        # kart goz onunde tutmaktan iyi.
+        if not chart_type:
+            chart_type = "table"
+        elif chart_type not in CHART_TYPE_WHITELIST:
             logger.info(
                 "Format kartı whitelist dışı chart_type='%s' — atlandı", chart_type
             )
