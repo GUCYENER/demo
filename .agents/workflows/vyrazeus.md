@@ -195,7 +195,7 @@ Aşağıdaki komutlar **büyük/küçük harf duyarsızdır** (başla=BAŞLA=Ba�
    ```
 
    > **Kural:** Kullanıcı seçim yapana kadar yeni MOD 2/MOD 3 göreve geçilmez.
-   > MOD 1 (tek satır soru/açıklama) bu gate'i bypass edebilir.
+   > MOD 1 (yalnız bilgi verme/açıklama — dosya değişikliği YOK; bkz. §4 revize 2026-05-28) bu gate'i bypass edebilir. **Tek satır fix MOD 1 değildir.**
    > **Kullanıcı [D] derse:** gerekçeyi auto-memory'ye `feedback_refactor_skip_<date>.md` olarak kaydet (sonraki BAŞLA'da aynı maddeleri tekrar sormaktan kaçınmak için).
 
    **current_version tespiti:** `README.md` "**Versiyon:**" satırı VEYA `app/core/config.py` `APP_VERSION` (semver karşılaştırması).
@@ -259,12 +259,27 @@ Görev nedir?
 ### 🟢 MOD 1 — LITE
 **Konsey YOK · Doğrudan yanıt**
 
-Proje bağlamı gerektirmeyen bağımsız sorular:
-- "Bu Python satırını açıkla", "SQL doğru mu?"
-- Config değişikliği, tek satır düzeltme, import ekleme
-- Log seviyesi değiştirme, comment ekleme
+> **REVİZE 2026-05-28 — KESİN KURAL:** MOD 1 **yalnız bilgi verme / açıklama / görüş bildirme** içindir. Herhangi bir dosya (kod, config, script, README, plan, audit, schema, migration, frontend module, vs.) **yazılıyor / değiştiriliyor / siliniyor** ise MOD 1 BYPASS YASAK, en az MOD 2 (council görüş + commit-öncesi onay) **zorunlu**. **Tek satır fix bile bu kuraldan muaf değildir** — sorun tespiti + çözüm önerisi + ilgili konsey üyelerinin ✅/❌ raporu olmadan diff working tree'ye uygulanamaz.
 
-→ Doğrudan yanıtla. Konsey çağırılmaz.
+**MOD 1 kapsamı (yalnız konuşma, dosya değişikliği YOK):**
+- "Bu Python satırını açıkla", "SQL doğru mu?" — açıklama
+- "Bu yaklaşım uygun mu?" — görüş bildirme
+- "Hangi modül nerede?" — yer gösterme
+- "X kütüphanesi ne işe yarar?" — bilgi verme
+
+| Yapılacak iş | Mod | Council görüş zorunlu mu? |
+|---|---|---|
+| "Bu satırı açıkla / bu doğru mu söyle" | MOD 1 | Hayır (dosya değişmiyor) |
+| Tek satır fix uygulayacağım | MOD 2 | **✅ ZORUNLU** (en az 1 primary + 1 review) |
+| Comment ekleme | MOD 2 | **✅ ZORUNLU** (değişiklik = değişiklik) |
+| Log seviyesi değiştirme | MOD 2 | **✅ ZORUNLU** (runtime davranış) |
+| Import ekleme | MOD 2 | **✅ ZORUNLU** (kod ekleme) |
+| Config / .env değişikliği | MOD 2 | **✅ ZORUNLU** (deploy etkisi) |
+| 1-3 dosya bug fix / UI tweak | MOD 2 | **✅ ZORUNLU** + §5b post-impl review |
+| Yeni özellik / migration / mimari | MOD 3 | **✅ ZORUNLU** (tam konsey) |
+
+→ MOD 1: doğrudan yanıtla, konsey çağırılmaz.
+→ MOD 2/3: konsey görüş + commit-öncesi ✅ onay raporu (commit body'sinde primary + review listesi açıkça) + §5b post-implementation review.
 
 ---
 
@@ -476,7 +491,7 @@ Aşağıdaki kalıplar tetikleyicidir (Türkçe veya İngilizce):
 - Yeni endpoint / yeni dosya / yeni servis / yeni migration / yeni frontend modülü talebi
 - Mevcut davranışın değiştirilmesi talebi (UI / API / pipeline / DB / config)
 
-> **MOD 1 LITE istisnası:** Salt soru-cevap, tek satırlık config açıklaması, log seviyesi vb. tek atımlık taleplerde plan.md zorunlu değildir. Şüpheli durumda HERA yine de yazar (maliyet düşük).
+> **MOD 1 LITE istisnası (revize 2026-05-28):** **Yalnız "bilgi verme / açıklama / görüş bildirme"** (dosya değişikliği YOK) durumunda plan.md zorunlu değildir. Tek satır config / log seviyesi / import değişikliği DAHİL **her dosya yazımı MOD 2+** sınıfındadır ve **plan.md + council görüş + commit-öncesi onay raporu** zorunludur (bkz. §4 revize). Şüpheli durumda HERA yine de yazar.
 
 ### Dosya Adı Kuralı (Kanonik — 2026-05-23'ten itibaren)
 
@@ -1271,6 +1286,7 @@ Uzun oturumlarda `graphify_wakeup` çıktısı sıkıştırılarak context windo
 
 | Konu | Kural |
 |------|-------|
+| **Council mandatory (revize 2026-05-28)** | **Tek satır fix bile** council görüş + commit-öncesi onay zorunlu. MOD 1 bypass YALNIZ "bilgi verme / açıklama / görüş bildirme" (dosya değişikliği YOK) için. Kod / config / script / README / plan / migration / frontend yazımı → en az 1 primary + 1 review konsey üyesi ✅ raporu commit message body'sinde açıkça yer almalı. Atlama = süreç ihlali. (bkz. §4 revize + §5b post-impl review) |
 | Branch | Main'e doğrudan commit — yalnızca kullanıcı merge onayı ile |
 | Plan.md persistance | Her geliştirme/güncelleme/fix talebinde HERA `.agents/plans/<slug>.md` yazar (Bölüm 5d) — `/compact` sonrası bağlam kaybını önler, atlanırsa süreç ihlali |
 | Plan tarama | Oturum başında veya `/compact` sonrası `.agents/plans/` klasöründe `status: in_progress` olan plan varsa yüklenir |
