@@ -900,28 +900,68 @@ def _load_source(
                 detail="Source credential decrypt failed",
             )
 
-    # Bug C v3.37.4: port defensive cast at the source-of-truth.
-    # data_sources.port DB schema'sı INTEGER ama literal "port" sızıntısı
-    # (eski data corruption — v3.37.1 Brief A'da tespit edildi) hâlâ canlı
-    # kayıtlarda gözlemlendi. Cast'i `_load_source` çıkışında yapıp explicit
-    # actionable hata mesajı veriyoruz; downstream `int(src_dict["port"])`
-    # cast'i (line ~1027) artık zaten int alır, kaçak path kapanır.
+    # F22c (ARES 2026-05-25): db_type değeri data_sources kaydı oluşturulurken
+    # yanlış girilmiş olabilir (örn. literal "db_type") → sql_executor_stream
+    # whitelist'i {"postgresql","oracle","mssql","mysql"} dışında ise 500
+    # değil sessiz fallback. Engine alias'larını da normalize ediyoruz.
+    # NOTE v3.37.4: dialect normalization moved AHEAD of port defensive cast
+    # because the port-default fallback below needs a normalized db_type to
+    # pick the right default (oracle=1521 vs. postgresql=5432 etc.).
+    _DIALECT_ALIAS = {
+        "postgres": "postgresql", "psql": "postgresql", "pg": "postgresql",
+        "ora": "oracle", "oracledb": "oracle",
+        "sqlserver": "mssql", "sql_server": "mssql", "ms_sql": "mssql",
+    }
+    _SUPPORTED_DIALECTS = {"postgresql", "oracle", "mssql", "mysql"}
+    _DEFAULT_PORTS = {
+        "postgresql": 5432, "oracle": 1521, "mssql": 1433, "mysql": 3306,
+    }
+    raw_dt = (rec.get("db_type") or "").strip().lower()
+    dialect = _DIALECT_ALIAS.get(raw_dt, raw_dt)
+    if dialect not in _SUPPORTED_DIALECTS:
+        logger.warning(
+            "[db_smart._load_source] source_id=%s db_type=%r desteklenmiyor; "
+            "postgresql fallback uygulanıyor.",
+            source_id, rec.get("db_type"),
+        )
+        dialect = "postgresql"
+
+    # Bug C v3.37.4 (revision 2): port defensive cast with db_type-aware
+    # default fallback. Earlier revision raised 500 on bad port — actionable
+    # for the DB admin, but a hard block for the end user whose only
+    # recourse was filing a ticket. Now: try int cast; if the row carries
+    # a literal "port" string (real data corruption case observed in
+    # source_id=3 on 2026-05-28), WARN-log it AND substitute the canonical
+    # port for the normalized dialect so the report run proceeds. The
+    # admin still sees a single WARN line per source per process lifetime
+    # because we don't suppress repeat hits.
     raw_port = rec.get("port")
     try:
         port_int = int(raw_port)
     except (TypeError, ValueError):
-        logger.error(
-            "[db_smart._load_source] data_sources.port literal/invalid "
-            "source_id=%s value=%r type=%s — data corruption suspected",
-            source_id, raw_port, type(raw_port).__name__,
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                f"Veri kaynağı port değeri bozuk (source_id={source_id}): "
-                f"{raw_port!r}. DB yöneticisine bildirin — örn. "
-                f"UPDATE data_sources SET port=<INT> WHERE id={source_id};"
-            ),
+        default_port = _DEFAULT_PORTS.get(dialect)
+        if default_port is None:
+            # Should be unreachable — dialect is forced to postgresql above —
+            # but kept as a guard so future dialect additions can't crash.
+            logger.error(
+                "[db_smart._load_source] data_sources.port invalid AND no "
+                "default port for dialect=%r source_id=%s port=%r",
+                dialect, source_id, raw_port,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"Veri kaynağı port değeri bozuk (source_id={source_id}): "
+                    f"{raw_port!r}. DB yöneticisine bildirin — örn. "
+                    f"UPDATE data_sources SET port=<INT> WHERE id={source_id};"
+                ),
+            )
+        port_int = default_port
+        logger.warning(
+            "[db_smart._load_source] data_sources.port invalid (=%r) for "
+            "source_id=%s; using dialect=%r default port=%d. Schedule a "
+            "data fix: UPDATE data_sources SET port=%d WHERE id=%s;",
+            raw_port, source_id, dialect, port_int, port_int, source_id,
         )
 
     # 4) source dict — _get_db_connector'ın beklediği sade alanlar
@@ -933,25 +973,6 @@ def _load_source(
         "db_name": rec["db_name"],
         "db_user": rec["db_user"],
     }
-    # F22c (ARES 2026-05-25): db_type değeri data_sources kaydı oluşturulurken
-    # yanlış girilmiş olabilir (örn. literal "db_type") → sql_executor_stream
-    # whitelist'i {"postgresql","oracle","mssql","mysql"} dışında ise 500
-    # değil sessiz fallback. Engine alias'larını da normalize ediyoruz.
-    _DIALECT_ALIAS = {
-        "postgres": "postgresql", "psql": "postgresql", "pg": "postgresql",
-        "ora": "oracle", "oracledb": "oracle",
-        "sqlserver": "mssql", "sql_server": "mssql", "ms_sql": "mssql",
-    }
-    _SUPPORTED_DIALECTS = {"postgresql", "oracle", "mssql", "mysql"}
-    raw_dt = (rec.get("db_type") or "").strip().lower()
-    dialect = _DIALECT_ALIAS.get(raw_dt, raw_dt)
-    if dialect not in _SUPPORTED_DIALECTS:
-        logger.warning(
-            "[db_smart._load_source] source_id=%s db_type=%r desteklenmiyor; "
-            "postgresql fallback uygulanıyor.",
-            source_id, rec.get("db_type"),
-        )
-        dialect = "postgresql"
     # B1 fix v3.37.0: normalize db_type for downstream consumers
     # (ds_learning_service._get_db_connector saved-report rerun yolunda
     # source_dict["db_type"] değerini okur; alias/whitelist normalize'i
