@@ -11,8 +11,12 @@ window.DataSourcesModule = (function () {
     const VF_BASE = '/data-sources';
     let sources = [];
 
-    // v3.37.7 (HEBE+ARES): host alanında kolon-adı placeholder reddet.
-    // BE'deki `_HOST_VALUE_CANARIES` ile aynı set — defense-in-depth (BE primary).
+    // v3.37.7 → v3.37.8 post-review (finding N3): defense-in-depth.
+    // BE SSOT: `app/services/db_smart/dialect_constants.HOST_VALUE_CANARIES`.
+    // **MANUEL SYNC GEREKLİ** — BE listesi büyürse bu array da güncellenmeli;
+    // BE primary validator olduğu için drift FE'de zararsız sessiz silent-pass
+    // demek (UI'da FE uyarısı yok, BE 422 döner). Sonraki sprintte GET
+    // /api/db-smart/canary-set veya build-time inject ile auto-sync planlanır.
     const _HOST_VALUE_CANARIES = [
         'host', 'port', 'db_type', 'db_name', 'db_user',
         'db_password', 'db_password_encrypted', 'id',

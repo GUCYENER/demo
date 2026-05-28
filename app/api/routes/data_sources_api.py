@@ -28,23 +28,35 @@ router = APIRouter(prefix="/api/data-sources", tags=["data_sources"])
 # ve read yolu artık AYNI lookup'ı paylaşıyor (v3.37.7 divergence kapatıldı).
 # `_HOST_VALUE_CANARIES`/`_DATA_CORRUPTION_CANARIES` local kopyalar silindi.
 _CREDENTIAL_FIELDS = ("host", "db_name", "db_user", "db_password")
-# Source type'lar host alanını zorunlu sayar — pure-file (manual_file) hariç.
-_REQUIRES_HOST = frozenset({"database", "ftp", "sharepoint", "file_server"})
+# v3.37.8 post-review (finding N1): file_server host kullanmıyor (FE
+# data_sources_module.js:643-650 sadece file_server_path/db_user/db_password
+# gönderir; BE _test_file_server_connection da host'a bakmaz). Bu set'i
+# host'un FUNCTIONALLY required olduğu source_type'larla sınırla.
+_REQUIRES_HOST = frozenset({"database", "ftp", "sharepoint"})
 
 
 def _validate_credential_field(field_name: str, v: Optional[str]) -> Optional[str]:
     """Tüm credential alanları için ortak Pydantic validator helper.
 
-    - None → None (Optional, model_validator cross-field check'e bırakılır)
-    - whitespace-only → None (boş; cross-field check kararı verir)
+    - None → None (Optional; cross-field check sorumluluk)
+    - whitespace-only → **ValueError** (post-review finding N2: silent
+      None coercion UPDATE path'te corruption deliği açıyordu; whitespace
+      eksplicit reject — explicit None hâlâ Optional olarak kabul)
     - canary kelimesi → ValueError (Pydantic 422)
     - geçerli → strip edilmiş hâli
     """
     if v is None:
         return None
+    if not isinstance(v, str):
+        return v  # pydantic earlier coercion already rejected non-str
     s = v.strip()
     if not s:
-        return None
+        # post-review N2: whitespace-only girdi corruption sinyali; sessizce
+        # None'a düşürmek UPDATE'te silent NULL yazar. Explicit reject.
+        raise ValueError(
+            f"{field_name} alanı boşluk karakterlerden oluşamaz — "
+            f"gerçek bir değer girin veya alanı atlayın."
+        )
     if is_canary_value(s):
         raise ValueError(
             f"{field_name} alanı kolon adı ('{s}') değil gerçek bir değer olmalı "

@@ -1066,13 +1066,14 @@ def post_execute_stream(
             errs = "; ".join(out.get("errors") or [])
             raise HTTPException(status_code=400, detail=f"SQL üretilemedi: {errs}")
 
-    # v3.37.1 Brief A + v3.37.8 (code-review wf_1da517ba bulgu #5/#10/#14):
+    # v3.37.1 Brief A + v3.37.8 post-review (finding N4):
     # body.source_id None ve body.wizard_state.source_id var ise fallback.
-    # Legacy saved_reports (migration 047 öncesi) source_id NULL'sa FE
-    # `_report.source_id` boş gönderir AMA wizard_state'i de body'ye koyar
-    # (report_detail_modal.js v3.37.8) — bu BE fallback o snapshot path'i
-    # aktive eder. Migration 047 backfill'i edge-case bırakırsa burası
-    # safety net. NOT dead code — eski yorum yanlış bilgi veriyordu, düzeltildi.
+    # **Mevcut FE caller (report_detail_modal.js v3.37.8) effectiveSourceId
+    # = source_id || ws.source_id'yi FE'de hesaplar ve body.source_id'yi her
+    # zaman doldurur — yani bu blok FE rerun yolundan TETİKLENMEZ.** Fallback
+    # API/programmatic caller'lar için safety net olarak korunur (örn. CLI
+    # script veya 3rd-party integration `{sql, wizard_state}` post ederse).
+    # Eski yorum FE behavior'ı yanlış tanımlıyordu; v3.37.8'de düzeltildi.
     if not src_id and isinstance(body.wizard_state, dict):
         ws_sid = body.wizard_state.get("source_id")
         if ws_sid:
