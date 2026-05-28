@@ -1,0 +1,9 @@
+{
+  "_bootstrap": "placeholder snapshot — replace by running `python scripts/openapi_snapshot.py` once the runtime venv is reachable (Windows: ./python/Scripts/python.exe scripts/openapi_snapshot.py). The KAP 5 gate stays NOT-APPLICABLE until this file contains the real spec.",
+  "openapi": "3.1.0",
+  "info": {
+    "title": "VYRA L1 Support API",
+    "version": "0.0.0-bootstrap"
+  },
+  "paths": {}
+}
