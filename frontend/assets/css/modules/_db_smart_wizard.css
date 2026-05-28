@@ -1926,6 +1926,11 @@ body[data-dsw-locked="true"] {
     flex: 0 0 auto;
     font-size: 11px;
     font-weight: 600;
+    /* v3.37.4 (code review #4): parent .dsw-table-group taşıyıcısı text-transform:
+       uppercase inherit ettiriyordu; "+ Tümünü ekle" → "+ TÜMÜNÜ EKLE" görsel
+       regresyon yaratıyordu. Mixed-case okunabilirlik için explicit reset. */
+    text-transform: none;
+    letter-spacing: normal;
     padding: 4px 10px;
     border-radius: 6px;
     border: 1px solid var(--vyra-success, #2ecc71);

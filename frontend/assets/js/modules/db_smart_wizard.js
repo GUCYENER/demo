@@ -1297,17 +1297,23 @@
     function _addReportColumn(colName, tableId) {
         if (!colName) return;
         const tid = (typeof tableId === 'number' && !isNaN(tableId)) ? tableId : null;
+        // v3.37.4 (code review #6): catalog lookup ÖNCE — resolved table_id
+        // üzerinden dup check yapıyoruz. Eski sıra (dup check → catalog
+        // lookup) tableId null gelirse aynı isimli kolonların ilkini eklenmiş
+        // sayıp diğerlerini "zaten ekli" notify'ı ile bastırıyordu. Catalog
+        // her zaman table_id'yi taşıyor, dolayısıyla resolution güvenli.
+        const cat = (_state._columnCatalog || []).find(x =>
+            x.name === colName && (tid == null || x.table_id === tid)
+        ) || (_state._columnCatalog || []).find(x => x.name === colName);
+        if (!cat) return;
+        const resolvedTid = (typeof cat.table_id === 'number') ? cat.table_id : tid;
         const exists = (_state.reportColumns || []).some(c =>
-            c.column_name === colName && (tid == null || c.table_id === tid)
+            c.column_name === colName && c.table_id === resolvedTid
         );
         if (exists) {
             _notify('Bu kolon zaten ekli', 'info');
             return;
         }
-        const cat = (_state._columnCatalog || []).find(x =>
-            x.name === colName && (tid == null || x.table_id === tid)
-        ) || (_state._columnCatalog || []).find(x => x.name === colName);
-        if (!cat) return;
         // v3.37.1 D (POSEIDON): metric-aware uyumsuzluk uyarısı.
         // _metricAwareWarn array'i column-filter-suggest endpoint'inden gelir.
         // Eklemeyi engellemiyoruz — kullanıcı override edebilir, sadece uyarı veriyoruz.
@@ -1352,7 +1358,26 @@
         const root = panelRoot || document;
         const headCount = root.querySelector('[data-metric-aware-count]');
         const list = root.querySelector('[data-metric-aware-list]');
+        const addAllBtn = root.querySelector('[data-metric-aware-add-all]');
         if (!list) return;
+
+        // v3.37.4 (code review #3): her early-return path'inde de butonu
+        // resetle; eski sürüm metric-yok/fetch-fail/empty durumlarında
+        // önceki metriğin "Tümünü ekle (N)" handler'ını canlı bırakıyordu.
+        function _resetAddAllBtn() {
+            if (!addAllBtn) return;
+            addAllBtn.hidden = true;
+            addAllBtn.textContent = '+ Tümünü ekle';
+        }
+        _resetAddAllBtn();
+
+        // v3.37.4 (code review #5): out-of-order fetch race koruması.
+        // Hızlı metric M1→M2 geçişinde önce M2 (200ms) sonra M1 (800ms)
+        // resolve olursa M1'in recommended[]'i M2 panel'ine yazılıyordu.
+        // Artan callId ile en son çağrı dışındaki resolve'ları no-op yap.
+        const callId = ((_state._metricAwareCallId || 0) + 1) | 0;
+        _state._metricAwareCallId = callId;
+        const _isCurrent = () => _state._metricAwareCallId === callId;
 
         const metric = _state.metric || null;
         const metricKey = metric && (metric.metric_key || metric.key || metric.name) || null;
@@ -1389,6 +1414,7 @@
                 body: JSON.stringify(payload),
             });
         } catch (e) {
+            if (!_isCurrent()) return;
             console.warn('[db_smart_wizard] column-filter-suggest failed:', e);
             list.innerHTML = '<li class="dsw-col-row"><div class="dsw-col-row-text">' +
                 '<div class="dsw-r-meta">Metrik analizi alınamadı.</div>' +
@@ -1396,6 +1422,7 @@
             if (headCount) headCount.textContent = '(0)';
             return;
         }
+        if (!_isCurrent()) return;
 
         const recommended = (data && Array.isArray(data.recommended)) ? data.recommended : [];
         const warns = (data && Array.isArray(data.warn_columns)) ? data.warn_columns : [];
@@ -1465,17 +1492,16 @@
         // Recommended list dolu (≥1) ise gözükür; click → tüm önerilenleri
         // _addReportColumn üzerinden sırayla ekler. Duplicate (zaten ekli)
         // kolonları _addReportColumn kendi içinde info-toast ile geçer.
-        const addAllBtn = root.querySelector('[data-metric-aware-add-all]');
-        if (addAllBtn) {
-            if (recommended.length) {
-                addAllBtn.hidden = false;
-                addAllBtn.textContent = '+ Tümünü ekle (' + recommended.length + ')';
-            } else {
-                addAllBtn.hidden = true;
-            }
+        // v3.37.4 (code review #3): _resetAddAllBtn fonksiyon başında baseline
+        // hidden bıraktı; burada recommended varsa unhide + rebind. Panel
+        // re-render olabileceği için addAllBtn referansını tazele.
+        const addAllBtnNow = root.querySelector('[data-metric-aware-add-all]');
+        if (addAllBtnNow && recommended.length) {
+            addAllBtnNow.hidden = false;
+            addAllBtnNow.textContent = '+ Tümünü ekle (' + recommended.length + ')';
             // Re-bind safe: önce eski handler'ı temizle (cloneNode swap).
-            const fresh = addAllBtn.cloneNode(true);
-            addAllBtn.parentNode.replaceChild(fresh, addAllBtn);
+            const fresh = addAllBtnNow.cloneNode(true);
+            addAllBtnNow.parentNode.replaceChild(fresh, addAllBtnNow);
             fresh.addEventListener('click', function () {
                 const prevWarn = _state._metricAwareWarn;
                 _state._metricAwareWarn = [];
@@ -1484,9 +1510,19 @@
                     recommended.forEach(function (rec) {
                         const colName = rec.column_name || '';
                         if (!colName) return;
-                        const tid = (rec.table_id != null) ? parseInt(rec.table_id, 10) : null;
+                        // v3.37.4 (code review #6): rec.table_id null gelirse
+                        // _addReportColumn dup check column_name-only fallback'e
+                        // düşer; catalog'tan resolve ile multi-table same-name
+                        // sızıntısını engelle.
+                        let tid = (rec.table_id != null) ? parseInt(rec.table_id, 10) : null;
+                        if (tid == null || isNaN(tid)) {
+                            const cat = (_state._columnCatalog || []).find(function (x) {
+                                return x.name === colName;
+                            });
+                            if (cat && typeof cat.table_id === 'number') tid = cat.table_id;
+                        }
                         const before = (_state.reportColumns || []).length;
-                        _addReportColumn(colName, isNaN(tid) ? null : tid);
+                        _addReportColumn(colName, (typeof tid === 'number' && !isNaN(tid)) ? tid : null);
                         const after = (_state.reportColumns || []).length;
                         if (after > before) added += 1;
                     });

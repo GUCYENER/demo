@@ -56,9 +56,29 @@ resolve_python() {
   return 1
 }
 
-PY="$(resolve_python)" || {
-  echo "[graphify-guard] no python interpreter found — fail-open ALLOW" >&2
-  exit 0
-}
+## v3.37.4 (code review #8): per-fire Python resolution was 10-30ms × N
+## hook calls per session — meaningful background tax. Cache the resolved
+## interpreter in the runtime state dir; invalidate after 24h or whenever
+## the cached binary stops being executable (PATH change, venv rebuild).
+CACHE_FILE="$HOOK_DIR/../state/python_path"
+PY=""
+if [[ -f "$CACHE_FILE" ]]; then
+  cache_mtime=$(stat -c %Y "$CACHE_FILE" 2>/dev/null || echo 0)
+  now=$(date +%s)
+  if (( now - cache_mtime < 86400 )); then
+    cached=$(cat "$CACHE_FILE" 2>/dev/null || true)
+    if [[ -n "$cached" && -x "$cached" ]]; then
+      PY="$cached"
+    fi
+  fi
+fi
+if [[ -z "$PY" ]]; then
+  PY="$(resolve_python)" || {
+    echo "[graphify-guard] no python interpreter found — fail-open ALLOW" >&2
+    exit 0
+  }
+  mkdir -p "$(dirname "$CACHE_FILE")" 2>/dev/null || true
+  printf '%s' "$PY" > "$CACHE_FILE" 2>/dev/null || true
+fi
 
 exec "$PY" "$GUARD" "$MODE"

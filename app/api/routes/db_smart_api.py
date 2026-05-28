@@ -904,21 +904,22 @@ def _load_source(
     # yanlış girilmiş olabilir (örn. literal "db_type") → sql_executor_stream
     # whitelist'i {"postgresql","oracle","mssql","mysql"} dışında ise 500
     # değil sessiz fallback. Engine alias'larını da normalize ediyoruz.
-    _DIALECT_ALIAS = {
-        "postgres": "postgresql", "psql": "postgresql", "pg": "postgresql",
-        "ora": "oracle", "oracledb": "oracle",
-        "sqlserver": "mssql", "sql_server": "mssql", "ms_sql": "mssql",
-    }
-    _SUPPORTED_DIALECTS = {"postgresql", "oracle", "mssql", "mysql"}
+    # v3.37.4: alias/supported maps lifted to dialect_constants.py — the
+    # connector helpers in ds_learning_service and data_sources_api now
+    # consume the same single source of truth.
+    from app.services.db_smart.dialect_constants import (
+        SUPPORTED_DIALECTS, normalize_dialect,
+    )
     raw_dt = (rec.get("db_type") or "").strip().lower()
-    dialect = _DIALECT_ALIAS.get(raw_dt, raw_dt)
-    if dialect not in _SUPPORTED_DIALECTS:
+    dialect = normalize_dialect(raw_dt)
+    if raw_dt and raw_dt not in SUPPORTED_DIALECTS and dialect == "postgresql":
+        # normalize_dialect silently falls back; keep the diagnostic WARN
+        # so the admin can spot a misconfigured source row.
         logger.warning(
             "[db_smart._load_source] source_id=%s db_type=%r desteklenmiyor; "
             "postgresql fallback uygulanıyor.",
             source_id, rec.get("db_type"),
         )
-        dialect = "postgresql"
 
     # v3.37.4 (revision 3): strict data_sources integrity validation.
     # Earlier revisions tried defensive casts and dialect-aware default-port

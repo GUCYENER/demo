@@ -541,10 +541,15 @@ def _init_oracle_thick_mode():
 
 def _test_database_connection(source: dict, password: str) -> dict:
     """Veritabanı bağlantı testi (PostgreSQL / MSSQL / MySQL / Oracle)."""
+    # v3.37.4 (code review #7): dialect-aware port default — hardcoded 5432
+    # PG dışı dialect testlerinde sessiz yanlış porta bağlanma riskiydi.
+    from app.services.db_smart.dialect_constants import default_port
     import time
     db_type = source.get("db_type", "")
     host = source.get("host", "")
-    port = source.get("port", 5432)
+    port = source.get("port")
+    if port is None:
+        port = default_port(db_type)
     db_name = source.get("db_name", "")
     db_user = source.get("db_user", "")
 

@@ -31,9 +31,17 @@ def _safe_identifier(name):
 
 def _get_db_connector(source: dict, password: str):
     """Kaynak bilgilerine göre DB bağlantı nesnesi döndürür."""
+    # v3.37.4 (code review #7): port default önceden hardcoded 5432 idi —
+    # Oracle/MSSQL/MySQL için yanlış. dialect_constants.default_port lookup
+    # ile dialect-aware default; data_sources Pydantic validator zaten
+    # write-path'te int garanti veriyor ama legacy çağrılar (test endpoint,
+    # discovery vb.) source dict'i kısmen dolu gönderebilir.
+    from app.services.db_smart.dialect_constants import default_port
     db_type = source.get("db_type", "")
     host = source.get("host", "")
-    port = source.get("port", 5432)
+    port = source.get("port")
+    if port is None:
+        port = default_port(db_type)
     db_name = source.get("db_name", "")
     db_user = source.get("db_user", "")
 

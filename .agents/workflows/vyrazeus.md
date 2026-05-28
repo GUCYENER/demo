@@ -634,7 +634,7 @@ Faz/Gate     : G1, G2, … (özet)
 | Observability — SLO/SLI/error budget/alerting | NIKE | METIS (LLM-ops kısmında) |
 | API contract drift / OpenAPI versioning / breaking-change detection | POSEIDON | HERMES |
 | LLM cost/token budget/model selection economics | METIS | NIKE |
-| Code review (skill: /code-review medium\|high) | (görev sahibi) | code-reviewer alt-ajan |
+| Code review (skill: /code-review medium\|high) | (görev sahibi) | `/code-review` skill (medium veya high — Bölüm 2b'deki code-reviewer dispatcher'ı tetikler) |
 
 > **Disjoint kapsam + disjoint konsey eşliği:** İki ajan aynı dosyayı değiştirmez (5e.2) **ve** iki konsey üyesi aynı alanın primary'si değildir. Aynı üye birden fazla ajanda **review** rolünde olabilir.
 

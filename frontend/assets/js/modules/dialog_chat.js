@@ -246,53 +246,49 @@ window.DialogChatModule = (function () {
 
     async function loadActiveDialog() {
         const container = document.getElementById('dialogMessages');
+        // v3.37.4 Bug E (code review #2 revision): aki-kesif modunda chat
+        // UI gizli ama dialog STATE (currentDialogId, fresh-login flag)
+        // hidrasyonu hâlâ gerekli — sonra sohbet moduna geçildiğinde
+        // null currentDialogId duplicate dialog oluşturuyordu. Yeni yapı:
+        // state hydration her modda, UI render (innerHTML clear, Merhaba
+        // mesajı, textarea, ticket butonu) sadece chat modunda.
+        const isAkiKesif = !!(container && container.classList.contains('aki-kesif-grid-host'));
 
-        // v3.37.4 Bug E fix: Akıllı Veri Keşfi modunda dialogMessages grid host.
-        // Eski Merhaba/chat-state yenileme bu modda DOM'a sızıyordu — chat
-        // sekmesi aktif değilse loadActiveDialog'u erken sonlandır.
-        if (container && container.classList.contains('aki-kesif-grid-host')) {
-            return;
+        if (!isAkiKesif) {
+            // v3.15.1: dialog açık ve DOM doluysa state korunsun.
+            if (currentDialogId && container && container.children.length > 0) {
+                console.log(`[DialogChat] Dialog #${currentDialogId} state korunmuş, yeniden yükleme atlanıyor.`);
+                return;
+            }
+
+            // v2.21.12: UI'ı temizle (duplicate mesaj önleme)
+            if (container) {
+                container.innerHTML = '';
+            }
+
+            // v2.25.1: Mevcut dialog varsa devam et + erken çık.
+            if (currentDialogId) {
+                console.log(`[DialogChat] Mevcut dialog #${currentDialogId} ile devam ediliyor...`);
+                await loadDialogById(currentDialogId);
+                return;
+            }
+
+            // v2.24.6: Hoşgeldin mesajı + textarea aktivasyonu + ticket reset.
+            addSystemMessage('👋 Merhaba! Size nasıl yardımcı olabilirim? Sorununuzu yazın veya ekran görüntüsü paylaşın.');
+            const textarea = document.getElementById('dialogInput');
+            if (textarea) {
+                textarea.disabled = false;
+                textarea.placeholder = 'Mesajınızı yazın...';
+            }
+            setTicketButtonEnabled(false);
         }
 
-        // v3.15.1: Eğer halihazırda bir dialog açık ve DOM doluysa (kullanıcı sadece
-        // başka menüye gidip geri geldi), hiçbir şey yapma — state'i koru.
-        if (currentDialogId && container && container.children.length > 0) {
-            console.log(`[DialogChat] Dialog #${currentDialogId} state korunmuş, yeniden yükleme atlanıyor.`);
-            return;
-        }
-
-        // v2.21.12: UI'ı temizle (duplicate mesaj önleme)
-        if (container) {
-            container.innerHTML = '';
-        }
-
-        // v2.25.1: Eğer zaten bir dialog açıksa (notification'dan gelmiş olabilir), devam et
-        if (currentDialogId) {
-            console.log(`[DialogChat] Mevcut dialog #${currentDialogId} ile devam ediliyor...`);
-            await loadDialogById(currentDialogId);
-            return;
-        }
-
-        // v2.24.6: Hoşgeldin mesajı HEMEN göster (API çağrılarından önce)
-        addSystemMessage('👋 Merhaba! Size nasıl yardımcı olabilirim? Sorununuzu yazın veya ekran görüntüsü paylaşın.');
-
-        // v2.21.12: Textarea'yı aktifle (hemen yazabilsin)
-        const textarea = document.getElementById('dialogInput');
-        if (textarea) {
-            textarea.disabled = false;
-            textarea.placeholder = 'Mesajınızı yazın...';
-        }
-
-        // v2.24.6: Çağrı Aç butonu başlangıçta pasif (sonuç gelince aktifleşecek)
-        setTicketButtonEnabled(false);
-
-        // v2.25.1: Aktif dialog varsa DEVAM ET (kapatma!)
-        // Sadece "Yeni Sohbet" tıklanırsa yeni dialog oluşturulacak
+        // ── State hydration (her modda çalışır) ────────────────────
         try {
             const token = localStorage.getItem('access_token');
             if (!token) return;
 
-            // v3.19.2: Yeni login sonrası temiz başla — eski aktif dialog'a devam etme
+            // v3.19.2: Fresh login → temiz dialog.
             const freshLogin = sessionStorage.getItem('vyra_fresh_login');
             if (freshLogin) {
                 sessionStorage.removeItem('vyra_fresh_login');
@@ -301,32 +297,29 @@ window.DialogChatModule = (function () {
                 return;
             }
 
-            // 1️⃣ Aktif dialog'u kontrol et (F5/refresh durumlarında devam için)
+            // 1️⃣ Aktif dialog kontrol (F5/refresh devamı).
             try {
                 const existingDialog = await window.vyraFetch('/dialogs/active');
                 if (existingDialog && existingDialog.id) {
-                    // 2️⃣ v2.25.1: Aktif dialog varsa DEVAM ET (Strict Mode kaldırıldı)
                     console.log(`[DialogChat] Aktif dialog #${existingDialog.id} bulundu, devam ediliyor...`);
                     currentDialogId = existingDialog.id;
-
-                    // Mevcut mesajları yükle
-                    await loadDialogById(existingDialog.id);
+                    // UI render sadece chat modunda — aki-kesif'te DOM gizli, mesaj yükleme gereksiz.
+                    if (!isAkiKesif) await loadDialogById(existingDialog.id);
                     return;
                 }
             } catch (_e) {
-                // Aktif dialog bulunmazsa (404 vb.) yeni dialog akışına düş
+                // 404 vb. — yeni dialog akışına düş.
             }
 
-            // 3️⃣ Aktif dialog yoksa yeni oluştur
+            // 2️⃣ Aktif dialog yoksa yeni oluştur (state hydration için, mod ne olursa olsun).
             await createInitialDialogBackground();
 
         } catch (error) {
             console.error('[DialogChat] Dialog yönetimi hatası:', error);
-            // Hoşgeldin mesajı zaten gösterildi, hata durumunda sadece logla
         }
 
-        // 📝 Buton durumlarını güncelle
-        updateSendButtonState();
+        // 📝 Buton durumlarını sadece chat modunda güncelle.
+        if (!isAkiKesif) updateSendButtonState();
     }
 
     /**
@@ -2379,12 +2372,20 @@ window.DialogChatModule = (function () {
     function addSystemMessage(content, extraClass = '') {
         const container = document.getElementById('dialogMessages');
         if (!container) return;
-        // v3.37.4 Bug E fix: Akıllı Veri Keşfi modunda #dialogMessages container
-        // SavedReportsGrid host olarak repurpose ediliyor (home.html
-        // _akiKesifHideChrome / _akiKesifMountGrid). Eski chat sistem mesajları
-        // (Merhaba, mode-info, vb.) bu modda grid'in altına sızıyordu. CSS class
-        // 'aki-kesif-grid-host' aktifse sistem mesajı eklemeyi reddet.
+        // v3.37.4 Bug E (code review #1 revision): aki-kesif modunda chat
+        // container'ı SavedReportsGrid host olarak repurpose ediliyor; eski
+        // sürüm (30a63db) bu modda HER addSystemMessage'i sessizce drop
+        // ediyordu — kullanıcı in-flight SSE timeout veya VPN error gibi
+        // KRİTİK bildirimleri kaçırıyordu. Yeni davranış: bilgi/welcome
+        // mesajları sessizce skip, ama error/warning/timeout/fail içeren
+        // extraClass'lı mesajları toast'a yönlendir ki kullanıcı hata
+        // bildirimini alsın.
         if (container.classList.contains('aki-kesif-grid-host')) {
+            const isCritical = /\berror\b|\bwarning\b|\btimeout\b|\bfail\b/i.test(extraClass || '');
+            if (isCritical && typeof window.showToast === 'function') {
+                const plain = String(content || '').replace(/<[^>]+>/g, '').trim().slice(0, 220);
+                if (plain) window.showToast(plain, 'error');
+            }
             return;
         }
 
