@@ -165,6 +165,52 @@ def _validate_select_sql(sql: str) -> Optional[str]:
 
 
 # ─────────────────────────────────────────────────────────────
+# B4 (v3.37.9 — METIS+ARES+POSEIDON): glued garbage keyword-prefix repair
+# ─────────────────────────────────────────────────────────────
+# LLM ham çıktısında ara sıra bir SQL keyword'ünün hemen önüne BOŞLUKSUZ
+# yapışmış kısa bir garbage token görülüyor ("W0SELECT", "WDFROM" gibi —
+# v3.37.4 telemetri notuna bkz: "W0SELECT/W0FROM garbage-prefix failure mode
+# is upstream"). Bu SQL'i hem DB'de patlatıyor hem de _validate_select_sql'in
+# "SELECT/WITH ile başlamalı" kontrolünü bozuyordu.
+#
+# Hedefli onarım: bir SQL keyword'üne YAPIŞIK (araya separator girmeden) gelen
+# 1-3 karakterlik harf/rakam token'ını temizle. Gözlenen bozulma modunda garbage
+# DAİMA satırbaşında belirir ("W0SELECT" ilk satır, "\nW0FROM" sonraki satır).
+# Bu yüzden lookbehind `(?<![^\n])` ile token'ın YALNIZ string-başı veya bir
+# newline'dan hemen sonra gelmesini şart koşarız (satır-içi boşluk sonrası HARİÇ):
+#   - String literal içindeki keyword ('fooSELECT bar', 'abUNION x') tırnak/harf
+#     gibi boşluk-OLMAYAN bir karakterle öncelenir → eşleşmez → korunur.
+#   - Satır-içi bareword ("SELECT myWITH FROM t") keyword'den önce boşlukla
+#     gelir → newline değil → eşleşmez → korunur.
+#   - Çift-tırnaklı identifier ("VYRA_TEST"."WITHHOLDING") zaten `KEYWORD\b`
+#     sınırını sağlamaz (HOLDING devam eder) → güvende.
+# Code-review (medium, v3.37.9): eski `(?<![A-Za-z0-9_."])` lookbehind tırnak
+# sonrasını ('fooSELECT) chop ediyordu (string filtre değerlerini bozan CONFIRMED
+# FP). Ara adım `(?<!\S)` literal'ı kurtardı ama satır-içi bareword'ü (myWITH)
+# hâlâ kesiyordu; `(?<![^\n])` ankoru her iki FP'yi de sıfırlar, gözlenen
+# satırbaşı garbage'ını (W0SELECT/W0FROM) onarır.
+# Telemetri (raw LLM log'u) bu onarımın ÖNCESİNDE çalışır → kök neden sinyali
+# kaybolmaz; onarım yalnız kullanıcıya giden semptomu kapatır.
+_GLUED_KW_RE = re.compile(
+    r'(?<![^\n])'
+    r'[A-Za-z][A-Za-z0-9]{0,2}'
+    r'(?=(?:SELECT|FROM|WHERE|GROUP\s+BY|ORDER\s+BY|HAVING|'
+    r'LEFT\s+JOIN|RIGHT\s+JOIN|INNER\s+JOIN|FULL\s+JOIN|CROSS\s+JOIN|'
+    r'OUTER\s+JOIN|JOIN|UNION\s+ALL|UNION|INTERSECT|EXCEPT|'
+    r'LIMIT|OFFSET|FETCH\s+FIRST|WITH)\b)',
+    re.IGNORECASE,
+)
+
+
+def _repair_glued_keyword_garbage(sql: str) -> tuple:
+    """Return (repaired_sql, changed: bool). Bkz. _GLUED_KW_RE notu."""
+    if not sql:
+        return sql, False
+    repaired = _GLUED_KW_RE.sub("", sql)
+    return repaired, (repaired != sql)
+
+
+# ─────────────────────────────────────────────────────────────
 # Prompt builder
 # ─────────────────────────────────────────────────────────────
 
@@ -454,6 +500,16 @@ def generate_report(
         (raw or "")[:240],
         sql_candidate[:240],
     )
+
+    # ── 4b. B4 (v3.37.9): glued garbage keyword-prefix onar (telemetri'den
+    # SONRA → raw sinyal log'da korunur). Bkz. _repair_glued_keyword_garbage.
+    sql_candidate, _kw_repaired = _repair_glued_keyword_garbage(sql_candidate)
+    if _kw_repaired:
+        logger.warning(
+            "[llm_generate_report] B4 glued keyword-prefix garbage repaired "
+            "(upstream LLM artifact); repaired_head=%r",
+            sql_candidate[:200],
+        )
 
     # ── 5. Validate SELECT-only / single-statement ──────────
     ve = _validate_select_sql(sql_candidate)

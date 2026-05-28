@@ -161,10 +161,12 @@
             + '    <h4 class="dsw-ast-section-title">SELECT</h4>'
             + _renderSelectList()
             + '  </section>'
-            + '  <section class="dsw-ast-section" data-key="order">'
-            + '    <h4 class="dsw-ast-section-title">ORDER BY</h4>'
-            + _renderOrderList()
-            + '  </section>'
+            // v3.37.9 B2 (ATHENA+HEBE): AST editor'ün statik "ORDER BY /
+            // Sıralama yok." section'ı kaldırıldı. Wizard Step 4 zaten kendi
+            // editable "SIRALAMA" chip barını gösteriyor (_renderOrderByChips,
+            // "+ Kolon seç" dropdown ile çalışan) → iki ORDER BY UI'ı redundant
+            // ve kafa karıştırıcıydı. Order_by AST'te korunur; reorder/remove/
+            // modify_order op'ları (klavye kısayolu + chip bar) etkilenmez.
             + '  <section class="dsw-ast-section" data-key="filters">'
             + '    <h4 class="dsw-ast-section-title">WHERE</h4>'
             + _renderFilterChips()
@@ -203,31 +205,10 @@
         return html;
     }
 
-    function _renderOrderList() {
-        var ord = (state.ast && state.ast.order_by) || [];
-        var html = '<ul class="dsw-ast-list" role="list" data-list="order">';
-        for (var i = 0; i < ord.length; i += 1) {
-            var o = ord[i];
-            var expr = (typeof o === 'string') ? o : (o && (o.expr || o.column)) || '';
-            var dir = (o && typeof o === 'object' && o.direction) ? String(o.direction).toUpperCase() : 'ASC';
-            if (dir !== 'ASC' && dir !== 'DESC') dir = 'ASC';
-            html += ''
-                + '<li class="dsw-ast-item" role="listitem" draggable="true"'
-                + '    tabindex="0" aria-grabbed="false"'
-                + '    data-list="order" data-index="' + i + '"'
-                + '    aria-label="Sıralama ' + _escape(expr) + ' ' + dir + '">'
-                + '  <span class="dsw-ast-item-label">' + _escape(expr) + '</span>'
-                + '  <button type="button" class="dsw-ast-order-toggle"'
-                + '          data-action="toggle_order_dir" data-index="' + i + '"'
-                + '          aria-label="Yönü değiştir, şu an ' + dir + '">' + dir + '</button>'
-                + '  <button type="button" class="dsw-ast-item-remove" aria-label="Sıralamayı kaldır"'
-                + '          data-action="remove_order" data-index="' + i + '">×</button>'
-                + '</li>';
-        }
-        html += '</ul>';
-        if (ord.length === 0) html += '<p class="dsw-ast-empty-line">Sıralama yok.</p>';
-        return html;
-    }
+    // v3.37.9 B2 (code-review medium): _renderOrderList() kaldırıldı — tek
+    // çağıranı (statik "ORDER BY" section, yukarıda) silindiğinden ölü koddu.
+    // ORDER BY artık wizard'ın editable "SIRALAMA" chip barında render edilir
+    // (db_smart_wizard.js:_renderOrderByChips). order_by AST'te korunur.
 
     function _renderFilterChips() {
         var fs = (state.ast && state.ast.filters) || [];

@@ -406,7 +406,17 @@ def render(
 
     # SELECT [TOP n] cols
     top, limit_suffix = _render_limit_offset(dialect, ast.get("limit"), ast.get("offset"))
-    cols = ast.get("columns") or []
+    # B3 (v3.37.9 — HEPHAESTUS+HERMES+ARES): frontend AST editor, wizard
+    # `_buildStarterAst` ve `/explain` guard'ı `select` key kullanıyor;
+    # ast_renderer (render + add_column/remove_column/...) ise `columns`.
+    # Bu tutarsızlık WHERE filtre eklenince `/explain` render'ında "SELECT
+    # requires at least one column" 400'üne yol açıyordu (boş `columns`).
+    # Geriye-uyumlu köprü: `columns` yoksa `select`'e düş; `select` öğeleri
+    # string ("AYLIK_TUTAR") veya dict ({expr, alias}) olabilir → dict normalize.
+    cols = ast.get("columns")
+    if not cols:
+        sel = ast.get("select") or []
+        cols = [({"expr": c} if isinstance(c, str) else c) for c in sel]
     if not cols:
         raise ValueError("SELECT requires at least one column")
     col_sqls = [_render_column(dialect, c) for c in cols]

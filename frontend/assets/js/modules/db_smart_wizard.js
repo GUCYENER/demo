@@ -1840,6 +1840,12 @@
         }));
         _renderSuggestionSlots();
         _renderReportColumns();
+        // v3.37.9 B1 (ATHENA+HEBE): LLM öneri slot'u uygulanınca reportColumns
+        // REPLACE ediliyor; tek-kolon ekleme/silme path'leri (_addReportColumn /
+        // _removeReportColumn) guard'ı çağırır ama bu path çağırmıyordu →
+        // "Raporda görünecek kolonlar" dolu olmasına rağmen Step 3 "İleri →"
+        // pasif kalıyordu. Guard'ı burada da tetikle.
+        try { _updateNextGuard(); } catch (e) { /* defansif */ }
         const idx = slots.findIndex(s => s.id === slotId) + 1;
         const tail = slot.rationale ? ': ' + slot.rationale : '';
         _notify('Öneri ' + idx + ' uygulandı' + tail, 'success');

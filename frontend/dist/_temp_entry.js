@@ -1016,30 +1016,50 @@ window.NgssNotification = NgssNotification;
     // Ek olarak ikinci dönüş değeri olarak bir "code" tag'i üretiyoruz; caller
     // (login.js gibi UX-sensitive yerler) error.code üzerinden mapping yapabilir,
     // mesajın exact-text değişimine duyarlı olmaz.
+    // v3.37.8 (code-review wf_1da517ba bulgu #10): FastAPI HTTPException detail
+    // artık DICT olabilir (`{error_code, message, ...}` — db_smart_api.py
+    // `_data_corruption_500`). Eski "detail her zaman string" varsayımı bozuldu;
+    // `new Error(dict)` `'[object Object]'` üretiyordu. Bu helper dict|string
+    // ayrımını tek noktada yapar; structured `code` field'ı caller'a iletilir.
+    function _extractDetailMessage(detail) {
+        if (detail == null) return { msg: null, code: null };
+        if (typeof detail === 'string') return { msg: detail, code: null };
+        if (typeof detail === 'object') {
+            const msg = detail.message || detail.detail || null;
+            const code = detail.error_code || null;
+            return { msg, code };
+        }
+        return { msg: null, code: null };
+    }
+
     function buildFriendlyMessage(status, isJson, data) {
         // 401 fast path
         if (status === 401) {
-            const detail = data && (data.detail || data.message);
+            const ex = _extractDetailMessage(data && (data.detail || data.message));
             return {
-                msg: detail || "Oturum sona erdi. Lütfen yeniden giriş yapın.",
-                code: 'AUTH_REQUIRED',
+                msg: ex.msg || "Oturum sona erdi. Lütfen yeniden giriş yapın.",
+                code: ex.code || 'AUTH_REQUIRED',
             };
         }
         // 403 fast path
         if (status === 403) {
-            const detail = data && (data.detail || data.message);
+            const ex = _extractDetailMessage(data && (data.detail || data.message));
             return {
-                msg: detail || "Bu işlem için yetkiniz yok.",
-                code: 'FORBIDDEN',
+                msg: ex.msg || "Bu işlem için yetkiniz yok.",
+                code: ex.code || 'FORBIDDEN',
             };
         }
-        // JSON-formatlı hata: backend mesajını kullan (HTML/raw scrub: JSON
-        // değilse buraya hiç girmiyoruz — aşağıdaki path'ler devralır).
+        // JSON-formatlı hata: backend mesajını kullan (dict ise message field,
+        // string ise direkt). HTML/raw bu blokta değil.
         if (isJson && data && (data.detail || data.message)) {
-            return {
-                msg: data.detail || data.message,
-                code: status >= 500 ? 'SERVER_ERROR' : 'CLIENT_ERROR',
-            };
+            const ex = _extractDetailMessage(data.detail || data.message);
+            if (ex.msg) {
+                return {
+                    msg: ex.msg,
+                    code: ex.code || (status >= 500 ? 'SERVER_ERROR' : 'CLIENT_ERROR'),
+                };
+            }
+            // dict ama message yok — fall through generic
         }
         // 502/503/504 — proxy/backend down (genellikle HTML body)
         if (status === 502 || status === 503 || status === 504) {
@@ -11869,46 +11889,49 @@ window.DialogChatModule = (function () {
 
     async function loadActiveDialog() {
         const container = document.getElementById('dialogMessages');
+        // v3.37.4 Bug E (code review #2 revision): aki-kesif modunda chat
+        // UI gizli ama dialog STATE (currentDialogId, fresh-login flag)
+        // hidrasyonu hâlâ gerekli — sonra sohbet moduna geçildiğinde
+        // null currentDialogId duplicate dialog oluşturuyordu. Yeni yapı:
+        // state hydration her modda, UI render (innerHTML clear, Merhaba
+        // mesajı, textarea, ticket butonu) sadece chat modunda.
+        const isAkiKesif = !!(container && container.classList.contains('aki-kesif-grid-host'));
 
-        // v3.15.1: Eğer halihazırda bir dialog açık ve DOM doluysa (kullanıcı sadece
-        // başka menüye gidip geri geldi), hiçbir şey yapma — state'i koru.
-        if (currentDialogId && container && container.children.length > 0) {
-            console.log(`[DialogChat] Dialog #${currentDialogId} state korunmuş, yeniden yükleme atlanıyor.`);
-            return;
+        if (!isAkiKesif) {
+            // v3.15.1: dialog açık ve DOM doluysa state korunsun.
+            if (currentDialogId && container && container.children.length > 0) {
+                console.log(`[DialogChat] Dialog #${currentDialogId} state korunmuş, yeniden yükleme atlanıyor.`);
+                return;
+            }
+
+            // v2.21.12: UI'ı temizle (duplicate mesaj önleme)
+            if (container) {
+                container.innerHTML = '';
+            }
+
+            // v2.25.1: Mevcut dialog varsa devam et + erken çık.
+            if (currentDialogId) {
+                console.log(`[DialogChat] Mevcut dialog #${currentDialogId} ile devam ediliyor...`);
+                await loadDialogById(currentDialogId);
+                return;
+            }
+
+            // v2.24.6: Hoşgeldin mesajı + textarea aktivasyonu + ticket reset.
+            addSystemMessage('👋 Merhaba! Size nasıl yardımcı olabilirim? Sorununuzu yazın veya ekran görüntüsü paylaşın.');
+            const textarea = document.getElementById('dialogInput');
+            if (textarea) {
+                textarea.disabled = false;
+                textarea.placeholder = 'Mesajınızı yazın...';
+            }
+            setTicketButtonEnabled(false);
         }
 
-        // v2.21.12: UI'ı temizle (duplicate mesaj önleme)
-        if (container) {
-            container.innerHTML = '';
-        }
-
-        // v2.25.1: Eğer zaten bir dialog açıksa (notification'dan gelmiş olabilir), devam et
-        if (currentDialogId) {
-            console.log(`[DialogChat] Mevcut dialog #${currentDialogId} ile devam ediliyor...`);
-            await loadDialogById(currentDialogId);
-            return;
-        }
-
-        // v2.24.6: Hoşgeldin mesajı HEMEN göster (API çağrılarından önce)
-        addSystemMessage('👋 Merhaba! Size nasıl yardımcı olabilirim? Sorununuzu yazın veya ekran görüntüsü paylaşın.');
-
-        // v2.21.12: Textarea'yı aktifle (hemen yazabilsin)
-        const textarea = document.getElementById('dialogInput');
-        if (textarea) {
-            textarea.disabled = false;
-            textarea.placeholder = 'Mesajınızı yazın...';
-        }
-
-        // v2.24.6: Çağrı Aç butonu başlangıçta pasif (sonuç gelince aktifleşecek)
-        setTicketButtonEnabled(false);
-
-        // v2.25.1: Aktif dialog varsa DEVAM ET (kapatma!)
-        // Sadece "Yeni Sohbet" tıklanırsa yeni dialog oluşturulacak
+        // ── State hydration (her modda çalışır) ────────────────────
         try {
             const token = localStorage.getItem('access_token');
             if (!token) return;
 
-            // v3.19.2: Yeni login sonrası temiz başla — eski aktif dialog'a devam etme
+            // v3.19.2: Fresh login → temiz dialog.
             const freshLogin = sessionStorage.getItem('vyra_fresh_login');
             if (freshLogin) {
                 sessionStorage.removeItem('vyra_fresh_login');
@@ -11917,32 +11940,29 @@ window.DialogChatModule = (function () {
                 return;
             }
 
-            // 1️⃣ Aktif dialog'u kontrol et (F5/refresh durumlarında devam için)
+            // 1️⃣ Aktif dialog kontrol (F5/refresh devamı).
             try {
                 const existingDialog = await window.vyraFetch('/dialogs/active');
                 if (existingDialog && existingDialog.id) {
-                    // 2️⃣ v2.25.1: Aktif dialog varsa DEVAM ET (Strict Mode kaldırıldı)
                     console.log(`[DialogChat] Aktif dialog #${existingDialog.id} bulundu, devam ediliyor...`);
                     currentDialogId = existingDialog.id;
-
-                    // Mevcut mesajları yükle
-                    await loadDialogById(existingDialog.id);
+                    // UI render sadece chat modunda — aki-kesif'te DOM gizli, mesaj yükleme gereksiz.
+                    if (!isAkiKesif) await loadDialogById(existingDialog.id);
                     return;
                 }
             } catch (_e) {
-                // Aktif dialog bulunmazsa (404 vb.) yeni dialog akışına düş
+                // 404 vb. — yeni dialog akışına düş.
             }
 
-            // 3️⃣ Aktif dialog yoksa yeni oluştur
+            // 2️⃣ Aktif dialog yoksa yeni oluştur (state hydration için, mod ne olursa olsun).
             await createInitialDialogBackground();
 
         } catch (error) {
             console.error('[DialogChat] Dialog yönetimi hatası:', error);
-            // Hoşgeldin mesajı zaten gösterildi, hata durumunda sadece logla
         }
 
-        // 📝 Buton durumlarını güncelle
-        updateSendButtonState();
+        // 📝 Buton durumlarını sadece chat modunda güncelle.
+        if (!isAkiKesif) updateSendButtonState();
     }
 
     /**
@@ -13995,6 +14015,22 @@ window.DialogChatModule = (function () {
     function addSystemMessage(content, extraClass = '') {
         const container = document.getElementById('dialogMessages');
         if (!container) return;
+        // v3.37.4 Bug E (code review #1 revision): aki-kesif modunda chat
+        // container'ı SavedReportsGrid host olarak repurpose ediliyor; eski
+        // sürüm (30a63db) bu modda HER addSystemMessage'i sessizce drop
+        // ediyordu — kullanıcı in-flight SSE timeout veya VPN error gibi
+        // KRİTİK bildirimleri kaçırıyordu. Yeni davranış: bilgi/welcome
+        // mesajları sessizce skip, ama error/warning/timeout/fail içeren
+        // extraClass'lı mesajları toast'a yönlendir ki kullanıcı hata
+        // bildirimini alsın.
+        if (container.classList.contains('aki-kesif-grid-host')) {
+            const isCritical = /\berror\b|\bwarning\b|\btimeout\b|\bfail\b/i.test(extraClass || '');
+            if (isCritical && typeof window.showToast === 'function') {
+                const plain = String(content || '').replace(/<[^>]+>/g, '').trim().slice(0, 220);
+                if (plain) window.showToast(plain, 'error');
+            }
+            return;
+        }
 
         const rowClass = `message-row assistant${extraClass ? ' ' + extraClass : ''}`;
         const html = `
@@ -26667,6 +26703,21 @@ window.DataSourcesModule = (function () {
     const VF_BASE = '/data-sources';
     let sources = [];
 
+    // v3.37.7 → v3.37.8 post-review (finding N3): defense-in-depth.
+    // BE SSOT: `app/services/db_smart/dialect_constants.HOST_VALUE_CANARIES`.
+    // **MANUEL SYNC GEREKLİ** — BE listesi büyürse bu array da güncellenmeli;
+    // BE primary validator olduğu için drift FE'de zararsız sessiz silent-pass
+    // demek (UI'da FE uyarısı yok, BE 422 döner). Sonraki sprintte GET
+    // /api/db-smart/canary-set veya build-time inject ile auto-sync planlanır.
+    const _HOST_VALUE_CANARIES = [
+        'host', 'port', 'db_type', 'db_name', 'db_user',
+        'db_password', 'db_password_encrypted', 'id',
+    ];
+    function _isInvalidHostValue(v) {
+        if (typeof v !== 'string') return false;
+        return _HOST_VALUE_CANARIES.indexOf(v.trim().toLowerCase()) !== -1;
+    }
+
     // Kaynak Tipi Etiketleri
     const SOURCE_TYPE_LABELS = {
         'database': 'Veri Tabanı',
@@ -27272,10 +27323,15 @@ window.DataSourcesModule = (function () {
 
             if (!dbType) { showToast('Veritabanı tipi seçin', 'warning'); return; }
             if (!host) { showToast('Sunucu adresi zorunludur', 'warning'); return; }
+            if (_isInvalidHostValue(host)) { showToast('Sunucu adresi kolon adı olamaz (örn. localhost, 10.0.0.5, mssql.firma.local)', 'warning'); return; }
             if (!port) { showToast('Port numarası zorunludur', 'warning'); return; }
             if (!dbName) { showToast('Veritabanı adı zorunludur', 'warning'); return; }
+            // v3.37.8 bulgu #3: scope genişletme — diğer credential field'lar
+            if (_isInvalidHostValue(dbName)) { showToast('Veritabanı adı kolon adı olamaz (gerçek bir DB adı girin)', 'warning'); return; }
             if (!dbUser) { showToast('Kullanıcı adı zorunludur', 'warning'); return; }
+            if (_isInvalidHostValue(dbUser)) { showToast('Kullanıcı adı kolon adı olamaz (gerçek bir DB kullanıcısı girin)', 'warning'); return; }
             if (!existingSource?.id && !dbPassword) { showToast('Şifre zorunludur', 'warning'); return; }
+            if (dbPassword && _isInvalidHostValue(dbPassword)) { showToast('Şifre kolon adı olamaz — gerçek bir parola girin', 'warning'); return; }
 
             formData.db_type = dbType;
             formData.host = host;
@@ -27301,6 +27357,7 @@ window.DataSourcesModule = (function () {
             const dbPassword = document.getElementById('dsDbPassword')?.value;
 
             if (!host) { showToast('Sunucu adresi zorunludur', 'warning'); return; }
+            if (_isInvalidHostValue(host)) { showToast('Sunucu adresi kolon adı olamaz (örn. ftp.firma.com, 10.0.0.5)', 'warning'); return; }
             if (!port) { showToast('Port numarası zorunludur', 'warning'); return; }
             if (!dbUser) { showToast('Kullanıcı adı zorunludur', 'warning'); return; }
             if (!existingSource?.id && !dbPassword) { showToast('Şifre zorunludur', 'warning'); return; }
@@ -27321,8 +27378,14 @@ window.DataSourcesModule = (function () {
 
             if (!siteUrl) { showToast('Site URL zorunludur', 'warning'); return; }
             if (!tenantId) { showToast('Tenant ID zorunludur', 'warning'); return; }
+            // v3.37.8 bulgu #12: SharePoint mesajını semantik düzelt — kanary kontrolü
+            // DB-host placeholder'larını (literal "host", "port" vb.) yakalar; SharePoint
+            // tenant'ı için legitimacy değil sadece kötü-placeholder reddi.
+            if (_isInvalidHostValue(tenantId)) { showToast('Tenant ID kolon adı/placeholder olamaz — gerçek tenant (GUID veya *.onmicrosoft.com) girin', 'warning'); return; }
             if (!clientId) { showToast('Client ID zorunludur', 'warning'); return; }
+            if (_isInvalidHostValue(clientId)) { showToast('Client ID kolon adı/placeholder olamaz — gerçek Azure AD app ID girin', 'warning'); return; }
             if (!existingSource?.id && !clientSecret) { showToast('Client Secret zorunludur', 'warning'); return; }
+            if (clientSecret && _isInvalidHostValue(clientSecret)) { showToast('Client Secret kolon adı olamaz — gerçek Azure AD app secret girin', 'warning'); return; }
 
             formData.file_server_path = siteUrl;
             formData.host = tenantId;
@@ -35067,10 +35130,12 @@ window.ThemePickerPopup = (function () {
             + '    <h4 class="dsw-ast-section-title">SELECT</h4>'
             + _renderSelectList()
             + '  </section>'
-            + '  <section class="dsw-ast-section" data-key="order">'
-            + '    <h4 class="dsw-ast-section-title">ORDER BY</h4>'
-            + _renderOrderList()
-            + '  </section>'
+            // v3.37.9 B2 (ATHENA+HEBE): AST editor'ün statik "ORDER BY /
+            // Sıralama yok." section'ı kaldırıldı. Wizard Step 4 zaten kendi
+            // editable "SIRALAMA" chip barını gösteriyor (_renderOrderByChips,
+            // "+ Kolon seç" dropdown ile çalışan) → iki ORDER BY UI'ı redundant
+            // ve kafa karıştırıcıydı. Order_by AST'te korunur; reorder/remove/
+            // modify_order op'ları (klavye kısayolu + chip bar) etkilenmez.
             + '  <section class="dsw-ast-section" data-key="filters">'
             + '    <h4 class="dsw-ast-section-title">WHERE</h4>'
             + _renderFilterChips()
@@ -35109,31 +35174,10 @@ window.ThemePickerPopup = (function () {
         return html;
     }
 
-    function _renderOrderList() {
-        var ord = (state.ast && state.ast.order_by) || [];
-        var html = '<ul class="dsw-ast-list" role="list" data-list="order">';
-        for (var i = 0; i < ord.length; i += 1) {
-            var o = ord[i];
-            var expr = (typeof o === 'string') ? o : (o && (o.expr || o.column)) || '';
-            var dir = (o && typeof o === 'object' && o.direction) ? String(o.direction).toUpperCase() : 'ASC';
-            if (dir !== 'ASC' && dir !== 'DESC') dir = 'ASC';
-            html += ''
-                + '<li class="dsw-ast-item" role="listitem" draggable="true"'
-                + '    tabindex="0" aria-grabbed="false"'
-                + '    data-list="order" data-index="' + i + '"'
-                + '    aria-label="Sıralama ' + _escape(expr) + ' ' + dir + '">'
-                + '  <span class="dsw-ast-item-label">' + _escape(expr) + '</span>'
-                + '  <button type="button" class="dsw-ast-order-toggle"'
-                + '          data-action="toggle_order_dir" data-index="' + i + '"'
-                + '          aria-label="Yönü değiştir, şu an ' + dir + '">' + dir + '</button>'
-                + '  <button type="button" class="dsw-ast-item-remove" aria-label="Sıralamayı kaldır"'
-                + '          data-action="remove_order" data-index="' + i + '">×</button>'
-                + '</li>';
-        }
-        html += '</ul>';
-        if (ord.length === 0) html += '<p class="dsw-ast-empty-line">Sıralama yok.</p>';
-        return html;
-    }
+    // v3.37.9 B2 (code-review medium): _renderOrderList() kaldırıldı — tek
+    // çağıranı (statik "ORDER BY" section, yukarıda) silindiğinden ölü koddu.
+    // ORDER BY artık wizard'ın editable "SIRALAMA" chip barında render edilir
+    // (db_smart_wizard.js:_renderOrderByChips). order_by AST'te korunur.
 
     function _renderFilterChips() {
         var fs = (state.ast && state.ast.filters) || [];
@@ -37161,6 +37205,10 @@ window.ThemePickerPopup = (function () {
         currentAst: null,                 // P20-D: server-canonical AST snapshot
         _lastFocusEl: null,               // HEBE Gate: return-focus target
         lastGeneratedSql: null,           // v3.36.0 F10: Önizleme'den son üretilen SQL (save flow için)
+        // v3.37.3 (bulgular-2 / Bulgu 7a, 8): kayıtlı bir raporu düzenleme modunda
+        // açtıysak burada id tutulur. _saveCurrentReport bunu görürse POST yerine
+        // PATCH (update) yapar; modal kapanışında null'a düşer.
+        editingReportId: null,
     };
 
     // P20-D — Step 4 AST editor mount lifecycle
@@ -37252,6 +37300,24 @@ window.ThemePickerPopup = (function () {
         // FIX5 P2 (ATHENA+TYCHE): forward-skip engelle — kullanıcı ileri adıma
         // ancak bir sonraki _STEPS index'ine geçebilir (validation by-pass koruma).
         if (!force && currentIdx >= 0 && targetIdx > currentIdx + 1) return;
+        // v3.37.3 (bulgular-2 / Bulgu 1 + 4a): forward-step validation.
+        // Stepper-tab tıklaması doğrudan _setStep çağırdığı için "Next" disable
+        // bypass edilebiliyordu. Şimdi her ileri geçişte ön-koşul kontrol edilir.
+        if (!force && currentIdx >= 0 && targetIdx > currentIdx) {
+            // Step 0 → 2 (Tablo Seç → Metrik): tablo seçili olmalı.
+            if (n === 2 && _state.selectedTableId == null) {
+                _notify(_t('wizard.toast.select_table_first'), 'warning');
+                return;
+            }
+            // Step 3 → 4 (Filtre/Kolon → Önizleme): en az 1 kolon seçili olmalı.
+            if (n === 4) {
+                const cols = _state.reportColumns;
+                if (!Array.isArray(cols) || cols.length === 0) {
+                    _notify(_t('wizard.toast.select_columns_first'), 'warning');
+                    return;
+                }
+            }
+        }
         // FIX5 F1 (ATHENA): backward navigation → ileri adımlara ait state'i temizle
         // (preview→filter→metric→filter gezinince stale metric/filters görünmesin).
         if (currentIdx >= 0 && targetIdx < currentIdx) {
@@ -37693,6 +37759,40 @@ window.ThemePickerPopup = (function () {
             .replace(/[ûÛ]/g, 'u');
     }
 
+    // v3.37.3 (bulgular-2 / Bulgu 2): LLM hata sebebini kullanıcı-okur
+    // büyük harfli mesaja indirgeyen helper. Kind='empty' modelin yanıt
+    // verip de öneri çıkaramadığı durum; kind='error' fetch/parse istisnası.
+    function _mapLlmErrorReason(err, kind) {
+        if (kind === 'empty') {
+            return 'YAPAY ZEKA BU TABLO İÇİN UYGUN BİR METRİK ÇIKARAMADI';
+        }
+        if (!err) return 'YAPAY ZEKA YANIT VERMEDİ';
+        const status = (err && (err.status || err.statusCode)) || 0;
+        const msg = String((err && err.message) || '').toLowerCase();
+        if (err.name === 'TimeoutError' || msg.indexOf('timeout') >= 0) {
+            return 'YAPAY ZEKA YANITI ZAMAN AŞIMINA UĞRADI';
+        }
+        if (status === 429 || msg.indexOf('rate limit') >= 0 || msg.indexOf('quota') >= 0) {
+            return 'YAPAY ZEKA KOTASI DOLDU — DAHA SONRA TEKRAR DENEYİN';
+        }
+        if (status === 401 || status === 403) {
+            return 'YAPAY ZEKA YETKİLENDİRME HATASI';
+        }
+        if (status === 400 || status === 422) {
+            return 'YAPAY ZEKA İSTEĞİ GEÇERSİZ (TABLO VEYA KOLON BİLGİSİ EKSİK)';
+        }
+        if (status >= 500) {
+            return 'YAPAY ZEKA SUNUCUSU YANIT VERMEDİ (' + status + ')';
+        }
+        if (msg.indexOf('json') >= 0 || msg.indexOf('parse') >= 0) {
+            return 'YAPAY ZEKA YANITI ÇÖZÜMLENEMEDİ';
+        }
+        if (msg.indexOf('network') >= 0 || msg.indexOf('failed to fetch') >= 0) {
+            return 'AĞ BAĞLANTI HATASI';
+        }
+        return 'YAPAY ZEKA SAĞLAYICISI ŞU AN ULAŞILAMIYOR';
+    }
+
     // F14: accordion render + search + multi-checkbox. Kategori bazında
     // <details> blokları, üstte search input, her item solunda checkbox.
     // Multi-select (Set), boş geçilebilir; "İleri" validation YOK.
@@ -37710,6 +37810,12 @@ window.ThemePickerPopup = (function () {
         _setBusy(panel, true);
         panel.innerHTML = '<p class="dsw-hint" role="status">🤖 METIS metrikleri analiz ediyor...</p>';
 
+        // v3.37.3 (bulgular-2 / Bulgu 2): LLM önerisi başarısız olursa neden
+        // göster. Reset → sonra catch dalları doldursun. _autoSuggestMetrics
+        // null dönerse (kolon fetch hatası / tablo adı yok / boş yanıt) bunu
+        // da fallback nedeni olarak kayıt ederiz.
+        _state._lastMetricLlmError = null;
+
         // 1) LLM auto-suggest dene (sadece tablo seçildiyse anlamli).
         let llmSuggestions = null;
         const llmAbort = new AbortController();
@@ -37726,6 +37832,9 @@ window.ThemePickerPopup = (function () {
                 });
                 if (llmData && Array.isArray(llmData.suggestions) && llmData.suggestions.length) {
                     llmSuggestions = llmData.suggestions;
+                } else {
+                    // Yanıt geldi ama boş — model "çıkaramadı" durumu.
+                    _state._lastMetricLlmError = _mapLlmErrorReason(null, 'empty');
                 }
             } catch (e) {
                 if (e && e.name === 'AbortError') {
@@ -37733,6 +37842,7 @@ window.ThemePickerPopup = (function () {
                     _setBusy(panel, false);
                     return;
                 }
+                _state._lastMetricLlmError = _mapLlmErrorReason(e, 'error');
                 console.warn('[db_smart_wizard] auto metric-suggest failed:', e);
             }
         }
@@ -37765,8 +37875,17 @@ window.ThemePickerPopup = (function () {
 
         // 3) Merge — LLM önerileri "✨ LLM Önerisi" kategorisinde, sonra statik
         //    kategoriler. metric_key cakismasinda LLM kazanir.
+        //
+        // Bulgular3 / Bulgu 3: LLM önerisi geldiyse standart "fallback başlıkları"
+        // (Müşteri / Diğer / Masraf / Gelir ...) varsayılan olarak GİZLE — kullanıcı
+        // toolbar toggle ile açabilir. _metricsIndex'e statikler yine yazılır
+        // (arama + restore için), ama kategori listesinden çıkarılır. Restore
+        // path'inde önceden seçili statik metric varsa o kategoriyi görünür tut
+        // ki kullanıcı seçimini görsün.
         _state._metricsIndex = {};
         _state._metricCategories = {};
+        _state._staticCategoriesShadow = {};
+        _state._llmActive = !!(llmSuggestions && llmSuggestions.length);
 
         if (llmSuggestions) {
             const llmCat = '✨ LLM Önerisi';
@@ -37783,6 +37902,8 @@ window.ThemePickerPopup = (function () {
                     confidence: s.confidence,
                     formula: s.formula,
                     agg: s.agg,
+                    table_name_tr: s.table_name_tr,
+                    table_object_name: s.table_object_name,
                 };
                 _state._metricsIndex[key] = item;
                 return item;
@@ -37790,15 +37911,22 @@ window.ThemePickerPopup = (function () {
             _state._metricCategories[llmCat] = llmList;
         }
 
+        const selectedSet = _state.selectedMetrics || new Set();
         staticItems.forEach(m => {
             if (!m || !m.metric_key) return;
             if (_state._metricsIndex[m.metric_key]) return; // LLM zaten ekledi
             _state._metricsIndex[m.metric_key] = m;
-            // applicable_when.category fallback'i — backend tek tip değil.
             const cat = (m.category)
                 || (m.applicable_when && m.applicable_when.category)
                 || 'Diğer';
-            (_state._metricCategories[cat] = _state._metricCategories[cat] || []).push(m);
+            // LLM aktifse statikler shadow'a (gizli); aksi halde normal kategoriye.
+            // Ancak restore'da seçili olan statik metric'ler görünür kategoriye çıkar
+            // (kullanıcı seçimini kaybetmesin).
+            const isSelectedStatic = selectedSet.has && selectedSet.has(m.metric_key);
+            const target = (_state._llmActive && !isSelectedStatic)
+                ? _state._staticCategoriesShadow
+                : _state._metricCategories;
+            (target[cat] = target[cat] || []).push(m);
         });
 
         // Stale selectedMetrics temizle (yeniden çağrılırsa).
@@ -37820,19 +37948,53 @@ window.ThemePickerPopup = (function () {
 
         // Fallback notu SADECE LLM yokken VE statik fallback'tayken gosterilir.
         const showFallbackNote = (!llmSuggestions) && staticFallback;
+        // Bulgular3 / Review fix #2: toggle re-render'ı için fallbackUsed'i state'e tut —
+        // closure'dan stale değer okumayalım.
+        _state._lastFallbackUsed = showFallbackNote;
         _renderStep2(mergedItems, showFallbackNote);
         _setBusy(panel, false);
         _state._metricLlmAbort = null;
     }
 
-    // v3.37.1 B (HEBE+METIS): Step 2 auto-suggest helper. Backend
-    // /api/db/smart/llm/metric-suggest sözleşmesi (v3.37.0 B4) ile çalisir.
+    // v3.37.2 (HEBE+METIS+ARES): Step 2 auto-suggest helper. Backend
+    // /api/db-smart/llm/metric-suggest kontratı: { source_id, table:str,
+    // columns:[{name,type}], user_intent? }. Auto-path'ta Step 2 girişinde
+    // henüz _columnCatalog yok — kolonları ön-fetch ediyoruz
+    // (/sources/{sid}/tables/{tid}/columns) ve {name, type} şekline indiriyoruz.
+    // Kolon fetch hata verirse veya boş dönerse LLM'i atla (null), caller statik
+    // kütüphaneye düşer. AbortError up'a propagate eder (step-out cleanup için).
     async function _autoSuggestMetrics(payload) {
+        let columns = [];
+        try {
+            const colUrl = API_BASE + '/sources/' + payload.source_id +
+                           '/tables/' + payload.table_id + '/columns';
+            const colData = await _fetchJson(colUrl, { signal: payload.signal });
+            columns = (colData && Array.isArray(colData.columns) ? colData.columns : [])
+                .map(function (c) {
+                    return {
+                        name: c.name,
+                        type: c.data_type || c.semantic_type || 'unknown',
+                    };
+                })
+                .filter(function (c) { return c.name && c.type; });
+        } catch (e) {
+            if (e && e.name === 'AbortError') throw e;
+            console.warn('[db_smart_wizard] metric-suggest column pre-fetch failed:', e);
+            return null;
+        }
+        if (!columns.length) return null;
+
+        const tableName = _state.selectedTableObjectName ||
+                          (payload.table_label || '').split('.').pop() || null;
+        if (!tableName) return null;
+
         const body = {
             source_id: payload.source_id,
-            table_id: payload.table_id,
-            table_label: payload.table_label || '',
-            joined_tables: payload.joined_tables || [],
+            table: tableName,
+            // Bulgular3 / Bulgu 4: TR ad backend'e propagate; prompt+response
+            // bunu kullanir, chip "Tablo: <TR ad>" basligi olusur, tooltip SQL adi.
+            table_label: payload.table_label || _state.selectedTableLabel || null,
+            columns: columns,
             user_intent: _state.user_intent || '',
         };
         return await _fetchJson(API_BASE + '/llm/metric-suggest', {
@@ -37846,21 +38008,53 @@ window.ThemePickerPopup = (function () {
     function _renderStep2(items, fallbackUsed) {
         const panel = document.getElementById('dswStep2');
         if (!panel) return;
-        const cats = _state._metricCategories || {};
+        // Bulgular3 / Bulgu 3: LLM aktif + kullanıcı toggle açtıysa shadow'daki
+        // statikleri görünür kategorilere merge et. Aksi halde shadow gizli kalır.
+        const baseCats = _state._metricCategories || {};
+        const shadow = _state._staticCategoriesShadow || {};
+        const showShadow = _state._llmActive && _state._showStaticMetrics === true;
+        const cats = {};
+        Object.keys(baseCats).forEach(k => { cats[k] = baseCats[k].slice(); });
+        if (showShadow) {
+            Object.keys(shadow).forEach(k => {
+                cats[k] = (cats[k] || []).concat(shadow[k]);
+            });
+        }
         const catNames = Object.keys(cats).sort();
         const total = items.length;
         const selCount = (_state.selectedMetrics && _state.selectedMetrics.size) || 0;
 
         let html = '';
-        // Intro hint + (varsa) fallback uyarısı.
+        // v3.37.3 (bulgular-2 / Bulgu 2): LLM önerisi yapılamadıysa neden'i
+        // BÜYÜK HARFLERLE intro mesajının ÜSTÜNE bas. fallbackUsed alanı
+        // _loadMetrics tarafından (!llmSuggestions && staticFallback) durumunda
+        // true gelir — yani statik kütüphaneye düşüldü demektir.
+        const llmReason = _state._lastMetricLlmError;
+        if (fallbackUsed || llmReason) {
+            const reasonText = llmReason || 'YAPAY ZEKA ÖNERİSİ ÜRETİLEMEDİ';
+            html += '<div class="dsw-llm-fallback-banner" role="alert">' +
+                    '<span class="dsw-llm-fallback-banner-reason">' +
+                    _escape(reasonText) + '</span>' +
+                    '<span class="dsw-llm-fallback-banner-subtitle">' +
+                    _escape(_t('wizard.banner.llm_fallback_subtitle')) +
+                    '</span>' +
+                    '</div>';
+        }
+        // Intro hint
         html += '<p class="dsw-hint">' +
                 _escape(_t('wizard.hint.metric_intro', { count: total })) +
                 '</p>';
-        if (fallbackUsed) {
-            html += '<p class="dsw-hint" style="opacity:.8;font-style:italic">' +
-                    'Metrik kütüphanesi boş veya fallback ile yüklendi.</p>';
-        }
         // Top toolbar — search + clear + selected counter.
+        // Bulgular3 / Bulgu 3: LLM aktifse "Standart kütüphaneyi göster/gizle"
+        // toggle göster — varsayılan gizli, kullanıcı açabilir.
+        const staticToggleHtml = (_state._llmActive)
+            ? ('<button type="button" id="dswMetricStaticToggle" class="dsw-metric-static-toggle" ' +
+               'title="Standart metrik kütüphanesi görünürlüğü">' +
+               (_state._showStaticMetrics
+                   ? '📚 Standart kütüphaneyi gizle'
+                   : '📚 Standart kütüphaneyi göster') +
+               '</button>')
+            : '';
         html += '<div class="dsw-metric-toolbar">' +
                 '<div class="dsw-metric-search-wrap">' +
                 '<input type="search" id="dswMetricSearch" class="dsw-metric-search" ' +
@@ -37870,6 +38064,7 @@ window.ThemePickerPopup = (function () {
                 '</div>' +
                 '<button type="button" id="dswMetricClearAll" class="dsw-metric-clear-all" ' +
                 'title="Tüm seçimleri kaldır">Tümünü temizle</button>' +
+                staticToggleHtml +
                 '<span id="dswMetricSelectedCount" class="dsw-metric-selected-count" aria-live="polite">' +
                 (selCount > 0 ? (selCount + ' seçili') : '') +
                 '</span>' +
@@ -37988,6 +38183,18 @@ window.ThemePickerPopup = (function () {
                 updateSelectedCount();
             });
         }
+        // Bulgular3 / Bulgu 3: standart kütüphane görünürlük toggle.
+        const staticToggleBtn = panel.querySelector('#dswMetricStaticToggle');
+        if (staticToggleBtn) {
+            staticToggleBtn.addEventListener('click', () => {
+                _state._showStaticMetrics = !_state._showStaticMetrics;
+                // Re-render — fallbackUsed'i state'ten oku (Review fix #2: stale closure'dan değil).
+                _renderStep2(
+                    Object.values(_state._metricsIndex || {}),
+                    !!_state._lastFallbackUsed,
+                );
+            });
+        }
     }
 
     // ============================================
@@ -38084,11 +38291,20 @@ window.ThemePickerPopup = (function () {
             'Soldan "+ Ekle" ile rapora dahil edin, sağ panelde sürükle-bırak ile sıralayın.') + '</p>';
         // v3.37.1 D (ATHENA+POSEIDON+HEBE): "✨ Metrik için uygun kolonlar" kategorisi.
         // Background fetch POST /llm/column-filter-suggest — render edilince doldurulur.
+        // v3.37.4 Bug D fix (HEBE+ATHENA): başlığa "+ Tümünü ekle" butonu.
+        // Initial state'te hidden — _loadMetricAwareColumns recommended[] dolduğunda
+        // unhide edilir. Click → tüm önerilen kolonları reportColumns'a sırayla ekler.
         const metricAwareHtml =
             '<div class="dsw-metric-aware" data-category="metric-aware">' +
               '<h5 class="dsw-table-group dsw-cat-metric-aware" data-metric-aware-head>' +
-                '✨ Metrik için uygun kolonlar ' +
-                '<span class="dsw-table-group-count" data-metric-aware-count>(...)</span>' +
+                '<span class="dsw-metric-aware-title">' +
+                  '✨ Metrik için uygun kolonlar ' +
+                  '<span class="dsw-table-group-count" data-metric-aware-count>(...)</span>' +
+                '</span>' +
+                '<button type="button" class="dsw-metric-aware-add-all" ' +
+                  'data-metric-aware-add-all aria-label="Önerilen tüm kolonları rapora ekle" ' +
+                  'title="Önerilen tüm kolonları sırayla rapora ekle" hidden>' +
+                  '+ Tümünü ekle</button>' +
               '</h5>' +
               '<ul class="dsw-col-catalog" data-metric-aware-list>' +
                 '<li class="dsw-col-row dsw-metric-aware-loading">' +
@@ -38222,17 +38438,23 @@ window.ThemePickerPopup = (function () {
     function _addReportColumn(colName, tableId) {
         if (!colName) return;
         const tid = (typeof tableId === 'number' && !isNaN(tableId)) ? tableId : null;
+        // v3.37.4 (code review #6): catalog lookup ÖNCE — resolved table_id
+        // üzerinden dup check yapıyoruz. Eski sıra (dup check → catalog
+        // lookup) tableId null gelirse aynı isimli kolonların ilkini eklenmiş
+        // sayıp diğerlerini "zaten ekli" notify'ı ile bastırıyordu. Catalog
+        // her zaman table_id'yi taşıyor, dolayısıyla resolution güvenli.
+        const cat = (_state._columnCatalog || []).find(x =>
+            x.name === colName && (tid == null || x.table_id === tid)
+        ) || (_state._columnCatalog || []).find(x => x.name === colName);
+        if (!cat) return;
+        const resolvedTid = (typeof cat.table_id === 'number') ? cat.table_id : tid;
         const exists = (_state.reportColumns || []).some(c =>
-            c.column_name === colName && (tid == null || c.table_id === tid)
+            c.column_name === colName && c.table_id === resolvedTid
         );
         if (exists) {
             _notify('Bu kolon zaten ekli', 'info');
             return;
         }
-        const cat = (_state._columnCatalog || []).find(x =>
-            x.name === colName && (tid == null || x.table_id === tid)
-        ) || (_state._columnCatalog || []).find(x => x.name === colName);
-        if (!cat) return;
         // v3.37.1 D (POSEIDON): metric-aware uyumsuzluk uyarısı.
         // _metricAwareWarn array'i column-filter-suggest endpoint'inden gelir.
         // Eklemeyi engellemiyoruz — kullanıcı override edebilir, sadece uyarı veriyoruz.
@@ -38277,7 +38499,26 @@ window.ThemePickerPopup = (function () {
         const root = panelRoot || document;
         const headCount = root.querySelector('[data-metric-aware-count]');
         const list = root.querySelector('[data-metric-aware-list]');
+        const addAllBtn = root.querySelector('[data-metric-aware-add-all]');
         if (!list) return;
+
+        // v3.37.4 (code review #3): her early-return path'inde de butonu
+        // resetle; eski sürüm metric-yok/fetch-fail/empty durumlarında
+        // önceki metriğin "Tümünü ekle (N)" handler'ını canlı bırakıyordu.
+        function _resetAddAllBtn() {
+            if (!addAllBtn) return;
+            addAllBtn.hidden = true;
+            addAllBtn.textContent = '+ Tümünü ekle';
+        }
+        _resetAddAllBtn();
+
+        // v3.37.4 (code review #5): out-of-order fetch race koruması.
+        // Hızlı metric M1→M2 geçişinde önce M2 (200ms) sonra M1 (800ms)
+        // resolve olursa M1'in recommended[]'i M2 panel'ine yazılıyordu.
+        // Artan callId ile en son çağrı dışındaki resolve'ları no-op yap.
+        const callId = ((_state._metricAwareCallId || 0) + 1) | 0;
+        _state._metricAwareCallId = callId;
+        const _isCurrent = () => _state._metricAwareCallId === callId;
 
         const metric = _state.metric || null;
         const metricKey = metric && (metric.metric_key || metric.key || metric.name) || null;
@@ -38314,6 +38555,7 @@ window.ThemePickerPopup = (function () {
                 body: JSON.stringify(payload),
             });
         } catch (e) {
+            if (!_isCurrent()) return;
             console.warn('[db_smart_wizard] column-filter-suggest failed:', e);
             list.innerHTML = '<li class="dsw-col-row"><div class="dsw-col-row-text">' +
                 '<div class="dsw-r-meta">Metrik analizi alınamadı.</div>' +
@@ -38321,6 +38563,7 @@ window.ThemePickerPopup = (function () {
             if (headCount) headCount.textContent = '(0)';
             return;
         }
+        if (!_isCurrent()) return;
 
         const recommended = (data && Array.isArray(data.recommended)) ? data.recommended : [];
         const warns = (data && Array.isArray(data.warn_columns)) ? data.warn_columns : [];
@@ -38385,6 +38628,55 @@ window.ThemePickerPopup = (function () {
                 }
             });
         });
+
+        // v3.37.4 Bug D fix (HEBE+ATHENA): "+ Tümünü ekle" butonu unhide + handler.
+        // Recommended list dolu (≥1) ise gözükür; click → tüm önerilenleri
+        // _addReportColumn üzerinden sırayla ekler. Duplicate (zaten ekli)
+        // kolonları _addReportColumn kendi içinde info-toast ile geçer.
+        // v3.37.4 (code review #3): _resetAddAllBtn fonksiyon başında baseline
+        // hidden bıraktı; burada recommended varsa unhide + rebind. Panel
+        // re-render olabileceği için addAllBtn referansını tazele.
+        const addAllBtnNow = root.querySelector('[data-metric-aware-add-all]');
+        if (addAllBtnNow && recommended.length) {
+            addAllBtnNow.hidden = false;
+            addAllBtnNow.textContent = '+ Tümünü ekle (' + recommended.length + ')';
+            // Re-bind safe: önce eski handler'ı temizle (cloneNode swap).
+            const fresh = addAllBtnNow.cloneNode(true);
+            addAllBtnNow.parentNode.replaceChild(fresh, addAllBtnNow);
+            fresh.addEventListener('click', function () {
+                const prevWarn = _state._metricAwareWarn;
+                _state._metricAwareWarn = [];
+                let added = 0;
+                try {
+                    recommended.forEach(function (rec) {
+                        const colName = rec.column_name || '';
+                        if (!colName) return;
+                        // v3.37.4 (code review #6): rec.table_id null gelirse
+                        // _addReportColumn dup check column_name-only fallback'e
+                        // düşer; catalog'tan resolve ile multi-table same-name
+                        // sızıntısını engelle.
+                        let tid = (rec.table_id != null) ? parseInt(rec.table_id, 10) : null;
+                        if (tid == null || isNaN(tid)) {
+                            const cat = (_state._columnCatalog || []).find(function (x) {
+                                return x.name === colName;
+                            });
+                            if (cat && typeof cat.table_id === 'number') tid = cat.table_id;
+                        }
+                        const before = (_state.reportColumns || []).length;
+                        _addReportColumn(colName, (typeof tid === 'number' && !isNaN(tid)) ? tid : null);
+                        const after = (_state.reportColumns || []).length;
+                        if (after > before) added += 1;
+                    });
+                } finally {
+                    _state._metricAwareWarn = prevWarn;
+                }
+                if (added > 0) {
+                    _notify(added + ' kolon rapora eklendi', 'success');
+                } else {
+                    _notify('Tüm öneriler zaten rapora ekli', 'info');
+                }
+            });
+        }
     }
 
     function _removeReportColumn(colName) {
@@ -38689,6 +38981,12 @@ window.ThemePickerPopup = (function () {
         }));
         _renderSuggestionSlots();
         _renderReportColumns();
+        // v3.37.9 B1 (ATHENA+HEBE): LLM öneri slot'u uygulanınca reportColumns
+        // REPLACE ediliyor; tek-kolon ekleme/silme path'leri (_addReportColumn /
+        // _removeReportColumn) guard'ı çağırır ama bu path çağırmıyordu →
+        // "Raporda görünecek kolonlar" dolu olmasına rağmen Step 3 "İleri →"
+        // pasif kalıyordu. Guard'ı burada da tetikle.
+        try { _updateNextGuard(); } catch (e) { /* defansif */ }
         const idx = slots.findIndex(s => s.id === slotId) + 1;
         const tail = slot.rationale ? ': ' + slot.rationale : '';
         _notify('Öneri ' + idx + ' uygulandı' + tail, 'success');
@@ -38759,6 +39057,12 @@ window.ThemePickerPopup = (function () {
                 label: (j && j.label) || null,
             }))
             : [];
+        // v3.37.3 (bulgular-2 / Bulgu 6): edit-mode reopen için "Raporda
+        // görünecek kolonlar" tam shape ile persist edilir. `selected_columns`
+        // (expr/alias) SQL üretimi içindir; `reportColumns` UI state'ini
+        // restore eden alandır — _loadSavedReport ve _hydrateFromSavedReport
+        // burayı arıyor.
+        ws.reportColumns = rc.slice();
         return ws;
     }
 
@@ -38770,6 +39074,8 @@ window.ThemePickerPopup = (function () {
         // v3.36.0 F9 (HEBE+APOLLO): Çalıştır butonu — Önizleme step yüklenince
         // mount et (idempotent). Yetersiz state durumunda dahi DOM'da kalır ama
         // _runGeneratedReport tıklamasında erken çıkar.
+        // v3.37.2 B2 — LLM chips header run-btn'den ÖNCE mount
+        try { _ensureLlmChipsHeader(panel); } catch (e) { /* defansif */ }
         _ensureRunButton(panel);
         if (!_state.sessionUid || !_state.selectedTableId) {
             if (hint) hint.textContent = 'Önceki adımları tamamlayın.';
@@ -38824,27 +39130,76 @@ window.ThemePickerPopup = (function () {
     // v3.36.0 F9 — Çalıştır button + Rapor Sonucu modal (HEBE+APOLLO+POSEIDON)
     // ============================================
 
-    // Mount the "▶️ Çalıştır" button as the first action in dswStep4.
-    // Idempotent — re-callable on every _loadPreview.
+    // Bulgular3 / Bulgu 6: "Çalıştır" butonu sticky footer'a taşındı (Format
+    // Öner ile aynı eylem grubunda). Bu fonksiyon artık eski runbar/header-bar
+    // DOM'unu (varsa) temizleyen idempotent bir cleanup helper'i. Footer'daki
+    // gerçek mount `_ensureRunFooter` içinde.
     function _ensureRunButton(panel) {
         if (!panel) return;
-        let bar = panel.querySelector('[data-dsw-runbar]');
-        if (!bar) {
-            bar = document.createElement('div');
-            bar.setAttribute('data-dsw-runbar', '1');
-            bar.className = 'dsw-runbar';
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'dsw-run-btn';
-            btn.id = 'dswRunBtn';
-            btn.setAttribute('aria-label', 'Raporu çalıştır');
-            btn.textContent = '▶️ Çalıştır';
-            btn.addEventListener('click', _runGeneratedReport);
-            bar.appendChild(btn);
-            // Insert as the first child of the step panel so it sits above the
-            // SQL preview / AST editor.
-            panel.insertBefore(bar, panel.firstChild);
+        const oldBar = panel.querySelector('[data-dsw-runbar]');
+        if (oldBar && oldBar.parentNode) oldBar.parentNode.removeChild(oldBar);
+        const oldHeader = panel.querySelector('[data-dsw-step4-headerbar]');
+        if (oldHeader && oldHeader.parentNode) {
+            // hint'i geri panel'e koy, headerBar'ı kaldır
+            // Review fix #3: parentNode null check (defansif — oldHeader detached path).
+            const parent = oldHeader.parentNode;
+            const hint = oldHeader.querySelector('#dswStep4Hint');
+            if (hint && parent) parent.insertBefore(hint, oldHeader);
+            if (parent) parent.removeChild(oldHeader);
         }
+    }
+
+    // v3.37.2 B2 — Step 4 önizleme panel'inde LLM-kaynaklı seçili metrikler için
+    // "✨ LLM Önerileri" alt-başlık + chip listesi. Idempotent; LLM seçimi
+    // yoksa block kaldırılır.
+    function _ensureLlmChipsHeader(panel) {
+        if (!panel) return;
+        let block = panel.querySelector('[data-dsw-llm-chips]');
+        const idx = _state._metricsIndex || {};
+        const selected = _state.selectedMetrics;
+        if (!selected || typeof selected.forEach !== 'function') {
+            if (block) block.remove();
+            return;
+        }
+        const llmItems = [];
+        selected.forEach(function (key) {
+            const m = idx[key];
+            if (m && m.source === 'llm') llmItems.push(m);
+        });
+        if (!llmItems.length) {
+            if (block) block.remove();
+            return;
+        }
+        if (!block) {
+            block = document.createElement('div');
+            block.setAttribute('data-dsw-llm-chips', '1');
+            block.className = 'dsw-llm-chips-header';
+            panel.insertBefore(block, panel.firstChild);
+        }
+        const title = '<h5 class="dsw-llm-chips-title">✨ LLM Önerileri</h5>';
+        const chips = llmItems.map(function (m) {
+            const labelTxt = m.name_tr || m.metric_name || m.metric_key || '';
+            const conf = m.confidence != null
+                ? ' <span class="dsw-llm-chip-conf">' + Math.round(m.confidence * 100) + '%</span>'
+                : '';
+            // Bulgular3 / Bulgu 4: tooltip'e rationale + (TR/SQL farkliysa) orijinal tablo adi
+            const tooltipParts = [];
+            const rat = m.rationale || m.description_tr || '';
+            if (rat) tooltipParts.push(rat);
+            const tableTr = m.table_name_tr || '';
+            const tableSql = m.table_object_name || '';
+            if (tableTr && tableSql && tableTr.toUpperCase() !== tableSql.toUpperCase()) {
+                tooltipParts.push('Tablo (orijinal): ' + tableSql);
+            }
+            const titleAttr = tooltipParts.length
+                ? ' title="' + _escape(tooltipParts.join('\n')) + '"' : '';
+            const tableInline = tableTr
+                ? ' <span class="dsw-llm-chip-table-inline">· ' + _escape(tableTr) + '</span>'
+                : (tableSql ? ' <span class="dsw-llm-chip-table-inline">· ' + _escape(tableSql) + '</span>' : '');
+            return '<span class="dsw-llm-chip"' + titleAttr + '>' +
+                _escape(labelTxt) + conf + tableInline + '</span>';
+        }).join('');
+        block.innerHTML = title + '<div class="dsw-llm-chips-list">' + chips + '</div>';
     }
 
     // Collect wizard state and POST to /generate-report → open result modal.
@@ -39339,6 +39694,14 @@ window.ThemePickerPopup = (function () {
         if (_astEditorMounted) _unmountAstEditor();
         panel.classList.add('hidden');
         panel.setAttribute('hidden', '');
+        // v3.37.3 (bulgular-2 / Bulgu 7a): sonraki açılış yeni rapor olarak başlasın.
+        _state.editingReportId = null;
+        // Bulgular3 / Review fix #1: oturumlar arası leak'i önle — toggle bayrakları
+        // ve runtime view-state alanlarını sıfırla.
+        _state._showStaticMetrics = undefined;
+        _state._llmActive = undefined;
+        _state._lastFallbackUsed = undefined;
+        _state._lastMetricLlmError = null;
         // Return focus to opener if recorded
         if (_state._lastFocusEl && typeof _state._lastFocusEl.focus === 'function') {
             try { _state._lastFocusEl.focus(); } catch (e) { /* ignore */ }
@@ -39355,6 +39718,54 @@ window.ThemePickerPopup = (function () {
                 await window.VyraI18n.init();
             }
         } catch (e) { /* graceful: passthrough fallback */ }
+    }
+
+    // Bulgular3 / Bulgu 7: "Yeni Keşif" tıklandığında wizard state'ini fresh sıfırla.
+    // _akiKesifOpenWizard(null) → openAsModal({reportId: null}) → bu helper çağrılır.
+    // Saved-report edit path (_hydrateFromSavedReport) bu helper'ı KULLANMAZ.
+    function _resetWizardState() {
+        try { if (_astEditorMounted) _unmountAstEditor(); } catch (_) { /* defansif */ }
+        _state.sessionUid = null;
+        _state.currentStep = 0;
+        _state.sourceId = null;
+        _state.selectedTableId = null;
+        _state.selectedTableObjectName = null;
+        _state.selectedTableSchema = null;
+        _state.selectedTableLabel = null;
+        _state.selectedTables = [];
+        _state.joinTableIds = [];
+        _state.metric = null;
+        _state.selectedMetrics = new Set();
+        _state._metricsIndex = {};
+        _state._metricCategories = {};
+        _state._staticCategoriesShadow = {};
+        _state._llmActive = undefined;
+        _state._showStaticMetrics = undefined;
+        _state._lastFallbackUsed = undefined;
+        _state._lastMetricLlmError = null;
+        _state._lastColumnSuggestion = null;
+        _state._columnCatalog = [];
+        _state._columnGroups = [];
+        _state.filters = [];
+        _state.reportColumns = [];
+        _state.suggestions = [];
+        _state._suggestionCounter = 0;
+        _state.userNote = '';
+        _state.user_intent = '';
+        _state.currentAst = null;
+        _state.lastGeneratedSql = null;
+        _state.editingReportId = null;
+        _state.format = null;
+        _state.order_by = [];
+        // UI input'larını da temizle (Step 0 arama kutusu, sticky-footer textarea).
+        try {
+            const q = document.getElementById('dswSearchQ');
+            if (q) q.value = '';
+            const ui = document.getElementById('user-intent');
+            if (ui) ui.value = '';
+            const un = document.getElementById('dswUserNote');
+            if (un) un.value = '';
+        } catch (_) { /* defansif */ }
     }
 
     function init(opts) {
@@ -39489,6 +39900,13 @@ window.ThemePickerPopup = (function () {
         _modalState.opener = document.activeElement;
         _state._lastFocusEl = _modalState.opener;
 
+        // Bulgular3 / Bulgu 7: "Yeni Keşif" akışında tüm önceki state'i fresh sıfırla
+        // — eski seçim/tablo/metrik/filter/SQL UI'da görünmesin. Saved-report edit
+        // path'i (_hydrateFromSavedReport) state'i kendi şemasıyla restore edecek.
+        if (!opts.reportId) {
+            _resetWizardState();
+        }
+
         // Overlay + dialog
         const overlay = document.createElement('div');
         overlay.className = 'dsw-modal-overlay';
@@ -39566,6 +39984,8 @@ window.ThemePickerPopup = (function () {
     }
 
     async function _hydrateFromSavedReport(reportId) {
+        // v3.37.3 (bulgular-2 / Bulgu 7a): modal edit-reopen edit-mode işaret.
+        _state.editingReportId = parseInt(reportId, 10) || reportId;
         const url = API_BASE + '/saved-reports/' + encodeURIComponent(reportId);
         const data = await _fetchJson(url);
         if (data && data.wizard_state && typeof data.wizard_state === 'object') {
@@ -39582,6 +40002,9 @@ window.ThemePickerPopup = (function () {
             if (ws.selectedTableSchema) _state.selectedTableSchema = ws.selectedTableSchema;
             if (ws.selectedTableLabel) _state.selectedTableLabel = ws.selectedTableLabel;
             if (Array.isArray(ws.selectedTables)) _state.selectedTables = ws.selectedTables;
+            // v3.37.3 (bulgular-2 / Bulgu 6): modal edit-reopen reportColumns restore.
+            const restoredCols = _restoreReportColumns(ws);
+            if (restoredCols) _state.reportColumns = restoredCols;
             if (ws.metric) _state.metric = ws.metric;
             // F14: multi-metric restore — ws.metrics array (forward-compat).
             if (Array.isArray(ws.metrics) && ws.metrics.length) {
@@ -39777,6 +40200,39 @@ window.ThemePickerPopup = (function () {
         }
     }
 
+    // v3.37.3 (bulgular-2 / Bulgu 6): reportColumns restore helper. Yeni
+    // kayıtlarda `ws.reportColumns` tam shape; eski kayıtlarda yalnız
+    // `ws.selected_columns` ({expr, alias}) var — reverse-map ile UI state'i
+    // geri kazandırılır.
+    //
+    // PR-5/R3: backward-compat restore'da `_columnCatalog` doluysa
+    // `semantic_type`/`table_id`/`table_name` alanlarını cross-reference ile
+    // geri kazandırır — eski raporlarda metric-aware uyarı ve multi-table
+    // chip görünümü tam çalışsın.
+    function _restoreReportColumns(ws) {
+        if (Array.isArray(ws.reportColumns) && ws.reportColumns.length) {
+            return ws.reportColumns.slice();
+        }
+        if (!Array.isArray(ws.selected_columns)) return null;
+        const catalog = Array.isArray(_state._columnCatalog) ? _state._columnCatalog : [];
+        const byName = {};
+        catalog.forEach(function (c) {
+            if (c && c.name && !byName[c.name]) byName[c.name] = c;
+        });
+        return ws.selected_columns
+            .filter(function (c) { return c && c.expr && c.expr !== '*'; })
+            .map(function (c) {
+                const cat = byName[c.expr] || null;
+                return {
+                    column_name: c.expr,
+                    label: c.alias || (cat && cat.label) || c.expr,
+                    semantic_type: cat ? cat.semantic_type : undefined,
+                    table_name: cat ? cat.table_name : undefined,
+                    table_id: cat ? cat.table_id : undefined,
+                };
+            });
+    }
+
     async function _loadSavedReport(reportId) {
         try {
             const url = API_BASE + '/saved-reports/' + encodeURIComponent(reportId);
@@ -39785,6 +40241,8 @@ window.ThemePickerPopup = (function () {
                 _notify('Rapor verisi alınamadı.', 'error');
                 return;
             }
+            // v3.37.3 (bulgular-2 / Bulgu 7a): edit-mode işaret.
+            _state.editingReportId = parseInt(reportId, 10) || reportId;
             const ws = data.wizard_state || {};
             // _state restore — yalnız tanımlı alanları yaz, geri kalanı koru.
             if (ws.sourceId != null) _state.sourceId = ws.sourceId;
@@ -39795,7 +40253,6 @@ window.ThemePickerPopup = (function () {
             if (ws.selectedTableLabel) _state.selectedTableLabel = ws.selectedTableLabel;
             if (Array.isArray(ws.selectedTables)) _state.selectedTables = ws.selectedTables.slice();
             if (Array.isArray(ws.joinTableIds)) _state.joinTableIds = ws.joinTableIds.slice();
-            if (Array.isArray(ws.reportColumns)) _state.reportColumns = ws.reportColumns.slice();
             if (ws.metric && typeof ws.metric === 'object') _state.metric = ws.metric;
             // F14: multi-metric restore (saved-report path).
             if (Array.isArray(ws.metrics) && ws.metrics.length) {
@@ -39804,16 +40261,43 @@ window.ThemePickerPopup = (function () {
                 ws.metrics.forEach(m => {
                     if (!m || !m.metric_key) return;
                     _state.selectedMetrics.add(m.metric_key);
+                    // Saved metric'i LLM kaynaklı sayılır — restore sonrası
+                    // chip header _metricsIndex'ten source==='llm' filtresi kullanır.
+                    if (!m.source) m.source = 'llm';
                     _state._metricsIndex[m.metric_key] = m;
                 });
             } else if (ws.metric && ws.metric.metric_key) {
                 _state.selectedMetrics = new Set([ws.metric.metric_key]);
                 _state._metricsIndex = _state._metricsIndex || {};
+                if (!ws.metric.source) ws.metric.source = 'llm';
                 _state._metricsIndex[ws.metric.metric_key] = ws.metric;
             }
             if (Array.isArray(ws.filters)) _state.filters = ws.filters.slice();
             if (typeof ws.userNote === 'string') _state.userNote = ws.userNote;
             if (data.last_sql) _state.lastGeneratedSql = data.last_sql;
+
+            // Bulgular3 / Bulgu 1: Step 4 jump'ından ÖNCE oturum + kolon kataloğu
+            // hazırla — aksi halde _onStepEnter(4) → _loadPreview "Önceki adımları
+            // tamamlayın" early-exit'i veriyor, _buildStarterAst kataloğsuz çalışıp
+            // AST editor mount fail → console.warn zinciri (DbSmartAstEditor not
+            // loaded / mount failed).
+            try {
+                if (!_state.sessionUid) await _ensureSession();
+                if (_state.selectedTableId != null && _state.sourceId != null) {
+                    await _loadColumns();
+                }
+            } catch (preErr) {
+                console.warn('[db_smart_wizard] saved-report pre-fetch failed:', preErr);
+            }
+            // Catalog dolu olduktan SONRA reportColumns restore et — bu sayede
+            // eski format (ws.selected_columns) `_restoreReportColumns` cross-ref
+            // ile semantic_type/table_name/table_id alanlarını geri kazanır.
+            const restoredCols = _restoreReportColumns(ws);
+            if (restoredCols) _state.reportColumns = restoredCols;
+            // Metric library lazy-load — _metricsIndex'i saved metric'lerle
+            // birleştirir (mevcut entryler korunur; backend response'u shadow merge).
+            try { _loadMetrics(); } catch (_) { /* defansif, idempotent */ }
+
             // F10b Fix 2: restore path step 0 → step 4 jump → forward-skip guard
             // tarafından reddediliyordu (silent no-op). force:true ile bypass.
             _setStep(4, { force: true });
@@ -39848,29 +40332,215 @@ window.ThemePickerPopup = (function () {
 
     // ----- Save modal -----
 
+    // v3.37.3 (bulgular-2 / Bulgu 5, 7a, 8): "Raporu Kaydet" butonuna tıklanınca
+    //   - edit-mode (editingReportId varsa): pop-up açma, doğrudan PATCH ile
+    //     üzerine kaydet ve tüm modalları kapatıp ana ekrana dön.
+    //   - yeni kayıt: pop-up'ı aç → kullanıcı isim/açıklama girer → kaydet.
     function _openSaveModal() {
         if (_state.selectedTableId == null || _state.sourceId == null) {
             _notify('Önce kaynak ve tablo seçimini tamamlayın.', 'warning');
             return;
         }
+        if (_state.editingReportId != null) {
+            // Edit modunda doğrudan üzerine kaydet; pop-up'a gerek yok.
+            _overwriteCurrentReport();
+            return;
+        }
         const modal = document.getElementById('dswSaveReportModal');
         if (!modal) return;
+        // v3.37.2 FIX (HEBE+ATHENA): Save modal'i body'ye taşı.
+        // dswSaveReportModal varsayılan olarak #dbSmartWizardPanel içinde nested;
+        // openAsModal wizard'ı .dsw-modal-dialog içine taşıdığında save modal
+        // yeni stacking context altında kalıyor → z-index:11100 result modal
+        // overlay'inin (11000) ÜSTÜNE çıkamıyor. Body'ye taşıyarak global
+        // stacking context'e koy.
+        if (modal.parentElement !== document.body) {
+            document.body.appendChild(modal);
+        }
         const nameIn = document.getElementById('dswSaveReportName');
         const descIn = document.getElementById('dswSaveReportDesc');
         const err = document.getElementById('dswSaveReportError');
-        if (nameIn) nameIn.value = '';
-        if (descIn) descIn.value = '';
+        if (nameIn) { nameIn.value = ''; nameIn._userTouched = false; }
+        if (descIn) { descIn.value = ''; descIn._userTouched = false; }
         if (err) { err.hidden = true; err.textContent = ''; }
         modal.classList.remove('hidden');
         modal.removeAttribute('hidden');
         setTimeout(function () { if (nameIn) nameIn.focus(); }, 0);
+        // Bulgular3 / Bulgu 8: arka planda LLM'den baslik+aciklama oner.
+        // Kullanici inputlara dokunduysa override etme — sadece bos kalanlari doldur.
+        // Review fix #9: bekleyen LLM cagrisi varsa iptal et (modal her acilista yeni).
+        if (_state._saveMetaAbort) {
+            try { _state._saveMetaAbort.abort(); } catch (_) { /* ignore */ }
+        }
+        _state._saveMetaAbort = new AbortController();
+        _suggestReportMetaIntoModal(nameIn, descIn, _state._saveMetaAbort.signal);
+    }
+
+    // Bulgular3 / Bulgu 8: save-modal acildiginda LLM ile baslik+aciklama oner.
+    // Kullanici islerine dokunmayalim: input value bos VE _userTouched bayragi
+    // yoksa value'yu LLM yanitiyla doldur. Tekrar oner butonu da var.
+    async function _suggestReportMetaIntoModal(nameIn, descIn, abortSignal) {
+        const hintEl = document.getElementById('dswSaveReportLlmHint');
+        const setHint = function (txt, cls) {
+            if (!hintEl) return;
+            hintEl.textContent = txt || '';
+            hintEl.className = 'dsw-save-llm-hint' + (cls ? ' ' + cls : '');
+            hintEl.hidden = !txt;
+        };
+        // Kullanici input'a dokununca override koruma bayragi.
+        // Review fix: her _openSaveModal'da _userTouched sifirlanir (yukarida);
+        // listener once:true ile bir kez fire eder ve self-remove olur — flag
+        // mantigi gerekmez. Sonraki modal acilisinda yeniden bind ederiz.
+        const markTouched = function (el) {
+            if (!el) return;
+            el.addEventListener('input', function () { el._userTouched = true; }, { once: true });
+        };
+        markTouched(nameIn);
+        markTouched(descIn);
+
+        if (!_state.sourceId || !_state.selectedTableId) {
+            setHint('', '');
+            return;
+        }
+        // Payload: tablo + secili metrikler + raporda gorunen kolonlar + user_intent
+        // Review fix #4: backend Pydantic max_length=20/50 — slice ile guvende kal.
+        const idx = _state._metricsIndex || {};
+        const metric_names = [];
+        if (_state.selectedMetrics && _state.selectedMetrics.forEach) {
+            _state.selectedMetrics.forEach(function (k) {
+                const m = idx[k];
+                if (m) {
+                    const nm = (m.name_tr || m.metric_name || m.label || k || '').trim();
+                    if (nm) metric_names.push(nm);
+                }
+            });
+        }
+        const columns = (Array.isArray(_state.reportColumns) ? _state.reportColumns : [])
+            .map(function (c) { return c.label || c.column_name || ''; })
+            .filter(function (n) { return !!n; });
+        const metricNamesCapped = metric_names.slice(0, 20);
+        const columnsCapped = columns.slice(0, 50);
+        const payload = {
+            table_label: _state.selectedTableLabel || null,
+            metric_names: metricNamesCapped,
+            columns: columnsCapped,
+            filters_count: Array.isArray(_state.filters) ? _state.filters.length : 0,
+            user_intent: _state.user_intent || _state.userNote || '',
+        };
+        setHint('✨ AI baslik/aciklama oneriyor...', 'is-loading');
+        try {
+            const data = await _fetchJson(API_BASE + '/llm/report-meta-suggest', {
+                method: 'POST',
+                body: JSON.stringify(payload),
+                signal: abortSignal,
+            });
+            const suggestedTitle = (data && data.title) ? String(data.title) : '';
+            const suggestedDesc = (data && data.description) ? String(data.description) : '';
+            if (nameIn && !nameIn._userTouched && !nameIn.value) {
+                nameIn.value = suggestedTitle;
+            }
+            if (descIn && !descIn._userTouched && !descIn.value) {
+                descIn.value = suggestedDesc;
+            }
+            const cached = data && data.cache_hit ? ' (önbellek)' : '';
+            setHint('✨ AI önerdi — istediğin gibi düzenleyebilirsin' + cached, 'is-ok');
+        } catch (e) {
+            // Review fix #9: iptal edildiyse sessizce gec (kullanici modal'i kapatti/yeniden acti)
+            if (e && (e.name === 'AbortError' || (abortSignal && abortSignal.aborted))) {
+                return;
+            }
+            console.warn('[db_smart_wizard] report-meta-suggest failed:', e);
+            // Review fix #7: backend HTTPException.detail'i ekrana yansit.
+            const detail = (e && (e.detail || e.message)) ? String(e.detail || e.message).slice(0, 160) : '';
+            const tail = detail ? (' — ' + detail) : ' — başlığı ve açıklamayı manuel girin';
+            setHint('AI öneri alınamadı' + tail, 'is-error');
+        }
     }
 
     function _closeSaveModal() {
         const modal = document.getElementById('dswSaveReportModal');
         if (!modal) return;
+        // Review fix #9: bekleyen LLM meta-suggest cagrisi varsa iptal et.
+        if (_state._saveMetaAbort) {
+            try { _state._saveMetaAbort.abort(); } catch (_) { /* ignore */ }
+            _state._saveMetaAbort = null;
+        }
         modal.classList.add('hidden');
         modal.setAttribute('hidden', '');
+    }
+
+    // v3.37.3 (bulgular-2 / Bulgu 8): Kayıt sonrası tüm wizard modallarını
+    // kapat ve ana ekrana (Akıllı Keşif) dön. Saved Reports Grid'i de tazele.
+    function _afterSaveCleanup(reportId, name) {
+        _closeSaveModal();
+        // Sonuç modal'ı (Rapor Sonucu / Çalıştır popup) açıksa kapat.
+        try {
+            if (typeof _closeResultModal === 'function') _closeResultModal();
+        } catch (e) { /* defansif */ }
+        // PR-5/R5: refresh hedefini DOM'da hangi listenin görünür olduğuna göre
+        // seç — modal-mode'da wizard kapanırken ana ekran grid'i tazelenir,
+        // inline-mode'da yalnız wizard içi liste tazelenir. Eskiden ikisi de
+        // her zaman çağrılıyordu (gereksiz extra fetch).
+        if (_modalState.open) {
+            // Modal-mode: _notifySaved → closeModal → opts.onSave callback
+            // (home.html'de SavedReportsGrid.refresh çağırıyor).
+            try { _notifySaved(reportId, name); } catch (e) { /* ignore */ }
+        } else {
+            // Inline mode: önce wizard içi liste tazele (kullanıcı wizard'da
+            // kalmadan kapatılır ama liste DOM'da mount edilmiş olabilir),
+            // sonra panel'i kapat, ardından (varsa) ana ekran grid'ini tazele.
+            try { _loadSavedReportsList(); } catch (e) { /* defansif */ }
+            try { _closeWizard(); } catch (e) { /* ignore */ }
+            try {
+                if (window.SavedReportsGrid &&
+                    typeof window.SavedReportsGrid.refresh === 'function') {
+                    window.SavedReportsGrid.refresh();
+                }
+            } catch (e) { /* ignore */ }
+        }
+        // Edit-mode bayrağı sıfırla — sonraki wizard temiz başlasın.
+        _state.editingReportId = null;
+    }
+
+    // v3.37.3 (bulgular-2 / Bulgu 7a): Edit-mode "üzerine kaydet" — PATCH ile
+    // yalnız wizard_state + generated_sql güncellenir. İsim/açıklama korunur.
+    async function _overwriteCurrentReport() {
+        const id = _state.editingReportId;
+        if (id == null) return;
+        const wizard_state = _buildWizardState();
+        const patch = {
+            wizard_state: wizard_state,
+            generated_sql: _state.lastGeneratedSql || null,
+        };
+        try {
+            await _fetchJson(API_BASE + '/saved-reports/' + encodeURIComponent(id), {
+                method: 'PATCH',
+                body: JSON.stringify(patch),
+            });
+            _notify(_t('wizard.toast.report_updated'), 'success');
+            _afterSaveCleanup(id, null);
+        } catch (e) {
+            console.warn('[db_smart_wizard] overwrite failed:', e);
+            _notify('Güncellenemedi: ' + (e && e.message ? e.message : 'bilinmeyen hata'), 'error');
+        }
+    }
+
+    // v3.37.3 (bulgular-2 / Bulgu 7b): Aynı isimde rapor varsa kullanıcıya sor.
+    // Backend ?name_exact=X case-insensitive tam eşleşme döner (PR-5/R1) —
+    // 200-rapor listesi yerine doğrudan filtreli sorgu.
+    async function _findReportByName(name) {
+        const needle = (name || '').trim();
+        if (!needle) return null;
+        try {
+            const url = API_BASE + '/saved-reports?limit=1&offset=0&name_exact=' +
+                        encodeURIComponent(needle);
+            const data = await _fetchJson(url);
+            const items = (data && Array.isArray(data.items)) ? data.items : [];
+            return items.length ? items[0] : null;
+        } catch (e) {
+            console.warn('[db_smart_wizard] _findReportByName failed:', e);
+            return null;
+        }
     }
 
     async function _saveCurrentReport() {
@@ -39898,9 +40568,33 @@ window.ThemePickerPopup = (function () {
         };
         if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Kaydediliyor…'; }
         try {
+            // v3.37.3 (bulgular-2 / Bulgu 7b): duplicate-name kontrol.
+            const dup = await _findReportByName(name);
+            if (dup) {
+                const ok = window.confirm(_t('wizard.confirm.duplicate_name', { name: dup.name }));
+                if (!ok) {
+                    if (errEl) {
+                        errEl.textContent = _t('wizard.error.duplicate_name_field');
+                        errEl.hidden = false;
+                    }
+                    if (nameIn) nameIn.focus();
+                    return;
+                }
+                // Üzerine yaz: mevcut id ile PATCH.
+                await _fetchJson(API_BASE + '/saved-reports/' + encodeURIComponent(dup.id), {
+                    method: 'PATCH',
+                    body: JSON.stringify({
+                        name: name,
+                        description: description || null,
+                        wizard_state: wizard_state,
+                        generated_sql: body.generated_sql,
+                    }),
+                });
+                _notify(_t('wizard.toast.report_updated') + ': ' + name, 'success');
+                _afterSaveCleanup(dup.id, name);
+                return;
+            }
             // Backend route'u (FAZ 3 P13 G3.3) /sessions/{uid}/save-report — session-bound.
-            // F10 doğrudan flat body kabul eden /saved-reports endpoint'i bekler;
-            // session-bound path varsa onu kullan, yoksa flat POST dene.
             let res;
             if (_state.sessionUid) {
                 // F10b Fix 3 (POSEIDON+ATHENA): session-bound path artık client
@@ -39930,14 +40624,8 @@ window.ThemePickerPopup = (function () {
                     body: JSON.stringify(body),
                 });
             }
-            _notify('Rapor kaydedildi.', 'success');
-            _closeSaveModal();
-            // Liste refresh (mount'taki dswSavedReports DOM'da kalıyor)
-            _loadSavedReportsList();
-            // Modal akışındaysa parent'a haber ver
-            if (typeof _notifySaved === 'function' && res && (res.report_id || res.id)) {
-                try { _notifySaved(res.report_id || res.id, name); } catch (e) { /* ignore */ }
-            }
+            _notify(_t('wizard.toast.report_saved'), 'success');
+            _afterSaveCleanup(res && (res.report_id || res.id), name);
         } catch (e) {
             console.warn('[db_smart_wizard] save report failed:', e);
             const msg = (e && e.message) ? e.message : 'bilinmeyen hata';
@@ -40045,47 +40733,125 @@ window.ThemePickerPopup = (function () {
     // ====================================================================
 
     // ── B2: SQL pretty-print ────────────────────────────────────────────
-    // Manuel formatter (3rd-party lib YOK). Anahtar kelimelerden önce
-    // newline; SELECT listesi içinde virgül sonrası newline; indent 2 space.
+    // Bulgular3 / Bulgu 2: yeniden yazıldı. String literal'lerini koruyan,
+    // paren-depth tracking ile alt-sorgu/CTE içindeki anahtar kelimeleri
+    // bozmayan, AND/OR/ON için ek indent veren manuel formatter.
     function _prettyPrintSql(sql) {
         if (sql == null) return '';
         let s = String(sql).trim();
         if (!s) return '';
-        // Çoklu whitespace → tek space.
-        s = s.replace(/\s+/g, ' ');
-        const breakKeywords = [
-            'SELECT', 'FROM', 'WHERE', 'GROUP BY', 'ORDER BY',
-            'HAVING', 'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN',
-            'FULL JOIN', 'OUTER JOIN', 'JOIN', 'LIMIT', 'OFFSET',
-            'UNION ALL', 'UNION',
+
+        // 1) String literal'leri ('...' / "...") placeholder ile koru —
+        //    içlerindeki anahtar kelime/virgül yanlış parse edilmesin.
+        const strs = [];
+        s = s.replace(/'(?:[^']|'')*'|"(?:[^"]|"")*"/g, function (m) {
+            strs.push(m);
+            return 'STR' + (strs.length - 1) + '';
+        });
+
+        // 2) Whitespace normalize.
+        s = s.replace(/\s+/g, ' ').trim();
+
+        // 3) Top-level (paren depth=0) anahtar kelimeleri ve virgülleri parçala.
+        //    Uzun kelimeler önce gelir ("LEFT JOIN" > "JOIN", "UNION ALL" > "UNION").
+        const KW_LIST = [
+            'WITH', 'SELECT', 'FROM', 'WHERE', 'GROUP BY', 'HAVING', 'ORDER BY',
+            'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN', 'FULL OUTER JOIN',
+            'FULL JOIN', 'CROSS JOIN', 'OUTER JOIN', 'JOIN',
+            'UNION ALL', 'UNION', 'INTERSECT', 'EXCEPT',
+            'LIMIT', 'OFFSET', 'ON', 'AND', 'OR',
         ];
-        // Önce uzun kelimeleri eşle ("LEFT JOIN" > "JOIN") — yukarıdaki sıra
-        // bunu garanti ediyor.
-        breakKeywords.forEach(function (kw) {
-            const re = new RegExp('(\\s|^)' + kw.replace(/ /g, '\\s+') + '(\\s|$)', 'gi');
-            s = s.replace(re, function (_, pre, post) {
-                return '\n' + kw + (post === ' ' ? ' ' : post);
-            });
-        });
-        // SELECT listesindeki virgülleri yeni satıra al — sadece
-        // SELECT…FROM aralığında.
-        const lines = s.split('\n').map(function (ln) {
-            const trimmed = ln.trim();
-            if (/^SELECT\b/i.test(trimmed)) {
-                // SELECT kısmı içinde virgül + space → virgül + newline + indent.
-                return trimmed.replace(/,\s*/g, ',\n  ');
+        // Boşluklu kelimeler için tek+çoğul whitespace toleransı.
+        const kwPattern = KW_LIST.map(function (k) {
+            return k.replace(/ /g, '\\s+');
+        }).join('|');
+        const kwRe = new RegExp('^(?:' + kwPattern + ')\\b', 'i');
+
+        const parts = [];
+        let depth = 0;
+        let buf = '';
+        for (let i = 0; i < s.length; i++) {
+            const ch = s[i];
+            if (ch === '(') { depth++; buf += ch; continue; }
+            if (ch === ')') { depth = Math.max(0, depth - 1); buf += ch; continue; }
+            if (depth === 0) {
+                // Anahtar kelime başlangıcı mı?
+                const rest = s.slice(i);
+                const m = rest.match(kwRe);
+                if (m) {
+                    if (buf.trim()) parts.push(buf.trim());
+                    parts.push('KW' + m[0].toUpperCase().replace(/\s+/g, ' '));
+                    buf = '';
+                    i += m[0].length - 1;
+                    continue;
+                }
+                if (ch === ',') {
+                    parts.push((buf + ',').trim());
+                    buf = '';
+                    continue;
+                }
             }
-            return trimmed;
+            buf += ch;
+        }
+        if (buf.trim()) parts.push(buf.trim());
+
+        // 4) Indent stratejisi:
+        //    - Top-level keyword: ayrı satır (SELECT/FROM/WHERE/WITH/...)
+        //    - SELECT listesi devamı (virgüllü parça): 2-indent
+        //    - AND/OR: 2-indent (WHERE devamı)
+        //    - ON: 4-indent (JOIN devamı)
+        //    - FROM/WHERE/HAVING/LIMIT/OFFSET/JOIN: kelime + içerik tek satır
+        //    - SELECT/WITH/GROUP BY/ORDER BY: kelime tek satır, içerik alt-indentli
+        const lines = [];
+        let pendingKw = null;     // Sonraki içeriğin başına eklenecek (FROM/WHERE/JOIN/AND/OR/ON)
+        let curBlock = null;      // Multi-line block tracker (SELECT/GROUP BY/ORDER BY/WITH)
+        const MULTI_LINE_KW = { SELECT: 1, 'GROUP BY': 1, 'ORDER BY': 1, WITH: 1 };
+
+        parts.forEach(function (p) {
+            if (p.startsWith('KW')) {
+                const kw = p.slice(2);
+                if (kw === 'AND' || kw === 'OR') {
+                    pendingKw = '  ' + kw;
+                    curBlock = null;
+                    return;
+                }
+                if (kw === 'ON') {
+                    pendingKw = '    ' + kw;
+                    curBlock = null;
+                    return;
+                }
+                if (MULTI_LINE_KW[kw]) {
+                    lines.push(kw);
+                    curBlock = kw;
+                    pendingKw = null;
+                    return;
+                }
+                // Inline kw (FROM/WHERE/HAVING/JOIN turleri/LIMIT/OFFSET/UNION/...)
+                pendingKw = kw;
+                curBlock = null;
+                return;
+            }
+            // İçerik parçası
+            if (pendingKw) {
+                lines.push(pendingKw + ' ' + p);
+                pendingKw = null;
+            } else if (curBlock) {
+                // SELECT/ORDER BY/GROUP BY/WITH listesinde devam parçası → 2-indent
+                lines.push('  ' + p);
+            } else if (lines.length) {
+                // Hiç keyword yoksa son satıra ekle (defansif fallback)
+                lines[lines.length - 1] += ' ' + p;
+            } else {
+                lines.push(p);
+            }
         });
-        // Indent: alt satırlardaki devamları 2 space ile gir.
-        const out = [];
-        lines.forEach(function (ln) {
-            if (!ln) return;
-            // İlk anahtar kelime satırın başında zaten — ek indent yok.
-            // Çok satırlı SELECT'in 2-N satırları zaten "  col" şeklinde.
-            out.push(ln);
+        // Trailing lone keyword (içerik gelmediyse)
+        if (pendingKw) lines.push(pendingKw);
+
+        // 5) Placeholder'ları geri koy.
+        return lines.join('\n').replace(/STR(\d+)/g, function (_, idx) {
+            return strs[parseInt(idx, 10)] || '';
         });
-        return out.join('\n');
     }
 
     // ── B7b: ORDER BY editable chips ───────────────────────────────────
@@ -40220,8 +40986,9 @@ window.ThemePickerPopup = (function () {
         }
         footer = document.createElement('div');
         footer.className = 'wizard-sticky-footer';
-        // v3.37.1 F: run-btn footer'dan kaldırıldı; Çalıştır yalnızca
-        // `_ensureRunButton` ile sağ-üst (dsw-runbar) konumunda kalıyor.
+        // Bulgular3 / Bulgu 6: Çalıştır butonu sticky footer içine alındı —
+        // Format Öner ile yan yana, user_intent textarea ile aynı satırda.
+        // ID=dswRunBtn legacy (_runGeneratedReport label override) korunur.
         footer.innerHTML =
             '<textarea id="user-intent" placeholder="Bu rapordan ne bekliyorsunuz?" maxlength="500" ' +
               'aria-label="Bu rapordan ne bekliyorsunuz?"></textarea>' +
@@ -40229,6 +40996,8 @@ window.ThemePickerPopup = (function () {
               '<button type="button" id="dswFormatSuggestBtn" class="dsw-llm-btn dsw-llm-btn-format" ' +
                 'aria-label="Hazır format öner">✨ Hazır Format Öner</button>' +
               '<span id="dswFormatCacheHint" class="dsw-cache-hint" hidden></span>' +
+              '<button type="button" id="dswRunBtn" class="dsw-run-btn" ' +
+                'aria-label="Raporu çalıştır">▶️ Çalıştır</button>' +
             '</div>' +
             '<div id="dswFormatSuggestPanel" class="dsw-format-suggest-panel" hidden ' +
               'role="region" aria-label="LLM format önerileri"></div>';
@@ -40243,10 +41012,13 @@ window.ThemePickerPopup = (function () {
                 _state.userNote = ta.value || '';
             });
         }
-        // v3.37.1 F: run-btn footer'dan kaldırıldı; binding gerekmez.
         const fmtBtn = footer.querySelector('#dswFormatSuggestBtn');
         if (fmtBtn) {
             fmtBtn.addEventListener('click', _onFormatSuggestClick);
+        }
+        const runBtn = footer.querySelector('#dswRunBtn');
+        if (runBtn) {
+            runBtn.addEventListener('click', _runGeneratedReport);
         }
     }
 
@@ -40296,12 +41068,31 @@ window.ThemePickerPopup = (function () {
         }
         const tableName = _state.selectedTableObjectName ||
             (_state.selectedTableLabel || '').split('.').pop() || null;
-        const columns = (_state._columnCatalog || []).map(function (c) {
-            return { name: c.name, semantic_type: c.semantic_type, table: c.table_name };
-        });
+        // v3.37.2 (ARES+METIS): backend ColumnInfo {name, type} bekliyor.
+        // _columnCatalog henüz yüklenmediyse pre-fetch et.
+        let columns = (_state._columnCatalog || []).map(function (c) {
+            return { name: c.name, type: c.data_type || c.semantic_type || 'unknown' };
+        }).filter(function (c) { return c.name && c.type; });
+        if (!columns.length && _state.selectedTableId) {
+            try {
+                const colData = await _fetchJson(API_BASE + '/sources/' + _state.sourceId +
+                    '/tables/' + _state.selectedTableId + '/columns');
+                columns = ((colData && colData.columns) || []).map(function (c) {
+                    return { name: c.name, type: c.data_type || c.semantic_type || 'unknown' };
+                }).filter(function (c) { return c.name && c.type; });
+            } catch (e) {
+                console.warn('[db_smart_wizard] column pre-fetch failed:', e);
+            }
+        }
+        if (!columns.length) {
+            _notify('Kolonlar yüklenemedi — tabloyu yeniden seçin', 'warning');
+            return;
+        }
         const payload = {
             source_id: _state.sourceId,
             table: tableName,
+            // Bulgular3 / Bulgu 4: TR ad propagate (table_label)
+            table_label: _state.selectedTableLabel || null,
             columns: columns,
             user_intent: _state.user_intent || '',
         };
@@ -40330,16 +41121,35 @@ window.ThemePickerPopup = (function () {
             host.hidden = false;
             return;
         }
+        // Bulgular3 / Bulgu 4: TR ad chip basligi, aciklama altinda "Tablo: <TR ad>"
+        // satiri. Tooltip: SQL identifier'i farkliysa "Tablo (orijinal): X" + rationale.
         host.innerHTML = items.map(function (s) {
             const key = s.metric_key || s.key || '';
             const name = s.metric_name || s.name || key;
             const conf = (typeof s.confidence === 'number')
                 ? Math.round(s.confidence * 100) + '%' : '';
             const rationale = s.rationale || '';
-            return '<button type="button" class="dsw-llm-chip" ' +
-                'data-metric-key="' + _escape(key) + '" ' +
-                'title="' + _escape(rationale) + '">' +
-                _escape(name) + (conf ? ' <span class="dsw-llm-conf">(' + conf + ')</span>' : '') +
+            const tableTr = s.table_name_tr || '';
+            const tableSql = s.table_object_name || '';
+            const tableLine = tableTr
+                ? ('<span class="dsw-llm-chip-table">Tablo: ' + _escape(tableTr) + '</span>')
+                : (tableSql
+                    ? ('<span class="dsw-llm-chip-table">Tablo: ' + _escape(tableSql) + '</span>')
+                    : '');
+            const tooltipParts = [];
+            if (rationale) tooltipParts.push(rationale);
+            // SQL identifier farkli ise tooltip'te goster
+            if (tableTr && tableSql && tableTr.toUpperCase() !== tableSql.toUpperCase()) {
+                tooltipParts.push('Tablo (orijinal): ' + tableSql);
+            }
+            const titleAttr = tooltipParts.length
+                ? ' title="' + _escape(tooltipParts.join('\n')) + '"' : '';
+            return '<button type="button" class="dsw-llm-chip dsw-llm-chip-metric" ' +
+                'data-metric-key="' + _escape(key) + '"' + titleAttr + '>' +
+                '<span class="dsw-llm-chip-title">' + _escape(name) +
+                (conf ? ' <span class="dsw-llm-conf">(' + conf + ')</span>' : '') +
+                '</span>' +
+                (tableLine ? '<br>' + tableLine : '') +
                 '</button>';
         }).join('');
         host.hidden = false;
@@ -40395,14 +41205,28 @@ window.ThemePickerPopup = (function () {
         }
         const tableName = _state.selectedTableObjectName ||
             (_state.selectedTableLabel || '').split('.').pop() || null;
+        // v3.37.2 (ARES+METIS): backend ColumnSuggestRequest kontratı:
+        // { source_id, table, metric:{metric_name, agg, formula, unit},
+        //   available_columns:[{name, type}] }
+        const m = _state.metric || {};
+        const metric = {
+            metric_name: m.name_tr || m.metric_name || m.metric_key || '',
+            agg: m.agg || m.aggregation || null,
+            formula: m.formula || null,
+            unit: m.unit || null,
+        };
+        const availableColumns = (_state._columnCatalog || []).map(function (c) {
+            return { name: c.name, type: c.data_type || c.semantic_type || 'unknown' };
+        }).filter(function (c) { return c.name; });
+        if (!availableColumns.length) {
+            _notify('Kolon listesi boş — adımı yeniden yükleyin', 'warning');
+            return;
+        }
         const payload = {
             source_id: _state.sourceId,
             table: tableName,
-            metric_key: _state.metric.metric_key,
-            columns: (_state._columnCatalog || []).map(function (c) {
-                return { name: c.name, semantic_type: c.semantic_type, table: c.table_name };
-            }),
-            user_intent: _state.user_intent || '',
+            metric: metric,
+            available_columns: availableColumns,
         };
         _llmSetBusy(btn, true);
         try {
@@ -40446,16 +41270,40 @@ window.ThemePickerPopup = (function () {
                 'data-col-name="' + _escape(name) + '" ' +
                 'title="' + _escape(rationale) + '">' + _escape(label) + '</button>';
         }
+        // Bulgular3 / Bulgu 5: section basligi yaninda "+ Tumunu ekle" buton +
+        // panel ust kosesinde "+ Hepsini ekle" (metric_bound + dimensions birlikte).
+        const bulkAllBtn = (metricCols.length || dimCols.length)
+            ? '<button type="button" class="dsw-llm-bulk-add" data-bulk-add="all" ' +
+              'aria-label="Tum onerilen kolonlari rapora ekle" title="Tum onerileri ekle">' +
+              '+ Hepsini rapora ekle</button>'
+            : '';
+        const bulkMetricBtn = metricCols.length
+            ? '<button type="button" class="dsw-llm-bulk-add dsw-llm-bulk-add-small" data-bulk-add="metric-cols" ' +
+              'aria-label="Tum metrige bagli kolonlari rapora ekle" title="Metrige bagli kolonlari topluca ekle">' +
+              '+ Tumunu ekle</button>'
+            : '';
+        const bulkDimBtn = dimCols.length
+            ? '<button type="button" class="dsw-llm-bulk-add dsw-llm-bulk-add-small" data-bulk-add="dimensions" ' +
+              'aria-label="Tum ilgili boyutlari rapora ekle" title="Boyut kolonlarini topluca ekle">' +
+              '+ Tumunu ekle</button>'
+            : '';
         host.innerHTML =
+            (bulkAllBtn ? '<div class="dsw-llm-bulk-bar">' + bulkAllBtn + '</div>' : '') +
             '<div class="dsw-llm-section" data-section="metric-cols">' +
-              '<h6>Metriğe Bağlı Kolonlar</h6>' +
+              '<div class="dsw-llm-section-head">' +
+                '<h6>Metriğe Bağlı Kolonlar</h6>' +
+                bulkMetricBtn +
+              '</div>' +
               '<div class="dsw-llm-chip-row">' +
                 (metricCols.length ? metricCols.map(chipHtml).join('') :
                   '<span class="dsw-hint">Yok</span>') +
               '</div>' +
             '</div>' +
             '<div class="dsw-llm-section" data-section="dimensions">' +
-              '<h6>İlgili Boyutlar</h6>' +
+              '<div class="dsw-llm-section-head">' +
+                '<h6>İlgili Boyutlar</h6>' +
+                bulkDimBtn +
+              '</div>' +
               '<div class="dsw-llm-chip-row">' +
                 (dimCols.length ? dimCols.map(chipHtml).join('') :
                   '<span class="dsw-hint">Yok</span>') +
@@ -40468,6 +41316,39 @@ window.ThemePickerPopup = (function () {
                 const name = chip.getAttribute('data-col-name');
                 if (!name) return;
                 _addReportColumn(name, null);
+                chip.classList.add('dsw-llm-chip-added');
+            });
+        });
+        // Bulgular3 / Bulgu 5: bulk-add handler — secime gore section veya tumu.
+        host.querySelectorAll('[data-bulk-add]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                const scope = btn.getAttribute('data-bulk-add');
+                let targets = [];
+                if (scope === 'metric-cols') {
+                    targets = Array.from(host.querySelectorAll('[data-section="metric-cols"] [data-col-name]'));
+                } else if (scope === 'dimensions') {
+                    targets = Array.from(host.querySelectorAll('[data-section="dimensions"] [data-col-name]'));
+                } else { // all
+                    targets = Array.from(host.querySelectorAll('[data-col-name]'));
+                }
+                let added = 0;
+                targets.forEach(function (chip) {
+                    if (chip.classList.contains('dsw-llm-chip-added')) return;
+                    const name = chip.getAttribute('data-col-name');
+                    if (!name) return;
+                    const before = (_state.reportColumns || []).length;
+                    _addReportColumn(name, null);
+                    const after = (_state.reportColumns || []).length;
+                    if (after > before) {
+                        added += 1;
+                        chip.classList.add('dsw-llm-chip-added');
+                    }
+                });
+                if (added > 0) {
+                    _notify(added + ' kolon rapora eklendi', 'success');
+                } else {
+                    _notify('Tum oneriler zaten rapora ekli', 'info');
+                }
             });
         });
     }
@@ -40498,13 +41379,60 @@ window.ThemePickerPopup = (function () {
             _notify('Önce kaynak ve tablo seçin', 'warning');
             return;
         }
+        // v3.37.3 (bulgular-2 / Bulgu 4b-ii): metric + kolon pre-flight kontrol.
+        // Backend FormatSuggestRequest metric_name + en az 1 kolon zorunlu;
+        // eksikse 422 dönerek "yukarıdaki" generic hata mesajını tetikliyordu.
+        // Burada kullanıcıya doğrudan eksik adımı bildiriyoruz.
+        const hasMetric = !!(
+            (_state.metric && _state.metric.metric_key) ||
+            (_state.selectedMetrics && _state.selectedMetrics.size > 0)
+        );
+        if (!hasMetric) {
+            _notify(_t('wizard.toast.format_select_metric_first'), 'warning');
+            return;
+        }
+        // v3.37.2 (ARES+METIS): backend FormatSuggestRequest kontratı:
+        // { metric:{metric_name, agg, formula, unit}, columns:[str], user_intent? }
         const cols = (Array.isArray(_state.reportColumns) ? _state.reportColumns : [])
-            .map(function (c) {
-                return { name: c.column_name, semantic_type: c.semantic_type };
-            });
+            .map(function (c) { return c.column_name; })
+            .filter(function (n) { return !!n; });
+        if (!cols.length) {
+            _notify(_t('wizard.toast.format_select_columns_first'), 'warning');
+            return;
+        }
+        // Bulgular3 / Bulgu 6: metric_name fallback zinciri — _state.metric
+        // tekil pointer'i boş olabilir (multi-select ilk eklemeden sonra),
+        // bu durumda selectedMetrics + _metricsIndex'ten ilk dolu adı bul.
+        function _pickMetricForPayload() {
+            const idx = _state._metricsIndex || {};
+            const candidates = [];
+            if (_state.metric && _state.metric.metric_key) candidates.push(_state.metric);
+            if (_state.selectedMetrics && _state.selectedMetrics.forEach) {
+                _state.selectedMetrics.forEach(function (k) {
+                    if (idx[k]) candidates.push(idx[k]);
+                });
+            }
+            for (let i = 0; i < candidates.length; i++) {
+                const c = candidates[i];
+                const nm = (c.name_tr || c.metric_name || c.label || c.metric_key || '').trim();
+                if (nm) return { src: c, name: nm };
+            }
+            return null;
+        }
+        const picked = _pickMetricForPayload();
+        if (!picked || !picked.name) {
+            _notify('Metrik adı boş — önce metrik seçimini doğrulayın.', 'warning');
+            return;
+        }
+        const m = picked.src;
+        const metric = {
+            metric_name: picked.name,
+            agg: m.agg || m.aggregation || null,
+            formula: m.formula || null,
+            unit: m.unit || null,
+        };
         const payload = {
-            source_id: _state.sourceId,
-            metric_key: (_state.metric && _state.metric.metric_key) || null,
+            metric: metric,
             columns: cols,
             user_intent: _state.user_intent || '',
         };
@@ -40518,7 +41446,9 @@ window.ThemePickerPopup = (function () {
             _renderFormatSuggestions(data);
         } catch (e) {
             console.warn('[db_smart_wizard] format-suggest failed:', e);
-            _llmError('AI önerisi alınamadı', e, btn);
+            // Bulgular3 / Bulgu 6: backend HTTP detail'ini kullanıcıya yansıt.
+            const detail = (e && (e.detail || e.message)) ? String(e.detail || e.message) : '';
+            _llmError('AI önerisi alınamadı' + (detail ? ': ' + detail : ''), e, btn);
             return;
         }
         _llmSetBusy(btn, false);
@@ -40527,7 +41457,10 @@ window.ThemePickerPopup = (function () {
     function _renderFormatSuggestions(data) {
         const host = document.getElementById('dswFormatSuggestPanel');
         if (!host) return;
-        const items = (data && Array.isArray(data.formats)) ? data.formats : [];
+        // v3.37.2: backend FormatSuggestResponse → { format_cards: [...] }
+        // (eski `formats` alanına eski sürüm yanıtı için fallback bırakıldı)
+        const items = (data && Array.isArray(data.format_cards)) ? data.format_cards :
+                      (data && Array.isArray(data.formats)) ? data.formats : [];
         if (!items.length) {
             host.innerHTML = '<p class="dsw-hint">Öneri dönmedi.</p>';
             host.hidden = false;
@@ -40596,6 +41529,9 @@ window.ThemePickerPopup = (function () {
             try { _renderOrderByChips(); } catch (e) { /* defansif */ }
             const panel = document.getElementById('dswStep4');
             try { _ensureRunFooter(panel); } catch (e) { /* defansif */ }
+            // v3.37.2 B2 — LLM chip header (run-btn'den ÖNCE mount edilsin diye
+            // burada da çağırıyoruz; _loadPreview da ayrıca çağırır — idempotent)
+            try { _ensureLlmChipsHeader(panel); } catch (e) { /* defansif */ }
         }
     }
 
@@ -41094,10 +42030,18 @@ window.ThemePickerPopup = (function () {
         try {
             // F21c (ARES+HERMES 2026-05-25): /sessions/{uid}/execute backend'de
             // stub (rows:[]) — bu yüzden "Sonuç boş." görünüyordu. Gerçek runner
-            // /sessions/{uid}/execute/stream (SSE). Saved report'taki last_sql +
-            // source_id (wizard_state'ten) + last_dialect ile direkt yeniden çalıştır.
-            const ws = _report.wizard_state || {};
-            const sourceId = _report.source_id || ws.source_id || ws.sourceId;
+            // /sessions/{uid}/execute/stream (SSE).
+            //
+            // v3.37.8 (code-review wf_1da517ba bulgu #5/#9): saved_reports.source_id
+            // BIRINCIL OTORITE; legacy NULL durumda BE'nin v3.37.1 wizard_state
+            // fallback'i (db_smart_api.py:1067 etrafı) safety net olarak kullanılır.
+            // FE artık `wizard_state`'i de POST body'sine ekler — strict snapshot
+            // kullanımı YOK (host='host' gibi kanary'ler BE _load_source canary
+            // guard'ında yine reddedilir; SSOT canary tek liste).
+            const sourceId = _report.source_id;
+            const wizardState = _report.wizard_state && typeof _report.wizard_state === 'object'
+                ? _report.wizard_state
+                : null;
             const lastSql = _report.last_sql || '';
             // F21c+F22c (ARES 2026-05-25): dialect HER ZAMAN omit → backend
             // source.db_type'tan resolve eder. Eski raporlarda last_dialect
@@ -41106,13 +42050,16 @@ window.ThemePickerPopup = (function () {
             // sırasında mismatch/whitelist hatası üretiyordu. FE asla
             // dialect tahmininde bulunmasın.
             const dialect = null;
-            if (!sourceId) throw new Error('Veri kaynağı (source_id) yok — rapor eksik kaydedilmiş.');
+            // v3.37.8: source_id veya wizard_state.source_id'den biri YOK ise hata.
+            const wsSourceId = wizardState && (wizardState.source_id || wizardState.sourceId);
+            const effectiveSourceId = sourceId || wsSourceId;
+            if (!effectiveSourceId) throw new Error('Bu rapor eski formatta — veri kaynağı bilgisi eksik. Lütfen raporu wizard ile yeniden oluşturup kaydedin.');
             if (!lastSql) throw new Error('Saklanan SQL yok — raporu wizard ile yeniden oluşturup kaydedin.');
 
             // 1) Yeni session aç (source_id zorunlu — CreateSessionRequest).
             const sess = await window.vyraFetch('/db-smart/sessions', {
                 method: 'POST',
-                body: { source_id: Number(sourceId) },
+                body: { source_id: Number(effectiveSourceId) },
             });
             const uid = sess.session_uid || sess.uid || sess.id;
             if (!uid) throw new Error('Session UID alınamadı');
@@ -41132,18 +42079,47 @@ window.ThemePickerPopup = (function () {
                     body: JSON.stringify(Object.assign(
                         {
                             sql: lastSql,
-                            source_id: Number(sourceId),
+                            source_id: Number(effectiveSourceId),
                             batch_size: 200,
                             max_rows: 1000,
                         },
+                        // v3.37.8 bulgu #5/#10/#14: wizard_state'i BE'ye gönder
+                        // — legacy saved_reports.source_id NULL durumunda BE
+                        // fallback (db_smart_api.py:1074) snapshot'tan source_id
+                        // çıkarabilsin. Yeni reports için zararsız (BE öncelikle
+                        // body.source_id'yi kullanır).
+                        wizardState ? { wizard_state: wizardState } : {},
                         dialect ? { dialect: dialect } : {}
                     )),
                 }
             );
             if (!streamRes.ok) {
+                // v3.37.8 (code-review bulgu #6): BE structured error parse.
+                // Format: {detail: {error_code, message, ...}} (admin_detail
+                // artık wire'a basılmıyor — log-only). Unrecognized error_code
+                // VE non-JSON response için RAW slice(0,200) leak'ini engelle:
+                // structured error varsa message kullan; değilse generic
+                // "HTTP <status>" mesajı, raw body'yi UI'a basma.
                 let detail = '';
-                try { detail = await streamRes.text(); } catch (_) { /* noop */ }
-                throw new Error('HTTP ' + streamRes.status + (detail ? (': ' + detail.slice(0, 200)) : ''));
+                let errBody = null;
+                try {
+                    detail = await streamRes.text();
+                    try { errBody = JSON.parse(detail); } catch (_) { /* not json */ }
+                } catch (_) { /* noop */ }
+                const errDetail = errBody && errBody.detail;
+                if (errDetail && typeof errDetail === 'object' && errDetail.message) {
+                    // Tanınan veya tanınmayan error_code — server'ın belirlediği
+                    // friendly message yeterli; field/source_id console'da debug.
+                    console.warn('[report_detail_modal] structured server error:',
+                        errDetail.error_code || '(no code)', errDetail);
+                    throw new Error(errDetail.message);
+                }
+                if (typeof errDetail === 'string') {
+                    throw new Error(errDetail);
+                }
+                // Generic — RAW JSON UI'a basılmaz; status yeterli.
+                console.warn('[report_detail_modal] HTTP error', streamRes.status, detail);
+                throw new Error('Sunucu hatası (HTTP ' + streamRes.status + '). Lütfen tekrar deneyin veya yöneticiye bildirin.');
             }
 
             const columnsAgg = [];
@@ -41886,11 +42862,45 @@ window.ThemePickerPopup = (function () {
 
         card.appendChild(head);
 
+        // Bulgular3 / Bulgu 9: tablo / kaynak subtitle (varsa)
+        const tableLabel = report.table_label || report.table_name_tr || report.table_object_name || '';
+        if (tableLabel) {
+            const sub = document.createElement('div');
+            sub.className = 'srg-card-subtitle';
+            sub.textContent = String(tableLabel);
+            card.appendChild(sub);
+        }
+
         // desc
         const desc = document.createElement('p');
         desc.className = 'srg-card-desc';
         desc.textContent = report.description || '';
         card.appendChild(desc);
+
+        // Bulgular3 / Bulgu 9: kullanım istatistikleri (run count varsa)
+        const runCount = Number(report.run_count || 0);
+        if (runCount > 0 || report.last_run_at) {
+            const stats = document.createElement('div');
+            stats.className = 'srg-card-stats';
+            if (runCount > 0) {
+                const sRun = document.createElement('span');
+                sRun.className = 'srg-card-stat';
+                sRun.textContent = runCount + ' çalıştırma';
+                stats.appendChild(sRun);
+            }
+            if (report.last_run_at) {
+                const sLast = document.createElement('span');
+                sLast.className = 'srg-card-stat';
+                sLast.textContent = 'Son: ' + _relativeTime(report.last_run_at);
+                const lastIso = _absoluteISO(report.last_run_at);
+                if (lastIso) {
+                    sLast.setAttribute('title', lastIso);
+                    sLast.setAttribute('data-tooltip', lastIso);
+                }
+                stats.appendChild(sLast);
+            }
+            card.appendChild(stats);
+        }
 
         // foot
         const foot = document.createElement('footer');

@@ -75,6 +75,16 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.37.9 (2026-05-29) - Bulgular4 Akıllı Veri Keşfi 5 fix (ATHENA + HEBE + HEPHAESTUS + HERMES + ARES + METIS + POSEIDON)
+> Kullanıcı `bulgular4.docx` ile sihirbazda 5 sorun raporladı; her biri **kodu okuyarak** doğrulandı (varsayım yok).
+
+- **B1 — Step 3 "İleri →" pasif kalıyordu (LLM öneri uygulayınca):** `db_smart_wizard.js:_applySuggestionSlot` reportColumns'u REPLACE ediyor ama tek-kolon ekleme/silme path'lerinin aksine `_updateNextGuard()` çağırmıyordu → "Raporda görünecek kolonlar" dolu olsa bile buton pasif. Guard çağrısı eklendi.
+- **B2 — Önizleme'de redundant "ORDER BY / Sıralama yok." kaldırıldı:** `db_smart_ast_editor.js` statik ORDER BY section'ı siliniyor; wizard'ın çalışan editable "SIRALAMA" chip barı (`_renderOrderByChips`, "+ Kolon seç") tek kaynak. order_by AST'te korunur; reorder/remove/modify op'ları etkilenmez.
+- **B3 — WHERE filtre ekleyince 400 "SELECT requires at least one column":** AST key tutarsızlığı — wizard `_buildStarterAst` + `/explain` guard `select` key kullanıyor, `ast_renderer` (render + ops) `columns` key. Filtre eklenince `/explain` render'ı boş `columns` görüp 400 atıyordu. `ast_renderer.render` artık **dual-key** (`columns` yoksa `select`'e düşer, string/dict normalize) — geriye uyumlu köprü.
+- **B4 — "Çalıştır" SQL'inde "W0SELECT/W0FROM" garbage prefix:** LLM ham çıktısında SQL keyword'lerine yapışan kısa garbage token'ı (upstream artefakt; v3.37.4 telemetri notu) DB'de patlatıyordu. `llm_generate_report._repair_glued_keyword_garbage` hedefli onarımı eklendi — keyword'e BOŞLUKSUZ yapışmış 1-3 char prefix temizlenir; **raw LLM telemetri logu korunur** (kök neden sinyali kaybolmaz).
+- **B5 — Kayıtlı rapor silme refresh:** Güncel kaynakta wiring doğru (`report_detail_modal.onDeleted` → `SavedReportsGrid.refresh()`, hard-delete 204, cache yok) — bundle rebuild ile çözülür; canlı doğrulama gerekli.
+- **Versiyon drift fix:** `config.py APP_VERSION` 3.37.1 → 3.37.9 + `dist/` bundle rebuild.
+
 ### 🆕 v3.37.8 (2026-05-29) - v3.37.7 code-review 15 finding konsolide fix (HERMES + ATHENA + ARES + HEBE)
 > **v3.37.7 fix paketi yarı kalmıştı + 2 yeni regresyon yaratmıştı.** `/code-review xhigh` workflow `wrctmcj31` (9 angle × 8 candidate × verify × sweep) ile 52 PLAUSIBLE/CONFIRMED bulgu surfaced; top 15 kapatıldı tek konsolide commit'te.
 
