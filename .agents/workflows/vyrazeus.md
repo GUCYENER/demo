@@ -875,10 +875,28 @@ Index            : Sık sorgulanan FK/filter kolonlarına index
 - Python syntax hatası yok
 - Import'lar temiz (kullanılmayan import yok)
 - Backend başarıyla ayağa kalkıyor
+- **Lint & format gate (ZORUNLU — v3.38.0+ adoption sonrası):**
+  - Python lint: `ruff check app/ core/ tests/` → exit 0 (autofix sonrası kalan ihlal = blocker)
+  - Python format: `ruff format --check app/ core/ tests/` → exit 0 (diff'siz)
+  - JS değişikliği varsa: değişen modül başına `node -c <file>` syntax check + `node frontend/build.mjs` exit 0
+  - **Bootstrap (henüz kurulu değil — v3.38.0 PR'i):** `pip install ruff` + `requirements-dev.txt` oluştur + `pyproject.toml` `[tool.ruff]` minimal config (line-length=100; exclude=`python/`, `Lib/`, `node_modules/`, `frontend/dist/`, `Gecici_Dosyalar_Sil/`); HERMES bootstrap commit'i ayrı PR
+  - **Atlama koşulu:** Bootstrap tamamlanmadan KAP 1 lint maddesi `NOT-APPLICABLE (ruff bootstrap pending)` notuyla geçilir; 2 oturum üstüste atlamak süreç ihlali — HERMES adoption PR'ini açmakla yükümlü
 
 **🔒 KAP 2 — Güvenlik (ARES)**
 - Bölüm 6 kontrol listesi temiz
 - Yeni endpoint varsa auth kontrolü var mı?
+- **Dependency vulnerability scan / SCA (ZORUNLU — v3.38.0+ adoption sonrası):**
+  - Python: `pip-audit -r requirements.txt --strict --vulnerability-service osv` → exit 0
+  - Frontend: `cd frontend && npm audit --omit=dev --audit-level=high` → exit 0 (mevcut deps: `chart.js`, `esbuild`)
+  - **Severity triage tablosu:**
+    | Severity | Aksiyon | Commit |
+    |---|---|---|
+    | CRITICAL / HIGH | Package upgrade veya pinned-with-rationale yorum; rationale CHANGELOG'a girer | **BLOCKED** — BITIR durur |
+    | MEDIUM | `REFACTOR_BACKLOG.md`'ye `priority: P2 risk: medium target: v<next-minor>` madde | ALLOW + audit log |
+    | LOW / INFO | Audit log only; backlog opsiyonel | ALLOW |
+  - **Bootstrap (henüz kurulu değil — v3.38.0 PR'i):** `pip install pip-audit` + `requirements-dev.txt`'ye ekle; ARES bootstrap commit'i ayrı PR
+  - **Atlama koşulu:** Offline ortam veya OSV DB erişim hatası → `OFFLINE — fail-open + log` (graphify-guard ile aynı desen); üst üste 2 oturum atlanırsa süreç ihlali
+  - **CHANGELOG bağlantısı:** CRITICAL/HIGH bulgular kapatıldığında commit message body'sinde CVE-ID + paket-versiyon delta yer alır (HERA convention'a uygun)
 
 **🗄️ KAP 3 — Veritabanı (HEPHAESTUS)**
 - Schema değişikliği varsa → `schema.py` güncellendi mi?
@@ -919,6 +937,29 @@ Index            : Sık sorgulanan FK/filter kolonlarına index
 **📊 KAP 7 — Test (TYCHE)**
 - Değişiklik elle test edildi mi?
 - Edge case'ler düşünüldü mü?
+- **Coverage threshold (ZORUNLU — v3.38.0+ adoption sonrası, `pytest-cov` zaten kurulu):**
+  - Baseline ölçümü: `pytest --cov=app --cov=core --cov-report=term-missing --cov-fail-under=75 tests/`
+  - **Threshold rampası:**
+    | Versiyon | Global threshold | Patch coverage (değişen satırlar) |
+    |---|---|---|
+    | v3.38.0 (baseline) | %75 | %85 |
+    | v3.40.0 | %79 | %87 |
+    | v3.42.0 | %83 | %88 |
+    | v3.45.0+ | %85 (steady) | %90 |
+  - **Patch coverage = TYCHE diff-cover heuristic:** Değişen satırların (`git diff main...HEAD -- '*.py'`) en az %85'i en az 1 test tarafından çalıştırılmalı; `diff-cover` paketi ile veya elle `coverage report -m` + diff cross-check
+  - **Threshold altı davranışı:**
+    | Durum | Aksiyon |
+    |---|---|
+    | Global threshold altı | Commit BLOCKED; eksik test PR'i açılır VEYA threshold geçici %2 düşürülür + REFACTOR_BACKLOG'a `priority: P1 target: <next-minor>` ödeme planı |
+    | Patch coverage altı, global OK | UYARI 🟡; kullanıcı onayıyla commit + follow-up test task |
+  - **İstisna (TYCHE kararı):** Sırf docs/CHANGELOG/migration `.py` (yeni `op.execute`) diff'i → coverage check skip; ML model file/`*.cbm` artefakt değişikliği → skip
+  - **Rapor formatı:**
+    ```
+    📊 Coverage Raporu:
+       Global  : 78.4% (threshold 75%) ✅
+       Patch   : 91.2% (threshold 85%) ✅
+       Eksik   : app/services/foo.py:42-58 (yeni try/except path)
+    ```
 
 **📄 KAP 8 — Versiyon, Build & Dokümantasyon (HERA)**
 
@@ -1157,6 +1198,9 @@ Uzun oturumlarda `graphify_wakeup` çıktısı sıkıştırılarak context windo
 | Auto-memory hijyeni | MEMORY.md >180 satırsa stale entry temizlenir, çelişen memory kullanıcıya sunulur (KAP 10b) |
 | Refactor backlog | Bu oturumda `priority: high` madde eklendiyse bitiş raporunda mutlaka görünür, sessiz arşivleme yasak (KAP 11) |
 | Test | Değişiklik sonrası mutlaka test — log oku, DB kontrol et |
+| Lint gate | KAP 1 (v3.38.0+): `ruff check + ruff format --check` exit 0 zorunlu; bootstrap (`pip install ruff` + `pyproject.toml [tool.ruff]`) ayrı HERMES PR'i — 2 oturum atlamak ihlal |
+| Dependency SCA | KAP 2 (v3.38.0+): `pip-audit --strict` + `npm audit --audit-level=high`; CRITICAL/HIGH = commit blocker, MEDIUM = REFACTOR_BACKLOG madde, offline = fail-open |
+| Coverage threshold | KAP 7 (v3.38.0+): `pytest --cov-fail-under=75` baseline; patch coverage %85+ (TYCHE diff-cover); rampaya göre v3.45.0'da %85 steady |
 | Anlaşmazlık | Konsey anlaşamazsa → her iki görüş kullanıcıya sunulur |
 | Graphify | Başla=warmup→wakeup (project:vyra), Bitir=mine→add_decision (project:vyra) — tek hafiza katmani |
 | MNEMOSYNE-GRAPH | KAP 10 atlanamaz, entity/triple delta sıfırsa mine tekrarla |
