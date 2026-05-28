@@ -1909,6 +1909,41 @@ body[data-dsw-locked="true"] {
     background: rgba(46, 204, 113, 0.08);
 }
 
+/* v3.37.4 Bug D (HEBE+ATHENA): "Metrik için uygun kolonlar" başlığı +
+   "+ Tümünü ekle" butonu için layout — başlık satırı flex; buton sağa yaslı,
+   marka yeşili ile renklenir, accessible hover/focus pattern. */
+.dsw-filter-catalog .dsw-cat-metric-aware {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.dsw-metric-aware-title {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.dsw-metric-aware-add-all {
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--vyra-success, #2ecc71);
+    color: var(--vyra-success, #2ecc71);
+    background: transparent;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+}
+.dsw-metric-aware-add-all:hover,
+.dsw-metric-aware-add-all:focus-visible {
+    background: var(--vyra-success, #2ecc71);
+    color: #fff;
+    outline: none;
+}
+.dsw-metric-aware-add-all[hidden] {
+    display: none;
+}
+
 /* ============================================================
  * v3.36.0 F11 — Akıllı Keşfi Grafik Popup (DbSmartChart)
  * Council: DIONYSOS + HEBE

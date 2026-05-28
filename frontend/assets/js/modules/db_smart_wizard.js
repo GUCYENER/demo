@@ -1150,11 +1150,20 @@
             'Soldan "+ Ekle" ile rapora dahil edin, sağ panelde sürükle-bırak ile sıralayın.') + '</p>';
         // v3.37.1 D (ATHENA+POSEIDON+HEBE): "✨ Metrik için uygun kolonlar" kategorisi.
         // Background fetch POST /llm/column-filter-suggest — render edilince doldurulur.
+        // v3.37.4 Bug D fix (HEBE+ATHENA): başlığa "+ Tümünü ekle" butonu.
+        // Initial state'te hidden — _loadMetricAwareColumns recommended[] dolduğunda
+        // unhide edilir. Click → tüm önerilen kolonları reportColumns'a sırayla ekler.
         const metricAwareHtml =
             '<div class="dsw-metric-aware" data-category="metric-aware">' +
               '<h5 class="dsw-table-group dsw-cat-metric-aware" data-metric-aware-head>' +
-                '✨ Metrik için uygun kolonlar ' +
-                '<span class="dsw-table-group-count" data-metric-aware-count>(...)</span>' +
+                '<span class="dsw-metric-aware-title">' +
+                  '✨ Metrik için uygun kolonlar ' +
+                  '<span class="dsw-table-group-count" data-metric-aware-count>(...)</span>' +
+                '</span>' +
+                '<button type="button" class="dsw-metric-aware-add-all" ' +
+                  'data-metric-aware-add-all aria-label="Önerilen tüm kolonları rapora ekle" ' +
+                  'title="Önerilen tüm kolonları sırayla rapora ekle" hidden>' +
+                  '+ Tümünü ekle</button>' +
               '</h5>' +
               '<ul class="dsw-col-catalog" data-metric-aware-list>' +
                 '<li class="dsw-col-row dsw-metric-aware-loading">' +
@@ -1451,6 +1460,46 @@
                 }
             });
         });
+
+        // v3.37.4 Bug D fix (HEBE+ATHENA): "+ Tümünü ekle" butonu unhide + handler.
+        // Recommended list dolu (≥1) ise gözükür; click → tüm önerilenleri
+        // _addReportColumn üzerinden sırayla ekler. Duplicate (zaten ekli)
+        // kolonları _addReportColumn kendi içinde info-toast ile geçer.
+        const addAllBtn = root.querySelector('[data-metric-aware-add-all]');
+        if (addAllBtn) {
+            if (recommended.length) {
+                addAllBtn.hidden = false;
+                addAllBtn.textContent = '+ Tümünü ekle (' + recommended.length + ')';
+            } else {
+                addAllBtn.hidden = true;
+            }
+            // Re-bind safe: önce eski handler'ı temizle (cloneNode swap).
+            const fresh = addAllBtn.cloneNode(true);
+            addAllBtn.parentNode.replaceChild(fresh, addAllBtn);
+            fresh.addEventListener('click', function () {
+                const prevWarn = _state._metricAwareWarn;
+                _state._metricAwareWarn = [];
+                let added = 0;
+                try {
+                    recommended.forEach(function (rec) {
+                        const colName = rec.column_name || '';
+                        if (!colName) return;
+                        const tid = (rec.table_id != null) ? parseInt(rec.table_id, 10) : null;
+                        const before = (_state.reportColumns || []).length;
+                        _addReportColumn(colName, isNaN(tid) ? null : tid);
+                        const after = (_state.reportColumns || []).length;
+                        if (after > before) added += 1;
+                    });
+                } finally {
+                    _state._metricAwareWarn = prevWarn;
+                }
+                if (added > 0) {
+                    _notify(added + ' kolon rapora eklendi', 'success');
+                } else {
+                    _notify('Tüm öneriler zaten rapora ekli', 'info');
+                }
+            });
+        }
     }
 
     function _removeReportColumn(colName) {

@@ -900,12 +900,36 @@ def _load_source(
                 detail="Source credential decrypt failed",
             )
 
+    # Bug C v3.37.4: port defensive cast at the source-of-truth.
+    # data_sources.port DB schema'sı INTEGER ama literal "port" sızıntısı
+    # (eski data corruption — v3.37.1 Brief A'da tespit edildi) hâlâ canlı
+    # kayıtlarda gözlemlendi. Cast'i `_load_source` çıkışında yapıp explicit
+    # actionable hata mesajı veriyoruz; downstream `int(src_dict["port"])`
+    # cast'i (line ~1027) artık zaten int alır, kaçak path kapanır.
+    raw_port = rec.get("port")
+    try:
+        port_int = int(raw_port)
+    except (TypeError, ValueError):
+        logger.error(
+            "[db_smart._load_source] data_sources.port literal/invalid "
+            "source_id=%s value=%r type=%s — data corruption suspected",
+            source_id, raw_port, type(raw_port).__name__,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Veri kaynağı port değeri bozuk (source_id={source_id}): "
+                f"{raw_port!r}. DB yöneticisine bildirin — örn. "
+                f"UPDATE data_sources SET port=<INT> WHERE id={source_id};"
+            ),
+        )
+
     # 4) source dict — _get_db_connector'ın beklediği sade alanlar
     source_dict = {
         "id": rec["id"],
         "db_type": rec["db_type"],
         "host": rec["host"],
-        "port": rec["port"],
+        "port": port_int,
         "db_name": rec["db_name"],
         "db_user": rec["db_user"],
     }

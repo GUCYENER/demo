@@ -247,6 +247,13 @@ window.DialogChatModule = (function () {
     async function loadActiveDialog() {
         const container = document.getElementById('dialogMessages');
 
+        // v3.37.4 Bug E fix: Akıllı Veri Keşfi modunda dialogMessages grid host.
+        // Eski Merhaba/chat-state yenileme bu modda DOM'a sızıyordu — chat
+        // sekmesi aktif değilse loadActiveDialog'u erken sonlandır.
+        if (container && container.classList.contains('aki-kesif-grid-host')) {
+            return;
+        }
+
         // v3.15.1: Eğer halihazırda bir dialog açık ve DOM doluysa (kullanıcı sadece
         // başka menüye gidip geri geldi), hiçbir şey yapma — state'i koru.
         if (currentDialogId && container && container.children.length > 0) {
@@ -2372,6 +2379,14 @@ window.DialogChatModule = (function () {
     function addSystemMessage(content, extraClass = '') {
         const container = document.getElementById('dialogMessages');
         if (!container) return;
+        // v3.37.4 Bug E fix: Akıllı Veri Keşfi modunda #dialogMessages container
+        // SavedReportsGrid host olarak repurpose ediliyor (home.html
+        // _akiKesifHideChrome / _akiKesifMountGrid). Eski chat sistem mesajları
+        // (Merhaba, mode-info, vb.) bu modda grid'in altına sızıyordu. CSS class
+        // 'aki-kesif-grid-host' aktifse sistem mesajı eklemeyi reddet.
+        if (container.classList.contains('aki-kesif-grid-host')) {
+            return;
+        }
 
         const rowClass = `message-row assistant${extraClass ? ' ' + extraClass : ''}`;
         const html = `
