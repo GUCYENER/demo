@@ -1,0 +1,24 @@
+{
+  "_comment_": "VYRA pa11y-ci config (KAP 5c.2 — vyrazeus §5c.2). The defaults assume the dev stack is up at http://localhost:8000 (Nginx in front of the FastAPI app). For one-off scans on a different host, override at the CLI: `pa11y-ci --config .pa11yci.json --threshold 0`. The urls list below is the critical-flow allowlist; new UI surfaces should land with an entry alongside the code change.",
+  "defaults": {
+    "standard": "WCAG2AA",
+    "runner": ["axe", "htmlcs"],
+    "timeout": 30000,
+    "wait": 500,
+    "viewport": { "width": 1366, "height": 768 },
+    "chromeLaunchConfig": {
+      "args": ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]
+    },
+    "hideElements": ".n-toast, .vyra-toast-host, [aria-hidden=\"true\"]",
+    "ignore": [
+      "WCAG2AA.Principle1.Guideline1_4.1_4_3.G18.Fail"
+    ],
+    "threshold": 0
+  },
+  "urls": [
+    { "url": "http://localhost:8000/login.html", "screenCapture": "../.tmp/pa11y/login.png" },
+    { "url": "http://localhost:8000/home.html",  "screenCapture": "../.tmp/pa11y/home.png", "actions": [
+        "wait for element #dialogInput to be visible"
+    ]}
+  ]
+}

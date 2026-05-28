@@ -6,10 +6,14 @@
     "scripts": {
         "build": "node build.mjs",
         "watch": "node build.mjs --watch",
-        "clean": "node -e \"const fs=require('fs'); if(fs.existsSync('dist')) fs.rmSync('dist',{recursive:true}); console.log('dist/ temizlendi')\""
+        "clean": "node -e \"const fs=require('fs'); if(fs.existsSync('dist')) fs.rmSync('dist',{recursive:true}); console.log('dist/ temizlendi')\"",
+        "a11y": "pa11y-ci --config .pa11yci.json",
+        "a11y:url": "pa11y --standard WCAG2AA --runner axe"
     },
     "devDependencies": {
-        "esbuild": "^0.24.2"
+        "esbuild": "^0.24.2",
+        "pa11y": "^8.0.0",
+        "pa11y-ci": "^3.1.0"
     },
     "dependencies": {
         "chart.js": "^4.4.0"
