@@ -630,8 +630,12 @@ window.DataSourcesModule = (function () {
             if (_isInvalidHostValue(host)) { showToast('Sunucu adresi kolon adı olamaz (örn. localhost, 10.0.0.5, mssql.firma.local)', 'warning'); return; }
             if (!port) { showToast('Port numarası zorunludur', 'warning'); return; }
             if (!dbName) { showToast('Veritabanı adı zorunludur', 'warning'); return; }
+            // v3.37.8 bulgu #3: scope genişletme — diğer credential field'lar
+            if (_isInvalidHostValue(dbName)) { showToast('Veritabanı adı kolon adı olamaz (gerçek bir DB adı girin)', 'warning'); return; }
             if (!dbUser) { showToast('Kullanıcı adı zorunludur', 'warning'); return; }
+            if (_isInvalidHostValue(dbUser)) { showToast('Kullanıcı adı kolon adı olamaz (gerçek bir DB kullanıcısı girin)', 'warning'); return; }
             if (!existingSource?.id && !dbPassword) { showToast('Şifre zorunludur', 'warning'); return; }
+            if (dbPassword && _isInvalidHostValue(dbPassword)) { showToast('Şifre kolon adı olamaz — gerçek bir parola girin', 'warning'); return; }
 
             formData.db_type = dbType;
             formData.host = host;
@@ -678,9 +682,14 @@ window.DataSourcesModule = (function () {
 
             if (!siteUrl) { showToast('Site URL zorunludur', 'warning'); return; }
             if (!tenantId) { showToast('Tenant ID zorunludur', 'warning'); return; }
-            if (_isInvalidHostValue(tenantId)) { showToast('Tenant ID kolon adı olamaz (Azure AD tenant GUID veya domain)', 'warning'); return; }
+            // v3.37.8 bulgu #12: SharePoint mesajını semantik düzelt — kanary kontrolü
+            // DB-host placeholder'larını (literal "host", "port" vb.) yakalar; SharePoint
+            // tenant'ı için legitimacy değil sadece kötü-placeholder reddi.
+            if (_isInvalidHostValue(tenantId)) { showToast('Tenant ID kolon adı/placeholder olamaz — gerçek tenant (GUID veya *.onmicrosoft.com) girin', 'warning'); return; }
             if (!clientId) { showToast('Client ID zorunludur', 'warning'); return; }
+            if (_isInvalidHostValue(clientId)) { showToast('Client ID kolon adı/placeholder olamaz — gerçek Azure AD app ID girin', 'warning'); return; }
             if (!existingSource?.id && !clientSecret) { showToast('Client Secret zorunludur', 'warning'); return; }
+            if (clientSecret && _isInvalidHostValue(clientSecret)) { showToast('Client Secret kolon adı olamaz — gerçek Azure AD app secret girin', 'warning'); return; }
 
             formData.file_server_path = siteUrl;
             formData.host = tenantId;

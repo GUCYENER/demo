@@ -69,3 +69,31 @@ def default_port(db_type: str | None) -> int:
     `db_smart_api._load_source`.
     """
     return DEFAULT_PORTS[normalize_dialect(db_type)]
+
+
+# v3.37.8 SSOT (code-review wf_1da517ba bulgu #1/#2/#11):
+# Kanary placeholder set — kullanıcının kolon adı / placeholder string'lerini
+# (örn. literal "host", "port", "db_user") gerçek değer yerine girmesini hem
+# yazma yolu Pydantic validator'ları hem de okuma yolu `_load_source` defansif
+# guard'ı **aynı kaynaktan** kontrol eder. v3.37.7'de iki ayrı liste tanımlandı
+# ve içerikleri DIVERGE oldu (`db_password` write tarafında vardı, read'de yoktu);
+# case-sensitivity da divergent idi (write `.lower()`, read raw). Bu modül o
+# divergence'i kapatır — tek liste, tek normalize.
+HOST_VALUE_CANARIES: "frozenset[str]" = frozenset({
+    "host", "port", "db_type", "db_name", "db_user",
+    "db_password", "db_password_encrypted", "id",
+})
+
+
+def is_canary_value(v: object) -> bool:
+    """True iff `v` is a placeholder/column-name canary string.
+
+    - Non-string / None / whitespace-only → False (boş ayrı handle edilir)
+    - Case-insensitive lookup against `HOST_VALUE_CANARIES`.
+    """
+    if not isinstance(v, str):
+        return False
+    s = v.strip()
+    if not s:
+        return False
+    return s.lower() in HOST_VALUE_CANARIES

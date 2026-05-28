@@ -76,30 +76,50 @@
     // Ek olarak ikinci dönüş değeri olarak bir "code" tag'i üretiyoruz; caller
     // (login.js gibi UX-sensitive yerler) error.code üzerinden mapping yapabilir,
     // mesajın exact-text değişimine duyarlı olmaz.
+    // v3.37.8 (code-review wf_1da517ba bulgu #10): FastAPI HTTPException detail
+    // artık DICT olabilir (`{error_code, message, ...}` — db_smart_api.py
+    // `_data_corruption_500`). Eski "detail her zaman string" varsayımı bozuldu;
+    // `new Error(dict)` `'[object Object]'` üretiyordu. Bu helper dict|string
+    // ayrımını tek noktada yapar; structured `code` field'ı caller'a iletilir.
+    function _extractDetailMessage(detail) {
+        if (detail == null) return { msg: null, code: null };
+        if (typeof detail === 'string') return { msg: detail, code: null };
+        if (typeof detail === 'object') {
+            const msg = detail.message || detail.detail || null;
+            const code = detail.error_code || null;
+            return { msg, code };
+        }
+        return { msg: null, code: null };
+    }
+
     function buildFriendlyMessage(status, isJson, data) {
         // 401 fast path
         if (status === 401) {
-            const detail = data && (data.detail || data.message);
+            const ex = _extractDetailMessage(data && (data.detail || data.message));
             return {
-                msg: detail || "Oturum sona erdi. Lütfen yeniden giriş yapın.",
-                code: 'AUTH_REQUIRED',
+                msg: ex.msg || "Oturum sona erdi. Lütfen yeniden giriş yapın.",
+                code: ex.code || 'AUTH_REQUIRED',
             };
         }
         // 403 fast path
         if (status === 403) {
-            const detail = data && (data.detail || data.message);
+            const ex = _extractDetailMessage(data && (data.detail || data.message));
             return {
-                msg: detail || "Bu işlem için yetkiniz yok.",
-                code: 'FORBIDDEN',
+                msg: ex.msg || "Bu işlem için yetkiniz yok.",
+                code: ex.code || 'FORBIDDEN',
             };
         }
-        // JSON-formatlı hata: backend mesajını kullan (HTML/raw scrub: JSON
-        // değilse buraya hiç girmiyoruz — aşağıdaki path'ler devralır).
+        // JSON-formatlı hata: backend mesajını kullan (dict ise message field,
+        // string ise direkt). HTML/raw bu blokta değil.
         if (isJson && data && (data.detail || data.message)) {
-            return {
-                msg: data.detail || data.message,
-                code: status >= 500 ? 'SERVER_ERROR' : 'CLIENT_ERROR',
-            };
+            const ex = _extractDetailMessage(data.detail || data.message);
+            if (ex.msg) {
+                return {
+                    msg: ex.msg,
+                    code: ex.code || (status >= 500 ? 'SERVER_ERROR' : 'CLIENT_ERROR'),
+                };
+            }
+            // dict ama message yok — fall through generic
         }
         // 502/503/504 — proxy/backend down (genellikle HTML body)
         if (status === 502 || status === 503 || status === 504) {

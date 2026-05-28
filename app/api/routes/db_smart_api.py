@@ -930,14 +930,21 @@ def _load_source(
     # str). Any row that violates the contract is data corruption from an
     # earlier-era write or a direct DB edit — fail loud, point the admin at
     # the exact UPDATE they need to issue, and refuse to guess.
-    _DATA_CORRUPTION_CANARIES = {"port", "host", "db_type", "db_name",
-                                 "db_user", "db_password_encrypted", "id"}
+    # v3.37.8 (code-review wf_1da517ba bulgu #1/#2/#11): SSOT'a geç.
+    # Önceki local `_DATA_CORRUPTION_CANARIES` write-side ile DIVERGE etmişti;
+    # case-sensitive idi → `host='Host'` legacy row sessizce geçiyordu.
+    # `dialect_constants.is_canary_value` ile hem yazı hem okuma case-insensitive
+    # aynı kelime kümesini kontrol eder.
+    from app.services.db_smart.dialect_constants import is_canary_value
 
     def _data_corruption_500(field_name: str, raw_value, hint: str) -> "HTTPException":
-        # v3.37.7 (ARES + HEBE): 500 → 400 + structured error_code. Admin
-        # mesajı (UPDATE komutu, tablo adı) detail dict'inde `admin_detail`
-        # alanında — FE log'a basabilir, son-kullanıcıya generic mesaj
-        # gösterir. Bilgi sızıntısı azalır + FE branch'leyebilir.
+        # v3.37.8 (code-review bulgu #7/#8/#12): 500 statüsü geri çevrildi —
+        # source_corrupted bir SERVER-STATE problemi (DB row bozuk), 4xx değil.
+        # Ops dashboard 5xx-rate alerting kaybetmesini ve retry middleware'in
+        # 5xx'i retry etmemesini önler. + `admin_detail` artık wire'a gitmiyor;
+        # sadece logger.error içinde tutulur — non-admin clientlar SQL hint /
+        # internal numeric id'leri göremez. FE branch'lemesi için `error_code`
+        # + `message` yeter; `field` debug log'da kalır.
         admin_msg = (
             f"Veri kaynağı '{field_name}' alanı bozuk "
             f"(source_id={source_id}, değer={raw_value!r}). {hint} "
@@ -946,26 +953,26 @@ def _load_source(
         )
         logger.error(
             "[db_smart._load_source] data_sources.%s corrupted source_id=%s "
-            "raw=%r type=%s",
-            field_name, source_id, raw_value, type(raw_value).__name__,
+            "raw=%r type=%s admin_action=%r",
+            field_name, source_id, raw_value, type(raw_value).__name__, admin_msg,
         )
         return HTTPException(
-            status_code=400,
+            status_code=500,
             detail={
                 "error_code": "source_corrupted",
-                "field": field_name,
-                "source_id": source_id,
-                "message": "Veri kaynağı bilgisi bozuk veya eksik. Lütfen yöneticiye bildirin veya raporu yeniden oluşturup kaydedin.",
-                "admin_detail": admin_msg,
+                "message": (
+                    "Veri kaynağı bilgisi bozuk veya eksik. "
+                    "Lütfen yöneticiye bildirin veya raporu yeniden oluşturup kaydedin."
+                ),
             },
         )
 
     raw_host = rec.get("host")
     if (not isinstance(raw_host, str)) or (not raw_host.strip()) \
-            or raw_host.strip() in _DATA_CORRUPTION_CANARIES:
+            or is_canary_value(raw_host):
         raise _data_corruption_500(
             "host", raw_host,
-            "Host alanı boş veya kolon adı (örn. 'host') olarak yazılmış.",
+            "Host alanı boş veya kolon adı (örn. 'host', 'Host') olarak yazılmış.",
         )
 
     raw_port = rec.get("port")
@@ -1059,11 +1066,13 @@ def post_execute_stream(
             errs = "; ".join(out.get("errors") or [])
             raise HTTPException(status_code=400, detail=f"SQL üretilemedi: {errs}")
 
-    # v3.37.1 Brief A (HERMES→ZEUS direct-apply 2026-05-26):
+    # v3.37.1 Brief A + v3.37.8 (code-review wf_1da517ba bulgu #5/#10/#14):
     # body.source_id None ve body.wizard_state.source_id var ise fallback.
-    # Saved-report rerun yolunda dbsmart_saved_reports.source_id NULL ise
-    # frontend body.source_id göndermeyebilir; wizard_state snapshot her
-    # zaman source_id taşır (v3.30+ yazma yolu garanti eder).
+    # Legacy saved_reports (migration 047 öncesi) source_id NULL'sa FE
+    # `_report.source_id` boş gönderir AMA wizard_state'i de body'ye koyar
+    # (report_detail_modal.js v3.37.8) — bu BE fallback o snapshot path'i
+    # aktive eder. Migration 047 backfill'i edge-case bırakırsa burası
+    # safety net. NOT dead code — eski yorum yanlış bilgi veriyordu, düzeltildi.
     if not src_id and isinstance(body.wizard_state, dict):
         ws_sid = body.wizard_state.get("source_id")
         if ws_sid:

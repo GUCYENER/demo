@@ -474,13 +474,16 @@
             // stub (rows:[]) — bu yüzden "Sonuç boş." görünüyordu. Gerçek runner
             // /sessions/{uid}/execute/stream (SSE).
             //
-            // v3.37.7 (HEBE+ATHENA+ARES 2026-05-28): wizard_state.source_id
-            // SNAPSHOT FALLBACK KALDIRILDI. Eski mantık snapshot içinden
-            // dangling/orphan source_id alıp `_load_source` 500'üne (literal
-            // 'host', silinmiş source) sebep oluyordu. Saved-report'un kendi
-            // source_id'si (kolon) tek otorite — yoksa rapor eski format
-            // sayılır, kullanıcıdan wizard'da yeniden kaydetmesi istenir.
+            // v3.37.8 (code-review wf_1da517ba bulgu #5/#9): saved_reports.source_id
+            // BIRINCIL OTORITE; legacy NULL durumda BE'nin v3.37.1 wizard_state
+            // fallback'i (db_smart_api.py:1067 etrafı) safety net olarak kullanılır.
+            // FE artık `wizard_state`'i de POST body'sine ekler — strict snapshot
+            // kullanımı YOK (host='host' gibi kanary'ler BE _load_source canary
+            // guard'ında yine reddedilir; SSOT canary tek liste).
             const sourceId = _report.source_id;
+            const wizardState = _report.wizard_state && typeof _report.wizard_state === 'object'
+                ? _report.wizard_state
+                : null;
             const lastSql = _report.last_sql || '';
             // F21c+F22c (ARES 2026-05-25): dialect HER ZAMAN omit → backend
             // source.db_type'tan resolve eder. Eski raporlarda last_dialect
@@ -489,13 +492,16 @@
             // sırasında mismatch/whitelist hatası üretiyordu. FE asla
             // dialect tahmininde bulunmasın.
             const dialect = null;
-            if (!sourceId) throw new Error('Bu rapor eski formatta — veri kaynağı bilgisi eksik. Lütfen raporu wizard ile yeniden oluşturup kaydedin.');
+            // v3.37.8: source_id veya wizard_state.source_id'den biri YOK ise hata.
+            const wsSourceId = wizardState && (wizardState.source_id || wizardState.sourceId);
+            const effectiveSourceId = sourceId || wsSourceId;
+            if (!effectiveSourceId) throw new Error('Bu rapor eski formatta — veri kaynağı bilgisi eksik. Lütfen raporu wizard ile yeniden oluşturup kaydedin.');
             if (!lastSql) throw new Error('Saklanan SQL yok — raporu wizard ile yeniden oluşturup kaydedin.');
 
             // 1) Yeni session aç (source_id zorunlu — CreateSessionRequest).
             const sess = await window.vyraFetch('/db-smart/sessions', {
                 method: 'POST',
-                body: { source_id: Number(sourceId) },
+                body: { source_id: Number(effectiveSourceId) },
             });
             const uid = sess.session_uid || sess.uid || sess.id;
             if (!uid) throw new Error('Session UID alınamadı');
@@ -515,18 +521,27 @@
                     body: JSON.stringify(Object.assign(
                         {
                             sql: lastSql,
-                            source_id: Number(sourceId),
+                            source_id: Number(effectiveSourceId),
                             batch_size: 200,
                             max_rows: 1000,
                         },
+                        // v3.37.8 bulgu #5/#10/#14: wizard_state'i BE'ye gönder
+                        // — legacy saved_reports.source_id NULL durumunda BE
+                        // fallback (db_smart_api.py:1074) snapshot'tan source_id
+                        // çıkarabilsin. Yeni reports için zararsız (BE öncelikle
+                        // body.source_id'yi kullanır).
+                        wizardState ? { wizard_state: wizardState } : {},
                         dialect ? { dialect: dialect } : {}
                     )),
                 }
             );
             if (!streamRes.ok) {
-                // v3.37.7: BE structured error → error_code branch'leme.
-                // {detail: {error_code, message, admin_detail, ...}} formatı
-                // backend `_data_corruption_500` tarafından dönülür.
+                // v3.37.8 (code-review bulgu #6): BE structured error parse.
+                // Format: {detail: {error_code, message, ...}} (admin_detail
+                // artık wire'a basılmıyor — log-only). Unrecognized error_code
+                // VE non-JSON response için RAW slice(0,200) leak'ini engelle:
+                // structured error varsa message kullan; değilse generic
+                // "HTTP <status>" mesajı, raw body'yi UI'a basma.
                 let detail = '';
                 let errBody = null;
                 try {
@@ -534,13 +549,19 @@
                     try { errBody = JSON.parse(detail); } catch (_) { /* not json */ }
                 } catch (_) { /* noop */ }
                 const errDetail = errBody && errBody.detail;
-                if (errDetail && typeof errDetail === 'object' && errDetail.error_code === 'source_corrupted') {
-                    if (errDetail.admin_detail) {
-                        console.warn('[report_detail_modal] source corruption (admin):', errDetail.admin_detail);
-                    }
-                    throw new Error(errDetail.message || 'Veri kaynağı bozuk');
+                if (errDetail && typeof errDetail === 'object' && errDetail.message) {
+                    // Tanınan veya tanınmayan error_code — server'ın belirlediği
+                    // friendly message yeterli; field/source_id console'da debug.
+                    console.warn('[report_detail_modal] structured server error:',
+                        errDetail.error_code || '(no code)', errDetail);
+                    throw new Error(errDetail.message);
                 }
-                throw new Error('HTTP ' + streamRes.status + (detail ? (': ' + detail.slice(0, 200)) : ''));
+                if (typeof errDetail === 'string') {
+                    throw new Error(errDetail);
+                }
+                // Generic — RAW JSON UI'a basılmaz; status yeterli.
+                console.warn('[report_detail_modal] HTTP error', streamRes.status, detail);
+                throw new Error('Sunucu hatası (HTTP ' + streamRes.status + '). Lütfen tekrar deneyin veya yöneticiye bildirin.');
             }
 
             const columnsAgg = [];

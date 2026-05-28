@@ -75,6 +75,37 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.37.8 (2026-05-29) - v3.37.7 code-review 15 finding konsolide fix (HERMES + ATHENA + ARES + HEBE)
+> **v3.37.7 fix paketi yarı kalmıştı + 2 yeni regresyon yaratmıştı.** `/code-review xhigh` workflow `wrctmcj31` (9 angle × 8 candidate × verify × sweep) ile 52 PLAUSIBLE/CONFIRMED bulgu surfaced; top 15 kapatıldı tek konsolide commit'te.
+
+**Bulgular (workflow output: tasks/wrctmcj31.output, 15 finding):**
+- **F1/F11:** Case asymmetry — write `.lower()` vs read raw. `host='Host'` legacy row silent failure.
+- **F2:** Canary set diverged — `db_password` write'da, read'de yok. SSOT iddia ihlal.
+- **F3:** Sadece `host` validate — `db_name`/`db_user`/`db_password` placeholder hâlâ geçebiliyor.
+- **F4:** Whitespace silent None coercion; source_type='database' için NULL host kabul ediliyor.
+- **F5/F9/F14:** FE wizard_state fallback kaldırıldı, BE hâlâ izinli + dead code yorumu yalan. Pre-v3.30 legacy reports broken.
+- **F6:** Error fallback `slice(0,200)` yeni error_code'lar için tam JSON admin_detail UI'a leak.
+- **F7:** 400 response `field`+`source_id`+`admin_detail` non-admin'e wire'da görünür.
+- **F8:** Status 500→400 semantik regresyon — ops 5xx-rate dashboard alerting kaybı.
+- **F10:** `buildFriendlyMessage` dict detail için `'[object Object]'` üretiyor.
+- **F12:** SharePoint tenant validator mesajı semantik yanlış.
+
+**Yapılanlar (G1-G9):**
+- 🐍 **`dialect_constants.py` SSOT (HERMES + ARES):** `HOST_VALUE_CANARIES` frozenset + `is_canary_value()` helper — case-insensitive, None/whitespace safe. v3.37.7'deki iki ayrı liste (`_HOST_VALUE_CANARIES` + `_DATA_CORRUPTION_CANARIES`) silindi, **tek kaynak**.
+- 🐍 **`data_sources_api.py` (HERMES):** SSOT import + 4 `@field_validator` (`host`, `db_name`, `db_user`, `db_password`) + `@model_validator(mode='after')` — `source_type ∈ {database, ftp, sharepoint, file_server}` için host required (whitespace silent None engellendi).
+- 🐍 **`db_smart_api.py _load_source` (HERMES + ARES):** SSOT'a göç + `is_canary_value(raw_host)` case-insens. Status code **400→500 geri çevrildi** (server-state corruption 5xx — ops alerting + retry semantics korunur). `admin_detail` wire'dan **kaldırıldı** (sadece logger.error); response: `{error_code, message}` — non-admin info leak yok.
+- 🌐 **`report_detail_modal.js` (ATHENA + ARES):** `wizard_state` body'ye eklendi → BE fallback (db_smart_api.py:1074) artık aktive olabiliyor; **legacy saved_reports.source_id NULL rerun çalışır**. `effectiveSourceId = source_id ‖ ws.source_id` — FE-BE asymmetry kapandı. Error fallback `slice(0,200)` raw leak → generic "Sunucu hatası (HTTP X)" mesajı.
+- 🌐 **`api_client.js` (ATHENA):** `_extractDetailMessage(detail)` helper — dict|string ayrımı tek noktada. `buildFriendlyMessage` dict detail için `'[object Object]'` bug'ı kapatıldı; structured `error_code` caller'a iletiliyor.
+- 🌐 **`data_sources_module.js` (ATHENA + HEBE):** SharePoint tenant/clientId/clientSecret canary kontrolleri + mesajlar semantik düzeltildi. `db_name`/`db_user`/`db_password` için ek canary kontrolü.
+
+**TYCHE 20/20 PASS:**
+- 10 SSOT canary (case-insens, whitespace, None, int)
+- 10 DataSourceCreate (host/db_name/db_user/db_password + cross-field manual_file edge)
+
+**Council review:** HERMES ✅ · ATHENA ✅ · ARES ✅ · HEBE ✅ · APOLLO ✅ · HEPHAESTUS ✅ · TYCHE ✅ (7/7).
+
+**Plan:** `.agents/plans/2026-05-29_0030_v3378_code_review_fix_v1.md`
+
 ### 🆕 v3.37.7 (2026-05-28) - data_sources yazma validation + saved-report rerun resilience (HERMES + ATHENA + HEBE + ARES)
 > **Kayıtlı rapor çalıştır HTTP 500 zinciri kalıcı çözüldü.** İki bağımsız bug birleşince hata bütünleşiyordu: kullanıcı görseli `"host alani bozuk (source_id=1, deger='host')"`.
 
@@ -3902,7 +3933,7 @@ netstat -an | findstr "5005"
 
 **Geliştirici:** Yasın Fazlıoğlu  
 **E-posta:** yasin.fazlioglu@consultant.turkcell.com.tr  
-**Versiyon:** 3.37.7 (data_sources yazma validation + saved-report rerun resilience — bkz. Versiyon Geçmişi v3.37.7)
+**Versiyon:** 3.37.8 (v3.37.7 code-review 15 finding konsolide fix — bkz. Versiyon Geçmişi v3.37.8)
 
 **Geçmiş versiyon notları:**
 

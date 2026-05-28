@@ -11,10 +11,11 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 
 from fastapi import APIRouter, HTTPException, Depends, Query, Body, BackgroundTasks
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.api.routes.auth import get_current_user
 from app.core.db import get_db_context
+from app.services.db_smart.dialect_constants import is_canary_value
 from app.services.permission_audit import log_permission_change
 
 logger = logging.getLogger(__name__)
@@ -22,24 +23,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/data-sources", tags=["data_sources"])
 
 
-# v3.37.7 (ARES + HERMES): yazma yolunda semantik validation — kullanıcının
-# kolon adı (placeholder) değerlerini gerçek host/port yerine girmesini
-# engelle. `_load_source` defansif okuma yolundaki canary set'i (db_smart_api
-# `_DATA_CORRUPTION_CANARIES`) ile aynı kelimeler — single source of truth
-# için duplicate; ileride dialect_constants.py'ye taşınabilir. Şu an
-# data_sources_api lokal kopya (circular import yok).
-_HOST_VALUE_CANARIES = frozenset({
-    "host", "port", "db_type", "db_name", "db_user",
-    "db_password", "db_password_encrypted", "id",
-})
+# v3.37.8 (ARES + HERMES + code-review wf_1da517ba):
+# SSOT canary check `dialect_constants.is_canary_value` üzerinden — write
+# ve read yolu artık AYNI lookup'ı paylaşıyor (v3.37.7 divergence kapatıldı).
+# `_HOST_VALUE_CANARIES`/`_DATA_CORRUPTION_CANARIES` local kopyalar silindi.
+_CREDENTIAL_FIELDS = ("host", "db_name", "db_user", "db_password")
+# Source type'lar host alanını zorunlu sayar — pure-file (manual_file) hariç.
+_REQUIRES_HOST = frozenset({"database", "ftp", "sharepoint", "file_server"})
 
 
-def _validate_host_value(v: Optional[str]) -> Optional[str]:
-    """host alanı için ortak Pydantic validator helper.
+def _validate_credential_field(field_name: str, v: Optional[str]) -> Optional[str]:
+    """Tüm credential alanları için ortak Pydantic validator helper.
 
-    - None → None (Optional)
-    - whitespace-only → None (boş kabul edilir)
-    - canary kelimesi (`'host'`, `'port'` vb.) → ValueError (Pydantic 422)
+    - None → None (Optional, model_validator cross-field check'e bırakılır)
+    - whitespace-only → None (boş; cross-field check kararı verir)
+    - canary kelimesi → ValueError (Pydantic 422)
     - geçerli → strip edilmiş hâli
     """
     if v is None:
@@ -47,10 +45,10 @@ def _validate_host_value(v: Optional[str]) -> Optional[str]:
     s = v.strip()
     if not s:
         return None
-    if s.lower() in _HOST_VALUE_CANARIES:
+    if is_canary_value(s):
         raise ValueError(
-            f"host alanı kolon adı ('{s}') değil sunucu adresi olmalı "
-            f"(örn. localhost, 10.0.0.5, mssql.firma.local)"
+            f"{field_name} alanı kolon adı ('{s}') değil gerçek bir değer olmalı "
+            f"(örn. host için localhost / 10.0.0.5; db_user için service_user)"
         )
     return s
 
@@ -73,8 +71,29 @@ class DataSourceCreate(BaseModel):
 
     @field_validator("host")
     @classmethod
-    def _check_host(cls, v):
-        return _validate_host_value(v)
+    def _v_host(cls, v): return _validate_credential_field("host", v)
+
+    @field_validator("db_name")
+    @classmethod
+    def _v_db_name(cls, v): return _validate_credential_field("db_name", v)
+
+    @field_validator("db_user")
+    @classmethod
+    def _v_db_user(cls, v): return _validate_credential_field("db_user", v)
+
+    @field_validator("db_password")
+    @classmethod
+    def _v_db_password(cls, v): return _validate_credential_field("db_password", v)
+
+    @model_validator(mode="after")
+    def _check_required_host(self):
+        # source_type host gerektiriyor mu? Whitespace-only girdileri validator
+        # zaten None'a indirgedi — burada None ise net 422 ile reddet.
+        if self.source_type in _REQUIRES_HOST and not self.host:
+            raise ValueError(
+                f"source_type='{self.source_type}' için host alanı zorunlu — boş bırakılamaz."
+            )
+        return self
 
 
 class DataSourceUpdate(BaseModel):
@@ -92,8 +111,23 @@ class DataSourceUpdate(BaseModel):
 
     @field_validator("host")
     @classmethod
-    def _check_host(cls, v):
-        return _validate_host_value(v)
+    def _v_host(cls, v): return _validate_credential_field("host", v)
+
+    @field_validator("db_name")
+    @classmethod
+    def _v_db_name(cls, v): return _validate_credential_field("db_name", v)
+
+    @field_validator("db_user")
+    @classmethod
+    def _v_db_user(cls, v): return _validate_credential_field("db_user", v)
+
+    @field_validator("db_password")
+    @classmethod
+    def _v_db_password(cls, v): return _validate_credential_field("db_password", v)
+
+    # Not: DataSourceUpdate'te host explicit boşaltma kullanım senaryosu olabilir
+    # (örn. manual_file'a dönüşüm). source_type değişmiyorsa cross-field check
+    # yapmıyoruz — mevcut row'un source_type'ına göre admin sorumluluğu.
 
 
 class CollectSamplesRequest(BaseModel):
