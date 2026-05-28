@@ -904,18 +904,12 @@ def _load_source(
     # yanlış girilmiş olabilir (örn. literal "db_type") → sql_executor_stream
     # whitelist'i {"postgresql","oracle","mssql","mysql"} dışında ise 500
     # değil sessiz fallback. Engine alias'larını da normalize ediyoruz.
-    # NOTE v3.37.4: dialect normalization moved AHEAD of port defensive cast
-    # because the port-default fallback below needs a normalized db_type to
-    # pick the right default (oracle=1521 vs. postgresql=5432 etc.).
     _DIALECT_ALIAS = {
         "postgres": "postgresql", "psql": "postgresql", "pg": "postgresql",
         "ora": "oracle", "oracledb": "oracle",
         "sqlserver": "mssql", "sql_server": "mssql", "ms_sql": "mssql",
     }
     _SUPPORTED_DIALECTS = {"postgresql", "oracle", "mssql", "mysql"}
-    _DEFAULT_PORTS = {
-        "postgresql": 5432, "oracle": 1521, "mssql": 1433, "mysql": 3306,
-    }
     raw_dt = (rec.get("db_type") or "").strip().lower()
     dialect = _DIALECT_ALIAS.get(raw_dt, raw_dt)
     if dialect not in _SUPPORTED_DIALECTS:
@@ -926,49 +920,71 @@ def _load_source(
         )
         dialect = "postgresql"
 
-    # Bug C v3.37.4 (revision 2): port defensive cast with db_type-aware
-    # default fallback. Earlier revision raised 500 on bad port — actionable
-    # for the DB admin, but a hard block for the end user whose only
-    # recourse was filing a ticket. Now: try int cast; if the row carries
-    # a literal "port" string (real data corruption case observed in
-    # source_id=3 on 2026-05-28), WARN-log it AND substitute the canonical
-    # port for the normalized dialect so the report run proceeds. The
-    # admin still sees a single WARN line per source per process lifetime
-    # because we don't suppress repeat hits.
+    # v3.37.4 (revision 3): strict data_sources integrity validation.
+    # Earlier revisions tried defensive casts and dialect-aware default-port
+    # fallbacks — both masked the underlying data corruption. User direction
+    # 2026-05-28: "temizlemek çözüm değil, kodu baştan düzgün yaz". Pydantic
+    # already validates the write path (data_sources_api.py DataSourceCreate
+    # / DataSourceUpdate enforce port∈[1, 65535] int and host max_length=500
+    # str). Any row that violates the contract is data corruption from an
+    # earlier-era write or a direct DB edit — fail loud, point the admin at
+    # the exact UPDATE they need to issue, and refuse to guess.
+    _DATA_CORRUPTION_CANARIES = {"port", "host", "db_type", "db_name",
+                                 "db_user", "db_password_encrypted", "id"}
+
+    def _data_corruption_500(field_name: str, raw_value, hint: str) -> "HTTPException":
+        # One construction site for the message so every field gets the same
+        # admin-actionable shape; logger.error captures the type for the
+        # post-mortem trail.
+        logger.error(
+            "[db_smart._load_source] data_sources.%s corrupted source_id=%s "
+            "raw=%r type=%s",
+            field_name, source_id, raw_value, type(raw_value).__name__,
+        )
+        return HTTPException(
+            status_code=500,
+            detail=(
+                f"Veri kaynağı '{field_name}' alanı bozuk "
+                f"(source_id={source_id}, değer={raw_value!r}). {hint} "
+                f"Düzeltme: UPDATE data_sources SET {field_name}=<doğru-değer> "
+                f"WHERE id={source_id};"
+            ),
+        )
+
+    raw_host = rec.get("host")
+    if (not isinstance(raw_host, str)) or (not raw_host.strip()) \
+            or raw_host.strip() in _DATA_CORRUPTION_CANARIES:
+        raise _data_corruption_500(
+            "host", raw_host,
+            "Host alanı boş veya kolon adı (örn. 'host') olarak yazılmış.",
+        )
+
     raw_port = rec.get("port")
+    if isinstance(raw_port, bool):
+        # int(True) == 1 silently — explicit bool guard avoids "connecting
+        # to port 1" surprises if a JSON path ever surfaces a boolean.
+        raise _data_corruption_500(
+            "port", raw_port, "Port alanı boolean — beklenen int.",
+        )
     try:
         port_int = int(raw_port)
     except (TypeError, ValueError):
-        default_port = _DEFAULT_PORTS.get(dialect)
-        if default_port is None:
-            # Should be unreachable — dialect is forced to postgresql above —
-            # but kept as a guard so future dialect additions can't crash.
-            logger.error(
-                "[db_smart._load_source] data_sources.port invalid AND no "
-                "default port for dialect=%r source_id=%s port=%r",
-                dialect, source_id, raw_port,
-            )
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    f"Veri kaynağı port değeri bozuk (source_id={source_id}): "
-                    f"{raw_port!r}. DB yöneticisine bildirin — örn. "
-                    f"UPDATE data_sources SET port=<INT> WHERE id={source_id};"
-                ),
-            )
-        port_int = default_port
-        logger.warning(
-            "[db_smart._load_source] data_sources.port invalid (=%r) for "
-            "source_id=%s; using dialect=%r default port=%d. Schedule a "
-            "data fix: UPDATE data_sources SET port=%d WHERE id=%s;",
-            raw_port, source_id, dialect, port_int, port_int, source_id,
+        raise _data_corruption_500(
+            "port", raw_port,
+            "Port alanı integer'a dönüştürülemiyor (kolon adı 'port' "
+            "literal'i sızmış olabilir).",
+        )
+    if not (1 <= port_int <= 65535):
+        raise _data_corruption_500(
+            "port", raw_port,
+            "Port aralık dışı — geçerli aralık 1-65535.",
         )
 
     # 4) source dict — _get_db_connector'ın beklediği sade alanlar
     source_dict = {
         "id": rec["id"],
         "db_type": rec["db_type"],
-        "host": rec["host"],
+        "host": raw_host.strip(),
         "port": port_int,
         "db_name": rec["db_name"],
         "db_user": rec["db_user"],
@@ -1063,25 +1079,11 @@ def post_execute_stream(
         # 404 vs 403 ayırmıyoruz — varlık vs yetki sızıntısını önler
         raise HTTPException(status_code=404, detail="Veri kaynağı bulunamadı veya erişim yok.")
     src_dict, src_password, src_dialect = loaded_src
-    # v3.37.1 Brief A (HERMES→ZEUS direct-apply 2026-05-26):
-    # port defensive — psycopg2/oracledb literal "port" string'i sızarsa ham
-    # "invalid integer value 'port' for connection option 'port'" yerine
-    # anlaşılır Türkçe mesaj. data_sources kolonu integer ama snapshot
-    # path'lerde literal sızabilir; explicit cast + raise.
-    try:
-        src_dict["port"] = int(src_dict.get("port"))
-    except (TypeError, ValueError) as _port_err:
-        logger.error(
-            "[db_smart.stream] invalid port literal source_id=%s value=%r: %s",
-            src_id, src_dict.get("port"), _port_err,
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                f"Source port literal değil int olmalı "
-                f"(source_id={src_id}): {src_dict.get('port')!r}"
-            ),
-        )
+    # v3.37.4 (revision 3): the old defensive int-cast for port lived here
+    # AND inside _load_source; both branches duplicated work and disagreed
+    # about how to fail (hard 500 vs. fallback). The route now trusts
+    # _load_source: src_dict["port"] is an int in [1, 65535] or the call
+    # already raised the canonical data-corruption 500 above. No cast here.
     # v3.37.1 Brief A — wizard_state.dialect ile data_sources.db_type mismatch
     # ise DEBUG log (data_sources yetkili olur; aşağıdaki F21c bloğu zaten
     # src_dialect'i adopte ediyor).

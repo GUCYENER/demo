@@ -127,48 +127,6 @@ _extract_json_obj = extract_json_obj
 
 
 # ─────────────────────────────────────────────────────────────
-# SQL garbage-prefix sanitizer (Bug B v3.37.4)
-# ─────────────────────────────────────────────────────────────
-#
-# Some LLM completions arrive with a short alphanumeric "garbage" token
-# glued to the front of each SQL keyword line — e.g.
-#   "W0SELECT col, ... W0FROM tbl W0JOIN x W0ON ..."
-# The cause is upstream of this service (model artifact, encoding edge
-# case, or a prompt-template echo) but it makes the SQL unrunnable and
-# the wizard's preview UI shows the literal garbage to the user.
-#
-# Strategy: a deny-list of *known* artifact tokens (W\d+, KW\d+, literal
-# `\n0`, `\\n0`) right before a real top-level SQL keyword gets stripped.
-# We deliberately do NOT strip any short alphanumeric blob — that would
-# eat legitimate identifiers like `T1FROM` (where `T1` is a CTE alias).
-#
-# WARN-log when stripping fires so we can grep production logs and
-# eventually trace the root cause; the user sees clean SQL meanwhile.
-
-_GARBAGE_PREFIX_RE = re.compile(
-    r"(^|\n)[ \t]*(?:W\d{1,2}|KW\d{0,2}|\\n0?|\\\\n0?)(?=\s*"
-    r"(?:SELECT|WITH|FROM|WHERE|GROUP\s+BY|HAVING|ORDER\s+BY|"
-    r"LEFT\s+JOIN|RIGHT\s+JOIN|INNER\s+JOIN|FULL\s+OUTER\s+JOIN|"
-    r"FULL\s+JOIN|CROSS\s+JOIN|OUTER\s+JOIN|JOIN|"
-    r"UNION(?:\s+ALL)?|INTERSECT|EXCEPT|"
-    r"LIMIT|OFFSET|ON|AND|OR)\b)",
-    re.IGNORECASE,
-)
-
-
-def _strip_sql_garbage_prefix(sql: str) -> str:
-    if not sql:
-        return sql
-    cleaned, n = _GARBAGE_PREFIX_RE.subn(r"\1", sql)
-    if n > 0:
-        logger.warning(
-            "[llm_generate_report] SQL garbage prefix stripped (%d hit(s)): %r -> %r",
-            n, sql[:120], cleaned[:120],
-        )
-    return cleaned
-
-
-# ─────────────────────────────────────────────────────────────
 # SQL validation (SELECT-only, single statement, blocklist)
 # ─────────────────────────────────────────────────────────────
 
@@ -483,10 +441,19 @@ def generate_report(
         rationale = "LLM önerisi uygulandı."
     rationale = rationale.strip()[:500]
 
-    # Bug B v3.37.4: known LLM artifact prefixes (W0, KW0, literal \n0)
-    # glued onto SQL keywords get stripped here, before validation, so the
-    # "W0SELECT … W0FROM …" failure mode can no longer surface in the UI.
-    sql_candidate = _strip_sql_garbage_prefix(sql_candidate)
+    # v3.37.4 Bug B telemetry: the W0SELECT/W0FROM garbage-prefix failure
+    # mode is upstream — the sanitizer that used to live here masked the
+    # symptom and made the root cause harder to trace. Log the raw LLM
+    # response head + the parsed SQL head + a length comparison so the
+    # next prod hit gives us the artifact signature in plain text.
+    logger.info(
+        "[llm_generate_report] LLM raw len=%d sql_len=%d "
+        "raw_head=%r sql_head=%r",
+        len(raw or ""),
+        len(sql_candidate),
+        (raw or "")[:240],
+        sql_candidate[:240],
+    )
 
     # ── 5. Validate SELECT-only / single-statement ──────────
     ve = _validate_select_sql(sql_candidate)
