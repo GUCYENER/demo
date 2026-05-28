@@ -1,0 +1,71 @@
+# VYRA — Python project tooling config (v3.38.0 dev tooling bootstrap).
+#
+# This file holds tool config only — packaging metadata stays out of scope
+# because VYRA is deployed as a service tree, not a pip-installable package.
+# Runtime deps live in requirements.txt; dev/lint deps in requirements-dev.txt.
+
+# ----------------------------------------------------------------------------
+# Ruff — lint + format (KAP 1, HERMES)
+# ----------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = [
+  "python",                  # Windows venv shipped with the repo
+  "Lib",                     # vendored site-packages mirror
+  "node_modules",
+  "frontend/dist",
+  "Gecici_Dosyalar_Sil",     # scratch / staging dir
+  "migrations/versions",     # alembic-generated; format would churn history
+  ".agents",                 # workflow / brief markdown, not code
+]
+
+[tool.ruff.lint]
+# Conservative baseline — expand after the first clean pass.
+select = [
+  "E",   # pycodestyle errors
+  "F",   # pyflakes (undefined name, unused import, etc.)
+  "I",   # isort import ordering
+  "B",   # flake8-bugbear common-bug heuristics
+  "UP",  # pyupgrade — modern syntax suggestions
+  "W",   # pycodestyle warnings
+]
+# Soft-ignore until a focused cleanup PR addresses each rule explicitly.
+ignore = [
+  "E501",  # line-too-long — many existing docstrings exceed 100 chars
+  "B008",  # function-call-in-default-arg — FastAPI Depends() pattern
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E501", "F401"]  # tests may import fixtures lazily
+"app/core/config.py" = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ----------------------------------------------------------------------------
+# Coverage — KAP 7 (TYCHE) baseline 75% global / 85% patch
+# ----------------------------------------------------------------------------
+[tool.coverage.run]
+branch = true
+source = ["app", "core"]
+omit = [
+  "*/migrations/versions/*",
+  "*/tests/*",
+  "Lib/*",
+  "python/*",
+  "frontend/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+  "raise NotImplementedError",
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+]
+show_missing = true
+skip_covered = false
+precision = 1
+fail_under = 75

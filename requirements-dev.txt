@@ -1,0 +1,20 @@
+# VYRA — Development & quality tooling (v3.38.0 dev tooling bootstrap)
+#
+# Install (Windows-native venv, recommended):
+#   ./python/Scripts/pip.exe install -r requirements-dev.txt
+#
+# WSL/Linux fallback (if python3 has pip):
+#   python3 -m pip install -r requirements-dev.txt
+#
+# These are NOT runtime dependencies — kept separate from requirements.txt so
+# `pip install -r requirements.txt` stays minimal for production deploys.
+
+# --- Lint & format (KAP 1 — HERMES) ---
+ruff>=0.6.0,<1.0.0
+
+# --- Dependency vulnerability scan (KAP 2 — ARES) ---
+pip-audit>=2.7.0,<3.0.0
+
+# --- Coverage diff (KAP 7 — TYCHE patch coverage) ---
+# pytest-cov already pinned in requirements.txt; diff-cover layers on top.
+diff-cover>=9.0.0,<10.0.0
