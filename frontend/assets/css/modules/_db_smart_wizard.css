@@ -2275,6 +2275,31 @@ body[data-dsw-locked="true"] {
     color: #fca5a5;
     font-size: 12px;
 }
+/* Bulgular3 / Bulgu 8: AI başlık+açıklama öneri durumu */
+.dsw-save-llm-hint {
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    line-height: 1.4;
+    border: 1px solid var(--vyra-border, #2a3550);
+    color: var(--text-secondary, #98a4bd);
+    background: rgba(79, 140, 255, 0.06);
+    margin-top: 4px;
+}
+.dsw-save-llm-hint.is-loading {
+    color: var(--vyra-accent, #4f8cff);
+    border-style: dashed;
+}
+.dsw-save-llm-hint.is-ok {
+    color: var(--success, #4ade80);
+    border-color: rgba(74, 222, 128, 0.35);
+    background: rgba(74, 222, 128, 0.06);
+}
+.dsw-save-llm-hint.is-error {
+    color: #fca5a5;
+    border-color: rgba(239, 68, 68, 0.35);
+    background: rgba(239, 68, 68, 0.06);
+}
 .dsw-save-modal-foot {
     display: flex;
     justify-content: flex-end;

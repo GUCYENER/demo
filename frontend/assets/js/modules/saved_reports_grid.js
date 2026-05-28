@@ -336,11 +336,45 @@
 
         card.appendChild(head);
 
+        // Bulgular3 / Bulgu 9: tablo / kaynak subtitle (varsa)
+        const tableLabel = report.table_label || report.table_name_tr || report.table_object_name || '';
+        if (tableLabel) {
+            const sub = document.createElement('div');
+            sub.className = 'srg-card-subtitle';
+            sub.textContent = String(tableLabel);
+            card.appendChild(sub);
+        }
+
         // desc
         const desc = document.createElement('p');
         desc.className = 'srg-card-desc';
         desc.textContent = report.description || '';
         card.appendChild(desc);
+
+        // Bulgular3 / Bulgu 9: kullanım istatistikleri (run count varsa)
+        const runCount = Number(report.run_count || 0);
+        if (runCount > 0 || report.last_run_at) {
+            const stats = document.createElement('div');
+            stats.className = 'srg-card-stats';
+            if (runCount > 0) {
+                const sRun = document.createElement('span');
+                sRun.className = 'srg-card-stat';
+                sRun.textContent = runCount + ' çalıştırma';
+                stats.appendChild(sRun);
+            }
+            if (report.last_run_at) {
+                const sLast = document.createElement('span');
+                sLast.className = 'srg-card-stat';
+                sLast.textContent = 'Son: ' + _relativeTime(report.last_run_at);
+                const lastIso = _absoluteISO(report.last_run_at);
+                if (lastIso) {
+                    sLast.setAttribute('title', lastIso);
+                    sLast.setAttribute('data-tooltip', lastIso);
+                }
+                stats.appendChild(sLast);
+            }
+            card.appendChild(stats);
+        }
 
         // foot
         const foot = document.createElement('footer');

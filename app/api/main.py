@@ -402,9 +402,12 @@ def create_app() -> FastAPI:
     from app.api.routes.llm_metric_api import router as llm_metric_router
     from app.api.routes.llm_column_api import router as llm_column_router
     from app.api.routes.llm_format_api import router as llm_format_router
+    # v3.37.4 / Bulgular3 Bulgu 8: save-modal title+description suggestion
+    from app.api.routes.llm_report_meta_api import router as llm_report_meta_router
     app.include_router(llm_metric_router)
     app.include_router(llm_column_router)
     app.include_router(llm_format_router)
+    app.include_router(llm_report_meta_router)
 
     app.include_router(prom_metrics_route.router, tags=["observability"])  # v3.30.0 FAZ 5 P36 - /metrics
 

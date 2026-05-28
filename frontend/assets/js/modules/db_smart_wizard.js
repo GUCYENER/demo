@@ -3134,6 +3134,77 @@
         modal.classList.remove('hidden');
         modal.removeAttribute('hidden');
         setTimeout(function () { if (nameIn) nameIn.focus(); }, 0);
+        // Bulgular3 / Bulgu 8: arka planda LLM'den baslik+aciklama oner.
+        // Kullanici inputlara dokunduysa override etme — sadece bos kalanlari doldur.
+        _suggestReportMetaIntoModal(nameIn, descIn);
+    }
+
+    // Bulgular3 / Bulgu 8: save-modal acildiginda LLM ile baslik+aciklama oner.
+    // Kullanici islerine dokunmayalim: input value bos VE _userTouched bayragi
+    // yoksa value'yu LLM yanitiyla doldur. Tekrar oner butonu da var.
+    async function _suggestReportMetaIntoModal(nameIn, descIn) {
+        const hintEl = document.getElementById('dswSaveReportLlmHint');
+        const setHint = function (txt, cls) {
+            if (!hintEl) return;
+            hintEl.textContent = txt || '';
+            hintEl.className = 'dsw-save-llm-hint' + (cls ? ' ' + cls : '');
+            hintEl.hidden = !txt;
+        };
+        // Kullanici input'a dokununca override koruma bayragi
+        const markTouched = function (el) {
+            if (!el || el._dswTouchedBound) return;
+            el._dswTouchedBound = true;
+            el.addEventListener('input', function () { el._userTouched = true; }, { once: true });
+        };
+        markTouched(nameIn);
+        markTouched(descIn);
+
+        if (!_state.sourceId || !_state.selectedTableId) {
+            setHint('', '');
+            return;
+        }
+        // Payload: tablo + secili metrikler + raporda gorunen kolonlar + user_intent
+        const idx = _state._metricsIndex || {};
+        const metric_names = [];
+        if (_state.selectedMetrics && _state.selectedMetrics.forEach) {
+            _state.selectedMetrics.forEach(function (k) {
+                const m = idx[k];
+                if (m) {
+                    const nm = (m.name_tr || m.metric_name || m.label || k || '').trim();
+                    if (nm) metric_names.push(nm);
+                }
+            });
+        }
+        const columns = (Array.isArray(_state.reportColumns) ? _state.reportColumns : [])
+            .map(function (c) { return c.label || c.column_name || ''; })
+            .filter(function (n) { return !!n; });
+        const payload = {
+            table_label: _state.selectedTableLabel || null,
+            metric_names: metric_names,
+            columns: columns,
+            filters_count: Array.isArray(_state.filters) ? _state.filters.length : 0,
+            user_intent: _state.user_intent || _state.userNote || '',
+        };
+        setHint('✨ AI baslik/aciklama oneriyor...', 'is-loading');
+        try {
+            const data = await _fetchJson(API_BASE + '/llm/report-meta-suggest', {
+                method: 'POST',
+                body: JSON.stringify(payload),
+            });
+            const suggestedTitle = (data && data.title) ? String(data.title) : '';
+            const suggestedDesc = (data && data.description) ? String(data.description) : '';
+            if (nameIn && !nameIn._userTouched && !nameIn.value) {
+                nameIn.value = suggestedTitle;
+            }
+            if (descIn && !descIn._userTouched && !descIn.value) {
+                descIn.value = suggestedDesc;
+            }
+            const cached = data && data.cache_hit ? ' (önbellek)' : '';
+            setHint('✨ AI önerdi — istediğin gibi düzenleyebilirsin' + cached, 'is-ok');
+        } catch (e) {
+            console.warn('[db_smart_wizard] report-meta-suggest failed:', e);
+            setHint('AI öneri alınamadı — başlığı ve açıklamayı manuel girin', 'is-error');
+        }
     }
 
     function _closeSaveModal() {

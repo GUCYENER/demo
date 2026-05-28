@@ -216,21 +216,17 @@
 }
 
 /* ---- Grid ---- */
+/* Bulgular3 / Bulgu 9: modern SaaS grid — auto-fit, daha esnek */
 .srg-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 16px;
-}
-
-@media (max-width: 1024px) {
-    .srg-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 18px;
 }
 
 @media (max-width: 600px) {
     .srg-grid {
         grid-template-columns: 1fr;
+        gap: 12px;
     }
     .srg-search-wrap {
         min-width: 0;
@@ -238,83 +234,137 @@
     }
 }
 
-/* ---- Card ---- */
+/* ---- Card (Bulgular3 / Bulgu 9: SaaS modern refresh) ---- */
 .srg-card {
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 16px;
+    position: relative;
+    background: linear-gradient(180deg, var(--bg-2, #161b2e), color-mix(in srgb, var(--bg-2, #161b2e) 92%, transparent));
+    border: 1px solid var(--border, #2a3550);
+    border-radius: 14px;
+    padding: 18px 18px 14px;
     cursor: pointer;
-    transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+    transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease, background .18s ease;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    min-height: 140px;
+    gap: 12px;
+    min-height: 168px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+    overflow: hidden;
 }
-
+.srg-card::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--accent, #4f8cff), color-mix(in srgb, var(--accent, #4f8cff) 60%, #8b5cf6));
+    opacity: 0;
+    transition: opacity .18s ease;
+}
 .srg-card:hover {
-    border-color: var(--accent);
-    outline: 2px solid var(--accent);
-    outline-offset: -2px;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    border-color: color-mix(in srgb, var(--accent, #4f8cff) 50%, var(--border, #2a3550));
+    transform: translateY(-3px);
+    box-shadow: 0 8px 24px rgba(79, 140, 255, 0.18), 0 2px 6px rgba(0, 0, 0, 0.25);
 }
-
+.srg-card:hover::before { opacity: 1; }
 .srg-card:focus-visible {
-    border-color: var(--accent);
-    outline: 2px solid var(--accent);
+    border-color: var(--accent, #4f8cff);
+    outline: 2px solid var(--accent, #4f8cff);
     outline-offset: 2px;
 }
 
 .srg-card-head {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 10px;
 }
 
 .srg-card-metric-badge {
-    background: var(--bg-3);
-    color: var(--accent);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 2px 8px;
-    font-size: 0.7rem;
-    font-weight: 600;
+    background: rgba(79, 140, 255, 0.12);
+    color: var(--accent, #4f8cff);
+    border: 1px solid color-mix(in srgb, var(--accent, #4f8cff) 30%, transparent);
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-size: 0.68rem;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.06em;
     flex-shrink: 0;
-    max-width: 120px;
+    max-width: 140px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    line-height: 1.4;
 }
-
 .srg-card-metric-badge--muted {
-    color: var(--text-2);
+    color: var(--text-secondary, #98a4bd);
+    background: transparent;
+    border-color: var(--border, #2a3550);
 }
 
 .srg-card-title {
     margin: 0;
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--text-1);
-    line-height: 1.35;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--text-primary, #e9eef8);
+    line-height: 1.3;
+    letter-spacing: -0.005em;
     overflow: hidden;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
 }
 
+/* Bulgular3 / Bulgu 9: tablo/kaynak subtitle — kart altinda kucuk gri satir */
+.srg-card-subtitle {
+    margin: -4px 0 0 0;
+    font-size: 0.72rem;
+    color: var(--text-secondary, #98a4bd);
+    line-height: 1.3;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+.srg-card-subtitle::before {
+    content: "▮";
+    font-size: 8px;
+    color: var(--accent, #4f8cff);
+    opacity: 0.6;
+}
+
 .srg-card-desc {
     margin: 0;
-    color: var(--text-2);
+    color: var(--text-secondary, #98a4bd);
     font-size: 0.85rem;
-    line-height: 1.45;
+    line-height: 1.5;
     overflow: hidden;
     display: -webkit-box;
-    -webkit-line-clamp: 3;
+    -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     flex: 1 1 auto;
+}
+
+/* Bulgular3 / Bulgu 9: kullanım istatistikleri (run count + last run) */
+.srg-card-stats {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    font-size: 0.72rem;
+    color: var(--text-secondary, #98a4bd);
+}
+.srg-card-stat {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border, #2a3550);
+    border-radius: 6px;
+    padding: 3px 8px;
+    line-height: 1.2;
+}
+.srg-card-stat-icon {
+    width: 11px;
+    height: 11px;
+    opacity: 0.7;
 }
 
 .srg-card-foot {
@@ -322,14 +372,15 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    border-top: 1px solid var(--border);
-    padding-top: 8px;
-    font-size: 0.75rem;
-    color: var(--text-2);
+    border-top: 1px solid color-mix(in srgb, var(--border, #2a3550) 60%, transparent);
+    padding-top: 10px;
+    font-size: 0.72rem;
+    color: var(--text-secondary, #98a4bd);
 }
 
 .srg-card-time {
     cursor: help;
+    font-variant-numeric: tabular-nums;
 }
 
 .srg-card-tags {
@@ -340,11 +391,16 @@
 }
 
 .srg-tag {
-    background: var(--bg-3);
-    color: var(--text-2);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary, #98a4bd);
+    border: 1px solid transparent;
     border-radius: 999px;
     padding: 2px 8px;
-    font-size: 0.7rem;
+    font-size: 0.68rem;
+}
+.srg-tag--more {
+    background: transparent;
+    border-color: var(--border, #2a3550);
 }
 
 .srg-tag--more {
