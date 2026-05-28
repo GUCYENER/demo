@@ -11,6 +11,11 @@ if ($ExecutionContext.SessionState.LanguageMode -ne 'NoLanguage') {
     }
 }
 
+# UTF-8 console encoding — child process (node/npm/python) ciktilari UTF-8 verir.
+# Aksi halde npm build report kutu cizimleri ve TR karakterleri CP850 olarak bozuk gozukur.
+$OutputEncoding = [System.Text.UTF8Encoding]::new()
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+
 $ProjectRoot = $PSScriptRoot
 if (-not $ProjectRoot) { $ProjectRoot = Split-Path -Parent (Resolve-Path $MyInvocation.MyCommand.Path) }
 
@@ -75,6 +80,37 @@ if ($graphifyAlive) {
     } else {
         Write-Host "   [--] mcp_warmup.bat yok - atlandi (MCP fallback devreye girecek)" -ForegroundColor DarkGray
     }
+}
+
+# 0.5 Frontend bundle rebuild (esbuild, hem Windows hem WSL uyumlu)
+#     `frontend/package.json` postinstall hook ile platform-spesifik esbuild
+#     binary'sini garanti eder; build idempotent (esbuild cache).
+Write-Host "[0.5/7] Frontend bundle rebuild..." -ForegroundColor Yellow
+$frontendDir = "$ProjectRoot\frontend"
+$buildScript = "$frontendDir\build.mjs"
+$nodeExe = (Get-Command node -ErrorAction SilentlyContinue).Source
+if ($nodeExe -and (Test-Path $buildScript)) {
+    Push-Location $frontendDir
+    try {
+        # `npm run build` postinstall + ensure-esbuild + build zincirini calistirir.
+        # node_modules yoksa `npm install` once cagrilir.
+        if (-not (Test-Path "$frontendDir\node_modules\esbuild")) {
+            Write-Host "   [INSTALL] node_modules eksik, npm install calistiriliyor..." -ForegroundColor DarkYellow
+            & npm install --silent 2>$null | Out-Null
+        }
+        & npm run build 2>&1 | Select-Object -Last 12
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "   [OK] dist/bundle.min.js + bundle.min.css guncellendi" -ForegroundColor Green
+        } else {
+            Write-Host "   [WARN] Bundle rebuild basarisiz (exit=$LASTEXITCODE) - mevcut dist kullanilacak" -ForegroundColor DarkYellow
+        }
+    } catch {
+        Write-Host "   [WARN] Bundle rebuild hata: $_" -ForegroundColor DarkYellow
+    } finally {
+        Pop-Location
+    }
+} else {
+    Write-Host "   [--] node bulunamadi veya build.mjs yok - bundle rebuild atlandi" -ForegroundColor DarkGray
 }
 
 # 1. PostgreSQL
