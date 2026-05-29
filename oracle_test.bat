@@ -1,10 +1,10 @@
 @echo off
 chcp 65001 >nul 2>&1
-title Oracle Test DB — VYRA
+title Oracle Test DB - VYRA
 color 0B
 
 echo ============================================================
-echo   Oracle Test DB — Hizli Baslatici
+echo   Oracle Test DB - Hizli Baslatici
 echo ============================================================
 
 set "DOCKER=C:\Program Files\Docker\Docker\resources\bin\docker.exe"
@@ -37,7 +37,7 @@ if %ERRORLEVEL% EQU 0 (
     goto wait_ready
 )
 
-:: Container hic yok — docker compose ile olustur
+:: Container hic yok - docker compose ile olustur
 echo [*] Container bulunamadi, olusturuluyor...
 "%DOCKER%" compose -f "%~dp0oracle_local_test\docker-compose.yml" up -d
 if %ERRORLEVEL% NEQ 0 (

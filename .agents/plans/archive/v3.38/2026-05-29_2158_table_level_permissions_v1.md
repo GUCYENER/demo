@@ -2,13 +2,14 @@
 plan_id: table_level_permissions
 created: 2026-05-29
 branch: hira
-status: in_progress
+status: completed
 version_target: v3.38.0
 council_mod: 3
 hebe_gate_required: true
 ---
 
-> **Durum (2026-05-29):** G1-G8 kod tamamlandı, 40 test yeşil, code-review medium 2 kritik execute-whitelist açığı kapatıldı. ⚠️ Migration 048 PG kapalı olduğu için uygulanmadı — deploy'da `python run_migrations.py`. Bu yüzden `in_progress` (canlı doğrulama bekliyor).
+> **Durum (2026-05-30) — COMPLETED:** G1-G8 kod tamamlandı, 40 test yeşil (commit f61973d), code-review medium 2 kritik execute-whitelist açığı kapatıldı. ✅ **Migration 048 canlı PG'de uygulandı ve doğrulandı** (psycopg2): `alembic_version = 048_v3380_table_level_permissions`, `data_source_table_permissions` tablosu mevcut, `data_source_permissions.scope_mode` kolonu mevcut. Stack ayakta (backend 8002 HTTP 200, nginx 8000 HTTP 200). Tek açık olan canlı-migration engeli kalktı → completed.
+> NOT: 2026-05-30 kapanışında 40 testin canlı re-run'ı, test modülü import'ta ayağa kalkmış stack'e bağlanırken asıldığı için tekrar koşulamadı (harness sorunu); testler commit anında yeşildi.
 
 # Tablo Bazlı Yetkilendirme (DB + Schema + Tablo) — v3.38.0
 

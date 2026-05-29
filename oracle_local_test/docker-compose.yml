@@ -1,0 +1,70 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/compose-spec/compose-spec/master/schema/compose-spec.json
+# =====================================================
+# Oracle Database Free 23ai — Local Test
+# =====================================================
+# Kullanım:
+#   cd oracle_local_test
+#   docker compose up -d
+#
+# İlk başlatma ~2 dakika sürer. Hazır olduğunda:
+#   docker compose logs -f oracle-db | grep "DATABASE IS READY"
+# =====================================================
+
+services:
+  oracle-db:
+    # v3.38.x: init SQL'leri image'a gömmek için build (bkz. Dockerfile).
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: vyra-oracle-test:local
+    container_name: vyra-oracle-test
+    ports:
+      - "1521:1521"
+    environment:
+      ORACLE_PASSWORD: "VyraTest2026"
+      APP_USER: "VYRA_TEST"
+      APP_USER_PASSWORD: "VyraTest2026"
+      # v3.32.0: Oracle bellek alanını 2GB container limit'inin altına çek.
+      # SGA 1024MB + PGA 512MB + OS overhead ~= 1.5GB; container 2GB.
+      # Bu env'ler gvenzl/oracle-free image'ı tarafından startup'ta alter
+      # system ile uygulanır.
+      ORACLE_SGA: "1024"
+      ORACLE_PGA: "512"
+    volumes:
+      # v3.38.x: Oracle datafile'ları named volume'de (Docker VM ext4). Windows
+      # drvfs bind mount perf düşüklüğü + datafile bozulma riski + Docker Desktop
+      # '/run/desktop/mnt/host/d: file exists' mount bug'ını ortadan kaldırır.
+      # Şema + örnek veri init scriptlerinden (01/02) yeniden üretilebilir.
+      - vyra_oracle_data:/opt/oracle/oradata
+      # Init SQL'ler artık Dockerfile ile image'a gömülü — host bind mount YOK,
+      # bu sayede '/run/desktop/mnt/host/d' mount bug'ı hiç tetiklenmez.
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+    restart: "no"
+    # v3.32.0: PC dondurma fix — `deploy.resources.limits` sadece Swarm modunda
+    # etkili. Docker Compose standalone (`docker compose up`) bu blok'u IGNORE
+    # ediyordu, container OS tüm RAM'i emmeye çalışıyordu. Aşağıdaki top-level
+    # alanlar standalone Compose tarafından enforce edilir.
+    #
+    # NOTE: VSCode YAML linter (Docker Compose schema) `mem_limit`,
+    # `memswap_limit`, `cpus` top-level keyleri için "property not allowed"
+    # uyarısı verebilir. Bu uyarı BİLİNÇLİ — alanlar `docker compose up`
+    # standalone modda ÇALIŞIR ve host RAM koruması için zorunlu.
+    # `deploy.resources` Swarm-only olduğundan tek başına yeterli değil.
+    mem_limit: 2g
+    memswap_limit: 2g   # swap'a taşmayı engelle (host'u dondurur)
+    cpus: "2.0"
+    deploy:
+      # Swarm mode için korundu (cross-compatibility)
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+
+# v3.38.x: Oracle oradata için named volume (host bind mount yerine).
+volumes:
+  vyra_oracle_data:
+    name: vyra_oracle_data
