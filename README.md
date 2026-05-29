@@ -75,6 +75,9 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.38.1 (2026-05-30) - Bulgular4 Round 2 — 5 Smart Discovery fix (ORACLE + HERMES + ARES + ATHENA + HEBE + APOLLO + POSEIDON + TYCHE)
+> v3.37.9 eksik kalan/değişen 5 bulgu, kök nedenleri **kanıtla** (kod+regex test+DB sorgu) bulunarak çözüldü. **B4-1** WHERE ekleyince 400: `add_filter` düz `{expr,op,value}` kabul eder (TypeError fix). **B4-2** W0SELECT/W0FROM: regex anchor `(?:^|(?<=\s))` satır-içi garbage'ı da onarır. **B4-3** silinen rapor anında kaybolur (grid optimistic `removeItem`). **B4-4** "kaynak bozuk": save `source_id`/`dialect`'i wizard_state'ten fallback eder + mevcut rapor backfill. **B4-5** Yeni Keşif fresh (`#dswResults` reset) + `wizard.toast.select_table_first` i18n eklendi. 11/11 test PASS. Backend restart + bundle rebuild.
+
 ### 🆕 v3.38.0 (2026-05-29) - Tablo Bazlı Yetkilendirme (DB + Schema + Tablo) (HEPHAESTUS + ARES + HERMES + ORACLE + ATHENA + HEBE + TYCHE)
 > Kaynak yetkilendirmesi DB seviyesinden **DB + schema + tablo** seviyesine indirildi (`gelistirme1.docx`). Subject başına `scope_mode` (`all`/`restricted`) + `data_source_table_permissions` allowlist (mig 048). Yalnız schema seçilip tablo seçilmezse hiçbir tablo okunamaz; nihai erişim direkt+org grant birleşimi. **Veritabanında Ara + Akıllı Keşif + text-to-sql LLM bağlamı + SQL execute whitelist** uçtan uca tablo kapsamıyla süzülür — yetkisiz tablo görülemez/tahmin edilemez. Yetkilendirme modalına schema akordion + tablo seçimi eklendi. code-review medium: deep_think/generate_report execute whitelist scope-kesişimi (boş→reddet). 40 test (20 yeni + regresyon) yeşil. ⚠️ mig 048 deploy'da `run_migrations.py` ile uygulanmalı.
 

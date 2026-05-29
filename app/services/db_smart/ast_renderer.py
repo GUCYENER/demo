@@ -646,15 +646,37 @@ def remove_column(
 
 def add_filter(
     ast: Dict[str, Any],
-    filt: Dict[str, Any],
+    filt: Optional[Dict[str, Any]] = None,
+    *,
+    expr: Optional[str] = None,
+    op: Optional[str] = None,
+    value: Any = None,
+    column: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """WHERE listesine filtre ekle. Mevcut optimize_ast dedup'ı sonraki adımda zaten çalışır."""
+    """WHERE listesine filtre ekle. Mevcut optimize_ast dedup'ı sonraki adımda zaten çalışır.
+
+    Bulgular4 B4-1 (v3.38.1): /ast/patch endpoint'i `fn(ast, **body.args)` ile çağırır;
+    FE (db_smart_ast_editor) filtreyi DÜZ `{expr, op, value}` olarak `args` gönderiyordu →
+    eski tek-`filt` imzası TypeError → 400 "AST args hatası" veriyordu. Artık hem düz
+    alanlar (expr/op/value/column) hem de sarmalanmış `{filt: {...}}` kabul edilir.
+    """
+    if filt is None:
+        # FE düz alanlarından filtre dict'i kur (value falsy=0 korunur → None kontrolü)
+        filt = {}
+        if expr is not None:
+            filt["expr"] = expr
+        if column is not None:
+            filt["column"] = column
+        if op is not None:
+            filt["op"] = op
+        if value is not None:
+            filt["value"] = value
     if not isinstance(filt, dict):
         raise ValueError("add_filter: filt dict olmalı")
-    expr = filt.get("expr") or filt.get("column")
-    if not expr:
+    expr_v = filt.get("expr") or filt.get("column")
+    if not expr_v:
         raise ValueError("add_filter: 'expr' zorunlu")
-    _validate_ident(expr)
+    _validate_ident(expr_v)
     _validate_op(filt.get("op", "="))
     new_ast = _require_select(ast)
     fl = list(new_ast.get("filters") or [])

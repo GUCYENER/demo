@@ -510,6 +510,17 @@
             });
     }
 
+    // Bulgular4 B4-3 (v3.38.1): silinen rapor anında kaybolsun → optimistic removal.
+    // refresh()'in taze GET'i DELETE commit'i görmeden race edebiliyordu; bu yüzden
+    // kartı state'ten hemen çıkarıp re-render ediyoruz (refresh ile reconcile caller'da).
+    function removeItem(id) {
+        if (!_root || id == null) return;
+        _lastItems = (_lastItems || []).filter(function (it) {
+            return String(it && it.id) !== String(id);
+        });
+        _renderItems(_applyChipFilter(_lastItems));
+    }
+
     function unmount() {
         if (_searchTimer) { clearTimeout(_searchTimer); _searchTimer = null; }
         if (_root) { _clear(_root); }
@@ -522,6 +533,7 @@
     const SavedReportsGrid = {
         mount: mount,
         refresh: refresh,
+        removeItem: removeItem,
         unmount: unmount,
         _instance: null,
     };

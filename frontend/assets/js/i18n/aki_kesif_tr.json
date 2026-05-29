@@ -76,6 +76,7 @@
   "wizard.step3.loadError": "Kolonlar yüklenemedi",
 
   "wizard.toast.select_source": "Önce veri kaynağı seçin.",
+  "wizard.toast.select_table_first": "Önce Adım 1'de bir tablo seçin.",
   "wizard.toast.table_selected": "Seçildi: {label}",
   "wizard.toast.metric_selected": "Metrik seçildi: {label}",
   "wizard.toast.saved": "Kaydedildi.",

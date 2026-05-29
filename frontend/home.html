@@ -1033,7 +1033,11 @@ function _akiKesifMountGrid() {
             _akiKesifOpenWizard(id);
           },
           onDuplicate: function () { if (window.SavedReportsGrid.refresh) window.SavedReportsGrid.refresh(); },
-          onDeleted: function () { if (window.SavedReportsGrid.refresh) window.SavedReportsGrid.refresh(); },
+          onDeleted: function (deletedId) {
+            // B4-3: önce optimistic çıkar (anında kaybolsun), sonra refresh ile reconcile.
+            if (window.SavedReportsGrid.removeItem) window.SavedReportsGrid.removeItem(deletedId);
+            if (window.SavedReportsGrid.refresh) window.SavedReportsGrid.refresh();
+          },
           onRan: function () { if (window.SavedReportsGrid.refresh) window.SavedReportsGrid.refresh(); },
         });
       }

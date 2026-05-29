@@ -2624,6 +2624,11 @@
             if (ui) ui.value = '';
             const un = document.getElementById('dswUserNote');
             if (un) un.value = '';
+            // Bulgular4 B4-5 (v3.38.1): "Seçilen tablolar" özeti #dswResults'a yazılıyor;
+            // panel DOM'u yeniden kurulmadan taşındığı için reset bunu temizlemezse eski
+            // raporun tablo chip'leri "Yeni Keşif"te görünmeye devam ediyordu.
+            const results = document.getElementById('dswResults');
+            if (results) results.innerHTML = '';
         } catch (_) { /* defansif */ }
     }
 

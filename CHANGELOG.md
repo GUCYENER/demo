@@ -1,5 +1,36 @@
 # VYRA Changelog
 
+## v3.38.1 — 2026-05-30 — Bulgular4 Round 2 (5 Smart Discovery fix)
+
+> Kullanıcı: "bu bulguları daha önce düzeltmiştin ama sorun değişti" (v3.37.9 eksik/regresyon).
+> Kök nedenler **kanıtla** doğrulandı (kod okundu + regex test + DB sorgulandı). Plan:
+> `.agents/plans/2026-05-29_2336_bulgular4_round2_v1.md`. Konsey: ORACLE+HERMES (B4-1),
+> ORACLE+ARES (B4-2), ATHENA+HEBE (B4-3), HERMES+POSEIDON (B4-4), ATHENA+APOLLO+HEBE (B4-5).
+
+- **B4-1 — WHERE kriter ekleyince 400 "kabul etmiyor":** FE filtreyi DÜZ `{expr,op,value}`
+  olarak `/ast/patch` `args`'ında gönderiyordu; backend `add_filter(ast, **args)` ama imza tek
+  `filt` dict → **TypeError → 400 "AST args hatası"**. `ast_renderer.add_filter` artık hem düz
+  alanları (expr/op/value/column) hem `{filt:{...}}` kabul eder (geriye uyumlu).
+- **B4-2 — "Çalıştır"da W0SELECT/W0FROM garbage devam:** `_GLUED_KW_RE` anchor'ı `(?<![^\n])`
+  YALNIZ satır başı garbage'ını yakalıyordu; LLM tek-satır SQL üretince `W0FROM` (boşluk sonrası)
+  kaçıyordu (regex testiyle kanıtlandı). Anchor → `(?:^|(?<=\s))` (satır başı VEYA whitespace
+  sonrası). String-literal/quoted-ident FP guard'ları korundu.
+- **B4-3 — Silinen kayıtlı rapor ekrandan hemen kaybolmuyor:** `refresh()` taze GET'i DELETE
+  commit'ini race ediyordu. `SavedReportsGrid.removeItem(id)` (optimistic) eklendi; `onDeleted(id)`
+  kartı anında çıkarır, sonra refresh ile reconcile.
+- **B4-4 — Kayıtlı raporu çalıştır → "Veri kaynağı bilgisi bozuk veya eksik":** DB sorgusu
+  rapor source_id kolonunun **NULL** kaldığını gösterdi (save endpoint client'a güveniyordu,
+  wizard_state.source_id'ye düşmüyordu; last_dialect hep None). Save (`post_save_report_flat` +
+  session) artık `source_id`/`dialect`'i wizard_state'ten fallback eder; mevcut NULL rapor
+  wizard_state'ten backfill edildi.
+- **B4-5 — "Yeni Keşif" fresh değil + çevrilmemiş i18n key:** (a) `_resetWizardState` `#dswResults`
+  (Seçilen tablolar özeti) DOM'unu temizlemiyordu → panel reuse'da eski raporun tabloları
+  görünüyordu; reset'e temizlik eklendi. (b) Kod `wizard.toast.select_table_first` çağırıyordu
+  ama i18n'de yalnız `wizard.hint.*` vardı → ham key; toast key TR/EN eklendi.
+- **Test:** `tests/db_smart/test_bulgular4_round2.py` 11/11 PASS (add_filter flat/wrapped/
+  positional/unary/value-0/missing-expr + regex inline/linestart/literal-FP/quoted-FP/clean).
+- ⚠️ Backend `--reload` yok → bu fix'ler için uvicorn restart edildi; frontend bundle rebuild.
+
 ## v3.38.0 — 2026-05-29 — Tablo Bazlı Yetkilendirme (DB + Schema + Tablo)
 
 > Konsey: HEPHAESTUS + ARES (model/migration) · HERMES + APOLLO (API) · ORACLE + ARES (Smart Discovery/text-to-sql filtre) · ATHENA + HEBE (frontend) · TYCHE (test). Plan: `.agents/plans/2026-05-29_2158_table_level_permissions_v1.md`.

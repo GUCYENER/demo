@@ -1201,6 +1201,17 @@ def post_save_report(
             )
             last_dialect = ctx.get("dialect") if isinstance(ctx, dict) else None
             source_id = loaded.get("source_id") if isinstance(loaded, dict) else None
+            # Bulgular4 B4-4 (v3.38.1): session'da source_id yoksa wizard_state'e düş
+            # (kayıt source_id=NULL kalmasın → rerun "kaynak bozuk/eksik" hatası).
+            if not source_id and isinstance(wizard_state, dict):
+                _ws_sid = wizard_state.get("source_id")
+                if _ws_sid:
+                    try:
+                        source_id = int(_ws_sid)
+                    except (TypeError, ValueError):
+                        pass
+            if not last_dialect and isinstance(wizard_state, dict):
+                last_dialect = wizard_state.get("dialect") or None
 
             out = saved_reports.save(
                 cur, current_user,
@@ -1261,6 +1272,20 @@ def post_save_report_flat(
 
     wizard_state = body.wizard_state if isinstance(body.wizard_state, dict) else {}
 
+    # Bulgular4 B4-4 (v3.38.1): source_id kolonu boş kalmasın — body.source_id yoksa
+    # wizard_state.source_id'ye düş. Aksi halde kayıt source_id=NULL olur ve rerun'da
+    # "Veri kaynağı bilgisi bozuk veya eksik" hatası verir. last_dialect'i de
+    # wizard_state.dialect'ten resolve et (eskiden hep None yazılıyordu).
+    _eff_source_id = body.source_id
+    if not _eff_source_id:
+        _ws_sid = wizard_state.get("source_id")
+        if _ws_sid:
+            try:
+                _eff_source_id = int(_ws_sid)
+            except (TypeError, ValueError):
+                _eff_source_id = None
+    _eff_dialect = wizard_state.get("dialect") or None
+
     # F16 (HEBE+ARES+POSEIDON): mirror flat endpoint of try/except hardening.
     out = None
     try:
@@ -1272,8 +1297,8 @@ def post_save_report_flat(
                 name=raw_name,
                 wizard_state=wizard_state,
                 last_sql=body.generated_sql,
-                last_dialect=None,
-                source_id=body.source_id,
+                last_dialect=_eff_dialect,
+                source_id=_eff_source_id,
                 description=body.description,
                 tags=body.tags,
             )

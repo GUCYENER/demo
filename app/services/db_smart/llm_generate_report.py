@@ -191,8 +191,14 @@ def _validate_select_sql(sql: str) -> Optional[str]:
 # satırbaşı garbage'ını (W0SELECT/W0FROM) onarır.
 # Telemetri (raw LLM log'u) bu onarımın ÖNCESİNDE çalışır → kök neden sinyali
 # kaybolmaz; onarım yalnız kullanıcıya giden semptomu kapatır.
+# Bulgular4 B4-2 (v3.38.1): eski `(?<![^\n])` anchor'ı YALNIZ satır başı garbage'ını
+# yakalıyordu; LLM SQL'i tek satır üretince (FROM boşlukla ayrılır) `W0FROM` kaçıyordu
+# (test: `W0SELECT a, b W0FROM tbl` → W0FROM kalıyordu). Anchor `(?:^|(?<=\s))` =
+# string başı VEYA herhangi bir whitespace (newline DAHİL) sonrası → satır-içi garbage
+# da onarılır. String-literal FP yok ('fooSELECT' quote-öncesi, whitespace değil); clause
+# keyword'leri (SELECT/FROM/...) zaten glued identifier olamaz.
 _GLUED_KW_RE = re.compile(
-    r'(?<![^\n])'
+    r'(?:^|(?<=\s))'
     r'[A-Za-z][A-Za-z0-9]{0,2}'
     r'(?=(?:SELECT|FROM|WHERE|GROUP\s+BY|ORDER\s+BY|HAVING|'
     r'LEFT\s+JOIN|RIGHT\s+JOIN|INNER\s+JOIN|FULL\s+JOIN|CROSS\s+JOIN|'

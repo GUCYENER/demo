@@ -76,6 +76,7 @@
   "wizard.step3.loadError": "Columns failed to load",
 
   "wizard.toast.select_source": "Select a data source first.",
+  "wizard.toast.select_table_first": "Pick a table in Step 1 first.",
   "wizard.toast.table_selected": "Selected: {label}",
   "wizard.toast.metric_selected": "Metric selected: {label}",
   "wizard.toast.saved": "Saved.",
