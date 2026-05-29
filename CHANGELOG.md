@@ -1,5 +1,20 @@
 # VYRA Changelog
 
+## v3.38.0 — 2026-05-29 — Tablo Bazlı Yetkilendirme (DB + Schema + Tablo)
+
+> Konsey: HEPHAESTUS + ARES (model/migration) · HERMES + APOLLO (API) · ORACLE + ARES (Smart Discovery/text-to-sql filtre) · ATHENA + HEBE (frontend) · TYCHE (test). Plan: `.agents/plans/2026-05-29_2158_table_level_permissions_v1.md`.
+
+Kaynak (data source) yetkilendirmesi DB seviyesinden **DB + schema + tablo** seviyesine indirildi. Bir subject (kullanıcı/org) için kaynak bazlı `scope_mode`: `all` (tüm tablolar, geriye uyumlu varsayılan) veya `restricted` (yalnız seçili tablo allowlist'i). **Yalnız schema seçilip tablo seçilmezse hiçbir tablo okunamaz.** Kullanıcının nihai erişimi direkt + org grant'larının birleşimidir; herhangi bir grant `all` ise tüm tablolar.
+
+- **Model (mig 048):** `data_source_permissions.scope_mode` kolonu + yeni `data_source_table_permissions` (source, subject, schema, table allowlist). RLS yok (admin-yönetimli, mevcut izin tabloları ile tutarlı). schema.py fresh-install DDL'i de güncellendi.
+- **Gate:** `data_source_access.user_accessible_tables() → AccessScope` (case-insensitive, admin bypass, union, fail-closed) + `db_smart/table_scope.resolve_scope()` sarmalayıcı.
+- **API:** GET/PUT `/data-sources/{id}/permissions` `scopes` (scope_mode + tables) ile genişletildi; yeni GET `/data-sources/{id}/schema-tree` (akordion ağacı). Audit before/after `scope_mode` taşır.
+- **Uçtan uca filtre (yetkisiz tablo görülemez/tahmin edilemez):** Discover (`discovered-schemas`/`samples`), Smart Discovery (`search_tables`, `related` FK graph node+edge, `list_columns`/`multi` → 404/skip), **text-to-sql `get_schema_context` LLM bağlamı** (tek choke-point), `deep_think` ML schema_record, ve **SQL execute whitelist** (`deep_think` DB-Only + `generate_report`) kullanıcının `can_execute` kapsamıyla kesiştirilir; boş restricted kapsam → çalıştırma reddedilir (allow-all'a düşmez).
+- **Frontend:** Yetkilendirme modalında subject başına "Tüm tablolar / Seçili tablolar" + schema akordion + tablo checkbox + arama (db_smart_picker pattern reuse, ARIA/escape/toast korunur).
+- **Test:** `tests/api/test_table_level_permissions.py` (16) + `tests/db_smart/test_table_perm_filter.py` (4) — allowlist, restricted+0 tablo=deny, union, admin bypass, case-insensitive, fail-closed. 35 ilgili + 35 deep_think regresyon yeşil.
+- **code-review (medium):** deep_think DB-Only execute whitelist ve generate_report `allowed_tables or None` boş-liste→allow-all açıkları kapatıldı (scope-kesişimi + boş→reddet); `get_schema_context` opt-in süzgeç tüm production caller'larda `user_ctx` geçtiği doğrulandı.
+- ⚠️ **Deploy:** Migration 048 PG kapalı olduğu için bu oturumda uygulanmadı — `python run_migrations.py` ile çalıştırılmalı.
+
 ## Graphify v1.2 → v1.2.2 — 2026-05-26 — Coverage + Embedding + Bug-fix + Concurrency Sprint
 
 > Graphify paketinin geliştirme adımları VYRA `CHANGELOG.md`'de izlenir; paket kendi git repo'sundadır (`General_Graphify/` initial commit `77330ab`, Wave D `d266249`). Tam detay: [`.agents/workflows/graphify_v12_release_notes.md`](.agents/workflows/graphify_v12_release_notes.md).

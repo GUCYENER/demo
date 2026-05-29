@@ -8,7 +8,7 @@ v2.56.0
 import logging
 import threading
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Literal
 
 from fastapi import APIRouter, HTTPException, Depends, Query, Body, BackgroundTasks
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -17,6 +17,7 @@ from app.api.routes.auth import get_current_user
 from app.core.db import get_db_context
 from app.services.db_smart.dialect_constants import is_canary_value
 from app.services.permission_audit import log_permission_change
+from app.services.data_source_access import user_accessible_tables
 
 logger = logging.getLogger(__name__)
 
@@ -147,11 +148,33 @@ class CollectSamplesRequest(BaseModel):
 
 
 # v3.17.0: Kaynak bazlı yetkilendirme
+# v3.38.0: tablo bazlı kapsam (scope_mode + tables) eklendi
+class DataSourceTableRef(BaseModel):
+    schema_name: str = Field(..., alias="schema", max_length=255)
+    table: str = Field(..., max_length=255)
+
+    model_config = {"populate_by_name": True}
+
+
+class DataSourceSubjectScope(BaseModel):
+    """Bir subject (user/org) için tablo kapsamı.
+
+    scope_mode='all' → kaynaktaki tüm tablolar (varsayılan, geriye uyumlu).
+    scope_mode='restricted' → yalnız `tables` listesi (boş = hiçbir tablo).
+    """
+    subject_type: Literal["user", "org"]
+    subject_id: int
+    scope_mode: Literal["all", "restricted"] = "all"
+    tables: List[DataSourceTableRef] = Field(default_factory=list)
+
+
 class DataSourcePermissionsUpdate(BaseModel):
     user_ids: List[int] = Field(default_factory=list)
     org_ids: List[int] = Field(default_factory=list)
     can_execute_user_ids: List[int] = Field(default_factory=list)
     can_execute_org_ids: List[int] = Field(default_factory=list)
+    # v3.38.0: subject başına tablo kapsamı (opsiyonel — yoksa hepsi 'all')
+    scopes: List[DataSourceSubjectScope] = Field(default_factory=list)
 
 
 # --- Helpers ---
@@ -265,34 +288,61 @@ def get_source_permissions(
             raise HTTPException(status_code=404, detail="Veri kaynağı bulunamadı.")
 
         cur.execute("""
-            SELECT subject_type, subject_id, can_view, can_execute
+            SELECT subject_type, subject_id, can_view, can_execute, scope_mode
             FROM data_source_permissions
             WHERE source_id = %s
         """, (source_id,))
         rows = cur.fetchall()
 
+        # v3.38.0: subject başına allowlist tabloları
+        cur.execute("""
+            SELECT subject_type, subject_id, schema_name, table_name
+            FROM data_source_table_permissions
+            WHERE source_id = %s
+            ORDER BY schema_name, table_name
+        """, (source_id,))
+        table_rows = [dict(r) for r in cur.fetchall()]
+
+    tables_by_subject: Dict[tuple, List[Dict[str, str]]] = {}
+    for tr in table_rows:
+        key = (tr["subject_type"], tr["subject_id"])
+        tables_by_subject.setdefault(key, []).append(
+            {"schema": tr["schema_name"], "table": tr["table_name"]}
+        )
+
     user_ids: List[int] = []
     org_ids: List[int] = []
     can_execute_user_ids: List[int] = []
     can_execute_org_ids: List[int] = []
+    scopes: List[Dict[str, Any]] = []
     for r in rows:
         item = dict(r)
-        if item["subject_type"] == "user":
+        st = item["subject_type"]
+        sid = item["subject_id"]
+        if st == "user":
             if item.get("can_view"):
-                user_ids.append(item["subject_id"])
+                user_ids.append(sid)
             if item.get("can_execute"):
-                can_execute_user_ids.append(item["subject_id"])
-        elif item["subject_type"] == "org":
+                can_execute_user_ids.append(sid)
+        elif st == "org":
             if item.get("can_view"):
-                org_ids.append(item["subject_id"])
+                org_ids.append(sid)
             if item.get("can_execute"):
-                can_execute_org_ids.append(item["subject_id"])
+                can_execute_org_ids.append(sid)
+        scope_mode = item.get("scope_mode") or "all"
+        scopes.append({
+            "subject_type": st,
+            "subject_id": sid,
+            "scope_mode": scope_mode,
+            "tables": tables_by_subject.get((st, sid), []),
+        })
 
     return {
         "user_ids": user_ids,
         "org_ids": org_ids,
         "can_execute_user_ids": can_execute_user_ids,
         "can_execute_org_ids": can_execute_org_ids,
+        "scopes": scopes,
     }
 
 
@@ -320,7 +370,7 @@ def update_source_permissions(
 
         # Audit için ÖNCEKİ durumu yakala
         cur.execute("""
-            SELECT subject_type, subject_id, can_view, can_execute
+            SELECT subject_type, subject_id, can_view, can_execute, scope_mode
             FROM data_source_permissions
             WHERE source_id = %s
             ORDER BY subject_type, subject_id
@@ -329,6 +379,8 @@ def update_source_permissions(
 
         # Eski yetkileri temizle, yeni listeyi yaz (replace semantiği)
         cur.execute("DELETE FROM data_source_permissions WHERE source_id = %s", (source_id,))
+        # v3.38.0: tablo allowlist'ini de replace et
+        cur.execute("DELETE FROM data_source_table_permissions WHERE source_id = %s", (source_id,))
 
         # can_execute olan subject'lar view'a da otomatik sahip
         view_users = set(data.user_ids) | set(data.can_execute_user_ids)
@@ -336,23 +388,60 @@ def update_source_permissions(
         exec_users = set(data.can_execute_user_ids)
         exec_orgs = set(data.can_execute_org_ids)
 
+        # v3.38.0: subject başına scope haritası (yoksa 'all')
+        scope_map: Dict[tuple, DataSourceSubjectScope] = {
+            (s.subject_type, s.subject_id): s for s in data.scopes
+        }
+
+        def _scope_for(subject_type: str, subject_id: int) -> str:
+            s = scope_map.get((subject_type, subject_id))
+            return s.scope_mode if s else "all"
+
         granted_by = current_user.get("id")
         rows_to_insert = []
         for uid in view_users:
-            rows_to_insert.append((source_id, "user", uid, True, uid in exec_users, granted_by))
+            rows_to_insert.append(
+                (source_id, "user", uid, True, uid in exec_users, _scope_for("user", uid), granted_by)
+            )
         for oid in view_orgs:
-            rows_to_insert.append((source_id, "org", oid, True, oid in exec_orgs, granted_by))
+            rows_to_insert.append(
+                (source_id, "org", oid, True, oid in exec_orgs, _scope_for("org", oid), granted_by)
+            )
 
         for row in rows_to_insert:
             cur.execute("""
                 INSERT INTO data_source_permissions
-                (source_id, subject_type, subject_id, can_view, can_execute, granted_by)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                (source_id, subject_type, subject_id, can_view, can_execute, scope_mode, granted_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, row)
+
+        # v3.38.0: restricted subject'ların tablo allowlist'ini yaz
+        # (yalnız view yetkisi olan subject'lar için; bilinmeyen subject scope'ları yok sayılır)
+        granted_subjects = {("user", uid) for uid in view_users} | {("org", oid) for oid in view_orgs}
+        table_rows_inserted = 0
+        for (st, sid), scope in scope_map.items():
+            if scope.scope_mode != "restricted":
+                continue
+            if (st, sid) not in granted_subjects:
+                continue  # view yetkisi olmayan subject'a tablo allowlist'i anlamsız
+            seen = set()
+            for t in scope.tables:
+                key = ((t.schema_name or "").strip(), (t.table or "").strip())
+                if not key[1] or key in seen:
+                    continue
+                seen.add(key)
+                cur.execute("""
+                    INSERT INTO data_source_table_permissions
+                    (source_id, subject_type, subject_id, schema_name, table_name, granted_by)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (source_id, subject_type, subject_id, schema_name, table_name) DO NOTHING
+                """, (source_id, st, sid, key[0], key[1], granted_by))
+                table_rows_inserted += 1
 
         # Audit log (v3.18.0 — aynı transaction içinde)
         after_rows = [
-            {"subject_type": r[1], "subject_id": r[2], "can_view": r[3], "can_execute": r[4]}
+            {"subject_type": r[1], "subject_id": r[2], "can_view": r[3],
+             "can_execute": r[4], "scope_mode": r[5]}
             for r in rows_to_insert
         ]
         ds_company_id = ds_row["company_id"] if isinstance(ds_row, dict) else (ds_row[1] if len(ds_row) > 1 else None)
@@ -378,6 +467,7 @@ def update_source_permissions(
         "message": "Yetkiler güncellendi.",
         "user_count": len(view_users),
         "org_count": len(view_orgs),
+        "table_grants": table_rows_inserted,
     }
 
 
@@ -432,6 +522,55 @@ def list_permission_subjects(
         orgs = [dict(r) for r in cur.fetchall()]
 
     return {"users": users, "orgs": orgs}
+
+
+@router.get("/{source_id}/schema-tree")
+def get_source_schema_tree(
+    source_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """v3.38.0 — Yetkilendirme modalı için schema→tablo ağacı.
+
+    `ds_db_objects` keşif cache'inden, kaynaktaki schema'ları ve altlarındaki
+    tabloları döner (akordion render için). Sadece admin.
+    Keşif yapılmamışsa boş liste + hint döner.
+    """
+    is_admin = current_user.get("is_admin", False) or current_user.get("role") == "admin"
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="Yetki yönetimi sadece admin yapabilir.")
+
+    from app.core.db import get_db_context_scoped
+    try:
+        with get_db_context_scoped(source_id) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM data_sources WHERE id = %s", (source_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Veri kaynağı bulunamadı.")
+
+            cur.execute("""
+                SELECT schema_name, object_name
+                FROM ds_db_objects
+                WHERE source_id = %s AND object_type = 'table'
+                ORDER BY schema_name NULLS FIRST, object_name
+            """, (source_id,))
+            rows = cur.fetchall()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("[DataSources] schema-tree hatası: %s", type(e).__name__)
+        return {"success": False, "schemas": [], "discovered": False}
+
+    tree: Dict[str, List[str]] = {}
+    for row in rows:
+        item = dict(row)
+        schema = item.get("schema_name") or ""
+        tree.setdefault(schema, []).append(item["object_name"])
+
+    schemas = [
+        {"schema": schema, "tables": tables}
+        for schema, tables in sorted(tree.items())
+    ]
+    return {"success": True, "schemas": schemas, "discovered": bool(schemas)}
 
 
 @router.post("/")
@@ -964,23 +1103,40 @@ def get_discovered_schemas(
     source_id: int,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
-    """Adım 2 sonrası: DS_DB_OBJECTS içindeki distinct şemaları ve tablo sayılarını döner."""
+    """Adım 2 sonrası: DS_DB_OBJECTS içindeki distinct şemaları ve tablo sayılarını döner.
+
+    v3.38.0: admin olmayan kullanıcıya yalnız tablo-bazlı yetkisinin kapsadığı
+    şemalar + tablo sayıları döner (yetkisiz şema/tablo görünmez).
+    """
+    is_admin = current_user.get("is_admin", False) or current_user.get("role") == "admin"
+    user_id = current_user.get("id")
     try:
         # v3.20.0 Faz 1c: ds_db_objects RLS koruma altında — source_id ile scope
         from app.core.db import get_db_context_scoped
+        scope = None
+        if not is_admin:
+            scope = user_accessible_tables(user_id, source_id, is_admin=False, permission="can_view")
         with get_db_context_scoped(source_id) as conn:
             cur = conn.cursor()
             cur.execute("""
-                SELECT schema_name, COUNT(*) AS table_count
+                SELECT schema_name, object_name
                 FROM ds_db_objects
                 WHERE source_id = %s AND object_type = 'table'
-                GROUP BY schema_name
-                ORDER BY schema_name
+                ORDER BY schema_name, object_name
             """, (source_id,))
             rows = cur.fetchall()
+
+            counts: Dict[str, int] = {}
+            for row in rows:
+                item = dict(row)
+                sch = item.get("schema_name")
+                if scope is not None and not scope.allows(sch, item.get("object_name")):
+                    continue
+                key = sch or "(varsayılan)"
+                counts[key] = counts.get(key, 0) + 1
             schemas = [
-                {"schema": row["schema_name"] or "(varsayılan)", "table_count": row["table_count"]}
-                for row in rows
+                {"schema": sch, "table_count": cnt}
+                for sch, cnt in sorted(counts.items())
             ]
             return {"success": True, "schemas": schemas}
     except Exception as e:
@@ -1018,6 +1174,14 @@ def get_table_samples(
             src = dict(src)
             if not is_admin and current_user.get("company_id") != src.get("company_id"):
                 raise HTTPException(status_code=403, detail="Bu kaynağa erişim yetkiniz yok.")
+
+            # v3.38.0: tablo bazlı yetki — yetkisiz tablonun varlığı ifşa edilmesin (404)
+            if not is_admin:
+                _scope = user_accessible_tables(
+                    current_user.get("id"), source_id, is_admin=False, permission="can_view"
+                )
+                if not _scope.allows(schema, table):
+                    raise HTTPException(status_code=404, detail="Örnek veri bulunamadı.")
 
             # ds_db_objects ile join: schema NULL ise IS NULL match, değilse eşitlik
             if schema is None or schema.strip() == "":

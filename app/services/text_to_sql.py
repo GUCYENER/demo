@@ -790,7 +790,11 @@ def _extract_explanation(llm_response: str) -> str:
 # Schema Context Builder
 # =====================================================
 
-def get_schema_context(source_id: int, enriched_only: bool = False) -> Dict[str, Any]:
+def get_schema_context(
+    source_id: int,
+    enriched_only: bool = False,
+    user_ctx: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """
     DS Learning'den öğrenilmiş schema bilgilerini context olarak hazırlar.
 
@@ -800,6 +804,10 @@ def get_schema_context(source_id: int, enriched_only: bool = False) -> Dict[str,
         source_id: Veri kaynağı ID
         enriched_only: True ise sadece enrichment kaydı olan (öğrenilmiş) tabloları döner.
                        Text-to-SQL akışında ML eşleşme bulunamadığında kullanılır.
+        user_ctx: v3.38.0 — get_current_user dict ({id, is_admin/role, ...}). Verilirse
+                  ve kullanıcı admin değilse, LLM'e verilen tablo/ilişki listesi kullanıcının
+                  `can_view` tablo kapsamıyla süzülür → yetkisiz tablo LLM context'ine
+                  GİRMEZ (tahmin edilemezlik). None → eski davranış (filtre yok).
 
     Returns:
         {
@@ -970,6 +978,44 @@ def get_schema_context(source_id: int, enriched_only: bool = False) -> Dict[str,
             })
 
         conn.close()
+
+        # v3.38.0: tablo seviyesi yetki süzgeci — admin değilse yetkisiz tablolar
+        # LLM context'ine girmemeli (kullanıcı yetkisiz tabloyu tahmin edememeli).
+        # Choke-point burası: get_schema_context tüm text-to-sql/deep_think şema
+        # context'inin tek kaynağı. user_ctx verilmezse filtre uygulanmaz.
+        if user_ctx is not None:
+            try:
+                from app.services.db_smart.table_scope import resolve_scope
+                scope = resolve_scope(source_id, user_ctx)
+                if not scope.all_tables:
+                    tables = [
+                        t for t in tables
+                        if scope.allows(t.get("schema"), t.get("name"))
+                    ]
+
+                    def _rel_part_allowed(ref: str) -> bool:
+                        # "schema.table.column" → (schema, table)
+                        parts = (ref or "").split(".")
+                        if len(parts) >= 3:
+                            sch, tbl = parts[0], parts[1]
+                        elif len(parts) == 2:
+                            sch, tbl = "", parts[0]
+                        else:
+                            sch, tbl = "", (parts[0] if parts else "")
+                        return scope.allows(sch, tbl)
+
+                    relationships = [
+                        r for r in relationships
+                        if _rel_part_allowed(r.get("from", ""))
+                        and _rel_part_allowed(r.get("to", ""))
+                    ]
+            except Exception as scope_err:
+                # Fail-closed: kapsam çözülemezse yetkisiz sızıntı riskine karşı
+                # tabloları boşalt (LLM hiçbir şema görmez) — admin user_ctx
+                # vermediğinde bu yola hiç girilmez.
+                log_warning(f"Schema context scope filtresi hatası: {scope_err}", "text_to_sql")
+                tables = []
+                relationships = []
 
         return {
             "tables": tables,

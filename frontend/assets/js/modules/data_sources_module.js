@@ -718,7 +718,21 @@ window.DataSourcesModule = (function () {
         execUserIds: new Set(),
         execOrgIds: new Set(),
         searchText: '',
+        // v3.38.0: per-subject tablo kapsamı. Anahtar: 'user:5' | 'org:3'
+        //   { mode:'all'|'restricted', tables:Set<'schema table'> }
+        scopeBySubject: {},
+        // schema-tree cache (modal açılışında bir kez çekilir)
+        schemaTree: null,            // { discovered:bool, schemas:[{schema, tables:[]}] }
+        schemaTreeLoaded: false,
+        // açık kapsam panelleri (subjectKey) + açık akordion (subjectKey schema)
+        scopeOpen: new Set(),
+        accordionOpen: new Set(),
+        scopeSearch: {},             // subjectKey -> arama metni
     };
+
+    // table key helper — schema + table'ı ayraçla birleştir (XSS/çakışma güvenli)
+    function _tblKey(schema, table) { return (schema || '') + ' ' + (table || ''); }
+    function _subjectKey(type, id) { return type + ':' + id; }
 
     async function openPermissionModal(sourceId, sourceName) {
         permState.sourceId = sourceId;
@@ -731,6 +745,12 @@ window.DataSourcesModule = (function () {
         permState.viewOrgIds = new Set();
         permState.execUserIds = new Set();
         permState.execOrgIds = new Set();
+        permState.scopeBySubject = {};
+        permState.schemaTree = null;
+        permState.schemaTreeLoaded = false;
+        permState.scopeOpen = new Set();
+        permState.accordionOpen = new Set();
+        permState.scopeSearch = {};
 
         _closePermissionModal();
         // A11y: kapanınca odağı buraya geri ver
@@ -815,9 +835,11 @@ window.DataSourcesModule = (function () {
             // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
             const companyId = _getSelectedCompanyId();
             const subjectsPath = `${VF_BASE}/permissions/subjects${companyId ? '?company_id=' + companyId : ''}`;
-            const [subjects, perms] = await Promise.all([
+            const [subjects, perms, tree] = await Promise.all([
                 window.vyraFetch(subjectsPath),
-                window.vyraFetch(`${VF_BASE}/${sourceId}/permissions`)
+                window.vyraFetch(`${VF_BASE}/${sourceId}/permissions`),
+                // schema-tree başarısızsa modal yine açılsın → catch ile null'a düş
+                window.vyraFetch(`${VF_BASE}/${sourceId}/schema-tree`).catch(() => null)
             ]);
             permState.users = subjects.users || [];
             permState.orgs = subjects.orgs || [];
@@ -825,6 +847,27 @@ window.DataSourcesModule = (function () {
             permState.viewOrgIds = new Set(perms.org_ids || []);
             permState.execUserIds = new Set(perms.can_execute_user_ids || []);
             permState.execOrgIds = new Set(perms.can_execute_org_ids || []);
+
+            // v3.38.0: schema-tree cache + discovered durumu
+            permState.schemaTree = (tree && tree.success && tree.discovered)
+                ? { discovered: true, schemas: Array.isArray(tree.schemas) ? tree.schemas : [] }
+                : { discovered: false, schemas: [] };
+            permState.schemaTreeLoaded = true;
+
+            // v3.38.0: scopes → scopeBySubject (Set'e dönüştür)
+            (perms.scopes || []).forEach(sc => {
+                if (!sc || (sc.subject_type !== 'user' && sc.subject_type !== 'org')) return;
+                const sid = parseInt(sc.subject_id, 10);
+                if (Number.isNaN(sid)) return;
+                const tbls = new Set();
+                (sc.tables || []).forEach(t => {
+                    if (t && typeof t.table === 'string') tbls.add(_tblKey(t.schema, t.table));
+                });
+                permState.scopeBySubject[_subjectKey(sc.subject_type, sid)] = {
+                    mode: sc.scope_mode === 'restricted' ? 'restricted' : 'all',
+                    tables: tbls,
+                };
+            });
             _renderPermissionList();
         } catch (error) {
             console.error('[DataSources] Permission modal load error:', error);
@@ -872,25 +915,32 @@ window.DataSourcesModule = (function () {
             return;
         }
 
+        const subjType = isUserTab ? 'user' : 'org';
         container.innerHTML = filtered.map(it => {
             const label = isUserTab
                 ? `${_escapeHtml(it.full_name || it.username || '')} <span class="ds-perm-sub">${_escapeHtml(it.email || '')}</span>`
                 : `<span class="ds-perm-code">${_escapeHtml(it.org_code || '')}</span> ${_escapeHtml(it.org_name || '')}`;
             const vChecked = viewSet.has(it.id) ? 'checked' : '';
             const eChecked = execSet.has(it.id) ? 'checked' : '';
+            const scopeBlock = viewSet.has(it.id)
+                ? _renderScopeBlock(subjType, it.id)
+                : '';
             return `
-                <div class="ds-perm-row">
-                    <div class="ds-perm-label">${label}</div>
-                    <div class="ds-perm-controls">
-                        <label class="ds-perm-chk" title="Görüntüleme">
-                            <input type="checkbox" class="ds-perm-view" data-id="${it.id}" ${vChecked}>
-                            <i class="fa-solid fa-eye"></i>
-                        </label>
-                        <label class="ds-perm-chk" title="Çalıştırma">
-                            <input type="checkbox" class="ds-perm-exec" data-id="${it.id}" ${eChecked}>
-                            <i class="fa-solid fa-bolt"></i>
-                        </label>
+                <div class="ds-perm-row-wrap">
+                    <div class="ds-perm-row">
+                        <div class="ds-perm-label">${label}</div>
+                        <div class="ds-perm-controls">
+                            <label class="ds-perm-chk" title="Görüntüleme">
+                                <input type="checkbox" class="ds-perm-view" data-id="${it.id}" ${vChecked}>
+                                <i class="fa-solid fa-eye"></i>
+                            </label>
+                            <label class="ds-perm-chk" title="Çalıştırma">
+                                <input type="checkbox" class="ds-perm-exec" data-id="${it.id}" ${eChecked}>
+                                <i class="fa-solid fa-bolt"></i>
+                            </label>
+                        </div>
                     </div>
+                    ${scopeBlock}
                 </div>
             `;
         }).join('');
@@ -909,9 +959,16 @@ window.DataSourcesModule = (function () {
                 } else {
                     set.delete(id);
                     execS.delete(id); // view kapatılırsa exec da düşer
-                    const execCb = container.querySelector(`.ds-perm-exec[data-id="${id}"]`);
-                    if (execCb) execCb.checked = false;
+                    // v3.38.0: view kapanınca subject kapsamı sıfırlanır (all)
+                    const sk = _subjectKey(isUserTab ? 'user' : 'org', id);
+                    delete permState.scopeBySubject[sk];
+                    permState.scopeOpen.delete(sk);
+                    Object.keys(permState.scopeSearch).forEach(k => {
+                        if (k === sk) delete permState.scopeSearch[k];
+                    });
                 }
+                // scope bloğunu göster/gizle için satır listesini yeniden çiz
+                _renderPermissionList();
             });
         });
         container.querySelectorAll('.ds-perm-exec').forEach(cb => {
@@ -923,10 +980,214 @@ window.DataSourcesModule = (function () {
                 if (e.target.checked) {
                     set.add(id);
                     viewS.add(id); // exec açılırsa view zorunlu
-                    const viewCb = container.querySelector(`.ds-perm-view[data-id="${id}"]`);
-                    if (viewCb) viewCb.checked = true;
+                    // view yeni açıldı → scope bloğunu göstermek için yeniden çiz
+                    _renderPermissionList();
                 } else {
                     set.delete(id);
+                }
+            });
+        });
+
+        _bindScopeEvents(container, subjType);
+    }
+
+    // v3.38.0: bir subject için tablo-kapsamı bloğu (toggle + akordion)
+    function _renderScopeBlock(subjType, subjectId) {
+        const sk = _subjectKey(subjType, subjectId);
+        const sc = permState.scopeBySubject[sk] || { mode: 'all', tables: new Set() };
+        const mode = sc.mode === 'restricted' ? 'restricted' : 'all';
+        const tree = permState.schemaTree || { discovered: false, schemas: [] };
+        const radioName = `dsScopeMode_${subjType}_${subjectId}`;
+
+        const toggle = `
+            <div class="ds-scope-toggle" role="radiogroup" aria-label="Tablo kapsamı">
+                <label class="ds-scope-opt">
+                    <input type="radio" name="${radioName}" class="ds-scope-mode" data-sk="${sk}" value="all" ${mode === 'all' ? 'checked' : ''}>
+                    <span>Tüm tablolar</span>
+                </label>
+                <label class="ds-scope-opt">
+                    <input type="radio" name="${radioName}" class="ds-scope-mode" data-sk="${sk}" value="restricted" ${mode === 'restricted' ? 'checked' : ''}>
+                    <span>Seçili tablolar</span>
+                </label>
+            </div>
+        `;
+
+        if (mode !== 'restricted') {
+            return `<div class="ds-perm-scope" data-sk="${sk}">${toggle}</div>`;
+        }
+
+        // restricted → akordion gövdesi
+        if (!tree.discovered || !tree.schemas.length) {
+            return `
+                <div class="ds-perm-scope" data-sk="${sk}">
+                    ${toggle}
+                    <div class="ds-scope-empty">
+                        <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+                        Önce kaynağı keşfedin (Adım 2)
+                    </div>
+                </div>
+            `;
+        }
+
+        const q = (permState.scopeSearch[sk] || '').toLowerCase();
+        const selected = sc.tables;
+        const accParts = [];
+        let visibleCount = 0;
+
+        tree.schemas.forEach((schObj, idx) => {
+            const schema = schObj.schema || '';
+            const allTables = Array.isArray(schObj.tables) ? schObj.tables : [];
+            const tables = q ? allTables.filter(t => (t || '').toLowerCase().includes(q)) : allTables;
+            if (!tables.length) return;
+            visibleCount += tables.length;
+
+            const accKey = sk + '|' + schema;
+            const isOpen = permState.accordionOpen.has(accKey) || !!q;
+            const panelId = `dsScopeAcc_${subjType}_${subjectId}_${idx}`;
+            const headerId = `dsScopeAccHdr_${subjType}_${subjectId}_${idx}`;
+            const schemaLabel = schema === '' ? '(varsayılan şema)' : _escapeHtml(schema);
+            const selInSchema = allTables.filter(t => selected.has(_tblKey(schema, t))).length;
+
+            const rows = tables.map(t => {
+                const key = _tblKey(schema, t);
+                const checked = selected.has(key) ? 'checked' : '';
+                return `
+                    <label class="ds-scope-tbl">
+                        <input type="checkbox" class="ds-scope-tbl-chk" data-sk="${sk}" data-key="${_escapeHtml(key)}" ${checked}>
+                        <span>${_escapeHtml(t)}</span>
+                    </label>
+                `;
+            }).join('');
+
+            accParts.push(`
+                <div class="ds-scope-acc${isOpen ? ' is-open' : ''}" data-acc="${_escapeHtml(accKey)}">
+                    <div class="ds-scope-acc-head">
+                        <button type="button" class="ds-scope-acc-toggle" id="${headerId}"
+                            aria-expanded="${isOpen ? 'true' : 'false'}" aria-controls="${panelId}"
+                            data-acc="${_escapeHtml(accKey)}">
+                            <span class="ds-scope-acc-caret" aria-hidden="true">▸</span>
+                            <span class="ds-scope-acc-title">${schemaLabel}</span>
+                            <span class="ds-scope-acc-count">${selInSchema}/${allTables.length}</span>
+                        </button>
+                        <button type="button" class="ds-scope-acc-all" data-sk="${sk}" data-schema-idx="${idx}"
+                            aria-label="${schemaLabel} şemasındaki tüm tabloları seç/temizle"
+                            data-tooltip="Tümünü seç / temizle">
+                            <i class="fa-solid fa-list-check" aria-hidden="true"></i>
+                        </button>
+                    </div>
+                    <div class="ds-scope-acc-body" id="${panelId}" role="region" aria-labelledby="${headerId}" ${isOpen ? '' : 'hidden'}>
+                        ${rows}
+                    </div>
+                </div>
+            `);
+        });
+
+        const searchBox = `
+            <div class="ds-scope-search">
+                <i class="fa-solid fa-search" aria-hidden="true"></i>
+                <input type="text" class="ds-scope-search-input" data-sk="${sk}"
+                    value="${_escapeHtml(permState.scopeSearch[sk] || '')}"
+                    placeholder="Tablo ara..." aria-label="Tablo ara">
+            </div>
+        `;
+
+        const body = accParts.length
+            ? accParts.join('')
+            : `<div class="ds-scope-empty"><i class="fa-solid fa-folder-open" aria-hidden="true"></i> Eşleşen tablo yok</div>`;
+
+        return `
+            <div class="ds-perm-scope" data-sk="${sk}">
+                ${toggle}
+                ${searchBox}
+                <div class="ds-scope-tree">${body}</div>
+            </div>
+        `;
+    }
+
+    function _bindScopeEvents(container, subjType) {
+        // mode radio
+        container.querySelectorAll('.ds-scope-mode').forEach(r => {
+            r.addEventListener('change', (e) => {
+                const sk = e.target.dataset.sk;
+                if (!sk) return;
+                const cur = permState.scopeBySubject[sk] || { mode: 'all', tables: new Set() };
+                cur.mode = e.target.value === 'restricted' ? 'restricted' : 'all';
+                if (!(cur.tables instanceof Set)) cur.tables = new Set();
+                permState.scopeBySubject[sk] = cur;
+                if (cur.mode === 'restricted') permState.scopeOpen.add(sk);
+                _renderPermissionList();
+            });
+        });
+
+        // akordion toggle (click)
+        container.querySelectorAll('.ds-scope-acc-toggle').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const acc = btn.dataset.acc;
+                if (!acc) return;
+                if (permState.accordionOpen.has(acc)) permState.accordionOpen.delete(acc);
+                else permState.accordionOpen.add(acc);
+                _renderPermissionList();
+            });
+            btn.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+                    e.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+
+        // tablo checkbox
+        container.querySelectorAll('.ds-scope-tbl-chk').forEach(cb => {
+            cb.addEventListener('change', (e) => {
+                const sk = e.target.dataset.sk;
+                const key = e.target.dataset.key;
+                if (!sk || !key) return;
+                const cur = permState.scopeBySubject[sk] || { mode: 'restricted', tables: new Set() };
+                if (!(cur.tables instanceof Set)) cur.tables = new Set();
+                if (e.target.checked) cur.tables.add(key);
+                else cur.tables.delete(key);
+                cur.mode = 'restricted';
+                permState.scopeBySubject[sk] = cur;
+                _renderPermissionList();
+            });
+        });
+
+        // şema "tümünü seç/temizle"
+        container.querySelectorAll('.ds-scope-acc-all').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const sk = btn.dataset.sk;
+                const idx = parseInt(btn.dataset.schemaIdx, 10);
+                const tree = permState.schemaTree;
+                if (!sk || Number.isNaN(idx) || !tree || !tree.schemas[idx]) return;
+                const schObj = tree.schemas[idx];
+                const schema = schObj.schema || '';
+                const tables = Array.isArray(schObj.tables) ? schObj.tables : [];
+                const cur = permState.scopeBySubject[sk] || { mode: 'restricted', tables: new Set() };
+                if (!(cur.tables instanceof Set)) cur.tables = new Set();
+                const allSelected = tables.every(t => cur.tables.has(_tblKey(schema, t)));
+                tables.forEach(t => {
+                    const k = _tblKey(schema, t);
+                    if (allSelected) cur.tables.delete(k);
+                    else cur.tables.add(k);
+                });
+                cur.mode = 'restricted';
+                permState.scopeBySubject[sk] = cur;
+                _renderPermissionList();
+            });
+        });
+
+        // arama (re-render odak kaybettirmesin → değeri state'e yaz, sonra odağı geri al)
+        container.querySelectorAll('.ds-scope-search-input').forEach(inp => {
+            inp.addEventListener('input', (e) => {
+                const sk = e.target.dataset.sk;
+                if (!sk) return;
+                permState.scopeSearch[sk] = e.target.value;
+                const caret = e.target.selectionStart;
+                _renderPermissionList();
+                const again = container.querySelector(`.ds-scope-search-input[data-sk="${sk}"]`);
+                if (again) {
+                    again.focus();
+                    try { again.setSelectionRange(caret, caret); } catch (_) {}
                 }
             });
         });
@@ -943,11 +1204,39 @@ window.DataSourcesModule = (function () {
             // FIX (v3.27.5): NaN/non-integer guard — JSON.stringify NaN'ı null'a çevirir,
             // backend 422 "Input should be a valid integer" verirdi.
             const _toIntArr = (s) => Array.from(s).filter(v => Number.isInteger(v));
+            const viewUsers = _toIntArr(permState.viewUserIds);
+            const viewOrgs = _toIntArr(permState.viewOrgIds);
+
+            // v3.38.0: scopes — yalnız view-yetkili subject'ler için.
+            // mode 'all' → tables boş; 'restricted' → seçili tablolar (boş olabilir, geçerli).
+            const scopes = [];
+            const _buildScope = (subjType, ids) => {
+                ids.forEach(id => {
+                    const sk = _subjectKey(subjType, id);
+                    const sc = permState.scopeBySubject[sk];
+                    if (!sc || sc.mode !== 'restricted') {
+                        scopes.push({ subject_type: subjType, subject_id: id, scope_mode: 'all', tables: [] });
+                        return;
+                    }
+                    const tables = Array.from(sc.tables instanceof Set ? sc.tables : []).map(k => {
+                        // _tblKey: 'schema table' (ilk boşluk ayraç). schema boş olabilir.
+                        const sp = k.indexOf(' ');
+                        const schema = sp >= 0 ? k.slice(0, sp) : '';
+                        const table = sp >= 0 ? k.slice(sp + 1) : k;
+                        return { schema, table };
+                    });
+                    scopes.push({ subject_type: subjType, subject_id: id, scope_mode: 'restricted', tables });
+                });
+            };
+            _buildScope('user', viewUsers);
+            _buildScope('org', viewOrgs);
+
             const body = {
-                user_ids: _toIntArr(permState.viewUserIds),
-                org_ids: _toIntArr(permState.viewOrgIds),
+                user_ids: viewUsers,
+                org_ids: viewOrgs,
                 can_execute_user_ids: _toIntArr(permState.execUserIds),
                 can_execute_org_ids: _toIntArr(permState.execOrgIds),
+                scopes,
             };
             // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
             // FastAPI 422 detail array'i için manuel flattening korunur.

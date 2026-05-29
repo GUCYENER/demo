@@ -59,6 +59,7 @@ from app.services.db_smart import (
     saved_reports,         # v3.30.0 FAZ 3 P13 G3.3
     template_marketplace,  # v3.30.0 FAZ 3 P18 G3.3
 )
+from app.services.db_smart.table_scope import resolve_scope  # v3.38.0 tablo kapsamı
 
 logger = logging.getLogger(__name__)
 
@@ -1746,6 +1747,13 @@ def search_tables(
                 cur, source_id=source_id, query=q,
                 user_ctx=current_user, limit=limit,
             )
+            # v3.38.0: tablo seviyesi yetki — admin değilse yetkisiz tabloları gizle.
+            scope = resolve_scope(source_id, current_user)
+            if not scope.all_tables:
+                items = [
+                    it for it in items
+                    if scope.allows(it.get("schema_name"), it.get("object_name"))
+                ]
         except Exception as e:
             logger.warning("[db_smart] search_tables failed source=%s: %s", source_id, e)
             items = []
@@ -1775,6 +1783,45 @@ def related_tables(
                 cur, source_id=source_id, table_ids=[table_id],
                 user_ctx=current_user, depth=depth,
             )
+            # v3.38.0: tablo seviyesi yetki — admin değilse yetkisiz komşu/node
+            # "related" üzerinden ifşa OLMAMALI. neighbors + subgraph nodes
+            # scope.allows ile süzülür; yetkisiz node'a giden edge'ler de atılır.
+            scope = resolve_scope(source_id, current_user)
+            if not scope.all_tables:
+                neighbors = [
+                    n for n in neighbors
+                    if scope.allows(n.get("schema"), n.get("table"))
+                ]
+                kept_nodes = [
+                    n for n in (subgraph.get("nodes") or [])
+                    if scope.allows(n.get("schema"), n.get("table"))
+                ]
+                allowed_keys = {
+                    (str(n.get("schema") or "").strip().lower(),
+                     str(n.get("table") or "").strip().lower())
+                    for n in kept_nodes
+                }
+
+                def _edge_key(side: str):
+                    # "schema.table" veya "table" → (schema_lower, table_lower)
+                    s = (side or "").strip()
+                    if "." in s:
+                        sch, tbl = s.split(".", 1)
+                    else:
+                        sch, tbl = "", s
+                    return (sch.strip().lower(), tbl.strip().lower())
+
+                kept_edges = [
+                    e for e in (subgraph.get("edges") or [])
+                    if _edge_key(e.get("from")) in allowed_keys
+                    and _edge_key(e.get("to")) in allowed_keys
+                ]
+                subgraph["nodes"] = kept_nodes
+                subgraph["edges"] = kept_edges
+                stats = subgraph.get("stats") or {}
+                stats["node_count"] = len(kept_nodes)
+                stats["edge_count"] = len(kept_edges)
+                subgraph["stats"] = stats
             junctions = fk_graph.detect_junctions(subgraph)
         except Exception as e:
             logger.warning("[db_smart] related_tables failed source=%s table=%s: %s",
@@ -1799,11 +1846,16 @@ def _fetch_table_columns(
     cur,
     source_id: int,
     table_id: int,
-) -> Dict[str, Any]:
+    scope: Optional[Any] = None,
+) -> Optional[Dict[str, Any]]:
     """Returns {table_id, table_name, schema_name, business_name_tr, columns:[…]}.
 
     columns: [{name, data_type, is_nullable, semantic_type, business_name_tr, description_tr}]
     Hard-cap _MAX_COLUMNS_PER_TABLE per table.
+
+    v3.38.0: `scope` (AccessScope) verilirse ve admin değilse, table_id'den çözülen
+    (schema, object_name) bu kapsamda erişilebilir değilse `None` döner (kolon sızıntısı
+    engellenir). scope=None veya scope.all_tables → eski davranış (filtre yok).
     """
     def _col(r, key, idx):
         return r[key] if isinstance(r, dict) else r[idx]
@@ -1818,6 +1870,10 @@ def _fetch_table_columns(
     obj_columns_json = (_col(row, 'columns_json', 2) if row else None) or []
     schema = _col(row, 'schema_name', 0) if row else None
     obj_name = _col(row, 'object_name', 1) if row else None
+
+    # v3.38.0: tablo seviyesi yetki kontrolü (admin/all_tables → bypass).
+    if scope is not None and not scope.all_tables and not scope.allows(schema, obj_name):
+        return None
 
     # Enrichment: business_name_tr, semantic_type, description_tr (column-level)
     # + table-level business_name_tr (for group header)
@@ -1888,9 +1944,15 @@ def list_columns(
         cur = conn.cursor()
         apply_vyra_user_context(cur, current_user)
         try:
-            info = _fetch_table_columns(cur, source_id, table_id)
+            # v3.38.0: tablo seviyesi yetki — yetkisiz table_id → 404 (kolon sızıntısı yok).
+            scope = resolve_scope(source_id, current_user)
+            info = _fetch_table_columns(cur, source_id, table_id, scope=scope)
+            if info is None:
+                raise HTTPException(status_code=404, detail="Tablo bulunamadı veya erişim yok.")
             columns = info["columns"]
             sample = eligibility.sample_preview(cur, table_id=table_id, user_ctx=current_user)
+        except HTTPException:
+            raise
         except Exception as e:
             logger.warning("[db_smart] list_columns failed source=%s table=%s: %s",
                            source_id, table_id, e)
@@ -1954,9 +2016,15 @@ def list_columns_multi(
     with get_db_context() as conn:
         cur = conn.cursor()
         apply_vyra_user_context(cur, current_user)
+        # v3.38.0: tablo seviyesi yetki — yetkisiz table_id'ler tamamen atlanır
+        # (boş slot bile dönmeyiz; aksi halde id'nin varlığı doğrulanmış olur).
+        scope = resolve_scope(source_id, current_user)
         for tid in ids:
             try:
-                tables.append(_fetch_table_columns(cur, source_id, tid))
+                info = _fetch_table_columns(cur, source_id, tid, scope=scope)
+                if info is None:
+                    continue  # yetkisiz tablo → response'tan çıkar
+                tables.append(info)
             except Exception as e:
                 logger.warning("[db_smart] list_columns_multi failed source=%s table=%s: %s",
                                source_id, tid, e)
@@ -2503,6 +2571,9 @@ def post_generate_report(
             int(t) for t in (req.join_table_ids or [])
         ]
         allowed_tables: List[str] = []
+        # v3.38.0: can_execute kapsamı — kullanıcı elle yetkisiz tabloyu
+        # allowed_tables'a (ve dolayısıyla çalıştırmaya) sokamamalı.
+        exec_scope = resolve_scope(req.source_id, current_user, permission="can_execute")
         try:
             cur.execute(
                 """
@@ -2523,6 +2594,18 @@ def post_generate_report(
                 obj = (r.get("object_name") if isinstance(r, dict) else r[1]) or ""
                 if not obj:
                     continue
+                # v3.38.0: kullanıcının can_execute kapsamıyla KESİŞİM.
+                # Yetkisiz tablo içeren çalıştırma → 403 (sessizce filtrelemek yerine
+                # reddet: picker yetkisiz tablo seçtirmiş demektir).
+                if not exec_scope.allows(schema, obj):
+                    logger.warning(
+                        "[db_smart] generate_report unauthorized table user=%s source=%s %s.%s",
+                        current_user.get("id"), req.source_id, schema, obj,
+                    )
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Seçilen tablolardan biri için çalıştırma yetkiniz yok.",
+                    )
                 variants: List[str] = []
                 if schema:
                     qual = f"{schema}.{obj}"
@@ -2532,6 +2615,8 @@ def post_generate_report(
                     if v and v not in _seen:
                         _seen.add(v)
                         allowed_tables.append(v)
+        except HTTPException:
+            raise  # v3.38.0: yetki reddini (403) yutma — yukarı taşı.
         except Exception as e:
             logger.warning(
                 "[db_smart] generate_report allowed_tables lookup failed: %s", e
@@ -2568,6 +2653,17 @@ def post_generate_report(
         )
 
     # ── Execute via SafeSQLExecutor — defense in depth ──
+    # v3.38.0 (code-review fix): restricted kullanıcıda allowed_tables boş kalırsa
+    # `or None` executor'da "kontrol atla = hepsine izin"e düşerdi. Boş + restricted
+    # → çalıştırmayı reddet (allow-all'a düşme).
+    if not exec_scope.all_tables and not allowed_tables:
+        return GenerateReportResp(
+            sql=generated_sql,
+            rationale=rationale,
+            success=False,
+            fallback=fallback,
+            error="Seçilen tablolar için çalıştırma yetkiniz bulunmuyor.",
+        )
     try:
         from app.services.safe_sql_executor import SafeSQLExecutor
 

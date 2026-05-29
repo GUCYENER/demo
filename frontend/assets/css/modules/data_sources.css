@@ -705,3 +705,130 @@
 }
 .ds-perm-legend i { margin-right: 4px; color: #6366f1; }
 
+/* --- v3.38.0: tablo kapsamı (scope) --- */
+.ds-perm-row-wrap {
+    border-bottom: 1px solid var(--border);
+}
+.ds-perm-row-wrap:last-child { border-bottom: none; }
+.ds-perm-row-wrap .ds-perm-row { border-bottom: none; }
+
+.ds-perm-scope {
+    padding: 4px 14px 12px 28px;
+    background: var(--bg-1, rgba(99, 102, 241, 0.03));
+}
+.ds-scope-toggle {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 8px;
+}
+.ds-scope-opt {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    color: var(--text-2);
+    cursor: pointer;
+}
+.ds-scope-opt input { accent-color: var(--accent, #6366f1); cursor: pointer; }
+.ds-scope-opt:has(input:checked) { color: var(--text-1); font-weight: 600; }
+
+.ds-scope-empty {
+    font-size: 12px;
+    color: var(--text-3);
+    padding: 8px 4px;
+}
+.ds-scope-empty i { margin-right: 6px; color: var(--accent, #6366f1); }
+
+.ds-scope-search {
+    position: relative;
+    margin-bottom: 8px;
+}
+.ds-scope-search > i {
+    position: absolute;
+    left: 9px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-3);
+    font-size: 11px;
+}
+.ds-scope-search-input {
+    width: 100%;
+    padding: 6px 10px 6px 26px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-2, transparent);
+    color: var(--text-1);
+    font-size: 12px;
+}
+.ds-scope-search-input:focus {
+    outline: none;
+    border-color: var(--accent, #6366f1);
+}
+
+.ds-scope-tree {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    max-height: 220px;
+    overflow-y: auto;
+}
+.ds-scope-acc {
+    border-bottom: 1px solid var(--border);
+}
+.ds-scope-acc:last-child { border-bottom: none; }
+.ds-scope-acc-head {
+    display: flex;
+    align-items: center;
+}
+.ds-scope-acc-toggle {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 10px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-1);
+    font-size: 12px;
+    text-align: left;
+}
+.ds-scope-acc-toggle:hover { color: var(--accent, #6366f1); }
+.ds-scope-acc-caret {
+    display: inline-block;
+    transition: transform 0.15s ease;
+    color: var(--text-3);
+    font-size: 10px;
+}
+.ds-scope-acc.is-open .ds-scope-acc-caret { transform: rotate(90deg); }
+.ds-scope-acc-title { flex: 1; font-weight: 600; }
+.ds-scope-acc-count {
+    color: var(--text-3);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+.ds-scope-acc-all {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-3);
+    padding: 7px 10px;
+    font-size: 12px;
+}
+.ds-scope-acc-all:hover { color: var(--accent, #6366f1); }
+.ds-scope-acc-body {
+    padding: 4px 10px 8px 26px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.ds-scope-tbl {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-2);
+    cursor: pointer;
+}
+.ds-scope-tbl input { accent-color: var(--accent, #6366f1); cursor: pointer; }
+.ds-scope-tbl:has(input:checked) { color: var(--text-1); }
+

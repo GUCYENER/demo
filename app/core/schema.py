@@ -794,12 +794,35 @@ CREATE TABLE IF NOT EXISTS data_source_permissions (
     subject_id INTEGER NOT NULL,
     can_view BOOLEAN DEFAULT TRUE,
     can_execute BOOLEAN DEFAULT FALSE,
+    -- scope_mode (v3.38.0): 'all' = kaynaktaki TÜM tablolar (geriye uyumlu varsayılan),
+    -- 'restricted' = yalnız data_source_table_permissions allowlist'indeki tablolar.
+    -- restricted + 0 tablo = hiçbir tablo okunamaz.
+    scope_mode VARCHAR(16) NOT NULL DEFAULT 'all' CHECK (scope_mode IN ('all','restricted')),
     granted_at TIMESTAMP DEFAULT NOW(),
     granted_by INTEGER REFERENCES users(id),
     UNIQUE(source_id, subject_type, subject_id)
 );
 CREATE INDEX IF NOT EXISTS idx_ds_perm_source ON data_source_permissions(source_id);
 CREATE INDEX IF NOT EXISTS idx_ds_perm_subject ON data_source_permissions(subject_type, subject_id);
+
+-- Tablo Bazlı Yetki Allowlist (v3.38.0)
+-- data_source_permissions.scope_mode='restricted' olan subject için erişilebilir
+-- (schema, tablo) çiftleri. Yoksa subject hiçbir tabloyu okuyamaz.
+-- Bir kullanıcının nihai erişimi = direkt + org grant'larının BİRLEŞİMİ;
+-- herhangi bir grant scope_mode='all' ise TÜM tablolar erişilebilir.
+CREATE TABLE IF NOT EXISTS data_source_table_permissions (
+    id SERIAL PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES data_sources(id) ON DELETE CASCADE,
+    subject_type VARCHAR(10) NOT NULL CHECK (subject_type IN ('user','org')),
+    subject_id INTEGER NOT NULL,
+    schema_name VARCHAR(255) NOT NULL,
+    table_name VARCHAR(255) NOT NULL,
+    granted_at TIMESTAMP DEFAULT NOW(),
+    granted_by INTEGER REFERENCES users(id),
+    UNIQUE(source_id, subject_type, subject_id, schema_name, table_name)
+);
+CREATE INDEX IF NOT EXISTS idx_ds_table_perm_subject ON data_source_table_permissions(source_id, subject_type, subject_id);
+CREATE INDEX IF NOT EXISTS idx_ds_table_perm_lookup ON data_source_table_permissions(source_id, schema_name, table_name);
 
 -- =====================================================
 -- Sistem Özelliği Yetkilendirme (v3.18.0)

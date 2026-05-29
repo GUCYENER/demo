@@ -75,6 +75,9 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.38.0 (2026-05-29) - Tablo Bazlı Yetkilendirme (DB + Schema + Tablo) (HEPHAESTUS + ARES + HERMES + ORACLE + ATHENA + HEBE + TYCHE)
+> Kaynak yetkilendirmesi DB seviyesinden **DB + schema + tablo** seviyesine indirildi (`gelistirme1.docx`). Subject başına `scope_mode` (`all`/`restricted`) + `data_source_table_permissions` allowlist (mig 048). Yalnız schema seçilip tablo seçilmezse hiçbir tablo okunamaz; nihai erişim direkt+org grant birleşimi. **Veritabanında Ara + Akıllı Keşif + text-to-sql LLM bağlamı + SQL execute whitelist** uçtan uca tablo kapsamıyla süzülür — yetkisiz tablo görülemez/tahmin edilemez. Yetkilendirme modalına schema akordion + tablo seçimi eklendi. code-review medium: deep_think/generate_report execute whitelist scope-kesişimi (boş→reddet). 40 test (20 yeni + regresyon) yeşil. ⚠️ mig 048 deploy'da `run_migrations.py` ile uygulanmalı.
+
 ### 🆕 v3.37.9 (2026-05-29) - Bulgular4 Akıllı Veri Keşfi 5 fix (ATHENA + HEBE + HEPHAESTUS + HERMES + ARES + METIS + POSEIDON)
 > Kullanıcı `bulgular4.docx` ile sihirbazda 5 sorun raporladı; her biri **kodu okuyarak** doğrulandı (varsayım yok).
 

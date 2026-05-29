@@ -2124,6 +2124,52 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             except Exception as gs_err:
                 log_warning(f"DB-Only Golden SQL hatası: {gs_err}", "deep_think")
 
+            # v3.38.0: tablo seviyesi yetki bağlamı — ML schema_record + LLM şema
+            # context'i bu user_ctx ile süzülür (yetkisiz tablo LLM'e sızmaz).
+            _db_user_ctx: Dict[str, Any] = {"id": user_id, "company_id": company_id}
+            try:
+                # get_db_context: hata/normal her durumda bağlantıyı kapatır (leak yok).
+                from app.core.db import get_db_context as _get_db_ctx
+                with _get_db_ctx() as _ac:
+                    _acur = _ac.cursor()
+                    _acur.execute(
+                        """
+                        SELECT r.name AS role
+                        FROM users u
+                        LEFT JOIN roles r ON u.role_id = r.id
+                        WHERE u.id = %s
+                        """,
+                        (user_id,),
+                    )
+                    _rrow = _acur.fetchone()
+                _role = (_rrow.get("role") if isinstance(_rrow, dict) else (_rrow[0] if _rrow else None))
+                _db_user_ctx["is_admin"] = (_role == "admin")
+            except Exception:
+                # Fail-closed: rol çözülemezse admin DEĞİL kabul → kapsam filtresi uygulanır.
+                _db_user_ctx["is_admin"] = False
+
+            # Kullanıcının (admin değilse) bu kaynaktaki can_view tablo kapsamı —
+            # ML matched tablolarını + matched table adlarını süzmek için.
+            _scope_for_ml = None
+            if not _db_user_ctx["is_admin"] and source_id:
+                try:
+                    from app.services.db_smart.table_scope import resolve_scope as _resolve_scope
+                    _scope_for_ml = _resolve_scope(source_id, _db_user_ctx)
+                except Exception as _sc_err:
+                    log_warning(f"DB-Only: ML scope çözülemedi: {_sc_err}", "deep_think")
+                    _scope_for_ml = None
+
+            def _ml_table_allowed(full_table: str) -> bool:
+                """'schema.table' veya 'table' → scope.allows. scope yoksa True."""
+                if _scope_for_ml is None or _scope_for_ml.all_tables:
+                    return True
+                ft = (full_table or "").strip()
+                if "." in ft:
+                    sch, tbl = ft.split(".", 1)
+                else:
+                    sch, tbl = "", ft
+                return _scope_for_ml.allows(sch, tbl)
+
             # ── 2. ML öğrenilmiş şema bilgisini getir (schema_record) ──────
             ml_context = ""
             ml_matched_tables = []
@@ -2137,6 +2183,9 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                         content = r.get("content", "")
                         meta = r.get("metadata") or {}
                         full_table = meta.get("full_table") or meta.get("table_name", "")
+                        # v3.38.0: yetkisiz tablo schema_record'unu LLM context'ine ALMA.
+                        if full_table and not _ml_table_allowed(full_table):
+                            continue
                         if full_table:
                             ml_matched_tables.append(full_table)
                         # schema_record içeriği zaten yapılandırılmış şema metni
@@ -2160,6 +2209,9 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             # ── 3. Schema context'i al ────────────────────────────────────
             from app.services.text_to_sql import get_schema_context
 
+            # v3.38.0: _db_user_ctx yukarıda (ML bloğu öncesi) kuruldu; aşağıdaki
+            # get_schema_context çağrılarına user_ctx olarak verilir.
+
             # v3.14.0: Entity Resolution — ML'den önce deterministik eşleştirme
             entity_matched_tables = []
             try:
@@ -2167,7 +2219,7 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 # Hızlı entity resolution için enriched tabloları çek
                 for s in sources:
                     try:
-                        er_ctx = _get_ctx(s["id"], enriched_only=True)
+                        er_ctx = _get_ctx(s["id"], enriched_only=True, user_ctx=_db_user_ctx)
                         if er_ctx and er_ctx.get("tables"):
                             entity_matched_tables = resolve_entities(query, er_ctx["tables"])
                             if entity_matched_tables:
@@ -2239,7 +2291,7 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             source = None
             for s in sources:
                 try:
-                    ctx = get_schema_context(s["id"], enriched_only=use_enriched_only)
+                    ctx = get_schema_context(s["id"], enriched_only=use_enriched_only, user_ctx=_db_user_ctx)
                     if ctx and ctx.get("tables"):
                         schema_ctx = ctx
                         source = s
@@ -2252,7 +2304,7 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 log_warning("DB-Only: Enriched tablo bulunamadı, tüm tablolarla deneniyor", "deep_think")
                 for s in sources:
                     try:
-                        ctx = get_schema_context(s["id"], enriched_only=False)
+                        ctx = get_schema_context(s["id"], enriched_only=False, user_ctx=_db_user_ctx)
                         if ctx and ctx.get("tables"):
                             schema_ctx = ctx
                             source = s
@@ -2420,8 +2472,34 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             executor = SafeSQLExecutor()
             allowed_tables = executor.get_allowed_tables(source["id"])
 
+            # v3.38.0 (code-review fix): SQL ÇALIŞTIRMA whitelist'i kullanıcının
+            # can_execute tablo kapsamıyla KESİŞTİRİLİR. Aksi halde restricted bir
+            # kullanıcı, prompt'ta yetkisiz tabloyu adıyla çağırıp (LLM context'i
+            # süzülmüş olsa da) cache/golden/LLM SQL ile çalıştırabilirdi. source["id"]
+            # seçilen kaynak (allowed_tables'ın kaynağı) ile birebir aynıdır.
+            _scope_blocked = False
+            try:
+                from app.services.db_smart.table_scope import resolve_scope as _resolve_scope_exec
+                _exec_scope = _resolve_scope_exec(source["id"], _db_user_ctx, permission="can_execute")
+                if not _exec_scope.all_tables:
+                    allowed_tables = [t for t in allowed_tables if _exec_scope.allows_table_name(t)]
+                    # KRİTİK: boş liste executor'da "kontrol atla = hepsine izin"
+                    # demektir; restricted + 0 çalıştırılabilir tablo → execute REDDET.
+                    if not allowed_tables:
+                        _scope_blocked = True
+            except Exception as _exec_sc_err:
+                # Fail-closed: kapsam çözülemezse çalıştırmayı reddet.
+                log_warning(f"DB-Only: exec scope çözülemedi, çalıştırma engellendi: {_exec_sc_err}", "deep_think")
+                _scope_blocked = True
+
             # v3.10.0: Cache'den SQL kullan (LLM çağrısını atla)
-            if cached and cached.get("sql") and not confirm_mode:
+            if _scope_blocked:
+                sql_result = {
+                    "success": False,
+                    "sql": None,
+                    "error": "Bu kaynakta çalıştırma yetkiniz olan tablo bulunmuyor.",
+                }
+            elif cached and cached.get("sql") and not confirm_mode:
                 sql_result = {
                     "success": True,
                     "sql": cached["sql"],
