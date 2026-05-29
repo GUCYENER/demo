@@ -27468,6 +27468,7 @@ window.DataSourcesModule = (function () {
                         <div class="ds-perm-search">
                             <i class="fa-solid fa-search"></i>
                             <input type="text" id="dsPermSearch" placeholder="Ara..." aria-label="Kullanıcı veya org ara">
+                            <button type="button" id="dsPermSearchClear" class="ds-search-clear" aria-label="Aramayı temizle" data-tooltip="Temizle" hidden><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
                         </div>
                         <div class="ds-perm-list" id="dsPermList">
                             <div class="ds-perm-loading">
@@ -27517,10 +27518,25 @@ window.DataSourcesModule = (function () {
                 _renderPermissionList();
             });
         });
-        document.getElementById('dsPermSearch').addEventListener('input', (e) => {
+        const _permSearchInput = document.getElementById('dsPermSearch');
+        const _permSearchClear = document.getElementById('dsPermSearchClear');
+        const _syncPermClear = () => {
+            if (_permSearchClear) _permSearchClear.hidden = !(_permSearchInput && _permSearchInput.value);
+        };
+        _permSearchInput.addEventListener('input', (e) => {
             permState.searchText = e.target.value.toLowerCase();
+            _syncPermClear();
             _renderPermissionList();
         });
+        if (_permSearchClear) {
+            _permSearchClear.addEventListener('click', () => {
+                _permSearchInput.value = '';
+                permState.searchText = '';
+                _syncPermClear();
+                _renderPermissionList();
+                _permSearchInput.focus();
+            });
+        }
 
         // Veri yükle (subjects + current permissions paralel)
         try {
@@ -27774,12 +27790,17 @@ window.DataSourcesModule = (function () {
             `);
         });
 
+        const _scopeQ = permState.scopeSearch[sk] || '';
         const searchBox = `
             <div class="ds-scope-search">
                 <i class="fa-solid fa-search" aria-hidden="true"></i>
                 <input type="text" class="ds-scope-search-input" data-sk="${sk}"
-                    value="${_escapeHtml(permState.scopeSearch[sk] || '')}"
+                    value="${_escapeHtml(_scopeQ)}"
                     placeholder="Tablo ara..." aria-label="Tablo ara">
+                <button type="button" class="ds-search-clear ds-scope-search-clear" data-sk="${sk}"
+                    aria-label="Aramayı temizle" data-tooltip="Temizle" ${_scopeQ ? '' : 'hidden'}>
+                    <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                </button>
             </div>
         `;
 
@@ -27794,6 +27815,24 @@ window.DataSourcesModule = (function () {
                 <div class="ds-scope-tree">${body}</div>
             </div>
         `;
+    }
+
+    // Tek-tablo toggle sonrası şema sayaç rozetlerini (n/total) re-render'sız güncelle.
+    function _updateScopeCounts(container, sk) {
+        const cur = permState.scopeBySubject[sk];
+        const sel = (cur && cur.tables instanceof Set) ? cur.tables : new Set();
+        const tree = permState.schemaTree || { schemas: [] };
+        (tree.schemas || []).forEach(schObj => {
+            const schema = schObj.schema || '';
+            const accKey = sk + '|' + schema;
+            const all = Array.isArray(schObj.tables) ? schObj.tables : [];
+            container.querySelectorAll('.ds-scope-acc').forEach(acc => {
+                if (acc.getAttribute('data-acc') !== accKey) return;
+                const n = all.filter(t => sel.has(_tblKey(schema, t))).length;
+                const badge = acc.querySelector('.ds-scope-acc-count');
+                if (badge) badge.textContent = `${n}/${all.length}`;
+            });
+        });
     }
 
     function _bindScopeEvents(container, subjType) {
@@ -27828,19 +27867,22 @@ window.DataSourcesModule = (function () {
             });
         });
 
-        // tablo checkbox
+        // tablo checkbox — IN-PLACE güncelleme (re-render YOK).
+        // Önceki full re-render, native checkbox toggle'ı ile çakışıp işaretin
+        // görünmemesine yol açabiliyordu; burada sadece state + sayaç güncellenir,
+        // checkbox'ın native checked durumu olduğu gibi kalır.
         container.querySelectorAll('.ds-scope-tbl-chk').forEach(cb => {
             cb.addEventListener('change', (e) => {
                 const sk = e.target.dataset.sk;
                 const key = e.target.dataset.key;
                 if (!sk || !key) return;
                 const cur = permState.scopeBySubject[sk] || { mode: 'restricted', tables: new Set() };
-                if (!(cur.tables instanceof Set)) cur.tables = new Set();
+                if (!(cur.tables instanceof Set)) cur.tables = new Set(Array.isArray(cur.tables) ? cur.tables : []);
                 if (e.target.checked) cur.tables.add(key);
                 else cur.tables.delete(key);
                 cur.mode = 'restricted';
                 permState.scopeBySubject[sk] = cur;
-                _renderPermissionList();
+                _updateScopeCounts(container, sk);
             });
         });
 
@@ -27865,6 +27907,18 @@ window.DataSourcesModule = (function () {
                 cur.mode = 'restricted';
                 permState.scopeBySubject[sk] = cur;
                 _renderPermissionList();
+            });
+        });
+
+        // scope arama temizle (X)
+        container.querySelectorAll('.ds-scope-search-clear').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const sk = btn.dataset.sk;
+                if (!sk) return;
+                delete permState.scopeSearch[sk];
+                _renderPermissionList();
+                const again = container.querySelector(`.ds-scope-search-input[data-sk="${sk}"]`);
+                if (again) again.focus();
             });
         });
 
