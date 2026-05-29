@@ -426,7 +426,20 @@ def update_source_permissions(
                 continue  # view yetkisi olmayan subject'a tablo allowlist'i anlamsız
             seen = set()
             for t in scope.tables:
-                key = ((t.schema_name or "").strip(), (t.table or "").strip())
+                # v3.38.2 savunma: NUL (0x00) / U+FFFD asla DB'ye girmemeli.
+                # PostgreSQL metin alanında NUL'ı reddeder → 500. Ayrıca bozuk
+                # frontend, şema+tabloyu tek string'e ayraçla yapıştırıp boş schema
+                # gönderebilir ('schema<NUL>table'); bu durumda ayraçtan böl.
+                raw_schema = t.schema_name or ""
+                raw_table = t.table or ""
+                if not raw_schema.strip():
+                    for _sep in ("\x00", "�", "\u001f"):
+                        if _sep in raw_table:
+                            raw_schema, _, raw_table = raw_table.partition(_sep)
+                            break
+                sch = raw_schema.replace("\x00", "").replace("�", "").strip()
+                tbl = raw_table.replace("\x00", "").replace("�", "").strip()
+                key = (sch, tbl)
                 if not key[1] or key in seen:
                     continue
                 seen.add(key)

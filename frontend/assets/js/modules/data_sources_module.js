@@ -719,19 +719,24 @@ window.DataSourcesModule = (function () {
         execOrgIds: new Set(),
         searchText: '',
         // v3.38.0: per-subject tablo kapsamı. Anahtar: 'user:5' | 'org:3'
-        //   { mode:'all'|'restricted', tables:Set<'schema table'> }
+        //   { mode:'all'|'restricted', tables:Set<'schema table'> }
         scopeBySubject: {},
         // schema-tree cache (modal açılışında bir kez çekilir)
         schemaTree: null,            // { discovered:bool, schemas:[{schema, tables:[]}] }
         schemaTreeLoaded: false,
-        // açık kapsam panelleri (subjectKey) + açık akordion (subjectKey schema)
+        // açık kapsam panelleri (subjectKey) + açık akordion (subjectKey schema)
         scopeOpen: new Set(),
         accordionOpen: new Set(),
         scopeSearch: {},             // subjectKey -> arama metni
     };
 
-    // table key helper — schema + table'ı ayraçla birleştir (XSS/çakışma güvenli)
-    function _tblKey(schema, table) { return (schema || '') + ' ' + (table || ''); }
+    // table key helper — schema + table'ı ayraçla birleştir.
+    // v3.38.2: ayraç = U+001F (unit separator). Boşluk/nokta gibi karakterler DB
+    // tanımlayıcılarında (tırnaklı identifier) geçebilir → ÇAKIŞIR; U+001F gerçek
+    // tanımlayıcılarda bulunmaz. join (_tblKey) ve split AYNI sabiti kullanır →
+    // ayraç sapması imkânsız. (Önceki NUL 0x00 ayracı PG'ye gidince 500 veriyordu.)
+    const _TBL_SEP = '\u001f';
+    function _tblKey(schema, table) { return (schema || '') + _TBL_SEP + (table || ''); }
     function _subjectKey(type, id) { return type + ':' + id; }
 
     async function openPermissionModal(sourceId, sourceName) {
@@ -1273,10 +1278,10 @@ window.DataSourcesModule = (function () {
                         return;
                     }
                     const tables = Array.from(sc.tables instanceof Set ? sc.tables : []).map(k => {
-                        // _tblKey: 'schema table' (ilk boşluk ayraç). schema boş olabilir.
-                        const sp = k.indexOf(' ');
+                        // _tblKey: schema + _TBL_SEP + table. schema boş olabilir.
+                        const sp = k.indexOf(_TBL_SEP);
                         const schema = sp >= 0 ? k.slice(0, sp) : '';
-                        const table = sp >= 0 ? k.slice(sp + 1) : k;
+                        const table = sp >= 0 ? k.slice(sp + _TBL_SEP.length) : k;
                         return { schema, table };
                     });
                     scopes.push({ subject_type: subjType, subject_id: id, scope_mode: 'restricted', tables });
