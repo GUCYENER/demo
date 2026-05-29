@@ -2,7 +2,7 @@
 plan_id: fix_bulgular4_smart_discovery
 created: 2026-05-29
 branch: hira
-status: in_progress
+status: completed
 version_target: v3.37.9
 council_mod: 3
 hebe_gate_required: true
