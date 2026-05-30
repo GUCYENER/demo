@@ -1177,26 +1177,28 @@ async def list_errors(
 
 @router.get("/errors/stats")
 async def error_stats(
-    since_hours: int = Query(24, ge=1, le=720),
+    since_hours: Optional[int] = Query(None, ge=1, le=720, description="boş = tüm zamanlar"),
     current_user: dict = Depends(get_current_user),
 ):
-    """Hata özeti: seviyeye göre sayım + en çok hatalı path'ler. Admin-only."""
+    """Hata özeti: seviyeye göre sayım + en çok hatalı path'ler. Admin-only.
+    since_hours boş ise tüm zamanlar (liste sekmesiyle tutarlı pencere)."""
     if not current_user.get("is_admin"):
         raise HTTPException(status_code=403, detail="Bu işlem için admin yetkisi gerekli")
+    # v3.38.3: liste ile aynı zaman penceresi — since_hours boşsa filtre yok (tüm zamanlar)
+    time_filter = " AND created_at >= NOW() - (%s * INTERVAL '1 hour')" if since_hours else ""
+    tp = [since_hours] if since_hours else []
     conn = get_db_conn()
     try:
         cur = conn.cursor()
         cur.execute(
-            """SELECT level, COUNT(*) AS cnt FROM system_logs
-               WHERE level IN ('ERROR','CRITICAL','WARNING')
-                 AND created_at >= NOW() - (%s * INTERVAL '1 hour')
-               GROUP BY level""", (since_hours,))
+            f"""SELECT level, COUNT(*) AS cnt FROM system_logs
+                WHERE level IN ('ERROR','CRITICAL','WARNING'){time_filter}
+                GROUP BY level""", tp)
         by_level = {r["level"]: r["cnt"] for r in cur.fetchall()}
         cur.execute(
-            """SELECT request_path, COUNT(*) AS cnt FROM system_logs
-               WHERE level IN ('ERROR','CRITICAL') AND request_path IS NOT NULL
-                 AND created_at >= NOW() - (%s * INTERVAL '1 hour')
-               GROUP BY request_path ORDER BY cnt DESC LIMIT 10""", (since_hours,))
+            f"""SELECT request_path, COUNT(*) AS cnt FROM system_logs
+                WHERE level IN ('ERROR','CRITICAL') AND request_path IS NOT NULL{time_filter}
+                GROUP BY request_path ORDER BY cnt DESC LIMIT 10""", tp)
         top_paths = [{"path": r["request_path"], "count": r["cnt"]} for r in cur.fetchall()]
     finally:
         conn.close()

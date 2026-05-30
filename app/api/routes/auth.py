@@ -169,6 +169,7 @@ def decode_token(token: str) -> TokenPayload:
 #  Dependencies
 # ---------------------------------------------------------
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> Dict[str, Any]:
     """JWT token'dan kullanıcıyı doğrular ve döndürür."""
@@ -186,6 +187,13 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Geçersiz token türü",
         )
+
+    # v3.38.3: hata loglarında kullanıcı korelasyonu — global_exception_handler
+    # request.state.user_id'yi okur (errors.jsonl + system_logs.user_id dolar).
+    try:
+        request.state.user_id = int(payload.sub)
+    except Exception:
+        pass
 
     with get_db_context() as conn:
         cur = conn.cursor()

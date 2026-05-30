@@ -133,6 +133,7 @@ def log_system_event(
     response_status: Optional[int] = None,
     error_detail: Optional[str] = None,
     request_id: Optional[str] = None,
+    exc_type: Optional[str] = None,
     exc_info=None,
 ) -> None:
     """
@@ -160,6 +161,7 @@ def log_system_event(
             "request_method": request_method,
             "response_status": response_status,
             "request_id": request_id,
+            "exc_type": exc_type,
         }
         # exc_info verilmişse JSONFormatter "traceback" alanını üretir + errors.jsonl'e düşer
         file_log.log(py_level, message, extra=extra, exc_info=exc_info)
@@ -331,5 +333,6 @@ def log_exception(
         response_status=response_status,
         error_detail=tb,
         request_id=request_id,
+        exc_type=exc_type,
         exc_info=(type(exc), exc, exc.__traceback__),
     )

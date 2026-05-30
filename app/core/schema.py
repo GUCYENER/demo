@@ -163,6 +163,7 @@ CREATE TABLE IF NOT EXISTS system_logs (
     request_method VARCHAR(10),
     response_status INTEGER,
     error_detail TEXT,
+    request_id VARCHAR(32),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -281,6 +282,8 @@ CREATE INDEX IF NOT EXISTS idx_system_logs_level ON system_logs(level);
 CREATE INDEX IF NOT EXISTS idx_system_logs_created_at ON system_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_system_logs_user_id ON system_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_system_logs_module ON system_logs(module);
+CREATE INDEX IF NOT EXISTS idx_system_logs_level_created ON system_logs(level, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_system_logs_request_id ON system_logs(request_id) WHERE request_id IS NOT NULL;
 
 -- Prompt Templates indexes
 CREATE INDEX IF NOT EXISTS idx_prompt_templates_is_active ON prompt_templates(is_active);

@@ -8,7 +8,10 @@ window.ErrorMonitorModule = (function () {
     'use strict';
 
     const ENDPOINT = '/system/errors';
-    const state = { level: '', since: '24', q: '', expanded: new Set() };
+    const PAGE = 100;
+    const state = { level: '', since: '24', q: '', expanded: new Set(), items: [], total: 0 };
+    let _seq = 0;        // race guard — eski yanıtları yok say
+    let _searchTimer = null;
 
     function _esc(s) {
         if (s == null) return '';
@@ -32,12 +35,16 @@ window.ErrorMonitorModule = (function () {
         return 'em-lvl-error';
     }
 
+    function _sinceParam() {
+        // liste ve stats AYNI pencereyi kullanır (boş = tüm zamanlar)
+        return state.since ? `&since_hours=${encodeURIComponent(state.since)}` : '';
+    }
+
     async function _loadStats() {
         const wrap = document.getElementById('errorMonitorStats');
         if (!wrap) return;
         try {
-            const since = state.since || 720;
-            const res = await window.vyraFetch(`/system/errors/stats?since_hours=${encodeURIComponent(since)}`);
+            const res = await window.vyraFetch(`/system/errors/stats?_=1${_sinceParam()}`);
             const bl = (res && res.by_level) || {};
             const crit = bl.CRITICAL || 0, err = bl.ERROR || 0, warn = bl.WARNING || 0;
             const top = (res && res.top_paths) || [];
@@ -55,7 +62,7 @@ window.ErrorMonitorModule = (function () {
         }
     }
 
-    function _renderRow(it) {
+    function _rowHtml(it) {
         const id = it.id;
         const open = state.expanded.has(id);
         const lvlCls = _lvlClass(it.level);
@@ -79,39 +86,83 @@ window.ErrorMonitorModule = (function () {
                 </div>
                 <pre class="em-traceback">${_esc(it.traceback || '(traceback kaydı yok)')}</pre>
             </div>` : '';
-        return `<div class="em-row ${open ? 'is-open' : ''}">${head}${body}</div>`;
+        return `<div class="em-row ${open ? 'is-open' : ''}" data-rowid="${id}">${head}${body}</div>`;
     }
 
-    async function _load() {
+    function _renderAll() {
         const list = document.getElementById('errorMonitorList');
         if (!list) return;
-        list.innerHTML = '<div class="em-empty">Yükleniyor…</div>';
+        if (!state.items.length) {
+            list.innerHTML = '<div class="em-empty"><i class="fa-solid fa-circle-check"></i> Bu filtrede hata kaydı yok.</div>';
+            return;
+        }
+        const shown = state.items.length;
+        const more = state.total > shown
+            ? `<button id="errMonMore" class="btn-secondary em-more" type="button">Daha fazla yükle (${shown}/${state.total})</button>`
+            : '';
+        list.innerHTML = `<div class="em-count">${state.total} kayıt${state.total > shown ? ` · ${shown} gösteriliyor` : ''}</div>`
+            + state.items.map(_rowHtml).join('')
+            + (more ? `<div class="em-more-wrap">${more}</div>` : '');
+        const moreBtn = document.getElementById('errMonMore');
+        if (moreBtn) moreBtn.addEventListener('click', () => _load(true));
+    }
+
+    async function _load(append) {
+        const list = document.getElementById('errorMonitorList');
+        if (!list) return;
+        const mySeq = ++_seq;            // race guard
+        const offset = append ? state.items.length : 0;
+        if (!append) list.innerHTML = '<div class="em-empty">Yükleniyor…</div>';
         const params = new URLSearchParams();
         if (state.level) params.set('level', state.level);
         if (state.since) params.set('since_hours', state.since);
         if (state.q) params.set('q', state.q);
-        params.set('limit', '100');
+        params.set('limit', String(PAGE));
+        params.set('offset', String(offset));
         try {
             const res = await window.vyraFetch(`${ENDPOINT}?${params.toString()}`);
+            if (mySeq !== _seq) return;   // daha yeni bir istek başladı → bu yanıtı yok say
             const items = (res && res.items) || [];
-            const present = new Set(items.map(i => i.id));
+            state.total = (res && res.total) || items.length;
+            state.items = append ? state.items.concat(items) : items;
+            // sadece mevcut id'ler için expanded tut
+            const present = new Set(state.items.map(i => i.id));
             Array.from(state.expanded).forEach(id => { if (!present.has(id)) state.expanded.delete(id); });
-            if (!items.length) {
-                list.innerHTML = '<div class="em-empty"><i class="fa-solid fa-circle-check"></i> Bu filtrede hata kaydı yok.</div>';
-            } else {
-                const more = res.total > items.length ? ` (son ${items.length} gösteriliyor)` : '';
-                list.innerHTML = `<div class="em-count">${res.total} kayıt${more}</div>` + items.map(_renderRow).join('');
-            }
-            _loadStats();
+            _renderAll();
+            if (!append) _loadStats();
         } catch (e) {
+            if (mySeq !== _seq) return;
             list.innerHTML = `<div class="em-empty em-error">Hatalar yüklenemedi: ${_esc((e && e.message) || 'bilinmeyen hata')}</div>`;
         }
     }
 
     function _toggle(idStr) {
+        // IN-PLACE: yeniden fetch YOK, scroll kaybı YOK — sadece o satırı güncelle
         const id = parseInt(idStr, 10);
         if (state.expanded.has(id)) state.expanded.delete(id); else state.expanded.add(id);
-        _load();
+        const it = state.items.find(x => x.id === id);
+        const node = document.querySelector(`.em-row[data-rowid="${id}"]`);
+        if (it && node) node.outerHTML = _rowHtml(it);
+    }
+
+    function _copyRid(id) {
+        const it = state.items.find(x => x.id === parseInt(id, 10));
+        const text = it && it.request_id;
+        const ok = () => { if (typeof window.showToast === 'function') window.showToast('request_id kopyalandı', 'success'); };
+        const fail = () => { if (typeof window.showToast === 'function') window.showToast('Kopyalanamadı — metni elle seçin', 'warning'); };
+        if (!text) { if (typeof window.showToast === 'function') window.showToast('Bu kayıtta request_id yok', 'warning'); return; }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(ok).catch(fail);
+        } else {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+                document.body.appendChild(ta); ta.select();
+                const done = document.execCommand && document.execCommand('copy');
+                document.body.removeChild(ta);
+                done ? ok() : fail();
+            } catch (e) { fail(); }
+        }
     }
 
     function _bind() {
@@ -120,14 +171,7 @@ window.ErrorMonitorModule = (function () {
             list._emBound = true;
             list.addEventListener('click', (e) => {
                 const copyBtn = e.target.closest('[data-emcopy]');
-                if (copyBtn) {
-                    e.stopPropagation();
-                    const row = copyBtn.closest('.em-row');
-                    const rid = row && row.querySelector('.em-rid');
-                    if (rid && navigator.clipboard) navigator.clipboard.writeText(rid.textContent || '');
-                    if (typeof window.showToast === 'function') window.showToast('request_id kopyalandı', 'success');
-                    return;
-                }
+                if (copyBtn) { e.stopPropagation(); _copyRid(copyBtn.dataset.emcopy); return; }
                 const head = e.target.closest('.em-row-head');
                 if (head && head.dataset.emid) _toggle(head.dataset.emid);
             });
@@ -143,30 +187,29 @@ window.ErrorMonitorModule = (function () {
             const el = document.getElementById(elId);
             if (el && !el._emBound) { el._emBound = true; el.addEventListener(evt, fn); }
         };
-        bindOnce('errMonRefresh', 'click', _load);
-        bindOnce('errMonLevel', 'change', () => { state.level = document.getElementById('errMonLevel').value; _load(); });
-        bindOnce('errMonSince', 'change', () => { state.since = document.getElementById('errMonSince').value; _load(); });
+        bindOnce('errMonRefresh', 'click', () => _load(false));
+        bindOnce('errMonLevel', 'change', () => { state.level = document.getElementById('errMonLevel').value; _load(false); });
+        bindOnce('errMonSince', 'change', () => { state.since = document.getElementById('errMonSince').value; _load(false); });
         const search = document.getElementById('errMonSearch');
         if (search && !search._emBound) {
             search._emBound = true;
-            let t = null;
             search.addEventListener('input', () => {
                 state.q = search.value.trim();
-                clearTimeout(t);
-                t = setTimeout(_load, 350);
+                clearTimeout(_searchTimer);
+                _searchTimer = setTimeout(() => _load(false), 350);
             });
         }
         bindOnce('errMonSearchClear', 'click', () => {
             const s = document.getElementById('errMonSearch');
             if (s) s.value = '';
             state.q = '';
-            _load();
+            _load(false);
         });
     }
 
     function load() {
         _bind();
-        _load();
+        _load(false);
     }
 
     return { load };
