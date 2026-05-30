@@ -1456,7 +1456,25 @@ def post_mark_run(
 ) -> Dict[str, Any]:
     """run_count++ + last_run_at=NOW() + (v3.38.7) opsiyonel last_run_snapshot."""
     _require_user_id(current_user)
+    # v3.38.8 (code-review): server-side snapshot cap — client slice(0,100) bir
+    # guard değil; sınırsız JSONB yazımı authenticated storage-amplification/DoS.
     _snapshot = body.snapshot if body else None
+    if isinstance(_snapshot, dict):
+        _rows = _snapshot.get("rows")
+        if isinstance(_rows, list) and len(_rows) > 100:
+            _snapshot = {**_snapshot, "rows": _rows[:100], "truncated": True}
+        try:
+            if len(json.dumps(_snapshot, default=str)) > 600_000:  # ~600KB tavan
+                _snapshot = {
+                    "columns": _snapshot.get("columns"),
+                    "rows": (_snapshot.get("rows") or [])[:50],
+                    "row_count": _snapshot.get("row_count"),
+                    "truncated": True,
+                }
+        except Exception:
+            _snapshot = None
+    elif _snapshot is not None:
+        _snapshot = None  # dict değilse sessizce yok say
     with get_db_context() as conn:
         cur = conn.cursor()
         apply_vyra_user_context(cur, current_user)

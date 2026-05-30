@@ -451,3 +451,20 @@ Option 1 is cleaner long-term; option 2 is lower risk for the existing 28 module
 - Credential rotation policy if any source_password was ever exposed in logs / responses.
 
 
+
+## RB-v3.38.8 — Sistemik `dict(zip(cols, row))` / RealDictCursor bug sınıfı (code-review)
+
+**Tespit:** v3.38.4 `_load_source` 500'ünün kökü: `get_db_context`/`get_db_conn` RealDictCursor
+kullanır → `row` DICT; `dict(zip(cols, row))` dict'i yinelerken ANAHTAR verir → değerler kolon
+adına eşitlenir (host='host'). Tek call-site (_load_source) düzeltildi ama AYNI desen başka
+yerlerde de LATENT (RealDictCursor altında sessiz bozulma):
+- `app/services/db_smart/schedule_runner.py:61` — zamanlanmış rapor runner (OTOMATİK koşar!)
+- `app/api/routes/query_builder_api.py:215`
+- `app/api/routes/query_state_api.py:237`
+- `app/services/ds_enrichment_service.py:758, 788, 927`
+(Güvenli sayılan: `dict(row) if hasattr(row,'keys') else ...` — data_sources_api.py:1736.)
+
+**Önerilen fix:** her bare `dict(zip(cols, row))` → `dict(row) if isinstance(row, dict) else
+dict(zip(cols, row))` (mekanik güvenli, iki cursor tipini de ele alır). Daha iyi altitude:
+paylaşılan `row_to_dict(cur, row)` helper. Her site ayrı test ister.
+**Öncelik:** schedule_runner (otomatik koşar → sessiz korupsiyon) ilk.

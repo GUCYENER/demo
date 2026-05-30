@@ -917,8 +917,11 @@ Fortify           : type(e).__name__ kullanıcıya sızmamalı
 Migration        : Yeni kolon/tablo → schema.py'ye ekle + IF NOT EXISTS
 FK Sırası        : DELETE'te önce child, INSERT'te önce parent
 Oracle Uyumluluk : all_tables/all_tab_columns toplu sorgu (tek tek yasak)
-PG Cursor        : dict dönüşümü zorunlu → dict(zip(cols, row)) pattern
-                   hasattr(r, 'keys') GÜVENİLMEZ — psycopg2 default tuple döner
+PG Cursor        : get_db_context/get_db_conn RealDictCursor kullanır → row DICT döner!
+                   `dict(zip(cols, row))` dict'i yinelerken ANAHTARLARINI verir → tüm
+                   değerler kolon ADINA eşitlenir (host='host' vs) — v3.38.4 _load_source
+                   "kaynak bozuk" 500'ünün KÖK nedeni buydu. DOĞRU desen:
+                   `dict(row) if isinstance(row, dict) else dict(zip(cols, row))`
 Commit           : INSERT/UPDATE sonrası conn.commit() unutma
 Connection Close : try/finally ile conn.close()
 Index            : Sık sorgulanan FK/filter kolonlarına index

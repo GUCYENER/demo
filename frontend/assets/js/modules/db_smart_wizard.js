@@ -3630,7 +3630,7 @@
         const strs = [];
         s = s.replace(/'(?:[^']|'')*'|"(?:[^"]|"")*"/g, function (m) {
             strs.push(m);
-            return 'STR' + (strs.length - 1) + '';
+            return '__VYRA_STR_' + (strs.length - 1) + '__';
         });
 
         // 2) Whitespace normalize.
@@ -3664,7 +3664,7 @@
                 const m = rest.match(kwRe);
                 if (m) {
                     if (buf.trim()) parts.push(buf.trim());
-                    parts.push('KW' + m[0].toUpperCase().replace(/\s+/g, ' '));
+                    parts.push({ kw: m[0].toUpperCase().replace(/\s+/g, ' ') });
                     buf = '';
                     i += m[0].length - 1;
                     continue;
@@ -3692,8 +3692,12 @@
         const MULTI_LINE_KW = { SELECT: 1, 'GROUP BY': 1, 'ORDER BY': 1, WITH: 1 };
 
         parts.forEach(function (p) {
-            if (p.startsWith('KW')) {
-                const kw = p.slice(2);
+            // v3.38.8 (code-review): keyword marker'ı OBJECT ({kw}) — content daima
+            // string, marker daima object → çakışma imkânsız. Eskiden düz 'KW' prefix'ti
+            // → 'KWH_total' gibi alias marker sanılıp bozuluyordu; ham kontrol-bayt (STX)
+            // yaklaşımı da re-korupsiyon riskliydi (v3.38.6 STX bug'ı tam buydu).
+            if (p && typeof p === 'object' && p.kw) {
+                const kw = p.kw;
                 if (kw === 'AND' || kw === 'OR') {
                     pendingKw = '  ' + kw;
                     curBlock = null;
@@ -3733,7 +3737,7 @@
         if (pendingKw) lines.push(pendingKw);
 
         // 5) Placeholder'ları geri koy.
-        return lines.join('\n').replace(/STR(\d+)/g, function (_, idx) {
+        return lines.join('\n').replace(/__VYRA_STR_(\d+)__/g, function (_, idx) {
             return strs[parseInt(idx, 10)] || '';
         });
     }

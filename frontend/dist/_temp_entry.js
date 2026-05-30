@@ -41136,7 +41136,7 @@ window.ThemePickerPopup = (function () {
         const strs = [];
         s = s.replace(/'(?:[^']|'')*'|"(?:[^"]|"")*"/g, function (m) {
             strs.push(m);
-            return 'STR' + (strs.length - 1) + '';
+            return '__VYRA_STR_' + (strs.length - 1) + '__';
         });
 
         // 2) Whitespace normalize.
@@ -41170,7 +41170,7 @@ window.ThemePickerPopup = (function () {
                 const m = rest.match(kwRe);
                 if (m) {
                     if (buf.trim()) parts.push(buf.trim());
-                    parts.push('KW' + m[0].toUpperCase().replace(/\s+/g, ' '));
+                    parts.push({ kw: m[0].toUpperCase().replace(/\s+/g, ' ') });
                     buf = '';
                     i += m[0].length - 1;
                     continue;
@@ -41198,8 +41198,12 @@ window.ThemePickerPopup = (function () {
         const MULTI_LINE_KW = { SELECT: 1, 'GROUP BY': 1, 'ORDER BY': 1, WITH: 1 };
 
         parts.forEach(function (p) {
-            if (p.startsWith('KW')) {
-                const kw = p.slice(2);
+            // v3.38.8 (code-review): keyword marker'ı OBJECT ({kw}) — content daima
+            // string, marker daima object → çakışma imkânsız. Eskiden düz 'KW' prefix'ti
+            // → 'KWH_total' gibi alias marker sanılıp bozuluyordu; ham kontrol-bayt (STX)
+            // yaklaşımı da re-korupsiyon riskliydi (v3.38.6 STX bug'ı tam buydu).
+            if (p && typeof p === 'object' && p.kw) {
+                const kw = p.kw;
                 if (kw === 'AND' || kw === 'OR') {
                     pendingKw = '  ' + kw;
                     curBlock = null;
@@ -41239,7 +41243,7 @@ window.ThemePickerPopup = (function () {
         if (pendingKw) lines.push(pendingKw);
 
         // 5) Placeholder'ları geri koy.
-        return lines.join('\n').replace(/STR(\d+)/g, function (_, idx) {
+        return lines.join('\n').replace(/__VYRA_STR_(\d+)__/g, function (_, idx) {
             return strs[parseInt(idx, 10)] || '';
         });
     }
@@ -42561,9 +42565,19 @@ window.ThemePickerPopup = (function () {
 
             if (sseError) throw new Error(sseError);
 
+            const result = {
+                columns: columnsAgg,
+                rows: rowsAgg,
+                row_count: totalCount || rowsAgg.length,
+                truncated: truncated,
+            };
+            if (resultMount) _renderRunResult(resultMount, result);
+
             // 3) mark-run + snapshot persist (best-effort). v3.38.7: sonucu snapshot
-            // olarak kaydet ki modal tekrar açılınca Çalıştır'a basmadan veri görünsün
-            // (önceden mark-run body'siz çağrılıyordu → last_run_snapshot NULL kalıyordu).
+            // olarak kaydet ki modal tekrar açılınca Çalıştır'a basmadan veri görünsün.
+            // v3.38.8 (code-review): `result` BURADA tanımlı — eskiden mark-run bloğu
+            // `result`'ı tanımdan ÖNCE okuyordu (TDZ ReferenceError → her run catch'e
+            // düşüp "başarısız" toast veriyor, snapshot hiç yazılmıyordu).
             window.vyraFetch(
                 '/db-smart/saved-reports/' + encodeURIComponent(_reportId) + '/mark-run',
                 {
@@ -42578,14 +42592,6 @@ window.ThemePickerPopup = (function () {
                     },
                 }
             ).catch(() => { /* noop */ });
-
-            const result = {
-                columns: columnsAgg,
-                rows: rowsAgg,
-                row_count: totalCount || rowsAgg.length,
-                truncated: truncated,
-            };
-            if (resultMount) _renderRunResult(resultMount, result);
 
             _toast('Sorgu çalıştırıldı (' + result.row_count + ' satır)', 'success');
             if (typeof _opts.onRan === 'function') {

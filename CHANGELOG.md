@@ -1,5 +1,22 @@
 # VYRA Changelog
 
+## v3.38.8 — 2026-05-30 — BİTİR code-review düzeltmeleri
+
+> `/code-review medium` (BİTİR KAP 1 sonrası) v3.38.4-3.38.7'yi inceledi; gerçek bulgular giderildi.
+
+- **🔴 KRİTİK (v3.38.7'de eklenen regresyon):** `report_detail_modal` mark-run snapshot bloğu
+  `result`'ı `const result` tanımından ÖNCE okuyordu → TDZ `ReferenceError` → HER Çalıştır
+  catch'e düşüp "başarısız" toast veriyor, snapshot hiç yazılmıyordu. Fix: `result` tanımı +
+  render ÖNCE, mark-run SONRA.
+- **`_prettyPrintSql` marker collision:** v3.38.6 STX baytlarını silip düz `'KW'`/`'STR'` marker'ları
+  bıraktı → `KWH_total` gibi alias keyword-marker sanılıp bozuluyor, `STR2024` placeholder restore'da
+  düşüyordu. Fix: keyword marker **OBJECT** (`{kw}` — content daima string, marker daima object →
+  çakışma imkânsız + kontrol baytı yok), STR placeholder `__VYRA_STR_N__`. node ile doğrulandı.
+- **mark-run snapshot DoS guard:** server-side `rows≤100` + ~600KB tavan (client `slice` bir guard değil).
+- **vyrazeus DB kuralı düzeltildi:** "psycopg2 default tuple döner" YANLIŞTI — `get_db_context`
+  RealDictCursor; doğru desen `dict(row) if isinstance(row, dict)`. + REFACTOR_BACKLOG'a sistemik
+  `dict(zip(cols,row))` site listesi (schedule_runner vb. — latent aynı bug sınıfı).
+
 ## v3.38.7 — 2026-05-30 — "Çalıştır kolon var veri yok" + duplicate-name uyarısı (modern + i18n)
 
 > Kullanıcı testi: (1) "Çalıştır" 500 düzeldi ama sonuç tablosu kolonları gösterip satırları

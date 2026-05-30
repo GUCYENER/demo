@@ -613,9 +613,19 @@
 
             if (sseError) throw new Error(sseError);
 
+            const result = {
+                columns: columnsAgg,
+                rows: rowsAgg,
+                row_count: totalCount || rowsAgg.length,
+                truncated: truncated,
+            };
+            if (resultMount) _renderRunResult(resultMount, result);
+
             // 3) mark-run + snapshot persist (best-effort). v3.38.7: sonucu snapshot
-            // olarak kaydet ki modal tekrar açılınca Çalıştır'a basmadan veri görünsün
-            // (önceden mark-run body'siz çağrılıyordu → last_run_snapshot NULL kalıyordu).
+            // olarak kaydet ki modal tekrar açılınca Çalıştır'a basmadan veri görünsün.
+            // v3.38.8 (code-review): `result` BURADA tanımlı — eskiden mark-run bloğu
+            // `result`'ı tanımdan ÖNCE okuyordu (TDZ ReferenceError → her run catch'e
+            // düşüp "başarısız" toast veriyor, snapshot hiç yazılmıyordu).
             window.vyraFetch(
                 '/db-smart/saved-reports/' + encodeURIComponent(_reportId) + '/mark-run',
                 {
@@ -630,14 +640,6 @@
                     },
                 }
             ).catch(() => { /* noop */ });
-
-            const result = {
-                columns: columnsAgg,
-                rows: rowsAgg,
-                row_count: totalCount || rowsAgg.length,
-                truncated: truncated,
-            };
-            if (resultMount) _renderRunResult(resultMount, result);
 
             _toast('Sorgu çalıştırıldı (' + result.row_count + ' satır)', 'success');
             if (typeof _opts.onRan === 'function') {
