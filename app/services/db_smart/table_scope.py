@@ -4,8 +4,9 @@
 text-to-sql akışlarında tek satırda çözmek için ince bir sarmalayıcı.
 
 Amaç: kod tekrarını önlemek + `is_admin` türetmesini (is_admin VEYA
-role=='admin') tek yerde tutmak. Admin → her zaman `AccessScope(all_tables=True)`
-döner (allows() her zaman True).
+role=='admin') tek yerde tutmak. v3.39.0: Admin → kaynakta açık grant YOKSA
+`AccessScope(all_tables=True)`; açık grant varsa kısıt admin'e de uygulanır
+(managed-admin — bkz. data_source_access.user_accessible_tables).
 
 Kullanım:
     scope = resolve_scope(source_id, current_user)
@@ -40,15 +41,17 @@ def resolve_scope(
         permission: 'can_view' (keşif/görüntüleme) veya 'can_execute' (çalıştırma)
 
     Returns:
-        AccessScope. Admin → all_tables=True. user_id yoksa → boş kapsam
-        (all_tables=False, tables=∅) yani hiçbir tablo erişilemez (fail-closed).
+        AccessScope. v3.39.0: Admin OTOMATİK all_tables DEĞİL — bu kaynakta açık
+        grant varsa kısıt admin'e de uygulanır (user_accessible_tables managed-admin
+        mantığı). Admin yalnız kaynakta hiç grant yokken all_tables=True alır.
+        user_id yoksa: admin (sistem ctx) → ALL, aksi → fail-closed (boş kapsam).
     """
-    if is_admin_ctx(user_ctx):
-        return AccessScope(all_tables=True)
+    admin = is_admin_ctx(user_ctx)
     uid = int((user_ctx or {}).get("id") or 0)
     if uid <= 0:
-        # Kimlik yok → fail-closed (hiçbir tablo)
-        return AccessScope(all_tables=False, tables=frozenset())
+        # Kimlik yok: admin/sistem ctx → ALL; normal kullanıcı → fail-closed.
+        return (AccessScope(all_tables=True) if admin
+                else AccessScope(all_tables=False, tables=frozenset()))
     return user_accessible_tables(
-        uid, int(source_id), is_admin=False, permission=permission
+        uid, int(source_id), is_admin=admin, permission=permission
     )

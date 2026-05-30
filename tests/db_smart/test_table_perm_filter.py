@@ -2,7 +2,8 @@
 
 `app/services/db_smart/table_scope.py`:
   - is_admin_ctx (is_admin VEYA role=='admin')
-  - resolve_scope (admin → all; user_id yok → fail-closed boş; aksi → gate'e devreder)
+  - resolve_scope (v3.39.0: admin → gate'e is_admin=True devreder [managed-admin];
+    user_id yok → admin ALL / aksi fail-closed boş; normal → gate'e is_admin=False)
 """
 from unittest.mock import patch
 
@@ -18,10 +19,21 @@ def test_is_admin_ctx_variants():
     assert table_scope.is_admin_ctx({}) is False
 
 
-def test_resolve_scope_admin_returns_all_without_gate():
-    # admin → user_accessible_tables hiç çağrılmamalı
+def test_resolve_scope_admin_delegates_with_is_admin_true():
+    # v3.39.0: admin artık otomatik bypass DEĞİL — user_accessible_tables'a
+    # is_admin=True ile devreder (managed-admin mantığı orada: kaynakta grant varsa
+    # kısıt uygulanır, yoksa all_tables). Eskiden gate hiç çağrılmadan all dönerdi.
+    expected = AccessScope(all_tables=True)
+    with patch.object(table_scope, "user_accessible_tables", return_value=expected) as gate:
+        scope = table_scope.resolve_scope(10, {"id": 1, "is_admin": True}, permission="can_view")
+        assert scope is expected
+        gate.assert_called_once_with(1, 10, is_admin=True, permission="can_view")
+
+
+def test_resolve_scope_admin_no_userid_returns_all():
+    # admin ama id yok (sistem ctx) → DB'ye gitmeden ALL (gate çağrılmaz).
     with patch.object(table_scope, "user_accessible_tables") as gate:
-        scope = table_scope.resolve_scope(10, {"id": 1, "is_admin": True})
+        scope = table_scope.resolve_scope(10, {"id": 0, "is_admin": True})
         assert scope.all_tables is True
         gate.assert_not_called()
 

@@ -931,6 +931,11 @@ def test_execute_stream_returns_sse_response(client_authed, mock_db, monkeypatch
         "app.services.data_source_access.user_can_access_source",
         lambda uid, sid, **kw: True,
     )
+    # v3.39.0: execute/stream artık tablo-yetki gate'i uygular (resolve_scope can_execute).
+    # Bu test SSE mekaniğini ölçer (tablo-yetkisini değil) → scope'u all_tables yap ki
+    # gate no-op olsun (allowed_tables=None). Gate'in kendi testi ayrı dosyada.
+    from app.services.data_source_access import AccessScope as _AS
+    monkeypatch.setattr(db_smart_api, "resolve_scope", lambda *a, **k: _AS(all_tables=True))
     # _load_source SELECT layout: (id, company_id, name, db_type, host, port,
     #                              db_name, db_user, db_password_encrypted)
     mock_db.fetchone.return_value = (
@@ -966,6 +971,36 @@ def test_execute_stream_returns_sse_response(client_authed, mock_db, monkeypatch
     assert "password" not in (captured.get("source") or {})
     assert "db_password_encrypted" not in (captured.get("source") or {})
     assert captured.get("password") == ""  # encrypted=None → boş plaintext
+
+
+def test_execute_stream_rejects_unauthorized_table(client_authed, mock_db, monkeypatch):
+    # v3.39.0 GÜVENLİK (saved-report rerun gate): rerun edilen SQL kapsam dışı tablo
+    # içeriyorsa 403 + Türkçe mesaj; stream HİÇ çalışmaz (sonuç gösterilmez).
+    monkeypatch.setattr(
+        "app.services.data_source_access.user_can_access_source",
+        lambda uid, sid, **kw: True,
+    )
+    mock_db.fetchone.return_value = (
+        1, 42, "pg-src", "postgresql", "localhost", 5432, "db", "u", None,
+    )
+    from app.services.data_source_access import AccessScope as _AS
+    # Kullanıcı yalnız public.orders'a yetkili; SQL faturalar'a erişiyor → reddedilmeli.
+    monkeypatch.setattr(
+        db_smart_api, "resolve_scope",
+        lambda *a, **k: _AS(all_tables=False, tables=frozenset({("public", "orders")})),
+    )
+    from app.services.db_smart import sql_executor_stream as _ses
+
+    def _must_not_run(*a, **k):
+        raise AssertionError("yetkisiz tablo: stream_safe_sql çağrılmamalı")
+
+    monkeypatch.setattr(_ses, "stream_safe_sql", _must_not_run)
+    resp = client_authed.post(
+        "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/execute/stream",
+        json={"sql": "SELECT * FROM faturalar", "source_id": 1, "dialect": "postgresql"},
+    )
+    assert resp.status_code == 403
+    assert "yetkiniz" in resp.json()["detail"].lower()
 
 
 # ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@ Bu modül `data_sources_api.list_data_sources` SQL pattern'ini taşır
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import FrozenSet, Tuple
+from typing import Any, FrozenSet, Tuple
 
 from app.core.db import get_db_context
 
@@ -113,6 +113,34 @@ def _norm(value: str | None) -> str:
     return (value or "").strip().lower()
 
 
+def _subject_has_any_grant(cur: Any, user_id: int, source_id: int) -> bool:
+    """Bu kullanıcı (veya üye olduğu org) için kaynakta HERHANGİ bir grant satırı
+    var mı? (can_view/can_execute ayrımı yapmaz.)
+
+    v3.39.0: Admin'in bu kaynakta "managed" olup olmadığını belirler. Açık bir
+    grant tanımlanmışsa admin tüm-tablo bypass'ı YAPMAZ — tanımlı kısıt geçerlidir.
+    """
+    cur.execute(
+        """
+        SELECT 1
+        FROM data_source_permissions p
+        LEFT JOIN user_organizations uo
+               ON uo.user_id = %s
+              AND p.subject_type = 'org'
+              AND uo.org_id = p.subject_id
+        WHERE p.source_id = %s
+          AND (
+              (p.subject_type = 'user' AND p.subject_id = %s)
+              OR
+              (p.subject_type = 'org'  AND uo.id IS NOT NULL)
+          )
+        LIMIT 1
+        """,
+        (user_id, source_id, user_id),
+    )
+    return cur.fetchone() is not None
+
+
 def user_accessible_tables(
     user_id: int,
     source_id: int,
@@ -123,12 +151,15 @@ def user_accessible_tables(
     """Kullanıcının `source_id` üzerinde erişebildiği tablo kapsamını döner.
 
     Çözümleme (union semantiği):
-      - Admin → her zaman ALL.
       - Uygulanabilir grant'lar = kullanıcının `permission` (can_view/can_execute)
         TRUE olan direkt VEYA org-üyeliği grant'ları.
-      - Hiç uygulanabilir grant yok → erişim yok (boş kapsam, all_tables=False).
       - Herhangi biri scope_mode='all' → ALL (tüm tablolar).
       - Aksi halde restricted grant'ların allowlist tablolarının BİRLEŞİMİ.
+      - Hiç uygulanabilir grant yok:
+          · is_admin VE kaynakta hiç grant yok → ALL (admin bypass — yalnız unmanaged).
+          · aksi (managed admin VEYA normal kullanıcı) → erişim yok (boş kapsam, fail-closed).
+      v3.39.0: Admin artık otomatik ALL değil — açık grant tanımlıysa kısıt admin'e
+      de uygulanır (kullanıcı kararı / Opsiyon A).
 
     Args:
         permission: 'can_view' (görüntüleme kapsamı) veya 'can_execute' (çalıştırma).
@@ -136,9 +167,6 @@ def user_accessible_tables(
     Returns:
         AccessScope
     """
-    if is_admin:
-        return AccessScope(all_tables=True)
-
     if permission not in ("can_view", "can_execute"):
         raise ValueError(f"Geçersiz permission: {permission!r}")
 
@@ -166,11 +194,26 @@ def user_accessible_tables(
         grants = cur.fetchall()
 
         if not grants:
-            # Kaynağa hiç erişim yok → hiçbir tablo yok
+            # Bu permission için uygulanabilir grant yok.
+            # v3.39.0: Admin SADECE bu kaynakta HİÇ grant'ı yoksa tüm tabloları görür
+            # (bypass). Açık grant tanımlıysa (bu permission'da olmasa bile) admin
+            # "managed" sayılır → fail-closed (örn. view-only admin execute edemez).
+            if is_admin and not _subject_has_any_grant(cur, user_id, source_id):
+                return AccessScope(all_tables=True)
             return AccessScope(all_tables=False, tables=frozenset())
 
         restricted_subjects = set()
-        for subject_type, subject_id, scope_mode in grants:
+        for g in grants:
+            # KÖK fix (v3.39.0): get_db_context RealDictCursor → satır DICT. Eski
+            # `for subject_type, subject_id, scope_mode in grants` dict'i unpack edip
+            # KOLON ADLARINI ('subject_type' vb.) atıyordu → scope hep çöp
+            # ([('schema_name','table_name')]) → tablo-yetkisi herkes için bozuktu.
+            if isinstance(g, dict):
+                subject_type = g["subject_type"]
+                subject_id = g["subject_id"]
+                scope_mode = g["scope_mode"]
+            else:
+                subject_type, subject_id, scope_mode = g
             if scope_mode == "all":
                 # Tek bir 'all' grant tüm tabloları açar
                 return AccessScope(all_tables=True)
@@ -185,11 +228,18 @@ def user_accessible_tables(
             """,
             (source_id,),
         )
-        tables = {
-            (_norm(schema_name), _norm(table_name))
-            for subject_type, subject_id, schema_name, table_name in cur.fetchall()
-            if (subject_type, subject_id) in restricted_subjects
-        }
+        tables = set()
+        for r in cur.fetchall():
+            # KÖK fix (v3.39.0): RealDictCursor → satır dict; dict|tuple uyumlu oku.
+            if isinstance(r, dict):
+                st = r["subject_type"]
+                sid_ = r["subject_id"]
+                schema_name = r["schema_name"]
+                table_name = r["table_name"]
+            else:
+                st, sid_, schema_name, table_name = r
+            if (st, sid_) in restricted_subjects:
+                tables.add((_norm(schema_name), _norm(table_name)))
         return AccessScope(all_tables=False, tables=frozenset(tables))
 
 

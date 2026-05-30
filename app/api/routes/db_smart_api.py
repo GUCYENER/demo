@@ -1146,13 +1146,49 @@ def post_execute_stream(
     if not dialect_explicit and src_dialect:
         dialect = src_dialect
 
+    # ── v3.39.0 Tablo-yetki gate (saved-report rerun KÖK fix) ──
+    # Önceden allowed_tables=None geçiliyordu → SafeSQLExecutor whitelist'i ATLANIYORDU
+    # (generate_report uygularken bu yol uygulamıyordu). Kullanıcının GÜNCEL can_execute
+    # kapsamını çöz; rerun edilen SQL kapsam dışı tablo içeriyorsa reddet (sonuç YOK).
+    # Admin: kaynakta açık restricted grant varsa o da bağlanır (resolve_scope v3.39.0).
+    exec_scope = resolve_scope(int(src_id), current_user, permission="can_execute")
+    allowed_tables: Optional[List[str]] = None
+    if not exec_scope.all_tables:
+        allowed_tables = []
+        for _sch, _tbl in exec_scope.tables:
+            if _sch:
+                allowed_tables.append(f"{_sch}.{_tbl}")
+            allowed_tables.append(_tbl)
+        if not allowed_tables:
+            # restricted ama hiç izinli tablo yok → çalıştırma yok (allow-all'a düşme)
+            raise HTTPException(
+                status_code=403,
+                detail="Bu veri kaynağında çalıştırma yetkiniz bulunmuyor.",
+            )
+        from app.services.safe_sql_executor import check_table_whitelist
+        _ok_wl, _wl_err = check_table_whitelist(sql_str, allowed_tables, dialect)
+        if not _ok_wl:
+            logger.warning(
+                "[db_smart.stream] yetkisiz tablo rerun user=%s source=%s: %s",
+                current_user.get("id"), src_id, _wl_err,
+            )
+            _bad = (_wl_err.split(":", 1)[-1].strip() if _wl_err and ":" in _wl_err else "")
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Bu raporda yetkiniz olmayan tablo var: {_bad} — sonuç gösterilmedi."
+                    if _bad else
+                    "Bu raporda yetkiniz olmayan tablo(lar) var — sonuç gösterilmedi."
+                ),
+            )
+
     # SSE generator
     def _event_stream():
         try:
             for evt in sql_executor_stream.stream_safe_sql(
                 sql_str, src_dict, dialect,
                 password=src_password,
-                allowed_tables=None,
+                allowed_tables=allowed_tables,
                 user_ctx=current_user,
                 batch_size=body.batch_size,
                 max_rows=body.max_rows,

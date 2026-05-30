@@ -468,3 +468,31 @@ yerlerde de LATENT (RealDictCursor altında sessiz bozulma):
 dict(zip(cols, row))` (mekanik güvenli, iki cursor tipini de ele alır). Daha iyi altitude:
 paylaşılan `row_to_dict(cur, row)` helper. Her site ayrı test ister.
 **Öncelik:** schedule_runner (otomatik koşar → sessiz korupsiyon) ilk.
+
+
+## RB-v3.39.0 — Tablo-yetki gate kapsamı: schedule_runner + diğer execute yolları (ARES)
+
+**Bağlam:** v3.39.0'da saved-report rerun (`db_smart_api.post_execute_stream`) tablo-yetki
+gate'i eklendi (`resolve_scope(can_execute)` + `check_table_whitelist`). Ayrıca KÖK fix:
+`user_accessible_tables` RealDictCursor tuple-unpack bug'ı (scope hep çöp dönüyordu) +
+admin-honors-grants (managed admin artık bypass etmez).
+
+**Açık risk (P1):** `app/services/db_smart/schedule_runner.py` — zamanlanmış saved-report
+runner OTOMATİK koşar. Aynı tablo-yetki gate'i orada UYGULANIYOR mu doğrulanmalı; restricted
+bir kullanıcı/owner zamanladığı raporda yetkisiz tabloyu otomatik çalıştırabiliyorsa aynı
+broken-access-control. (schedule_runner ayrıca RB-v3.38.8 dict(zip) bug listesinde de var.)
+
+**Diğer execute yolları:** `query_builder_api.py:504` (`allowed_tables=None`) ve
+`query_state_api.py:390` — bunlar da rerun/preview execute; resolve_scope gate'i var mı
+audit edilmeli (post_execute_stream ile aynı desen).
+
+**Öncelik:** schedule_runner (otomatik + güvenlik) ilk; sonra query_builder/query_state preview.
+
+**Ek (code-review v3.39.0):** `check_table_whitelist` (safe_sql_executor.py:164) **şema-agnostik**
+eşleşir — `test_schema_qualified_table` (test_safe_sql_executor.py:146) bunu kasıtlı kontrat
+olarak test eder ("schema.table → sadece tablo kısmı kontrol edilir"; satır 228 bu yüzden ölü
+dal). Sonuç: `VYRA_TEST.MUSTERILER` grant'ı, çok-şemalı kaynakta `BAŞKA_ŞEMA.MUSTERILER`
+(aynı tablo adı) erişimine de izin verir. Tek-şemalı kaynakta sorun yok; çok-şemalı kaynakta
+şema-strict mod istenirse: ya gate'te `exec_scope.allows(schema,table)` ile SQL'den çıkarılan
+(schema,table) çiftlerini per-tablo doğrula, ya da check_table_whitelist'e opt-in `strict_schema`
+parametresi ekle (mevcut çağıranları bozmadan). Risk: düşük/orta; öncelik P2 (narrow edge).

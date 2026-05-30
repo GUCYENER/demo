@@ -85,6 +85,8 @@ def _fake_ctx(results):
 
     cur.execute.side_effect = _execute
     cur.fetchall.side_effect = lambda: state["last"]
+    # v3.39.0: _subject_has_any_grant fetchone kullanır → state["last"]'in ilk satırı.
+    cur.fetchone.side_effect = lambda: (state["last"][0] if state["last"] else None)
     conn = MagicMock()
     conn.cursor.return_value = cur
     yield conn
@@ -94,13 +96,58 @@ def _patch_ctx(monkeypatch, results):
     monkeypatch.setattr(dsa, "get_db_context", lambda: _fake_ctx(results))
 
 
-def test_admin_gets_all_without_db(monkeypatch):
-    # Admin → DB'ye hiç gitmeden all_tables
-    called = {"n": 0}
-    monkeypatch.setattr(dsa, "get_db_context", lambda: called.__setitem__("n", called["n"] + 1))
+def test_admin_no_grant_gets_all(monkeypatch):
+    # v3.39.0: admin SADECE kaynakta hiç grant yokken all_tables (bypass).
+    # results: [grants(boş), any-grant(boş)]
+    _patch_ctx(monkeypatch, [[], []])
     scope = user_accessible_tables(1, 10, is_admin=True)
     assert scope.all_tables is True
-    assert called["n"] == 0
+
+
+def test_admin_with_restricted_grant_is_bound(monkeypatch):
+    # v3.39.0 KÖK davranış (kullanıcı kararı Opsiyon A): admin'e açık restricted
+    # grant varsa kısıt UYGULANIR — admin artık otomatik bypass etmez.
+    grants = [("user", 1, "restricted")]
+    tables = [("user", 1, "vyra_test", "musteriler")]
+    _patch_ctx(monkeypatch, [grants, tables])
+    scope = user_accessible_tables(1, 10, is_admin=True, permission="can_execute")
+    assert scope.all_tables is False
+    assert scope.tables == frozenset({("vyra_test", "musteriler")})
+    assert scope.allows("VYRA_TEST", "FATURALAR") is False  # yetkisiz tablo reddedilir
+    assert scope.allows("VYRA_TEST", "MUSTERILER") is True
+
+
+def test_admin_managed_other_permission_fail_closed(monkeypatch):
+    # Managed admin (kaynakta grant'ı VAR) bu permission'da grant'ı yoksa fail-closed
+    # — bypass etmez. results: [grants(boş, can_execute), any-grant(VAR)].
+    _patch_ctx(monkeypatch, [[], [("user", 1, "user")]])
+    scope = user_accessible_tables(1, 10, is_admin=True, permission="can_execute")
+    assert scope.all_tables is False
+    assert scope.tables == frozenset()
+
+
+def test_restricted_grant_dict_rows_realdictcursor(monkeypatch):
+    # KÖK REGRESYON (v3.39.0): get_db_context RealDictCursor → satır DICT. Eski
+    # tuple-unpack kolon adlarını okuyup çöp scope ([('schema_name','table_name')])
+    # üretiyordu → tablo-yetkisi herkes için bozuktu. Dict satırlarla da doğru çözülmeli.
+    grants = [{"subject_type": "user", "subject_id": 5, "scope_mode": "restricted"}]
+    tables = [
+        {"subject_type": "user", "subject_id": 5, "schema_name": "public", "table_name": "orders"},
+        {"subject_type": "org", "subject_id": 99, "schema_name": "public", "table_name": "secret"},
+    ]
+    _patch_ctx(monkeypatch, [grants, tables])
+    scope = user_accessible_tables(5, 10, is_admin=False)
+    assert scope.all_tables is False
+    assert scope.tables == frozenset({("public", "orders")})
+    assert ("public", "secret") not in scope.tables  # farklı subject → dahil değil
+
+
+def test_grant_scope_all_dict_row(monkeypatch):
+    # scope_mode='all' dict satırla da ALL döndürmeli.
+    grants = [{"subject_type": "user", "subject_id": 5, "scope_mode": "all"}]
+    _patch_ctx(monkeypatch, [grants])
+    scope = user_accessible_tables(5, 10, is_admin=False)
+    assert scope.all_tables is True
 
 
 def test_no_grants_means_no_access(monkeypatch):
