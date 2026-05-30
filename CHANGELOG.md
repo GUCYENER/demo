@@ -1,5 +1,15 @@
 # VYRA Changelog
 
+## v3.38.5 — 2026-05-30 — B4-3 silinen kayıtlı rapor anında kaybolmuyor (eksik fix tamam)
+
+> Kullanıcı: "Akıllı Keşif'te kayıtlı rapor silinince ekrandan hemen kaybolmuyor — düzeltmedin mi?"
+
+- v3.38.1 optimistic `removeItem` eklemişti (kart anında gider) AMA `home.html onDeleted` hemen
+  ardından `refresh()` çağırıyordu; refresh'in taze GET'i DELETE commit'ini görmeden race edip
+  silinen kaydı geri getirebiliyordu (skeleton flash + reappear). Fix:
+  `SavedReportsGrid._deletedIds` Set — optimistic-silinen id'ler refresh re-fetch'inde filtrelenir
+  (reappear engellenir); sunucu artık döndürmeyince takipten düşer (self-heal; serial id reuse yok).
+
 ## v3.38.4 — 2026-05-30 — Bulgular4 kalan 2 madde: KÖK fix (Çalıştır 500 + WHERE 409)
 
 > Kullanıcı testi: 2 madde hâlâ kırık. Hata izleme (v3.38.3) çalışan backend'e henüz

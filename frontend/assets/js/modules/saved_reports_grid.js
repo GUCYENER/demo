@@ -22,6 +22,7 @@
     let _searchTimer = null;
     let _currentChip = 'all'; // all | last7 | mostRun
     let _lastItems = [];
+    let _deletedIds = new Set();  // v3.38.5 B4-3: optimistic-silinen id'ler — refresh GET race'inde geri gelmesin
 
     // ─── Utils ───
     function _authHeaders() {
@@ -495,7 +496,16 @@
         _renderSkeleton();
         _fetchList()
             .then((items) => {
-                _lastItems = items || [];
+                let fetched = items || [];
+                // v3.38.5 B4-3: refresh'in taze GET'i DELETE commit'ini görmeden race
+                // edebilir → optimistic-silinen id'leri filtrele (reappear engelle).
+                // Sunucu artık döndürmüyorsa takipten düş (self-heal; serial id reuse yok).
+                if (_deletedIds.size) {
+                    const present = new Set(fetched.map((it) => String(it && it.id)));
+                    _deletedIds.forEach((did) => { if (!present.has(did)) _deletedIds.delete(did); });
+                    fetched = fetched.filter((it) => !_deletedIds.has(String(it && it.id)));
+                }
+                _lastItems = fetched;
                 _renderItems(_applyChipFilter(_lastItems));
             })
             .catch((err) => {
@@ -515,6 +525,7 @@
     // kartı state'ten hemen çıkarıp re-render ediyoruz (refresh ile reconcile caller'da).
     function removeItem(id) {
         if (!_root || id == null) return;
+        _deletedIds.add(String(id));  // refresh re-fetch'i bu id'yi geri getirmesin
         _lastItems = (_lastItems || []).filter(function (it) {
             return String(it && it.id) !== String(id);
         });
@@ -527,6 +538,7 @@
         _root = null;
         _opts = { onOpenReport: null, onNewReport: null };
         _lastItems = [];
+        _deletedIds = new Set();
         SavedReportsGrid._instance = null;
     }
 
