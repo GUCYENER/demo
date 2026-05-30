@@ -64,6 +64,9 @@
         currentAst: null,                 // P20-D: server-canonical AST snapshot
         _lastFocusEl: null,               // HEBE Gate: return-focus target
         lastGeneratedSql: null,           // v3.36.0 F10: Önizleme'den son üretilen SQL (save flow için)
+        baseSql: null,                    // v3.40.1: SEÇİM-tabanlı SQL (assemble/preview) — modal "üst" bölüm
+        finalSql: null,                   // v3.40.1: NİHAİ SQL (LLM+talep, generate-report) — modal "alt" + Çalıştır
+        _finalSqlKey: null,               // v3.40.1: finalSql cache anahtarı (seçim+talep değişince invalidate)
         // v3.37.3 (bulgular-2 / Bulgu 7a, 8): kayıtlı bir raporu düzenleme modunda
         // açtıysak burada id tutulur. _saveCurrentReport bunu görürse POST yerine
         // PATCH (update) yapar; modal kapanışında null'a düşer.
@@ -1954,6 +1957,7 @@
             const sql = data.sql || '';
             // v3.36.0 F10 — save flow için son üretilen SQL'i state'e tut
             _state.lastGeneratedSql = sql || null;
+            _state.baseSql = sql || null;  // v3.40.1: seçim-tabanlı (assemble) SQL — modal "üst" bölüm
             const cost = (data.explain && data.explain.total_cost) || null;
             const strategy = data.streaming_strategy || 'direct';
             const strategyLabel = ({
@@ -2080,7 +2084,12 @@
                 body: JSON.stringify(payload),
             });
             // v3.36.0 F10 hook: keep generated SQL for save flow.
-            if (data && data.sql) _state.lastGeneratedSql = data.sql;
+            // v3.40.1: Çalıştır LLM-nihai SQL'i koşar → finalSql'i güncel tut (modal "alt" bölüm).
+            if (data && data.sql) {
+                _state.lastGeneratedSql = data.sql;
+                _state.finalSql = data.sql;
+                _state._finalSqlKey = _finalSqlCacheKey();
+            }
             _openResultModal(data || {}, payload);
         } catch (e) {
             _openResultModal({
@@ -3922,70 +3931,140 @@
     // "📄 SQL" footer butonu → VyraModal: "Talebiniz" (user_intent) + pretty-print
     // SQL + Kopyala. Amaç: kullanıcı ne istedi / ne SQL üretildi / mantık doğru mu
     // tek ekranda review etsin (LLM talebi SQL'e yansıttı mı).
+    // v3.40.1: finalSql cache anahtarı — seçim/metrik/talep değişince nihai SQL invalidate.
+    function _finalSqlCacheKey() {
+        const note = (_state.user_intent || _state.userNote || '').trim();
+        const cols = (Array.isArray(_state.reportColumns) ? _state.reportColumns : [])
+            .map(function (c) { return c.column_name; });
+        return JSON.stringify({
+            t: _state.selectedTableId || null,
+            j: _state.selectedTables || null,
+            c: cols,
+            m: _state.metric ? _state.metric.metric_key : null,
+            sm: _state.selectedMetrics ? Array.from(_state.selectedMetrics) : null,
+            n: note,
+        });
+    }
+
+    // v3.40.1: bir kopyala butonunu bağla (iki SQL bölümü için ortak).
+    function _wireSqlCopy(btnId, statusId, getText) {
+        const btn = document.getElementById(btnId);
+        if (!btn) return;
+        btn.addEventListener('click', function () {
+            const statusEl = document.getElementById(statusId);
+            const done = function (ok) {
+                if (statusEl) statusEl.textContent = ok ? '✓ Kopyalandı' : 'Kopyalanamadı';
+            };
+            const text = getText() || '';
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(
+                        function () { done(true); }, function () { done(false); });
+                } else {
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.style.position = 'fixed';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    const ok = document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    done(ok);
+                }
+            } catch (e) { done(false); }
+        });
+    }
+
+    // v3.40.1: NİHAİ SQL'i (LLM + talep) ÇALIŞTIRMADAN üret (generate_only). Cache'li.
+    // Talep yoksa null (nihai = seçim SQL'i). Hata → throw (modal gösterir).
+    async function _computeFinalSqlForPreview() {
+        const note = (_state.user_intent || _state.userNote || '').trim();
+        if (!note) return null;
+        const key = _finalSqlCacheKey();
+        if (_state._finalSqlKey === key && _state.finalSql) return _state.finalSql;
+        const payload = Object.assign({}, _buildGenerateReportPayload(), { generate_only: true });
+        const data = await _fetchJson(API_BASE + '/generate-report', {
+            method: 'POST', body: JSON.stringify(payload),
+        });
+        const sql = (data && data.sql) || '';
+        if (sql) {
+            _state.finalSql = sql;
+            _state._finalSqlKey = key;
+            return sql;
+        }
+        throw new Error((data && data.error) || 'LLM nihai SQL üretemedi');
+    }
+
+    // v3.40.1: "📄 SQL" modalı — ÜST: seçimlerden oluşan SQL (deterministik),
+    // ALT: talebinizle oluşan NİHAİ SQL (LLM, Çalıştır bunu koşar). Kullanıcı
+    // "ne istedim / ne üretildi"yi yan yana görüp sürecin çalıştığına emin olur.
     function _onShowSqlClick() {
-        const sql = _state.lastGeneratedSql || '';
-        if (!sql) {
+        const base = _state.baseSql || _state.lastGeneratedSql || '';
+        if (!base) {
             _notify('SQL henüz üretilmedi — önce önizlemenin yüklenmesini bekleyin.', 'warning');
             return;
         }
-        const pretty = _prettyPrintSql(sql);
+        if (!(window.VyraModal && typeof window.VyraModal.info === 'function')) {
+            _notify('SQL önizleme için modal yüklenemedi.', 'error');
+            return;
+        }
+        const basePretty = _prettyPrintSql(base);
         const note = (_state.user_intent || _state.userNote || '').trim();
         const noteHtml = note
             ? '<div class="dsw-sql-modal-note"><span class="dsw-sql-modal-note-label">📝 Talebiniz:</span> '
                 + _escape(note) + '</div>'
             : '<div class="dsw-sql-modal-note dsw-sql-modal-note-empty">📝 Serbest talep girilmedi '
-                + '(SQL yalnızca seçili tablo/kolon/metrik/filtreden üretildi).</div>';
+                + '— nihai SQL = seçim SQL\'i.</div>';
         const html =
             noteHtml +
-            '<div class="dsw-sql-modal-label">Çalıştırılacak SQL:</div>' +
-            '<pre class="dsw-sql-modal-pre" id="dswSqlModalPre" tabindex="0" '
-              + 'aria-label="Üretilen SQL">' + _escape(pretty) + '</pre>' +
+            '<div class="dsw-sql-modal-label">1) Seçimlerinizden oluşan SQL (deterministik):</div>' +
+            '<pre class="dsw-sql-modal-pre" id="dswSqlBasePre" tabindex="0" '
+              + 'aria-label="Seçimlerden oluşan SQL">' + _escape(basePretty) + '</pre>' +
             '<div class="dsw-sql-modal-bar">' +
-              '<button type="button" id="dswSqlModalCopy" class="dsw-sql-modal-copy" '
-                + 'aria-label="SQL\'i panoya kopyala">📋 Kopyala</button>' +
-              '<span id="dswSqlModalCopyStatus" class="dsw-sql-modal-copy-status" '
+              '<button type="button" id="dswSqlBaseCopy" class="dsw-sql-modal-copy" '
+                + 'aria-label="Seçim SQL\'ini kopyala">📋 Kopyala</button>' +
+              '<span id="dswSqlBaseCopyStatus" class="dsw-sql-modal-copy-status" '
+                + 'role="status" aria-live="polite"></span>' +
+            '</div>' +
+            '<div class="dsw-sql-modal-label dsw-sql-modal-label-final">2) Talebinizle oluşan NİHAİ SQL '
+              + '(LLM — Çalıştır bunu koşar):</div>' +
+            '<pre class="dsw-sql-modal-pre" id="dswSqlFinalPre" tabindex="0" aria-label="Nihai SQL">'
+              + (note ? '⏳ Talebiniz LLM ile uygulanıyor…' : _escape(basePretty)) + '</pre>' +
+            '<div class="dsw-sql-modal-bar">' +
+              '<button type="button" id="dswSqlFinalCopy" class="dsw-sql-modal-copy" '
+                + 'aria-label="Nihai SQL\'i kopyala">📋 Kopyala</button>' +
+              '<span id="dswSqlFinalCopyStatus" class="dsw-sql-modal-copy-status" '
                 + 'role="status" aria-live="polite"></span>' +
             '</div>';
-        if (!(window.VyraModal && typeof window.VyraModal.info === 'function')) {
-            _notify('SQL önizleme için modal yüklenemedi.', 'error');
-            return;
-        }
         window.VyraModal.info({
-            title: 'SQL Önizleme — Talep & Sorgu',
+            title: 'SQL Önizleme — Seçim vs Nihai',
             htmlMessage: html,
             confirmText: 'Kapat',
         });
-        // Modal body artık DOM'da — Kopyala'yı bağla (VyraModal handle döndürmez).
-        const copyBtn = document.getElementById('dswSqlModalCopy');
-        const statusEl = document.getElementById('dswSqlModalCopyStatus');
-        if (copyBtn) {
-            copyBtn.addEventListener('click', function () {
-                const done = function (ok) {
-                    if (statusEl) statusEl.textContent = ok ? '✓ Kopyalandı' : 'Kopyalanamadı';
-                };
-                try {
-                    if (navigator.clipboard && navigator.clipboard.writeText) {
-                        navigator.clipboard.writeText(pretty).then(
-                            function () { done(true); },
-                            function () { done(false); }
-                        );
-                    } else {
-                        // Fallback: pre içeriğini seç + execCommand (eski tarayıcı/insecure ctx)
-                        const pre = document.getElementById('dswSqlModalPre');
-                        const range = document.createRange();
-                        range.selectNodeContents(pre);
-                        const sel = window.getSelection();
-                        sel.removeAllRanges();
-                        sel.addRange(range);
-                        const ok = document.execCommand('copy');
-                        sel.removeAllRanges();
-                        done(ok);
-                    }
-                } catch (e) {
-                    done(false);
-                }
-            });
+        // Modal body DOM'da — base kopyala bağla.
+        _wireSqlCopy('dswSqlBaseCopy', 'dswSqlBaseCopyStatus', function () { return basePretty; });
+        if (!note) {
+            // Talep yok → nihai = base; kopyala base ile bağlı.
+            _wireSqlCopy('dswSqlFinalCopy', 'dswSqlFinalCopyStatus', function () { return basePretty; });
+            return;
         }
+        // Talep var → LLM ile nihai SQL'i hesapla (generate_only), pre'yi doldur.
+        let _finalPretty = '';
+        _computeFinalSqlForPreview().then(function (finalSql) {
+            const pre = document.getElementById('dswSqlFinalPre');
+            if (!pre) return;  // modal kapandı
+            _finalPretty = finalSql ? _prettyPrintSql(finalSql) : '(LLM nihai SQL üretemedi)';
+            pre.textContent = _finalPretty;
+        }).catch(function (err) {
+            const pre = document.getElementById('dswSqlFinalPre');
+            if (pre) {
+                _finalPretty = 'Nihai SQL üretilemedi: ' + ((err && err.message) || 'hata');
+                pre.textContent = _finalPretty;
+            }
+        });
+        _wireSqlCopy('dswSqlFinalCopy', 'dswSqlFinalCopyStatus', function () {
+            return _finalPretty || _state.finalSql || '';
+        });
     }
 
     // ── B4/B5b/B8 — LLM endpoint wrappers ──────────────────────────────

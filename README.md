@@ -75,6 +75,10 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.41.0 (2026-05-31) - Wizard SQL önizleme: Seçim vs Nihai SQL yan yana (ATHENA + HEBE + ORACLE + METIS + APOLLO)
+> **Sorun (kullanıcı):** "Kullanıcı yorumuna göre LLM SQL'i gerçekten yeniden düzenliyor mu, süreç çalışıyor mu — emin olmam lazım." Doğrulandı (kod): `llm_generate_report` `user_note`'u prompt'a `Kullanıcı talebi: "..."` olarak gömüyor; süreç çalışıyor.
+> **Fix/Feature:** "📄 SQL" önizleme modalı artık **iki bölüm**: **(1)** Seçimlerinizden oluşan SQL — deterministik (`/preview` → `assemble`, yorumu yok sayar); **(2)** Talebinizle oluşan **NİHAİ** SQL — LLM (`/generate-report`), yeni **`generate_only=true`** bayrağıyla **ÇALIŞTIRMADAN** üretilir (scope gate korunur). Her ikisi kopyalanabilir. **Çalıştır** nihai (LLM) SQL'i koşar. Kullanıcı "ne istedim / ne üretildi"yi yan yana görüp sürecin çalıştığına emin olur. `_state.baseSql`/`finalSql` ayrı + cache (seçim/talep değişince invalidate). (Canlı LLM smoke kullanıcıda; backend `generate_only` short-circuit py_compile + inspekte.)
+
 ### 🆕 v3.40.0 (2026-05-31) - Tablo-yetki TÜM execute yüzeylerinde fail-closed (Faz B tamam) (ARES + HERMES + NIKE + APOLLO + TYCHE)
 > **Sistemik güvenlik:** 2-ajan audit, `check_table_whitelist`'in "boş allowed_tables = allow-all" footgun'u nedeniyle tablo-yetkiyi SESSİZCE atlayan execute yolları buldu. Yeni merkezi **fail-closed** guard `app/services/db_smart/table_guard.enforce_sql_scope` (restricted+boş → DENY; yetkisiz tablo → DENY, yetkili tablo listeler, yanlış-tablo/FK-komşu adı sızdırmaz) tek choke-point oldu. Bağlanan yüzeyler:
 > - **query_builder `/preview`** — `allowed_tables=None` idi (whitelist atlanıyordu).

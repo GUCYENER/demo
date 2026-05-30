@@ -226,6 +226,9 @@ class GenerateReportReq(BaseModel):
     # fk_context: [{from_table, to_table, from_col, to_col}]
     fk_context: List[Dict[str, Any]] = Field(default_factory=list)
     limit: int = Field(default=100, ge=1, le=1000)
+    # v3.40.1: True → SQL üret + döndür ama ÇALIŞTIRMA (wizard SQL-önizleme modalı
+    # "nihai SQL"i çalıştırmadan göstermek için). Scope gate yine uygulanır.
+    generate_only: bool = Field(default=False)
 
 
 class GenerateReportResp(BaseModel):
@@ -2764,6 +2767,16 @@ def post_generate_report(
             success=False,
             fallback=fallback,
             error="Seçilen tablolar için çalıştırma yetkiniz bulunmuyor.",
+        )
+    # v3.40.1: generate_only — SQL'i üret + döndür ama ÇALIŞTIRMA (modal "nihai SQL"
+    # önizlemesi). Yukarıdaki scope gate + per-tablo 403 yine geçerli (yetkisiz tablo
+    # bu noktaya gelmez); yalnızca SafeSQLExecutor.execute adımı atlanır.
+    if req.generate_only:
+        return GenerateReportResp(
+            sql=generated_sql,
+            rationale=rationale,
+            success=True,
+            fallback=fallback,
         )
     try:
         from app.services.safe_sql_executor import SafeSQLExecutor
