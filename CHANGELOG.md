@@ -1,5 +1,23 @@
 # VYRA Changelog
 
+## v3.38.4 — 2026-05-30 — Bulgular4 kalan 2 madde: KÖK fix (Çalıştır 500 + WHERE 409)
+
+> Kullanıcı testi: 2 madde hâlâ kırık. Hata izleme (v3.38.3) çalışan backend'e henüz
+> yansımadığı için (eski kod; `/api/system/errors` 404) traceback'ler **reproduce** ile
+> alındı. Konsey: HERMES+POSEIDON (B4-4), ORACLE+HERMES (B4-1).
+
+- **B4-4 — "Çalıştır" / kayıtlı rapor rerun → 500 "Veri kaynağı bozuk":** KÖK NEDEN
+  `_load_source` (db_smart_api.py): `get_db_context` **RealDictCursor** döndürür → `row`
+  bir dict; `dict(zip(keys, row))` dict'i yinelerken **ANAHTARLARINI** verir → `rec`
+  değerleri kolon adlarına eşitleniyordu (`host='host'` → canary guard → HER saved-report
+  rerun "kaynak bozuk" 500; password decrypt fail de aynı bug'ın semptomuydu — yanlış
+  string'i çözüyordu). Fix: `dict(row) if isinstance(row, dict) else dict(zip(keys, row))`.
+  **Uçtan uca kanıt:** Oracle source 3'ten 10 satır SSE ile aktı (start/columns/rows/end).
+- **B4-1 — WHERE kriter ekleyince hata (artık 409):** v3.38.1 fix'i 400 TypeError'ı çözdü
+  ama session `context.ast` stale/empty olunca `ast/patch` **409 "AST oluşturulmadı"**
+  veriyordu. Fix: `AstPatchRequest.base_ast` (client canonical AST) — session AST boşsa onu
+  taban al (SAVE'deki wizard_state override deseninin AST karşılığı); FE `state.ast` gönderir.
+
 ## v3.38.3 — 2026-05-30 — Merkezi Hata Gözlemi (Centralized Error Observability)
 
 > Kullanıcı: "loglama/hata yakalama zayıf; tüm hataları tek yerden gör, UI ekle, ajanlar

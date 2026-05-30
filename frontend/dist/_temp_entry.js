@@ -35881,6 +35881,9 @@ window.ThemePickerPopup = (function () {
             args: last.args,
             render_preview: true,
             dialect: state.dialect,
+            // v3.38.4 (B4-1): session context.ast stale/empty olabilir → client
+            // canonical AST'ini taban gönder ki backend 409 yerine patch uygulasın.
+            base_ast: state.ast || null,
         };
         var fetchOpts = {
             method: 'POST',

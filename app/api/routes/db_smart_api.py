@@ -347,6 +347,10 @@ class AstPatchRequest(BaseModel):
     args: Dict[str, Any] = Field(default_factory=dict)
     render_preview: bool = False
     dialect: Optional[str] = None
+    # v3.38.4 (B4-1): client'ın canonical AST'i. Session context stale/empty
+    # kalabilir (özellikle ilk filtre eklemede context.ast henüz yazılmamış olur);
+    # bu durumda backend session yerine bunu taban alır → 409 yerine patch uygulanır.
+    base_ast: Optional[Dict[str, Any]] = None
 
 
 class AstPatchResponse(BaseModel):
@@ -460,6 +464,12 @@ def post_ast_patch(
                 raise HTTPException(status_code=404, detail="Oturum bulunamadı veya yetkiniz yok.")
 
             ast = (ctx.get("context") or {}).get("ast") or {}
+            if not ast and isinstance(body.base_ast, dict) and body.base_ast:
+                # v3.38.4 (B4-1): session context.ast stale/empty → client'ın
+                # canonical AST'ini taban al (wizard_state override deseninin AST
+                # karşılığı). Patch sonrası new_ast zaten context'e yazılır (aşağıda).
+                ast = body.base_ast
+                logger.debug("[db_smart.ast] session ast empty → base_ast fallback uid=%s", session_uid)
             if not ast:
                 raise HTTPException(
                     status_code=409,
@@ -880,7 +890,11 @@ def _load_source(
         return None
     keys = ["id", "company_id", "name", "db_type", "host", "port",
             "db_name", "db_user", "db_password_encrypted"]
-    rec = dict(zip(keys, row))
+    # v3.38.4 (B4-4 kök neden): get_db_context RealDictCursor kullanır → `row` bir
+    # dict'tir. `dict(zip(keys, row))` dict'i yinelerken ANAHTARLARINI verir → rec
+    # değerleri kolon adlarına eşitleniyordu (host='host' → canary → HER saved-report
+    # rerun "Veri kaynağı bozuk" 500). Hem RealDict hem tuple cursor'ı doğru ele al.
+    rec = dict(row) if isinstance(row, dict) else dict(zip(keys, row))
 
     # 3) Password decrypt — _decrypt_stored_password Fernet/base64 fallback
     # FIX3 P1 B3 (HERMES+ARES): silent empty-string fallback yok. Decrypt
