@@ -56,6 +56,10 @@
             <i class="fa-solid fa-palette"></i>
             Tasarım
         </button>
+        <button id="tabErrorMonitor" class="sub-tab admin-only">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            Hata İzleme
+        </button>
     </div>
 
     <!-- Global Firma Seçici (v2.54.0) -->
@@ -895,6 +899,42 @@
                 <div id="themeCatalogFilterWrap"></div>
             </div>
             <div id="themeCatalogGrid" style="padding:0 18px 18px"></div>
+        </div>
+    </div>
+
+    <!-- Hata İzleme (v3.38.3) — merkezi hata gözlemi: tam traceback + request_id -->
+    <div id="contentErrorMonitor" class="param-content hidden admin-only">
+        <div class="error-monitor">
+            <div class="error-monitor-head">
+                <div>
+                    <h3 class="error-monitor-title"><i class="fa-solid fa-triangle-exclamation"></i> Hata İzleme</h3>
+                    <p class="form-hint">Sunucu hataları (500/exception) tam traceback + request context ile tek yerde. Bir hatayı görmek için satıra tıklayın.</p>
+                </div>
+                <button id="errMonRefresh" class="btn-secondary" type="button"><i class="fa-solid fa-rotate"></i> Yenile</button>
+            </div>
+            <div id="errorMonitorStats" class="error-monitor-stats"></div>
+            <div class="error-monitor-toolbar">
+                <select id="errMonLevel" class="error-monitor-select" aria-label="Seviye filtresi">
+                    <option value="">Hatalar (ERROR+CRITICAL)</option>
+                    <option value="ERROR">Yalnız ERROR</option>
+                    <option value="CRITICAL">Yalnız CRITICAL</option>
+                    <option value="WARNING">Yalnız WARNING</option>
+                    <option value="ALL">Tümü</option>
+                </select>
+                <select id="errMonSince" class="error-monitor-select" aria-label="Zaman filtresi">
+                    <option value="">Tüm zamanlar</option>
+                    <option value="1">Son 1 saat</option>
+                    <option value="24" selected>Son 24 saat</option>
+                    <option value="168">Son 7 gün</option>
+                    <option value="720">Son 30 gün</option>
+                </select>
+                <div class="error-monitor-search">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <input id="errMonSearch" type="text" placeholder="mesaj / path / traceback ara…" aria-label="Hata ara">
+                    <button id="errMonSearchClear" class="error-monitor-search-clear" type="button" title="Temizle" aria-label="Aramayı temizle"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+            </div>
+            <div id="errorMonitorList" class="error-monitor-list" aria-live="polite"></div>
         </div>
     </div>
 

@@ -1,5 +1,41 @@
 # VYRA Changelog
 
+## v3.38.3 — 2026-05-30 — Merkezi Hata Gözlemi (Centralized Error Observability)
+
+> Kullanıcı: "loglama/hata yakalama zayıf; tüm hataları tek yerden gör, UI ekle, ajanlar
+> önce oraya baksın." Plan: `.agents/plans/2026-05-30_0252_centralized_error_observability_v1.md`.
+> Konsey: HERMES+HEPHAESTUS (log çekirdek), ARES (savunma+redaksiyon), ATHENA+HEBE (UI),
+> APOLLO (CLI), ZEUS (ajan kuralı), TYCHE (test 4/4).
+
+- **Kök eksik (kanıtlı):** `JSONFormatter` `exc_info`'yu (traceback) yazmıyordu → global
+  exception handler `exc_info=True` ile loglasa bile traceback yalnız uvicorn konsoluna
+  düşüyor, `vyra.log`'a girmiyordu (v3.38.2 500'ünü bulmak bu yüzden saatler aldı).
+- **errors.jsonl:** ayrı ERROR+ akışı — her satır JSON (ts/level/path/method/status/request_id/
+  message/**traceback**/redaksiyonlu context). "Tek yerden bak" dosyası.
+- **log_exception():** tam traceback + context; PG **NUL-strip** (v3.38.2 dersi) + hassas alan
+  **redaksiyonu** (password/token/…) + boyut limiti; loglama hatası isteği kırmaz.
+- **request_id / X-Request-ID:** her isteğe id; 500 yanıt header + `detail.request_id` →
+  kullanıcının gördüğü hata ↔ log kaydı birebir eşleşir.
+- **GET /api/system/errors (+/stats):** admin, sayfalı, filtre (level/since/q/request_id).
+- **"Hata İzleme" admin UI sekmesi:** Sistem Parametreleri → tablo + satır aç → tam traceback +
+  request_id kopyala + filtre + özet (error_monitor.js/css).
+- **CLI:** `python .agents/tools/show_errors.py --full` (DB'siz, dosyadan okur).
+- **mig 049:** `system_logs.request_id` + (level,created_at) & request_id indeksleri.
+- **Ajan kuralı:** vyrazeus.md "HATA AYIKLAMA — ÖNCE errors.jsonl" + kalıcı memory.
+
+## v3.38.2 — 2026-05-30 — Tablo-yetki kaydet 500 + sessiz veri bozulması (kök: NUL ayraç)
+
+> Ekran: `PUT /api/data-sources/3/permissions → 500` ("Save permissions error"). Bayt düzeyinde
+> kanıt. Konsey: ORACLE+HERMES (kök neden), ARES (savunma+durability), ATHENA+HEBE (FE).
+
+- **Kök neden:** `data_sources_module.js` `_tblKey` join ayracı **NUL (0x00)** baytıydı; save
+  split boşluk kullanıyordu → (1) şema/tablo bölünmüyor (schema='' + composite), (2) NUL'lı
+  string PostgreSQL'e gidince "null character not permitted" → **INSERT 500**.
+- **Fix:** paylaşılan sabit `_TBL_SEP` = U+001F (unit separator) — join==split, çakışmasız,
+  kaynak saf ASCII. + backend NUL/U+FFFD savunma stripi + bozuk satır temizliği +
+  `.gitattributes *.js text` (yeniden bayt-bozulma guard'ı). Code-review: ayraç-çakışması +
+  sapma + altitude bulguları shared-const ile giderildi.
+
 ## v3.38.1 — 2026-05-30 — Bulgular4 Round 2 (5 Smart Discovery fix)
 
 > Kullanıcı: "bu bulguları daha önce düzeltmiştin ama sorun değişti" (v3.37.9 eksik/regresyon).

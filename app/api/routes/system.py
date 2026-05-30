@@ -1106,3 +1106,99 @@ async def set_maturity_threshold(threshold: int = Query(..., ge=0, le=100), curr
         if conn:
             conn.close()
 
+
+# ── v3.38.3: Merkezi Hata Gözlemi — admin hata görüntüleme ──────────────────
+# "Tek yerden bak" API'si: system_logs'tan ERROR/CRITICAL kayıtları TAM traceback
+# (error_detail) + request_id ile döner. "Hata İzleme" UI sekmesi ve show_errors.py
+# CLI bunu kullanır. Admin-only.
+
+@router.get("/errors")
+async def list_errors(
+    level: Optional[str] = Query(None, description="ERROR | CRITICAL | WARNING | ALL"),
+    q: Optional[str] = Query(None, description="message / path / traceback içinde ara"),
+    request_id: Optional[str] = Query(None, description="X-Request-ID ile tek kayıt"),
+    since_hours: Optional[int] = Query(None, ge=1, le=720),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    current_user: dict = Depends(get_current_user),
+):
+    """Son hataları TAM traceback ile listeler (system_logs). Admin-only."""
+    if not current_user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Bu işlem için admin yetkisi gerekli")
+
+    where: List[str] = []
+    params: list = []
+    lvl = (level or "").upper()
+    if lvl in ("ERROR", "CRITICAL", "WARNING"):
+        where.append("level = %s"); params.append(lvl)
+    elif lvl != "ALL":
+        where.append("level IN ('ERROR','CRITICAL')")  # varsayılan: yalnız hatalar
+    if request_id:
+        where.append("request_id = %s"); params.append(request_id)
+    if since_hours:
+        where.append("created_at >= NOW() - (%s * INTERVAL '1 hour')"); params.append(since_hours)
+    if q:
+        where.append("(message ILIKE %s OR request_path ILIKE %s OR error_detail ILIKE %s)")
+        like = f"%{q}%"; params.extend([like, like, like])
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+
+    conn = get_db_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(f"SELECT COUNT(*) AS cnt FROM system_logs{where_sql}", params)
+        total = cur.fetchone()["cnt"]
+        cur.execute(
+            f"""SELECT id, created_at, level, module, message, request_path, request_method,
+                       response_status, user_id, request_id, error_detail
+                FROM system_logs{where_sql}
+                ORDER BY id DESC LIMIT %s OFFSET %s""",
+            params + [limit, offset],
+        )
+        items = []
+        for r in cur.fetchall():
+            d = dict(r)
+            items.append({
+                "id": d["id"],
+                "ts": d["created_at"].isoformat() if d.get("created_at") else None,
+                "level": d["level"],
+                "module": d["module"],
+                "message": d["message"],
+                "request_path": d["request_path"],
+                "request_method": d["request_method"],
+                "response_status": d["response_status"],
+                "user_id": d["user_id"],
+                "request_id": d.get("request_id"),
+                "traceback": d.get("error_detail"),
+            })
+    finally:
+        conn.close()
+    return {"success": True, "total": total, "limit": limit, "offset": offset, "items": items}
+
+
+@router.get("/errors/stats")
+async def error_stats(
+    since_hours: int = Query(24, ge=1, le=720),
+    current_user: dict = Depends(get_current_user),
+):
+    """Hata özeti: seviyeye göre sayım + en çok hatalı path'ler. Admin-only."""
+    if not current_user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Bu işlem için admin yetkisi gerekli")
+    conn = get_db_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT level, COUNT(*) AS cnt FROM system_logs
+               WHERE level IN ('ERROR','CRITICAL','WARNING')
+                 AND created_at >= NOW() - (%s * INTERVAL '1 hour')
+               GROUP BY level""", (since_hours,))
+        by_level = {r["level"]: r["cnt"] for r in cur.fetchall()}
+        cur.execute(
+            """SELECT request_path, COUNT(*) AS cnt FROM system_logs
+               WHERE level IN ('ERROR','CRITICAL') AND request_path IS NOT NULL
+                 AND created_at >= NOW() - (%s * INTERVAL '1 hour')
+               GROUP BY request_path ORDER BY cnt DESC LIMIT 10""", (since_hours,))
+        top_paths = [{"path": r["request_path"], "count": r["cnt"]} for r in cur.fetchall()]
+    finally:
+        conn.close()
+    return {"success": True, "since_hours": since_hours, "by_level": by_level, "top_paths": top_paths}
+

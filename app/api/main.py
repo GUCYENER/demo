@@ -263,19 +263,38 @@ def create_app() -> FastAPI:
     # �️ Global Exception Handler — 500 hatalarında CORS header ekler (v2.46.0)
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
-        import logging
-        logger = logging.getLogger("vyra")
-        logger.error(f"[Global] Unhandled exception: {type(exc).__name__}: {exc}", exc_info=True)
+        # v3.38.3: TAM traceback + request context → logs/errors.jsonl + system_logs.
+        # (Eskiden sadece logger.error idi; JSONFormatter traceback'i düşürüyordu.)
+        rid = getattr(request.state, "request_id", None)
+        try:
+            from app.services.logging_service import log_exception
+            log_exception(
+                exc,
+                module="api",
+                request_id=rid,
+                request_path=str(request.url.path),
+                request_method=request.method,
+                user_id=getattr(request.state, "user_id", None),
+                response_status=500,
+                context={"query": (str(request.url.query) or None)},
+            )
+        except Exception:
+            import logging
+            logging.getLogger("vyra").error(
+                f"[Global] Unhandled exception: {type(exc).__name__}: {exc}", exc_info=True
+            )
 
         origin = request.headers.get("origin", "")
         headers = {}
         if origin in settings.backend_cors_origins:
             headers["access-control-allow-origin"] = origin
             headers["access-control-allow-credentials"] = "true"
+        if rid:
+            headers["X-Request-ID"] = rid
 
         return JSONResponse(
             status_code=500,
-            content={"detail": "Sunucu hatası oluştu. Lütfen tekrar deneyin."},
+            content={"detail": "Sunucu hatası oluştu. Lütfen tekrar deneyin.", "request_id": rid},
             headers=headers,
         )
 
@@ -340,11 +359,18 @@ def create_app() -> FastAPI:
     async def log_requests(request: Request, call_next):
         """Merkezi HTTP request/response loglama"""
         from app.services.logging_service import log_system_event, log_request
-        
+        import uuid
+
+        # v3.38.3: her isteğe request_id — 500 yanıtı ↔ errors.jsonl kaydı eşleşir.
+        # (en dıştaki middleware olduğu için call_next'ten ÖNCE set edilir; route
+        #  hata atsa bile global_exception_handler request.state.request_id'yi görür.)
+        request_id = uuid.uuid4().hex[:12]
+        request.state.request_id = request_id
         start = time.time()
         response = await call_next(request)
         duration = time.time() - start
-        
+        response.headers["X-Request-ID"] = request_id
+
         # Sadece /api endpoint'lerini logla (health check hariç)
         if request.url.path.startswith("/api") and not request.url.path.endswith("/health"):
             # DB sütunlarını doğru dolduran log_request kullan

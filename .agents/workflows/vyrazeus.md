@@ -1331,3 +1331,23 @@ Uzun oturumlarda `graphify_wakeup` çıktısı sıkıştırılarak context windo
 | SQL temperature | Text-to-SQL'de temperature 0.0-0.2 — chat/genel için 0.7 |
 | Hallucination | RAG sonuç yoksa "bilgi bulunamadı" dönmeli — uydurma YASAK |
 | Few-shot | Text-to-SQL'de sample_questions'dan en az 2 örnek gönder |
+
+---
+
+## 🔎 HATA AYIKLAMA PROTOKOLÜ — ÖNCE errors.jsonl (v3.38.3, ZORUNLU)
+
+Bir hata / 500 / exception araştırılırken **İLK ADIM** — körlemesine grep/read'den ÖNCE:
+
+1. `python .agents/tools/show_errors.py --full` — son hatalar + **TAM traceback** + request_id.
+   - Belirli istek: `--request-id <X-Request-ID>` (kullanıcının 500 yanıtındaki id).
+   - Filtre: `--grep <kelime>` (path / mesaj / traceback içinde arar).
+2. Ham akış: `logs/errors.jsonl` — yalnız ERROR+, her satır JSON (ts, level, path, method,
+   status, request_id, message, **traceback**, redaksiyonlu context).
+3. Admin UI: Sistem Parametreleri → **Hata İzleme** sekmesi (`GET /api/system/errors`).
+4. Geçmiş/sorgu: `system_logs` tablosu (request_id korelasyonu, ILIKE arama).
+
+> Kural: Traceback bu kanalda **HAZIR** — saatlerce kaynak taramaya gerek yok.
+> Mekanizma: `logging_service.log_exception()` + `global_exception_handler` + JSONFormatter
+> artık `exc_info`'yu yazar (eskiden düşürüyordu → traceback kayboluyordu).
+> (v3.38.2 permissions 500'ü bu yapı olmadığı için saatler aldı → v3.38.3 ile çözüldü.)
+> Loglamada hassas alan redaksiyonu + PG NUL-strip uygulanır.

@@ -39,6 +39,7 @@ const CSS_FILES = [
     'assets/css/modules/ldap_settings.css',
     'assets/css/modules/org_permissions.css',
     'assets/css/modules/data_sources.css',
+    'assets/css/modules/error_monitor.css',          // v3.38.3 — Hata İzleme sekmesi
     'assets/css/modules/ds_learning.css',
     'assets/css/modules/ds_enrichment.css',
     'assets/css/modules/theme_catalog.css',
@@ -154,6 +155,7 @@ const JS_FILES = [
     'assets/js/modules/saved_reports_grid.js',           // v3.33.0 — Saved reports kart grid (SavedReportsGrid.mount)
     'assets/js/modules/learning_cache_dashboard.js',     // v3.32.0 Ajan-G — Cache hit dashboard widget
     'assets/js/modules/admin_error_review.js',           // v3.32.0 Ajan-I — Error pattern approval UI
+    'assets/js/modules/error_monitor.js',                // v3.38.3 — Merkezi Hata Gözlemi (Hata İzleme sekmesi)
     'assets/js/branding_engine.js',
 ];
 

@@ -30,6 +30,7 @@ window.ParamTabsModule = (function () {
                     widgetKeys: document.getElementById("tabWidgetKeys"),
                     dataSources: document.getElementById("tabDataSources"),
                     themeCatalog: document.getElementById("tabThemeCatalog"),
+                    errorMonitor: document.getElementById("tabErrorMonitor"),
                 },
                 content: {
                     companies: document.getElementById("contentCompanies"),
@@ -42,6 +43,7 @@ window.ParamTabsModule = (function () {
                     widgetKeys: document.getElementById("contentWidgetKeys"),
                     dataSources: document.getElementById("contentDataSources"),
                     themeCatalog: document.getElementById("contentThemeCatalog"),
+                    errorMonitor: document.getElementById("contentErrorMonitor"),
                 }
             };
         }
@@ -142,6 +144,14 @@ window.ParamTabsModule = (function () {
                     window.ThemeCatalogModule.load();
                 }
                 break;
+
+            case "errorMonitor":
+                if (el.tabs.errorMonitor) el.tabs.errorMonitor.classList.add("active");
+                if (el.content.errorMonitor) el.content.errorMonitor.classList.remove("hidden");
+                if (window.ErrorMonitorModule) {
+                    window.ErrorMonitorModule.load();
+                }
+                break;
         }
     }
 
@@ -187,6 +197,10 @@ window.ParamTabsModule = (function () {
 
         if (el.tabs.themeCatalog) {
             el.tabs.themeCatalog.addEventListener("click", () => activateTab("themeCatalog"));
+        }
+
+        if (el.tabs.errorMonitor) {
+            el.tabs.errorMonitor.addEventListener("click", () => activateTab("errorMonitor"));
         }
 
         // Yeni Kaynak Ekle butonu

@@ -1,0 +1,55 @@
+/* VYRA Error Monitor (v3.38.3) — Sistem Parametreleri "Hata İzleme" sekmesi */
+.error-monitor { padding: 16px 18px 24px; }
+.error-monitor-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:12px; }
+.error-monitor-title { margin:0 0 4px; font-size:18px; }
+.error-monitor-title i { color:#e0a800; margin-right:6px; }
+
+.error-monitor-stats { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:14px; }
+.em-stat { padding:6px 12px; border-radius:8px; font-size:12px; font-weight:600; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); }
+.em-stat-n { font-size:16px; margin-right:4px; }
+.em-stat.em-lvl-critical { color:#ff6b6b; border-color:rgba(255,107,107,.35); }
+.em-stat.em-lvl-error { color:#ff924d; border-color:rgba(255,146,77,.35); }
+.em-stat.em-lvl-warning { color:#e0a800; border-color:rgba(224,168,0,.35); }
+.em-stat-top { font-size:12px; opacity:.75; }
+.em-stat-top code { font-size:11px; }
+
+.error-monitor-toolbar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:12px; }
+.error-monitor-select { padding:7px 10px; border-radius:8px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.12); color:inherit; font-size:13px; }
+.error-monitor-search { position:relative; display:flex; align-items:center; flex:1; min-width:220px; }
+.error-monitor-search > i { position:absolute; left:10px; opacity:.5; font-size:12px; }
+.error-monitor-search input { width:100%; padding:7px 30px; border-radius:8px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.12); color:inherit; font-size:13px; }
+.error-monitor-search-clear { position:absolute; right:6px; background:none; border:none; color:inherit; opacity:.5; cursor:pointer; padding:4px; }
+.error-monitor-search-clear:hover { opacity:1; }
+
+.em-count { font-size:12px; opacity:.6; margin-bottom:8px; }
+.error-monitor-list { display:flex; flex-direction:column; gap:6px; }
+.em-empty { padding:32px; text-align:center; opacity:.6; }
+.em-empty.em-error { color:#ff6b6b; opacity:.9; }
+.em-empty > i { margin-right:6px; color:#4caf50; }
+
+.em-row { border:1px solid rgba(255,255,255,0.08); border-radius:8px; overflow:hidden; background:rgba(255,255,255,0.02); }
+.em-row.is-open { border-color:rgba(255,255,255,0.18); }
+.em-row-head { display:grid; grid-template-columns:84px 150px 50px minmax(120px,1fr) 46px minmax(160px,2fr) 20px; gap:10px; align-items:center; padding:9px 12px; cursor:pointer; font-size:13px; }
+.em-row-head:hover { background:rgba(255,255,255,0.04); }
+.em-badge { font-size:10px; font-weight:700; padding:3px 7px; border-radius:5px; text-align:center; }
+.em-badge.em-lvl-critical { background:rgba(255,107,107,.18); color:#ff6b6b; }
+.em-badge.em-lvl-error { background:rgba(255,146,77,.18); color:#ff924d; }
+.em-badge.em-lvl-warning { background:rgba(224,168,0,.18); color:#e0a800; }
+.em-time { opacity:.7; font-size:12px; white-space:nowrap; }
+.em-method { font-weight:600; opacity:.85; font-size:12px; }
+.em-path { font-family:monospace; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.em-status { font-weight:700; opacity:.7; }
+.em-msg { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:.85; }
+.em-caret { opacity:.5; font-size:11px; }
+
+.em-row-body { padding:10px 14px 14px; border-top:1px solid rgba(255,255,255,0.08); }
+.em-meta { display:flex; flex-wrap:wrap; gap:16px; align-items:center; font-size:12px; opacity:.8; margin-bottom:8px; }
+.em-meta code { background:rgba(255,255,255,0.07); padding:2px 6px; border-radius:4px; }
+.em-copy { margin-left:auto; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); color:inherit; padding:4px 10px; border-radius:6px; cursor:pointer; font-size:12px; }
+.em-copy:hover { background:rgba(255,255,255,0.12); }
+.em-traceback { margin:0; padding:12px; background:rgba(0,0,0,0.35); border-radius:6px; font-family:monospace; font-size:12px; line-height:1.5; white-space:pre-wrap; word-break:break-word; max-height:420px; overflow:auto; }
+
+@media (max-width:900px){
+    .em-row-head { grid-template-columns:70px 1fr 40px 18px; }
+    .em-time, .em-method, .em-status { display:none; }
+}
