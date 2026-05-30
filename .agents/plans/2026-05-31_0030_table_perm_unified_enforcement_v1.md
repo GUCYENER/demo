@@ -2,9 +2,15 @@
 plan_id: table_perm_unified_enforcement
 created: 2026-05-31
 branch: hira
-status: in_progress
+status: completed
 version_target: v3.40.0
+completed: 2026-05-31
 faz_durum: |
+  TAMAMLANDI. Faz A (v3.39.2/G3) + Faz B (v3.40.0): G1 table_guard.enforce_sql_scope
+  (fail-closed) + G5 tüm 4 yüzey bağlandı (query_builder/query_state/agentic/schedule_runner).
+  G2 (sorulan tablo adı) + G4 (FK scope) bilinçli ertelendi (G3 yeterli). table_guard 5 test
+  + standalone 4/4; G3 pytest 3/3. Canlı agentic/schedule smoke kullanıcı tarafından (LLM/cron).
+  --- (eski) ---
   Faz A (DB-Only mesaj) — G3 TAMAM (v3.39.2): restricted kullanıcıda başarısızlık →
   "Yetkili tablolarınız: X" net mesajı (_scope_restricted_message); generic "Yalnızca
   SELECT" + check_table_whitelist yanlış-komşu sızıntısı bastırıldı. G2 (sorulan tablonun

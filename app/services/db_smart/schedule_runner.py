@@ -161,6 +161,29 @@ def _compute_next_run(cron_expr: str, base: Optional[datetime] = None) -> Option
         return None
 
 
+def _owner_scope_ctx(cur: Any, user_id: Any) -> Dict[str, Any]:
+    """Owner'ın resolve_scope ctx'i (zamanlanmış koşumda tablo-yetki kapsamı için).
+
+    `is_admin` kolonu + company_id → resolve_scope (v3.39.0) doğru çözer:
+    admin-no-grant → ALL (admin owner'ın schedule'ı kırılmaz); restricted → enforce
+    (interactive path ile tutarlı). Kolon okunamazsa minimal ctx → fail-closed (non-admin).
+    """
+    ctx: Dict[str, Any] = {"id": user_id}
+    try:
+        cur.execute("SELECT is_admin, company_id FROM users WHERE id = %s LIMIT 1", (int(user_id),))
+        row = cur.fetchone()
+        if row is not None:
+            if isinstance(row, dict):
+                ctx["is_admin"] = bool(row.get("is_admin"))
+                ctx["company_id"] = row.get("company_id")
+            else:
+                ctx["is_admin"] = bool(row[0])
+                ctx["company_id"] = row[1]
+    except Exception:
+        pass
+    return ctx
+
+
 def run_one(cur: Any, report: Dict[str, Any]) -> Dict[str, Any]:
     """Tek bir rapor çalıştır → snapshot + next_run hesapla + DB güncelle.
 
@@ -193,11 +216,24 @@ def run_one(cur: Any, report: Dict[str, Any]) -> Dict[str, Any]:
             err_msg = "source_not_found_or_inactive"
             snapshot["error"] = err_msg
         else:
+            # v3.40.0 Faz B: zamanlanmış rerun'da owner'ın GÜNCEL can_execute tablo kapsamını
+            # re-check et — kayıt sonrası yetki daraltıldıysa yetkisiz tabloyu çalıştırma
+            # (interactive execute/stream rerun ile tutarlı; source-level auth tek başına yetmez).
+            from app.services.db_smart.table_guard import enforce_sql_scope
+            _ok_sc, _allowed_sc, _deny_sc = enforce_sql_scope(
+                sql, source_id, _owner_scope_ctx(cur, report.get("user_id")),
+                dialect, permission="can_execute",
+            )
+            if not _ok_sc:
+                err_msg = "scope_revoked:table_not_authorized"
+                snapshot["error"] = err_msg
+                _auto_pause(cur, rid, snapshot)
+                return {"ok": False, "report_id": rid, "row_count": None, "error": err_msg}
             executor = SafeSQLExecutor(
                 timeout=int(settings.DBSMART_SCHEDULE_QUERY_TIMEOUT_S),
                 max_rows=int(settings.DBSMART_SCHEDULE_MAX_ROWS),
             )
-            result = executor.execute(sql, src, dialect, use_result_cache=False)
+            result = executor.execute(sql, src, dialect, allowed_tables=_allowed_sc, use_result_cache=False)
             if not result.success:
                 err_msg = result.error or "execute_failed"
                 snapshot["error"] = err_msg

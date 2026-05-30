@@ -280,6 +280,7 @@ def run_agentic_query(
                 state["force_ast"] = True  # AST builder eligibility
 
             # Prod wiring — LLM + execute + explain
+            state["_user_ctx"] = current_user  # v3.40.0 Faz B: execute callable tablo-yetki kapsamı
             inject_callables(state, llm=True, execute=True, explain=True)
 
             final = run_pipeline(state, mode=body.mode)
@@ -354,6 +355,7 @@ def resume_agentic_query(
             apply_company_scope(cur, company_id=company_id)
 
             state["_cursor"] = cur
+            state["_user_ctx"] = current_user  # v3.40.0 Faz B: execute callable tablo-yetki kapsamı
             inject_callables(state, llm=True, execute=True, explain=True)
             final = resume_pipeline(state, user_choice)
             response = {k: v for k, v in final.items() if not k.startswith("_")}
@@ -434,6 +436,7 @@ def stream_agentic_query(
                     state["force_ast"] = True
 
                 # Prod wiring
+                state["_user_ctx"] = current_user  # v3.40.0 Faz B: execute callable tablo-yetki kapsamı
                 inject_callables(state, llm=True, execute=True, explain=True)
 
                 final = run_pipeline(state, mode=body.mode)

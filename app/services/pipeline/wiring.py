@@ -97,6 +97,7 @@ def make_execute_callable(
     timeout: Optional[int] = None,
     max_rows: Optional[int] = None,
     company_id: Optional[int] = None,
+    user_ctx: Optional[Dict[str, Any]] = None,
 ) -> Callable[[str], Dict[str, Any]]:
     """
     execute node için callable üretir. SafeSQLExecutor'u sarar.
@@ -134,7 +135,19 @@ def make_execute_callable(
     def _call(sql: str) -> Dict[str, Any]:
         if source_dict is None:
             raise RuntimeError(f"data source bulunamadı: id={source_id}")
-        res = executor.execute(sql, source=source_dict, dialect=dialect, allowed_tables=allow)
+        # v3.40.0 Faz B: tablo-yetki fail-closed gate. Önceden allow=get_allowed_tables
+        # (TÜM kaynak tabloları) → agentic kullanıcısı yetkisiz tabloyu çalıştırabiliyordu.
+        eff_allow = allow
+        if user_ctx is not None:
+            from app.services.db_smart.table_guard import enforce_sql_scope
+            _ok, _scoped, _deny = enforce_sql_scope(
+                sql, source_id, user_ctx, dialect, permission="can_execute",
+            )
+            if not _ok:
+                raise RuntimeError(_deny)
+            if _scoped is not None:
+                eff_allow = _scoped  # restricted → doğrulanmış whitelist
+        res = executor.execute(sql, source=source_dict, dialect=dialect, allowed_tables=eff_allow)
         if not res.success:
             raise RuntimeError(res.error or "execute failed")
         return {
@@ -259,6 +272,7 @@ def inject_callables(
         # source_id leak'ini engeller (K7).
         state["_execute_callable"] = make_execute_callable(
             source_id, dialect=dialect, company_id=company_id,
+            user_ctx=state.get("_user_ctx"),  # v3.40.0 Faz B: tablo-yetki için kullanıcı kapsamı
         )
     if explain and "_explain_callable" not in state and source_id:
         state["_explain_callable"] = make_explain_callable(

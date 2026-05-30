@@ -75,6 +75,14 @@ Detaylı rehber: [`setup/KURULUM_REHBERI.md`](setup/KURULUM_REHBERI.md)
 
 ## 🚀 Versiyon Geçmişi
 
+### 🆕 v3.40.0 (2026-05-31) - Tablo-yetki TÜM execute yüzeylerinde fail-closed (Faz B tamam) (ARES + HERMES + NIKE + APOLLO + TYCHE)
+> **Sistemik güvenlik:** 2-ajan audit, `check_table_whitelist`'in "boş allowed_tables = allow-all" footgun'u nedeniyle tablo-yetkiyi SESSİZCE atlayan execute yolları buldu. Yeni merkezi **fail-closed** guard `app/services/db_smart/table_guard.enforce_sql_scope` (restricted+boş → DENY; yetkisiz tablo → DENY, yetkili tablo listeler, yanlış-tablo/FK-komşu adı sızdırmaz) tek choke-point oldu. Bağlanan yüzeyler:
+> - **query_builder `/preview`** — `allowed_tables=None` idi (whitelist atlanıyordu).
+> - **query_state `/preview`** — `allowed=[req.table]` SELF-REFERENTIAL'di (kullanıcının `req.table`'a yetkisi doğrulanmıyordu).
+> - **agentic `/api/agentic-query`[`/stream`/`/resume`]** — wiring `get_allowed_tables`=TÜM kaynak tabloları idi; `current_user` state'e (`_user_ctx`) threadlendi, `make_execute_callable` per-SQL enforce eder.
+> - **schedule_runner** — zamanlanmış rerun'da tablo whitelist YOKtu; artık owner'ın GÜNCEL `can_execute` kapsamı re-check edilir (kayıt sonrası daraltma yakalanır).
+> `table_guard` 5 birim test + standalone 4/4 (all-access/yetkili/yetkisiz-DENY/boş-DENY) doğrulandı. Plan: `.agents/plans/2026-05-31_0030_table_perm_unified_enforcement_v1.md` (completed). Canlı agentic/schedule smoke kullanıcıda (LLM/cron). Bilinen sınırlama: `check_table_whitelist` şema-agnostik (RB-v3.39.0).
+
 ### 🆕 v3.39.2 (2026-05-31) - "Veritabanında Ara" restricted kullanıcı net yetki mesajı (Faz A/G3) (APOLLO + HEBE + ARES + ORACLE + TYCHE)
 > **Sorun (kullanıcı raporu):** FATURA-only yetkili kullanıcı "Veritabanında Ara"da "müşteri listesi" sorunca "yetkiniz yok" demiyor — kimi zaman generic `"Yalnızca SELECT / farklı sorun"`, kimi zaman **sormadığı** tablo için `"sipariş yetkiniz yok"` (FK-komşu sızıntısı). **Kök:** scope ZATEN uygulanıyor (yetkisiz tablo LLM'e/execute'a sızmıyor — güvenli) ama başarısızlık mesajı tutarsız; `_prune_schema_tables` FK genişletmesi sormadığın komşuyu (SİPARİŞLER) çekip LLM ona JOIN atınca `check_table_whitelist` o tabloyu reddedip `_sanitize_error_for_user`'ın `"tablo" in msg` erken-return'ü ham adı sızdırıyor.
 > **Fix (Faz A/G3):** `process_stream_db_only` başarısızlık bloğunda restricted kullanıcı (`not _exec_scope.all_tables`) için yeni `_scope_restricted_message` → **"Yetkili tablolarınız: {liste}. Sorunuz yetkili olmadığınız bir tabloya ilişkin görünüyor."** Generic SELECT mesajı + yanlış-komşu tablo adı sızıntısı bastırıldı; `all_tables` kullanıcıda eski davranış korunur. 3 birim test. (Plan: `.agents/plans/2026-05-31_0030_table_perm_unified_enforcement_v1.md`; Faz B = agentic/query_builder/query_state/schedule_runner fail-closed enforcement, PENDING.)
