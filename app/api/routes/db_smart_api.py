@@ -760,7 +760,25 @@ def post_preview(
             estimated_rows=None,
         )
 
+    # v3.41.1: base SQL dialect'ini KAYNAKTAN çöz. FE (_buildWizardState) wizard_state.dialect'i
+    # 'postgresql' hardcoded gönderiyor → Oracle kaynakta base SQL yanlış (LIMIT) görünüyordu
+    # ("Seçim vs Nihai" modalında base=LIMIT, nihai=FETCH FIRST tutarsızlığı). Nihai
+    # (generate-report) zaten source dialect kullanıyor; base'i de source'a hizala.
     dialect = wizard_state.get("dialect", "postgresql")
+    _src_id = wizard_state.get("source_id")
+    if _src_id:
+        try:
+            with get_db_context() as _dc:
+                _dcur = _dc.cursor()
+                apply_vyra_user_context(_dcur, current_user)
+                _dcur.execute("SELECT db_type FROM data_sources WHERE id = %s LIMIT 1", (int(_src_id),))
+                _drow = _dcur.fetchone()
+            if _drow:
+                _dbt = ((_drow["db_type"] if isinstance(_drow, dict) else _drow[0]) or "").strip().lower()
+                if _dbt in ("oracle", "mssql", "mysql", "postgresql"):
+                    dialect = _dbt
+        except Exception as _de:
+            logger.debug("[db_smart.preview] source dialect resolve failed: %s", _de)
     out = query_assembler.assemble(wizard_state, current_user, dialect=dialect)
     sql = out.get("sql") or ""
 

@@ -2765,7 +2765,17 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
 
             # v3.9.0: Self-Healing — execution hatası varsa LLM ile düzeltme
             # v3.15.0: Timeout durumunda Self-Healing'i tetikleme — SQL yanlış değil, sadece uzun sürdü.
-            if not exec_result.success and exec_result.error and not getattr(exec_result, "timeout", False):
+            # v3.41.1: Bağlantı/altyapı hatasında (ORA-28547 vb.) da tetikleme — SQL doğru,
+            # sorun veritabanı bağlantısı; LLM-regenerate + reconnect DÖNGÜSÜ 285s'ye yol açıyordu (fail-fast).
+            _infra_err = bool(exec_result.error) and _is_infra_db_error(exec_result.error)
+            if _infra_err and not exec_result.success:
+                log_system_event(
+                    "WARNING",
+                    f"DB-Only: bağlantı/altyapı hatası — Self-Healing ATLANDI (SQL doğru, sorun bağlantı): "
+                    f"{(exec_result.error or '')[:120]}",
+                    "deep_think", user_id
+                )
+            if not exec_result.success and exec_result.error and not getattr(exec_result, "timeout", False) and not _infra_err:
                 log_system_event(
                     "INFO",
                     f"DB-Only: SQL Self-Healing tetikleniyor: {exec_result.error[:100]}",
@@ -3280,6 +3290,24 @@ def _prune_schema_tables(
         return []
 
     return pruned
+
+
+def _is_infra_db_error(err: str) -> bool:
+    """Bağlantı/altyapı hatası mı? (ORA-28547, TNS/listener, connection refused/timeout, vb.)
+
+    v3.41.1: Bu tür hatalarda SQL Self-Healing BOŞUNA + DÖNGÜ yaratır — SQL doğru,
+    sorun veritabanı bağlantısı. LLM ile SQL'i yeniden üretmek bağlantıyı düzeltmez;
+    her denemede tekrar bağlanma timeout'u → dakikalarca sürer (kullanıcı raporu: ORA-28547,
+    285s loop). Bu durumda self-heal ATLANIR → tek deneme + net mesaj (fail-fast).
+    """
+    e = (err or "").lower()
+    return any(k in e for k in (
+        "ora-28547", "ora-12154", "ora-12541", "ora-12505", "ora-12514",
+        "ora-03113", "ora-03114", "tns:", "oracle net", "no listener",
+        "connection to server failed", "connection refused", "could not connect",
+        "connection reset", "connection closed", "server closed the connection",
+        "operationalerror", "veritabanına bağlan", "can't connect", "timed out connecting",
+    ))
 
 
 def _scope_restricted_message(exec_scope) -> str:

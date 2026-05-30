@@ -105,8 +105,25 @@ def _get_db_connector(source: dict, password: str):
         import oracledb
         from app.api.routes.data_sources_api import _init_oracle_thick_mode
         _init_oracle_thick_mode()
-        dsn = oracledb.makedsn(host, port, service_name=db_name)
-        conn = oracledb.connect(user=db_user, password=password, dsn=dsn)
+        # v3.41.1: BAĞLANTI timeout'u — PG/MySQL/MSSQL'de connect_timeout/login_timeout=15
+        # vardı, Oracle'da YOKtu → Oracle erişilemez/listener kaydı yokken connect ~430s
+        # asılıp fail oluyordu (kullanıcı raporu + manuel test ELAPSED=430.7s).
+        # makedsn + tcp_connect_timeout kwarg THICK mode'da her zaman onurlanmıyor; bu yüzden
+        # timeout'u DESCRIPTOR'a da gömüyoruz (CONNECT_TIMEOUT/TRANSPORT_CONNECT_TIMEOUT/
+        # RETRY_COUNT) — thick+thin ikisi de okur → erişilemezse ~15s hızlı fail.
+        _h = str(host).strip()
+        _p = int(port)
+        _svc = str(db_name).strip()
+        dsn = (
+            "(DESCRIPTION=(CONNECT_TIMEOUT=15)(TRANSPORT_CONNECT_TIMEOUT=15)"
+            "(RETRY_COUNT=1)(RETRY_DELAY=2)"
+            f"(ADDRESS=(PROTOCOL=TCP)(HOST={_h})(PORT={_p}))"
+            f"(CONNECT_DATA=(SERVICE_NAME={_svc})))"
+        )
+        conn = oracledb.connect(
+            user=db_user, password=password, dsn=dsn,
+            tcp_connect_timeout=15, retry_count=1, retry_delay=2,
+        )
         return conn, "oracle"
 
     else:
