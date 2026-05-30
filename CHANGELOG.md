@@ -1,5 +1,21 @@
 # VYRA Changelog
 
+## v3.38.7 — 2026-05-30 — "Çalıştır kolon var veri yok" + duplicate-name uyarısı (modern + i18n)
+
+> Kullanıcı testi: (1) "Çalıştır" 500 düzeldi ama sonuç tablosu kolonları gösterip satırları
+> boş bırakıyor. (2) Duplicate isim uyarısı native browser popup + ham i18n key
+> (`wizard.confirm.duplicate_name`). Konsey: HERMES (run/snapshot), ATHENA+HEBE (confirm UI+i18n).
+
+- **"Çalıştır → kolon var veri yok" KÖK fix:** `report_detail_modal._renderRunResult` SSE/snapshot
+  rows'u **pozisyonel dizi** (`[v0,v1,…]`) iken `row[c]` ile **kolon ADIYLA** indeksliyordu → her
+  hücre `undefined` → boş ("kolon var veri yok"). Fix: `Array.isArray(row) ? row[ci] : row[c]`.
+  Ek: `/mark-run` artık sonucu `last_run_snapshot`'a yazıyor (eskiden body'siz çağrılıp NULL
+  kalıyordu) + modal açılışta snapshot'ı render ediyor (Çalıştır'a basmadan veri görünür).
+- **Duplicate-name uyarısı modern:** native `window.confirm` (+ ham i18n key) yerine modern
+  `VyraModal.confirm` (onConfirm=üzerine yaz, onCancel=alan hatası+focus, isim XSS-escape).
+  Eksik i18n key'ler TR+EN eklendi: `wizard.confirm.duplicate_name[.title/.confirm/.cancel]`,
+  `wizard.error.duplicate_name_field`, `wizard.toast.report_updated`.
+
 ## v3.38.6 — 2026-05-30 — SQL üretme W0/W garbage KÖK fix (frontend pretty-print STX korupsiyonu)
 
 > Kullanıcı: "farklı tablo seçince SELECT yanlış üretiliyor (W0SELECT/W0FROM…). Bu SQL üretme

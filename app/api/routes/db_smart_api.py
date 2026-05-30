@@ -1442,17 +1442,25 @@ def post_revoke_share(
     return {"ok": True, "report_id": report_id}
 
 
+class _MarkRunBody(BaseModel):
+    # v3.38.7: çalıştırma sonucu snapshot'ı (columns/rows/row_count/truncated) —
+    # last_run_snapshot'a yazılır ki rapor tekrar açılınca veri görünsün.
+    snapshot: Optional[Dict[str, Any]] = None
+
+
 @router.post("/saved-reports/{report_id}/mark-run")
 def post_mark_run(
     report_id: int = Path(..., ge=1),
+    body: Optional[_MarkRunBody] = Body(default=None),
     current_user: Dict[str, Any] = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """run_count++ + last_run_at=NOW(). Snapshot opsiyonel (sonraki iterasyon)."""
+    """run_count++ + last_run_at=NOW() + (v3.38.7) opsiyonel last_run_snapshot."""
     _require_user_id(current_user)
+    _snapshot = body.snapshot if body else None
     with get_db_context() as conn:
         cur = conn.cursor()
         apply_vyra_user_context(cur, current_user)
-        ok = saved_reports.mark_run(cur, report_id, current_user)
+        ok = saved_reports.mark_run(cur, report_id, current_user, snapshot=_snapshot)
         if not ok:
             raise HTTPException(status_code=404, detail="Rapor bulunamadı veya yetkiniz yok.")
         conn.commit()

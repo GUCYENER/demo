@@ -3430,32 +3430,52 @@
             metric_key: (_state.metric && _state.metric.metric_key) || null,
             schema_version: 'v3.36',
         };
+        const _saveOrigLabel = confirmBtn ? confirmBtn.textContent : 'Kaydet';
         if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Kaydediliyor…'; }
         try {
             // v3.37.3 (bulgular-2 / Bulgu 7b): duplicate-name kontrol.
             const dup = await _findReportByName(name);
             if (dup) {
-                const ok = window.confirm(_t('wizard.confirm.duplicate_name', { name: dup.name }));
-                if (!ok) {
-                    if (errEl) {
-                        errEl.textContent = _t('wizard.error.duplicate_name_field');
-                        errEl.hidden = false;
+                // v3.38.7: native window.confirm (SaaS-dışı + ham i18n key görünüyordu)
+                // yerine modern VyraModal.confirm + i18n. İsim XSS'e karşı _escape'li.
+                if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = _saveOrigLabel; }
+                const _doOverwrite = async function () {
+                    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Kaydediliyor…'; }
+                    try {
+                        await _fetchJson(API_BASE + '/saved-reports/' + encodeURIComponent(dup.id), {
+                            method: 'PATCH',
+                            body: JSON.stringify({
+                                name: name,
+                                description: description || null,
+                                wizard_state: wizard_state,
+                                generated_sql: body.generated_sql,
+                            }),
+                        });
+                        _notify(_t('wizard.toast.report_updated') + ': ' + name, 'success');
+                        _afterSaveCleanup(dup.id, name);
+                    } catch (e2) {
+                        if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = _saveOrigLabel; }
+                        if (errEl) { errEl.textContent = (e2 && e2.message) || 'Kaydetme sırasında hata oluştu.'; errEl.hidden = false; }
                     }
+                };
+                const _onCancelOverwrite = function () {
+                    if (errEl) { errEl.textContent = _t('wizard.error.duplicate_name_field'); errEl.hidden = false; }
                     if (nameIn) nameIn.focus();
-                    return;
+                };
+                if (window.VyraModal && typeof window.VyraModal.confirm === 'function') {
+                    window.VyraModal.confirm({
+                        title: _t('wizard.confirm.duplicate_name.title'),
+                        message: _t('wizard.confirm.duplicate_name', { name: _escape(dup.name) }),
+                        confirmText: _t('wizard.confirm.duplicate_name.confirm'),
+                        cancelText: _t('wizard.confirm.duplicate_name.cancel'),
+                        confirmClass: 'confirm',
+                        onConfirm: _doOverwrite,
+                        onCancel: _onCancelOverwrite,
+                    });
+                } else {
+                    if (window.confirm(_t('wizard.confirm.duplicate_name', { name: dup.name }))) _doOverwrite();
+                    else _onCancelOverwrite();
                 }
-                // Üzerine yaz: mevcut id ile PATCH.
-                await _fetchJson(API_BASE + '/saved-reports/' + encodeURIComponent(dup.id), {
-                    method: 'PATCH',
-                    body: JSON.stringify({
-                        name: name,
-                        description: description || null,
-                        wizard_state: wizard_state,
-                        generated_sql: body.generated_sql,
-                    }),
-                });
-                _notify(_t('wizard.toast.report_updated') + ': ' + name, 'success');
-                _afterSaveCleanup(dup.id, name);
                 return;
             }
             // Backend route'u (FAZ 3 P13 G3.3) /sessions/{uid}/save-report — session-bound.

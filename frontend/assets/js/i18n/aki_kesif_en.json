@@ -161,6 +161,13 @@
   "wizard.modal.confirm.discard.confirm": "Discard",
   "wizard.modal.confirm.discard.cancel": "Keep editing",
 
+  "wizard.confirm.duplicate_name.title": "Report name exists",
+  "wizard.confirm.duplicate_name": "A report named <strong>{name}</strong> already exists. Overwrite it?",
+  "wizard.confirm.duplicate_name.confirm": "Overwrite",
+  "wizard.confirm.duplicate_name.cancel": "Cancel",
+  "wizard.error.duplicate_name_field": "A report with this name exists — use a different name or overwrite.",
+  "wizard.toast.report_updated": "Report updated",
+
   "wizard.label.source": "Data source",
   "wizard.label.table": "Table",
   "wizard.label.column": "Column",

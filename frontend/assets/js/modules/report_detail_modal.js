@@ -378,6 +378,12 @@
         const resultMount = document.createElement('div');
         resultMount.className = 'rdm-result-mount';
         preview.appendChild(resultMount);
+        // v3.38.7: açılışta son çalıştırma snapshot'ı varsa hemen göster (Çalıştır'a
+        // basmadan veri görünür). Çalıştır yine canlı sonuçla günceller.
+        const _snap = _report && _report.last_run_snapshot;
+        if (_snap && ((Array.isArray(_snap.columns) && _snap.columns.length) || (Array.isArray(_snap.rows) && _snap.rows.length))) {
+            try { _renderRunResult(resultMount, _snap); } catch (e) { /* noop */ }
+        }
 
         body.appendChild(preview);
 
@@ -607,10 +613,22 @@
 
             if (sseError) throw new Error(sseError);
 
-            // 3) mark-run (best-effort)
+            // 3) mark-run + snapshot persist (best-effort). v3.38.7: sonucu snapshot
+            // olarak kaydet ki modal tekrar açılınca Çalıştır'a basmadan veri görünsün
+            // (önceden mark-run body'siz çağrılıyordu → last_run_snapshot NULL kalıyordu).
             window.vyraFetch(
                 '/db-smart/saved-reports/' + encodeURIComponent(_reportId) + '/mark-run',
-                { method: 'POST' }
+                {
+                    method: 'POST',
+                    body: {
+                        snapshot: {
+                            columns: result.columns,
+                            rows: (result.rows || []).slice(0, 100),
+                            row_count: result.row_count,
+                            truncated: result.truncated,
+                        },
+                    },
+                }
             ).catch(() => { /* noop */ });
 
             const result = {
@@ -670,9 +688,13 @@
         const tbody = document.createElement('tbody');
         rows.slice(0, 100).forEach((row) => {
             const tr = document.createElement('tr');
-            cols.forEach((c) => {
+            cols.forEach((c, ci) => {
                 const td = document.createElement('td');
-                const v = (row && typeof row === 'object') ? row[c] : '';
+                // v3.38.7: SSE/snapshot rows POZİSYONEL dizi ([v0,v1,...]); kolon adıyla
+                // (row[c]) indekslemek hep undefined → boş hücre veriyordu ("kolon var
+                // veri yok"). Dizi ise pozisyona, obje ise kolon adına göre eriş.
+                const v = Array.isArray(row) ? row[ci]
+                    : ((row && typeof row === 'object') ? row[c] : '');
                 td.textContent = (v === null || v === undefined) ? '' : String(v);
                 tr.appendChild(td);
             });

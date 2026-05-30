@@ -161,6 +161,13 @@
   "wizard.modal.confirm.discard.confirm": "İptal et",
   "wizard.modal.confirm.discard.cancel": "Devam et",
 
+  "wizard.confirm.duplicate_name.title": "Aynı isimde rapor var",
+  "wizard.confirm.duplicate_name": "<strong>{name}</strong> adında bir rapor zaten var. Üzerine yazmak ister misiniz?",
+  "wizard.confirm.duplicate_name.confirm": "Üzerine yaz",
+  "wizard.confirm.duplicate_name.cancel": "Vazgeç",
+  "wizard.error.duplicate_name_field": "Bu isimde bir rapor var — farklı bir ad girin veya üzerine yazın.",
+  "wizard.toast.report_updated": "Rapor güncellendi",
+
   "wizard.label.source": "Veri kaynağı",
   "wizard.label.table": "Tablo",
   "wizard.label.column": "Kolon",
