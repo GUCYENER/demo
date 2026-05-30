@@ -2478,6 +2478,7 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             # süzülmüş olsa da) cache/golden/LLM SQL ile çalıştırabilirdi. source["id"]
             # seçilen kaynak (allowed_tables'ın kaynağı) ile birebir aynıdır.
             _scope_blocked = False
+            _exec_scope = None  # G3: failure-block scope mesajı için init (NameError guard)
             try:
                 from app.services.db_smart.table_scope import resolve_scope as _resolve_scope_exec
                 _exec_scope = _resolve_scope_exec(source["id"], _db_user_ctx, permission="can_execute")
@@ -2540,17 +2541,25 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             if not sql_result.get("success"):
                 _sql_err = sql_result.get("error", "Bilinmeyen SQL hatasi")
                 log_warning(f"DB-Only: SQL uretimi basarisiz: {_sql_err}", "deep_think")
-                
-                # v3.8.0 Error Sanitization: Teknik detayları kullanıcıya gösterme
-                # v3.19.2: Yanlış anlaşılmaması için "problem yaşandı" başlığı kaldırıldı
-                content_msg = (
-                    f"**Yapay Zeka Notu:**\n_{_sanitize_error_for_user(_sql_err)}_\n\n"
-                    "Lütfen farklı bir şekilde sormayı deneyin."
-                )
-                
+
+                # G3 (v3.40.0): restricted kullanıcıda başarısızlık GENELDE kapsam-dışı
+                # tablo kaynaklıdır. Generic "Yalnızca SELECT / farklı sorun" VEYA
+                # check_table_whitelist'in yanlış-komşu tablo adı sızıntısı
+                # ("Tablo erişim yetkisi yok: SİPARİŞLER") yerine tek, net yetki mesajı:
+                # kullanıcıya YETKİLİ tablolarını söyle. (all_tables kullanıcıda eski davranış.)
+                _exec_restricted = bool(_exec_scope is not None and not _exec_scope.all_tables)
+                if _exec_restricted:
+                    content_msg = _scope_restricted_message(_exec_scope)
+                else:
+                    # v3.8.0 Error Sanitization: Teknik detayları kullanıcıya gösterme
+                    content_msg = (
+                        f"**Yapay Zeka Notu:**\n_{_sanitize_error_for_user(_sql_err)}_\n\n"
+                        "Lütfen farklı bir şekilde sormayı deneyin."
+                    )
+
                 yield {"type": "done", "data": {
                     "content": content_msg,
-                    "metadata": {"db_only": True, "error": True}
+                    "metadata": {"db_only": True, "error": True, "scope_restricted": _exec_restricted}
                 }}
                 return
 
@@ -3271,6 +3280,28 @@ def _prune_schema_tables(
         return []
 
     return pruned
+
+
+def _scope_restricted_message(exec_scope) -> str:
+    """G3 (v3.40.0): restricted (tablo-bazlı yetkili) kullanıcıda SQL üretimi/çalıştırması
+    başarısız olunca tutarlı + net YETKİ mesajı.
+
+    Amaç: "Veritabanında Ara"da yetkisiz tabloyu soran kullanıcıya generic
+    "Yalnızca SELECT / farklı sorun" yerine VEYA check_table_whitelist'in
+    yanlış-komşu tablo adını ("Tablo erişim yetkisi yok: SİPARİŞLER" — kullanıcının
+    sormadığı FK-komşu) sızdırması yerine, YETKİLİ tablolarını söyleyen tek mesaj.
+    `exec_scope.tables` = lowercase (schema, table) çiftleri.
+    """
+    try:
+        names = sorted({t for _s, t in (exec_scope.tables or set()) if t})
+    except Exception:
+        names = []
+    allow_txt = ", ".join(names) if names else "(yetkili tablonuz bulunmuyor)"
+    return (
+        "**Yetki Notu:** Bu soruyu yalnızca yetkili olduğunuz tablolarda yanıtlayabiliyorum.\n\n"
+        f"Yetkili tablolarınız: **{allow_txt}**.\n\n"
+        "Sorunuz yetkili olmadığınız bir tabloya ilişkin görünüyor — yetkili bir tablo için tekrar deneyin."
+    )
 
 
 def _sanitize_error_for_user(error_msg: str) -> str:

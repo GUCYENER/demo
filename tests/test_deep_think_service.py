@@ -567,3 +567,34 @@ class TestSplitLargeSectionTurkish:
             # Chunk'ların cümle ortasında kesilmediğini kontrol et
             assert len(chunk) <= 2100  # Küçük taşma kabul edilebilir
 
+
+
+class TestScopeRestrictedMessage:
+    """G3 (v3.40.0): restricted kullanıcıda DB-Only ("Veritabanında Ara") başarısızlık →
+    generic "Yalnızca SELECT" veya check_table_whitelist yanlış-komşu sızıntısı yerine
+    tutarlı, net YETKİ mesajı (yetkili tabloları listeler)."""
+
+    def test_lists_authorized_tables_no_leak(self):
+        from app.services.data_source_access import AccessScope
+        from app.services.deep_think_service import _scope_restricted_message
+        sc = AccessScope(all_tables=False, tables=frozenset({("vyra_test", "faturalar")}))
+        msg = _scope_restricted_message(sc)
+        assert "faturalar" in msg
+        assert "Yetkili tablolar" in msg
+        # Yanlış-komşu tablo adı / generic SELECT mesajı SIZMAMALI
+        assert "Yalnızca SELECT" not in msg
+        assert "siparis" not in msg.lower() and "sipariş" not in msg.lower()
+
+    def test_multiple_tables_sorted(self):
+        from app.services.data_source_access import AccessScope
+        from app.services.deep_think_service import _scope_restricted_message
+        sc = AccessScope(all_tables=False, tables=frozenset({("s", "faturalar"), ("s", "adresler")}))
+        msg = _scope_restricted_message(sc)
+        assert "adresler, faturalar" in msg  # alfabetik sıralı
+
+    def test_empty_scope_graceful(self):
+        from app.services.data_source_access import AccessScope
+        from app.services.deep_think_service import _scope_restricted_message
+        sc = AccessScope(all_tables=False, tables=frozenset())
+        msg = _scope_restricted_message(sc)
+        assert "yetkili tablonuz bulunmuyor" in msg.lower()
