@@ -41150,7 +41150,7 @@ window.ThemePickerPopup = (function () {
                 const m = rest.match(kwRe);
                 if (m) {
                     if (buf.trim()) parts.push(buf.trim());
-                    parts.push('KW' + m[0].toUpperCase().replace(/\s+/g, ' '));
+                    parts.push('KW' + m[0].toUpperCase().replace(/\s+/g, ' '));
                     buf = '';
                     i += m[0].length - 1;
                     continue;
@@ -41178,7 +41178,7 @@ window.ThemePickerPopup = (function () {
         const MULTI_LINE_KW = { SELECT: 1, 'GROUP BY': 1, 'ORDER BY': 1, WITH: 1 };
 
         parts.forEach(function (p) {
-            if (p.startsWith('KW')) {
+            if (p.startsWith('KW')) {
                 const kw = p.slice(2);
                 if (kw === 'AND' || kw === 'OR') {
                     pendingKw = '  ' + kw;

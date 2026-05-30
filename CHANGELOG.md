@@ -1,5 +1,22 @@
 # VYRA Changelog
 
+## v3.38.6 — 2026-05-30 — SQL üretme W0/W garbage KÖK fix (frontend pretty-print STX korupsiyonu)
+
+> Kullanıcı: "farklı tablo seçince SELECT yanlış üretiliyor (W0SELECT/W0FROM…). Bu SQL üretme
+> kısmını adam akıllı incele; daha önce bu harf ekleme/temizleme gerek olmadan çalışıyordu."
+> Kanıt: backend `generate_report` TEMİZ SQL döndürüyor (repair'li); garbage tamamen frontend display'de.
+
+- **KÖK NEDEN:** `db_smart_wizard.js _prettyPrintSql` keyword marker'ı `'\x02KW\x02'` — gizli
+  STX (0x02) kontrol baytları (bayt korupsiyonu; _tblKey NUL ile aynı sınıf). Marker 4 karakter
+  ama `kw = p.slice(2)` sadece ilk 2'sini (`\x02K`) atıyordu → geriye `W\x02`+keyword kalıyordu
+  → ekranda `W0SELECT` / `W0FROM` / `W0LEFT JOIN` / `W0ON` (STX görünmez veya `0` gibi).
+- **Fix:** 4 STX baytı silindi → marker temiz `KW` → `slice(2)` doğru strip eder. node ile
+  doğrulandı: temiz formatlı SQL, W yok. (report_detail_modal `JOIN_MARK=''` ESCAPE olarak
+  doğru kullanıyor — dokunulmadı.)
+- **NOT:** Backend `_repair_glued_keyword_garbage` (v3.37.9) bu W0'ı "LLM garbage" sanıp band-aid
+  eklemişti — **yanlış teşhis**; W hiç LLM/backend'den gelmiyordu. Repair zararsız no-op olarak
+  korunuyor (gerçek LLM garbage'ı için savunma).
+
 ## v3.38.5 — 2026-05-30 — B4-3 silinen kayıtlı rapor anında kaybolmuyor (eksik fix tamam)
 
 > Kullanıcı: "Akıllı Keşif'te kayıtlı rapor silinince ekrandan hemen kaybolmuyor — düzeltmedin mi?"
