@@ -981,3 +981,36 @@ def test_reorder_columns_then_render_keeps_order(fake_user_ctx):
     # SELECT içinde status önce gelmeli
     head = out["sql"].split("FROM")[0]
     assert head.index("status") < head.index('"t"."id"') or head.index("status") < head.index("t.id")
+
+
+# ─────────────────────────────────────────────────────────────
+# v3.39.1 — Output column alias serbest metin (boşluk/Türkçe) — KÖK fix
+# Önceden: _validate_ident(alias) "Adres Kimliği"yi reddedip preview "assembly failed"
+# veriyordu (wizard reportColumns label'ı alias olarak gönderir).
+# ─────────────────────────────────────────────────────────────
+
+def test_output_alias_with_space_renders_quoted():
+    # Ekrandaki başarısız senaryo: alias boşluk içeriyor → tırnaklı render olmalı, patlamamalı
+    assert ar._render_column("oracle", {"expr": "ADRES_ID", "alias": "Adres Kimliği"}) == '"ADRES_ID" AS "Adres Kimliği"'
+    assert ar._render_column("postgresql", {"expr": "ADRES_ID", "alias": "Adres Kimliği"}) == '"ADRES_ID" AS "Adres Kimliği"'
+    assert ar._render_column("mysql", {"expr": "ADRES_ID", "alias": "Adres Kimliği"}) == '`ADRES_ID` AS `Adres Kimliği`'
+    assert ar._render_column("mssql", {"expr": "ADRES_ID", "alias": "Adres Kimliği"}) == '[ADRES_ID] AS [Adres Kimliği]'
+
+
+def test_output_alias_injection_quote_doubled():
+    # Kapatma-tırnağı ikilenerek breakout engellenir (alias serbest ama güvenli)
+    out = ar._render_column("oracle", {"expr": "ADRES_ID", "alias": 'x" ,(SELECT pw FROM users)--'})
+    assert out == '"ADRES_ID" AS "x"" ,(SELECT pw FROM users)--"'  # gömülü " → ""
+    out_ms = ar._render_column("mssql", {"expr": "ADRES_ID", "alias": "a]b];DROP"})
+    assert out_ms == "[ADRES_ID] AS [a]]b]];DROP]"  # gömülü ] → ]]
+
+
+def test_output_alias_rejects_control_chars():
+    with pytest.raises(ValueError):
+        ar._render_column("oracle", {"expr": "ADRES_ID", "alias": "bad\nalias"})
+
+
+def test_expr_still_strict_identifier():
+    # expr (fiziksel kolon) hâlâ strict — boşluklu expr reddedilmeli (alias gevşemesi expr'i etkilemez)
+    with pytest.raises(ValueError):
+        ar._render_column("oracle", {"expr": "Adres Kimliği"})

@@ -137,6 +137,28 @@ def _q(dialect: str, ident: str) -> str:
     return ".".join(f"{d['quote_open']}{p}{d['quote_close']}" if p != "*" else "*" for p in parts)
 
 
+def _quote_output_alias(dialect: str, alias: str) -> str:
+    """ÇIKTI kolon alias'ı (`... AS "Adres Kimliği"`) — serbest görünen metin.
+
+    v3.39.1 KÖK fix: kolon çıktı alias'ı bir REFERANS identifier'ı DEĞİL, sadece
+    sonuç başlığıdır; boşluk/Türkçe/Unicode içerebilir (`_validate_ident` bunları
+    reddedip "Invalid identifier: 'Adres Kimliği'" veriyordu → preview "assembly failed").
+    Bare-identifier kuralına tabi tutulmaz; injection guard: kapatma-tırnağı ikilenir,
+    kontrol baytı reddedilir, 128 char cap. (Tablo alias'ı bundan AYRI: o referans
+    edilebildiği için `_validate_ident` ile strict kalır.)
+    """
+    if not isinstance(alias, str) or not alias.strip():
+        raise ValueError("Invalid alias (empty)")
+    s = alias.strip()
+    if any(ord(ch) < 0x20 for ch in s):
+        raise ValueError(f"Invalid alias (control chars): {alias!r}")
+    if len(s) > 128:
+        s = s[:128]
+    d = _DIALECT[dialect]
+    qo, qc = d["quote_open"], d["quote_close"]
+    return f"{qo}{s.replace(qc, qc + qc)}{qc}"  # kapatma-tırnağı kaçır (breakout guard)
+
+
 def _placeholder(dialect: str, name: str) -> str:
     style = _DIALECT[dialect]["param_style"]
     if style == "pyformat":
@@ -196,8 +218,9 @@ def _render_column(d: str, col: Dict[str, Any]) -> str:
     out = _q(d, expr) if expr != "*" and not expr.endswith(".*") else expr
     alias = col.get("alias")
     if alias:
-        _validate_ident(alias)
-        out = f"{out} AS {_q(d, alias)}"
+        # v3.39.1: çıktı alias'ı serbest metin (boşluk/Türkçe) — _validate_ident yerine
+        # güvenli tırnaklama. Bkz. _quote_output_alias.
+        out = f"{out} AS {_quote_output_alias(d, alias)}"
     return out
 
 
