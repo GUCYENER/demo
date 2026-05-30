@@ -41555,21 +41555,35 @@ window.ThemePickerPopup = (function () {
             return;
         }
         // Talep var → LLM ile nihai SQL'i hesapla (generate_only), pre'yi doldur.
-        let _finalPretty = '';
+        // v3.41.2 (code-review): VyraModal tek overlay reuse eder → modal kapanıp YENİDEN
+        // açılırsa eski (yavaş) LLM .then()'i YENİ modal'ın #dswSqlFinalPre'sine yazmasın
+        // (stale-DOM race). Per-open token ile bağla. Ayrıca kopyala HATA mesajını değil
+        // GERÇEK SQL'i versin (_finalSqlText ayrı tutulur).
+        _state._sqlModalSeq = (_state._sqlModalSeq || 0) + 1;
+        const _openSeq = _state._sqlModalSeq;
+        let _finalPretty = '';    // ekran metni (loading/hata olabilir)
+        let _finalSqlText = '';   // kopyalanacak GERÇEK SQL (hata/boşsa '' kalır)
         _computeFinalSqlForPreview().then(function (finalSql) {
+            if (_state._sqlModalSeq !== _openSeq) return;  // modal yeniden açıldı → bayat sonuç
             const pre = document.getElementById('dswSqlFinalPre');
             if (!pre) return;  // modal kapandı
-            _finalPretty = finalSql ? _prettyPrintSql(finalSql) : '(LLM nihai SQL üretemedi)';
+            if (finalSql) {
+                _finalSqlText = _prettyPrintSql(finalSql);
+                _finalPretty = _finalSqlText;
+            } else {
+                _finalPretty = '(LLM nihai SQL üretemedi)';
+            }
             pre.textContent = _finalPretty;
         }).catch(function (err) {
+            if (_state._sqlModalSeq !== _openSeq) return;
             const pre = document.getElementById('dswSqlFinalPre');
             if (pre) {
                 _finalPretty = 'Nihai SQL üretilemedi: ' + ((err && err.message) || 'hata');
-                pre.textContent = _finalPretty;
+                pre.textContent = _finalPretty;  // _finalSqlText '' kalır → kopyala hatayı almaz
             }
         });
         _wireSqlCopy('dswSqlFinalCopy', 'dswSqlFinalCopyStatus', function () {
-            return _finalPretty || _state.finalSql || '';
+            return _finalSqlText || _state.finalSql || '';  // SQL kopyala, hata mesajını DEĞİL
         });
     }
 

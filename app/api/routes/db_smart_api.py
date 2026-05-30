@@ -1167,41 +1167,22 @@ def post_execute_stream(
     if not dialect_explicit and src_dialect:
         dialect = src_dialect
 
-    # ── v3.39.0 Tablo-yetki gate (saved-report rerun KÖK fix) ──
-    # Önceden allowed_tables=None geçiliyordu → SafeSQLExecutor whitelist'i ATLANIYORDU
-    # (generate_report uygularken bu yol uygulamıyordu). Kullanıcının GÜNCEL can_execute
-    # kapsamını çöz; rerun edilen SQL kapsam dışı tablo içeriyorsa reddet (sonuç YOK).
-    # Admin: kaynakta açık restricted grant varsa o da bağlanır (resolve_scope v3.39.0).
-    exec_scope = resolve_scope(int(src_id), current_user, permission="can_execute")
-    allowed_tables: Optional[List[str]] = None
-    if not exec_scope.all_tables:
-        allowed_tables = []
-        for _sch, _tbl in exec_scope.tables:
-            if _sch:
-                allowed_tables.append(f"{_sch}.{_tbl}")
-            allowed_tables.append(_tbl)
-        if not allowed_tables:
-            # restricted ama hiç izinli tablo yok → çalıştırma yok (allow-all'a düşme)
-            raise HTTPException(
-                status_code=403,
-                detail="Bu veri kaynağında çalıştırma yetkiniz bulunmuyor.",
-            )
-        from app.services.safe_sql_executor import check_table_whitelist
-        _ok_wl, _wl_err = check_table_whitelist(sql_str, allowed_tables, dialect)
-        if not _ok_wl:
-            logger.warning(
-                "[db_smart.stream] yetkisiz tablo rerun user=%s source=%s: %s",
-                current_user.get("id"), src_id, _wl_err,
-            )
-            _bad = (_wl_err.split(":", 1)[-1].strip() if _wl_err and ":" in _wl_err else "")
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    f"Bu raporda yetkiniz olmayan tablo var: {_bad} — sonuç gösterilmedi."
-                    if _bad else
-                    "Bu raporda yetkiniz olmayan tablo(lar) var — sonuç gösterilmedi."
-                ),
-            )
+    # ── Tablo-yetki gate (saved-report rerun) — v3.41.2: merkezi leak-free guard ──
+    # Önceden (v3.39.0) bu yol kendi check_table_whitelist'ini yapıp YETKİSİZ TABLO ADINI
+    # mesajda sızdırıyordu (_bad). v3.40.0 Faz B table_guard.enforce_sql_scope ile birleştirildi:
+    # yetkisiz tablo adını/FK-komşusunu sızdırmaz (yetkili tabloları listeler), boş kapsam →
+    # DENY (allow-all'a düşmez), tüm diğer execute yollarıyla (query_builder/state/agentic/
+    # schedule_runner) TUTARLI. allowed_tables=None (all-access) veya doğrulanmış whitelist döner.
+    from app.services.db_smart.table_guard import enforce_sql_scope
+    _ok_scope, allowed_tables, _deny_scope = enforce_sql_scope(
+        sql_str, int(src_id), current_user, dialect, permission="can_execute",
+    )
+    if not _ok_scope:
+        logger.warning(
+            "[db_smart.stream] yetkisiz tablo rerun user=%s source=%s",
+            current_user.get("id"), src_id,
+        )
+        raise HTTPException(status_code=403, detail=_deny_scope)
 
     # SSE generator
     def _event_stream():
@@ -2786,9 +2767,25 @@ def post_generate_report(
             fallback=fallback,
             error="Seçilen tablolar için çalıştırma yetkiniz bulunmuyor.",
         )
-    # v3.40.1: generate_only — SQL'i üret + döndür ama ÇALIŞTIRMA (modal "nihai SQL"
-    # önizlemesi). Yukarıdaki scope gate + per-tablo 403 yine geçerli (yetkisiz tablo
-    # bu noktaya gelmez); yalnızca SafeSQLExecutor.execute adımı atlanır.
+    # v3.41.2: ÜRETİLEN SQL'i whitelist'e doğrula. Yukarıdaki per-tablo 403 yalnız PICKER'da
+    # SEÇİLEN tabloları kontrol eder; LLM çıktısı seçilmemiş YETKİSİZ FK-komşu tablo ekleyebilir
+    # → restricted kullanıcıya o SQL'i (tablo adıyla) GÖSTERME/çalıştırma (info leak, code-review).
+    if not exec_scope.all_tables and generated_sql and allowed_tables:
+        from app.services.safe_sql_executor import check_table_whitelist
+        _ok_gen, _gen_err = check_table_whitelist(generated_sql, allowed_tables, dialect)
+        if not _ok_gen:
+            logger.warning(
+                "[db_smart] generate_report üretilen SQL yetkisiz tablo içeriyor user=%s source=%s: %s",
+                current_user.get("id"), req.source_id, _gen_err,
+            )
+            return GenerateReportResp(
+                sql="",  # leak guard: yetkisiz tablo içeren SQL kullanıcıya gösterilmez
+                rationale=rationale,
+                success=False,
+                fallback=fallback,
+                error="Üretilen sorgu yetkili olmadığınız bir tabloya erişiyor — gösterilmedi.",
+            )
+    # v3.40.1: generate_only — SQL'i üret + döndür ama ÇALIŞTIRMA (modal "nihai SQL" önizlemesi).
     if req.generate_only:
         return GenerateReportResp(
             sql=generated_sql,
