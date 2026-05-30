@@ -41387,6 +41387,10 @@ window.ThemePickerPopup = (function () {
             '<textarea id="user-intent" placeholder="Bu rapordan ne bekliyorsunuz?" maxlength="500" ' +
               'aria-label="Bu rapordan ne bekliyorsunuz?"></textarea>' +
             '<div class="wizard-sticky-footer-actions">' +
+              // v3.39.0: çalıştırma öncesi SQL önizleme (en solda) — talep+SQL review modal.
+              '<button type="button" id="dswShowSqlBtn" class="dsw-llm-btn dsw-llm-btn-sql" ' +
+                'aria-label="Üretilen SQL\'i göster" ' +
+                'data-tooltip="Çalıştırma öncesi SQL\'i gör + kopyala">📄 SQL</button>' +
               '<button type="button" id="dswFormatSuggestBtn" class="dsw-llm-btn dsw-llm-btn-format" ' +
                 'aria-label="Hazır format öner">✨ Hazır Format Öner</button>' +
               '<span id="dswFormatCacheHint" class="dsw-cache-hint" hidden></span>' +
@@ -41413,6 +41417,80 @@ window.ThemePickerPopup = (function () {
         const runBtn = footer.querySelector('#dswRunBtn');
         if (runBtn) {
             runBtn.addEventListener('click', _runGeneratedReport);
+        }
+        const sqlBtn = footer.querySelector('#dswShowSqlBtn');
+        if (sqlBtn) {
+            sqlBtn.addEventListener('click', _onShowSqlClick);
+        }
+    }
+
+    // ── v3.39.0: Çalıştırma öncesi SQL önizleme + talep review (HEBE+ATHENA) ──
+    // "📄 SQL" footer butonu → VyraModal: "Talebiniz" (user_intent) + pretty-print
+    // SQL + Kopyala. Amaç: kullanıcı ne istedi / ne SQL üretildi / mantık doğru mu
+    // tek ekranda review etsin (LLM talebi SQL'e yansıttı mı).
+    function _onShowSqlClick() {
+        const sql = _state.lastGeneratedSql || '';
+        if (!sql) {
+            _notify('SQL henüz üretilmedi — önce önizlemenin yüklenmesini bekleyin.', 'warning');
+            return;
+        }
+        const pretty = _prettyPrintSql(sql);
+        const note = (_state.user_intent || _state.userNote || '').trim();
+        const noteHtml = note
+            ? '<div class="dsw-sql-modal-note"><span class="dsw-sql-modal-note-label">📝 Talebiniz:</span> '
+                + _escape(note) + '</div>'
+            : '<div class="dsw-sql-modal-note dsw-sql-modal-note-empty">📝 Serbest talep girilmedi '
+                + '(SQL yalnızca seçili tablo/kolon/metrik/filtreden üretildi).</div>';
+        const html =
+            noteHtml +
+            '<div class="dsw-sql-modal-label">Çalıştırılacak SQL:</div>' +
+            '<pre class="dsw-sql-modal-pre" id="dswSqlModalPre" tabindex="0" '
+              + 'aria-label="Üretilen SQL">' + _escape(pretty) + '</pre>' +
+            '<div class="dsw-sql-modal-bar">' +
+              '<button type="button" id="dswSqlModalCopy" class="dsw-sql-modal-copy" '
+                + 'aria-label="SQL\'i panoya kopyala">📋 Kopyala</button>' +
+              '<span id="dswSqlModalCopyStatus" class="dsw-sql-modal-copy-status" '
+                + 'role="status" aria-live="polite"></span>' +
+            '</div>';
+        if (!(window.VyraModal && typeof window.VyraModal.info === 'function')) {
+            _notify('SQL önizleme için modal yüklenemedi.', 'error');
+            return;
+        }
+        window.VyraModal.info({
+            title: 'SQL Önizleme — Talep & Sorgu',
+            htmlMessage: html,
+            confirmText: 'Kapat',
+        });
+        // Modal body artık DOM'da — Kopyala'yı bağla (VyraModal handle döndürmez).
+        const copyBtn = document.getElementById('dswSqlModalCopy');
+        const statusEl = document.getElementById('dswSqlModalCopyStatus');
+        if (copyBtn) {
+            copyBtn.addEventListener('click', function () {
+                const done = function (ok) {
+                    if (statusEl) statusEl.textContent = ok ? '✓ Kopyalandı' : 'Kopyalanamadı';
+                };
+                try {
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(pretty).then(
+                            function () { done(true); },
+                            function () { done(false); }
+                        );
+                    } else {
+                        // Fallback: pre içeriğini seç + execCommand (eski tarayıcı/insecure ctx)
+                        const pre = document.getElementById('dswSqlModalPre');
+                        const range = document.createRange();
+                        range.selectNodeContents(pre);
+                        const sel = window.getSelection();
+                        sel.removeAllRanges();
+                        sel.addRange(range);
+                        const ok = document.execCommand('copy');
+                        sel.removeAllRanges();
+                        done(ok);
+                    }
+                } catch (e) {
+                    done(false);
+                }
+            });
         }
     }
 

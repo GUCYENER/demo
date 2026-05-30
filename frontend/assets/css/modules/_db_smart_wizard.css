@@ -3020,6 +3020,87 @@ body[data-dsw-locked="true"] {
     color: var(--text-secondary, #98a4bd);
     font-style: italic;
 }
+
+/* v3.39.0: "📄 SQL" önizleme butonu (mavi = SQL/info, mantıksal renk) + modal içerik */
+.dsw-llm-btn-sql {
+    border-color: var(--blue, #3b82f6);
+    background: rgba(59, 130, 246, 0.10);
+    color: var(--blue-fg, #93c5fd);
+}
+.dsw-llm-btn-sql:hover:not(:disabled) {
+    background: rgba(59, 130, 246, 0.18);
+}
+.dsw-sql-modal-note {
+    text-align: left;
+    font-size: 13px;
+    color: var(--text-primary, #e2e8f0);
+    background: var(--bg-2, rgba(148, 163, 184, 0.08));
+    border-left: 3px solid var(--blue, #3b82f6);
+    border-radius: 4px;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.dsw-sql-modal-note-label {
+    font-weight: 600;
+    color: var(--blue-fg, #93c5fd);
+}
+.dsw-sql-modal-note-empty {
+    color: var(--text-secondary, #98a4bd);
+    font-style: italic;
+    border-left-color: var(--border, #334155);
+}
+.dsw-sql-modal-label {
+    text-align: left;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary, #98a4bd);
+    margin-bottom: 4px;
+}
+.dsw-sql-modal-pre {
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--text-primary, #e2e8f0);
+    background: var(--bg-3, #0f172a);
+    border: 1px solid var(--border, #334155);
+    border-radius: 6px;
+    padding: 12px;
+    max-height: 320px;
+    overflow: auto;
+    white-space: pre;
+    text-align: left;
+    margin: 0 0 10px;
+}
+.dsw-sql-modal-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.dsw-sql-modal-copy {
+    padding: 6px 12px;
+    border: 1px solid var(--blue, #3b82f6);
+    background: rgba(59, 130, 246, 0.10);
+    color: var(--blue-fg, #93c5fd);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+}
+.dsw-sql-modal-copy:hover {
+    background: rgba(59, 130, 246, 0.18);
+}
+.dsw-sql-modal-copy:focus-visible {
+    outline: 2px solid var(--blue, #3b82f6);
+    outline-offset: 2px;
+}
+.dsw-sql-modal-copy-status {
+    font-size: 12px;
+    color: var(--green, #22c55e);
+    font-weight: 500;
+}
+
 .dsw-llm-suggest-panel {
     width: 100%;
     margin-top: 8px;
