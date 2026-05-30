@@ -379,15 +379,23 @@ def preview_query_state(
             from app.services.safe_sql_executor import SafeSQLExecutor
 
             executor = SafeSQLExecutor(timeout=5, max_rows=100)
-            # Whitelist: kullanıcının seçtiği tek tablo + opsiyonel schema-qualified isim
-            allowed = [req.table]
-            if req.schema_name:
-                allowed.append(f"{req.schema_name}.{req.table}")
+            # v3.40.0 Faz B: önceki `allowed = [req.table]` SELF-REFERENTIAL'di — kullanıcının
+            # `req.table`'a YETKİSİ doğrulanmadan whitelist'e konuyordu. Artık merkezi
+            # fail-closed guard kullanıcının gerçek can_execute kapsamını doğrular.
+            from app.services.db_smart.table_guard import enforce_sql_scope
+            _ok, _allowed, _deny = enforce_sql_scope(
+                inlined_sql, req.source_id, current_user, dialect, permission="can_execute",
+            )
+            if not _ok:
+                response["executed"] = True
+                response["success"] = False
+                response["execute_error"] = _deny
+                return response
             sql_result = executor.execute(
                 inlined_sql,
                 source,
                 dialect=dialect,
-                allowed_tables=allowed,
+                allowed_tables=_allowed,
                 use_result_cache=False,
             )
             response["executed"] = True

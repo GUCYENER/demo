@@ -499,9 +499,20 @@ def preview_query(
                 "Parametrize sorgu örnek yürütmesi henüz desteklenmiyor — sample skipped"
             )
             return response
+        # v3.40.0 Faz B: tablo-yetki fail-closed gate (önceden allowed_tables=None →
+        # whitelist atlanıyordu; kullanıcı yetkisiz tabloyu preview edebiliyordu).
+        from app.services.db_smart.table_guard import enforce_sql_scope
+        _ok, _allowed, _deny = enforce_sql_scope(
+            sql_with_params, req.source_id, current_user, dialect, permission="can_execute",
+        )
+        if not _ok:
+            response["executed"] = True
+            response["success"] = False
+            response["execute_error"] = _deny
+            return response
         sql_result = executor.execute(
             sql_with_params, source_info, dialect=dialect,
-            allowed_tables=None, use_result_cache=False,
+            allowed_tables=_allowed, use_result_cache=False,
         )
         response["executed"] = True
         response["success"] = bool(sql_result.success)
