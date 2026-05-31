@@ -403,8 +403,16 @@
             statusEl.classList.add('db-query-done');
         }
 
-        // 2. Mesajı dialog'a ekle (SSE ile zaten eklenmediyse)
-        if (msgId) {
+        // 2. Mesajı dialog'a ekle — YALNIZ kullanıcı bu sohbeti AÇIK TUTMUYORSA.
+        //    v3.42.1 (KÖK fix — duplicate): statusEl (dbqs_jobId placeholder kartı) DOM'da
+        //    ise kullanıcı sohbeti açık → SSE yanıtı ZATEN render etti → websocket TEKRAR
+        //    eklerse DUPLICATE olur. Özellikle scope-denial/error yanıtlarında SSE bubble'ı
+        //    kaydedilmiş message_id taşımaz (savedMessageId null) → [data-message-id]
+        //    eşleşmez → alttaki _existing dedup'ı kaçırır. WebSocket import fix'i
+        //    (ImportError→çalışır, v3.42.0) bu push'u aktifleştirince on-screen duplicate
+        //    görünür oldu. statusEl guard: ekrandaysa SSE'ye bırak; değilse (geri dönünce
+        //    görsün diye) websocket render eder. Cross-screen bildirim (1/3/4) korunur.
+        if (msgId && !statusEl) {
             const existing = document.querySelector(`[data-message-id="${msgId}"]`);
             if (!existing && window.DialogChatModule && typeof DialogChatModule.addMessageFromWS === 'function') {
                 DialogChatModule.addMessageFromWS(message);
