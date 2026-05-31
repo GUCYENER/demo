@@ -16,7 +16,15 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 10000;
+    /* v3.41.3: 10000 → 11500. VyraModal uygulama genelindeki TEK global onay/uyarı
+       diyaloğu; onu tetikleyen app-modal yığınının ÜSTÜNDE durmalı. 10000'de iken
+       wizard kaydet modalının (.dsw-save-modal z:11100, fixed/inset:0 tam-ekran)
+       ARKASINDA kalıyordu → "Aynı isimde rapor var" onayı görünmüyor + kaydet
+       overlay'i tıklamaları yutuyordu (isim değişse de kaydedilmiyordu). 11500:
+       save(11100)/chart(11050)/result(11000)/session_timeout(11000) üstünde;
+       lightbox(20001/20002) ve document_enhancer(100001) tam-ekran görüntüleyiciler
+       altında — onlar VyraModal tetiklemez. 400 headroom. */
+    z-index: 11500;
     opacity: 0;
     visibility: hidden;
     transition: all 0.3s ease;
