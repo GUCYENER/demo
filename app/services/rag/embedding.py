@@ -9,6 +9,7 @@ Lazy loading, cache desteği ve batch embedding.
 
 from __future__ import annotations
 
+import threading
 from typing import List
 
 from app.core.config import settings
@@ -22,14 +23,38 @@ class EmbeddingManager:
     - ONNX öncelikli, PyTorch fallback
     - Lazy loading (ilk kullanımda yüklenir)
     - Cache destekli embedding üretimi
+    - v3.42.x: SINGLETON (__new__) — tüm çağıranlar (search_db_knowledge, text_to_sql golden,
+      rag/service, startup preload...) AYNI ısınmış instance'ı paylaşır. Önceden her çağrı TAZE
+      (soğuk) instance yaratıp modeli yeniden yüklüyordu → "Veritabanında Ara" ilk sorgu soğuk-yük
+      hang'i (TF/sentence-transformers ~60-200s, log'suz). Singleton + startup preload = ilk sorgu sıcak.
     """
-    
+
+    _instance = None
+    _instance_lock = threading.Lock()
+
+    def __new__(cls):
+        # code-review fix: TÜM başlatma __new__ İÇİNDE, _instance_lock altında yapılır.
+        # Neden: Python __new__'dan sonra __init__'i HER çağrıda çalıştırır; init __init__'te
+        # olsaydı iki thread ilk EmbeddingManager()'da yarışıp _load_lock'u farklı objelere
+        # reset edebilir (lock etkisiz) + _load_lock henüz set edilmemişken embedding_model
+        # çağrısı AttributeError verebilirdi. Instance, TÜM attr'ler set edildikten SONRA yayınlanır.
+        if cls._instance is None:
+            with cls._instance_lock:
+                if cls._instance is None:
+                    inst = super().__new__(cls)
+                    inst._embedding_model = None
+                    inst._onnx_session = None
+                    inst._onnx_tokenizer = None
+                    inst._backend = None  # "onnx" veya "pytorch"
+                    inst._embedding_dim = 384  # MiniLM default
+                    inst._load_lock = threading.RLock()  # model yük/reset race guard (RLock: meta-tensor reset property'yi re-entrant çağırır)
+                    cls._instance = inst  # init TAMAMLANDIKTAN sonra yayınla (yarı-kurulu görünmez)
+        return cls._instance
+
     def __init__(self):
-        self._embedding_model = None
-        self._onnx_session = None
-        self._onnx_tokenizer = None
-        self._backend = None  # "onnx" veya "pytorch"
-        self._embedding_dim = 384  # MiniLM default
+        # Tüm başlatma __new__ içinde (singleton, thread-safe). __init__ NO-OP — her
+        # EmbeddingManager() çağrısında çalışır ama paylaşılan state'e DOKUNMAZ.
+        pass
     
     @property
     def backend(self) -> str | None:
@@ -156,17 +181,28 @@ class EmbeddingManager:
                 log_error("sentence-transformers yüklü değil", "rag")
                 raise ImportError("sentence-transformers yüklü değil. 'pip install sentence-transformers' çalıştırın.")
     
+    def _model_loaded(self) -> bool:
+        # code-review fix: _backend!=None YETERSİZ — _backend zorlanmış (rag/service setter)
+        # ama model objesi None olabilir. Gerçek obje varlığını kontrol et.
+        return ((self._backend == "pytorch" and self._embedding_model is not None)
+                or (self._backend == "onnx" and self._onnx_session is not None))
+
+    def is_ready(self) -> bool:
+        """v3.42.x: Model GERÇEKTEN yüklendi mi? (DB-Only akışı soğuk-başlangıçta 'hazırlanıyor'
+        status gösterip sessiz hang'i önlemek için.)"""
+        return self._model_loaded()
+
     @property
     def embedding_model(self):
-        """Embedding modelini lazy load eder (ONNX öncelikli, PyTorch fallback)"""
-        if self._backend is None:
-            # 1. ONNX dene (hızlı: ~10s)
-            if self._try_load_onnx():
-                return self._onnx_session  # ONNX session döndür
-            
-            # 2. Fallback: PyTorch (yavaş: ~200s ama güvenilir)
-            self._load_pytorch_model()
-        
+        """Embedding modelini lazy load eder (ONNX öncelikli, PyTorch fallback). Thread-safe:
+        load-lock + double-check → preload thread'i ile ilk request ÇİFT-YÜKLEMESİN (race)."""
+        if not self._model_loaded():
+            with self._load_lock:
+                if not self._model_loaded():  # double-check — başka thread yüklemiş olabilir
+                    # 1. ONNX dene (hızlı: ~10s) — başarılıysa _backend='onnx' set edilir
+                    if not self._try_load_onnx():
+                        # 2. Fallback: PyTorch (yavaş: ~200s ama güvenilir)
+                        self._load_pytorch_model()
         return self._embedding_model if self._backend == "pytorch" else self._onnx_session
     
     def _onnx_encode(self, text: str) -> List[float]:
@@ -240,10 +276,13 @@ class EmbeddingManager:
             # "meta tensor" hatası durumunda modeli yeniden yükle (PyTorch only)
             if "meta tensor" in str(e) and self._backend == "pytorch":
                 log_system_event("WARNING", f"Embedding model hatası, yeniden yükleniyor: {e}", "rag")
-                self._embedding_model = None
-                self._backend = None
-                _ = self.embedding_model  # Yeniden yükle
-                return self.get_embedding(text)  # Tekrar dene
+                # code-review fix: reset+reload _load_lock (RLock) altında — paylaşılan singleton'da
+                # concurrent caller _backend/_embedding_model=None ara-durumunu okuyup None.encode() yapmasın.
+                with self._load_lock:
+                    self._embedding_model = None
+                    self._backend = None
+                    _ = self.embedding_model  # Yeniden yükle (RLock re-entrant → deadlock yok)
+                return self.get_embedding(text)  # Tekrar dene (kilit dışında)
             raise  # Diğer hataları yukarı ilet
     
     def get_embeddings_batch(self, texts: List[str]) -> List[List[float]]:

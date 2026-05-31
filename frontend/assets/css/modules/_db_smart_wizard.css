@@ -2487,6 +2487,44 @@ body[data-dsw-locked="true"] {
     overflow: auto;
 }
 
+/* v3.42.0: Üretilen SQL kopyala butonu */
+.dsw-result-sql-bar {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 6px;
+}
+.dsw-result-sql-copy {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    background: var(--vyra-bg-input, #14171b);
+    border: 1px solid var(--vyra-border-subtle, #2c3138);
+    border-radius: var(--vyra-radius-sm, 6px);
+    cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s;
+}
+.dsw-result-sql-copy:hover {
+    color: var(--vyra-fg-primary, #e6e9ee);
+    border-color: var(--vyra-accent, #3b82f6);
+}
+.dsw-result-sql-copy:focus-visible {
+    outline: 2px solid var(--vyra-accent, #3b82f6);
+    outline-offset: 2px;
+}
+
+/* v3.42.0: Rapor Sonucu export (Excel/Word/PDF) grubu — sola yaslı, .dsw-result-action tabanlı */
+.dsw-result-export-group {
+    display: inline-flex;
+    gap: 6px;
+    margin-right: auto;
+}
+.dsw-result-export-excel:hover:not(:disabled) { border-color: #1f7a45; color: #34d27f; }
+.dsw-result-export-word:hover:not(:disabled)  { border-color: #2b5797; color: #4f8cf0; }
+.dsw-result-export-pdf:hover:not(:disabled)   { border-color: #9b2c2c; color: #f06d6d; }
+
 .dsw-result-stats {
     font-size: 12px;
     color: var(--vyra-fg-secondary, #9aa1ab);

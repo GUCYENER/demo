@@ -262,6 +262,8 @@ def _build_prompt(
     metric: Optional[Dict[str, Any]],
     user_note: str,
     limit: int,
+    filters: Optional[List[Dict[str, Any]]] = None,
+    order_by: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, str]]:
     """Return chat-messages list for `call_llm_api`."""
     d = _normalize_dialect(dialect)
@@ -316,6 +318,45 @@ def _build_prompt(
         note_clean = note_clean[:MAX_USER_NOTE_LEN]
     note_block = f'Kullanıcı talebi: "{note_clean}"' if note_clean else "Kullanıcı talebi: (boş)"
 
+    # v3.42.0: Yapılandırılmış WHERE/ORDER BY → LLM'e ZORUNLU kısıt. Wizard'ın
+    # AST editör (WHERE chip) + SIRALAMA chip barı bunları gönderir; LLM üretilen
+    # SQL'e AYNEN koymalı (kullanıcı önizlemede gördüğü filtreyi sonuçta da bekler).
+    # code-review: değeri Python repr (!r) yerine SQL literal olarak göster —
+    # repr("O'Brien") → "O'Brien" (çift tırnak = SQL identifier), LLM'i yanıltır.
+    from app.services.db_smart.query_assembler import _literal as _sql_lit
+    _constraint_lines: List[str] = []
+    for _f in (filters or []):
+        if not isinstance(_f, dict):
+            continue
+        _col = (_f.get("expr") or _f.get("column") or "").strip()
+        if not _col:
+            continue
+        _op = (_f.get("op") or "=").strip()
+        if _op.upper() in ("IS NULL", "IS NOT NULL"):
+            _constraint_lines.append(f"- {_col} {_op}")
+        else:
+            _constraint_lines.append(f"- {_col} {_op} {_sql_lit(_f.get('value'))}")
+    _order_lines: List[str] = []
+    for _o in (order_by or []):
+        if not isinstance(_o, dict):
+            continue
+        _ocol = (_o.get("expr") or _o.get("column") or _o.get("column_name") or "").strip()
+        if not _ocol:
+            continue
+        _odir = (_o.get("dir") or _o.get("direction") or "ASC").strip().upper()
+        _order_lines.append(f"- {_ocol} {'DESC' if _odir == 'DESC' else 'ASC'}")
+    constraints_block = ""
+    if _constraint_lines:
+        constraints_block += (
+            "ZORUNLU WHERE koşulları (bu filtreleri SQL'e AYNEN, atlamadan uygula):\n"
+            + "\n".join(_constraint_lines) + "\n\n"
+        )
+    if _order_lines:
+        constraints_block += (
+            "ZORUNLU ORDER BY (bu sıralamayı uygula):\n"
+            + "\n".join(_order_lines) + "\n\n"
+        )
+
     user_prompt = (
         f"Dialect: {d}\n"
         f"Satır limiti: {int(limit)}  — Dialect kuralı: {limit_rule}\n\n"
@@ -325,6 +366,7 @@ def _build_prompt(
         + "\n".join(col_lines) + "\n\n"
         f"{metric_block}\n\n"
         f"{note_block}\n\n"
+        f"{constraints_block}"
         "Görev: Yukarıdaki kaynakları kullanarak BI kullanıcısının talebine cevap veren "
         "TEK bir SELECT üret. Mümkünse FK ile join yap; rapor kolonlarını öncelikli olarak "
         "listelerken metrik aggregate'ini ek kolon olarak ekleyebilirsin. "
@@ -393,6 +435,8 @@ def generate_report(
     fk_context: List[Dict[str, Any]],
     current_user: Dict[str, Any],
     limit: int = 100,
+    filters: Optional[List[Dict[str, Any]]] = None,
+    order_by: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Ask the LLM to generate a single SELECT SQL for the requested report.
 
@@ -455,6 +499,37 @@ def generate_report(
         if ft and tt and fc and tc:
             fk_lines.append(f"{ft}.{fc} = {tt}.{tc}")
 
+    # ── 2b. (v3.42.0 Faz 3b) Frontend fk_context GÖNDERMEDİYSE, seçili tablolar arası
+    # DETERMİNİSTİK FK join koşullarını FK grafiğinden SERVER-SIDE türet (join_planner) →
+    # LLM doğru join'i alır, 'FATURALAR.MUSTERI_ID' gibi olmayan kolon/yanlış join uydurmaz.
+    # Yalnız fk_lines BOŞken devreye girer (frontend'in curated join'lerini ezme). Fail-soft;
+    # yetki yine route'ta (enforce_sql_scope) korunur.
+    if primary_name and join_names and not fk_lines:
+        try:
+            from app.services.db_smart.join_planner import load_fk_edges, find_join_path
+            # code-review fix: in_scope = SEÇİLEN tablolar. lambda:True idi → join_planner
+            # seçilmemiş KÖPRÜ tablo üzerinden join üretip prompt'a koyabiliyordu (bridge-leak).
+            # Yalnız tüm yol seçili tablolardaysa (ok) join ver; köprü seçilmemişse HİÇ ekleme
+            # (kullanıcı köprüyü seçmeli — uydurma join yok). Yetki yine route'ta (enforce_sql_scope).
+            _picked = {primary_name.rsplit(".", 1)[-1].lower()}
+            _picked |= {n.rsplit(".", 1)[-1].lower() for n in join_names}
+            _jp = find_join_path(
+                load_fk_edges(int(source_id)), primary_name, join_names,
+                lambda _t: _t.rsplit(".", 1)[-1].lower() in _picked,
+            )
+            if _jp.get("ok"):
+                for j in _jp.get("joins", []):
+                    _l = j["left"].rsplit(".", 1)[-1]
+                    _r = j["right"].rsplit(".", 1)[-1]
+                    fk_lines.append(f"{_l}.{j['left_col']} = {_r}.{j['right_col']}")
+            if fk_lines:
+                logger.info(
+                    "[llm_generate_report] join_planner FK türetildi (frontend hint yoktu): %d join",
+                    len(fk_lines),
+                )
+        except Exception as e:
+            logger.warning("[llm_generate_report] join_planner FK augment atlandı: %s", e)
+
     # ── 3. LLM call (defensive) ─────────────────────────────
     messages = _build_prompt(
         dialect=dialect,
@@ -465,6 +540,8 @@ def generate_report(
         metric=metric,
         user_note=user_note or "",
         limit=int(limit),
+        filters=filters or [],
+        order_by=order_by or [],
     )
 
     try:

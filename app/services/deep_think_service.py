@@ -2175,6 +2175,16 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             ml_matched_tables = []
             try:
                 from app.services.ds_learning_service import search_db_knowledge
+                # v3.42.x: search_db_knowledge sorguyu embedding'e çevirir; embedding modeli SOĞUKsa
+                # (restart sonrası ilk sorgu) yükleme ~60-200s sürer ve aşağıdaki çağrı SESSİZCE bloke
+                # eder ("Çalışıyor", log yok). Soğuksa kullanıcıya status göster — hang algısı biter.
+                try:
+                    from app.services.rag.embedding import EmbeddingManager
+                    if not EmbeddingManager().is_ready():
+                        yield {"type": "status",
+                               "data": "📦 Yapay zeka modeli ilk sorgu için hazırlanıyor (birkaç saniye sürebilir)..."}
+                except Exception:
+                    pass
                 # v3.20.0 Faz 1c: DB-only path source_id verilmişse RLS-scope edilir
                 ml_results = search_db_knowledge(query, company_id=company_id, min_score=0.25, max_results=3, source_id=source_id)
                 if ml_results:
@@ -2494,13 +2504,19 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 _scope_blocked = True
 
             # v3.10.0: Cache'den SQL kullan (LLM çağrısını atla)
+            # v3.41.7 (Faz 1): TAKİP modunda (follow-up) cache + golden KISA-DEVRE ATLANIR.
+            # Golden/cache soru-METNİ benzerliğiyle eşleşir; bağlamsal takip ("bu siparişin
+            # müşterisi") generic bir golden SQL'e (tüm müşteriler) düşüp ÇIPA kısıtını (son
+            # sipariş) KAYBEDİYORDU. Takipte DAİMA generate_sql(follow_up_context) → modifikasyon
+            # promptu çıpa FROM + WHERE'i korur. Kanıt: 18:27 golden hit score=0.9795 → 20 müşteri.
+            _is_followup = bool(follow_up_context and follow_up_context.get("prev_sql"))
             if _scope_blocked:
                 sql_result = {
                     "success": False,
                     "sql": None,
                     "error": "Bu kaynakta çalıştırma yetkiniz olan tablo bulunmuyor.",
                 }
-            elif cached and cached.get("sql") and not confirm_mode:
+            elif cached and cached.get("sql") and not confirm_mode and not _is_followup:
                 sql_result = {
                     "success": True,
                     "sql": cached["sql"],
@@ -2509,7 +2525,7 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                     "from_cache": True,
                 }
                 log_system_event("INFO", f"DB-Only: Cache'den SQL kullanılıyor: {cached['sql'][:80]}", "deep_think", user_id)
-            elif golden_hit:
+            elif golden_hit and not _is_followup:
                 # v3.14.0: Golden SQL hit — LLM bypass, doğrulanmış SQL direkt kullan
                 sql_result = {
                     "success": True,
@@ -2529,6 +2545,70 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                         schema_ctx_with_ml["extra_context"] += gs_block
                     else:
                         schema_ctx_with_ml["extra_context"] = gs_block
+
+                # v3.42.0 (Faz 2c): Takip modunda FK join yolunu DETERMİNİSTİK hesapla
+                # (join_planner) → modifikasyon promptuna NET join koşulları enjekte et; LLM
+                # 'FATURALAR.MUSTERI_ID' gibi OLMAYAN kolon/yanlış join uydurmasın. Yetki ZATEN
+                # execution'da (enforce_sql_scope / check_table_whitelist) korunur — bu yalnız
+                # doğru join'i öğretir. Fail-soft: hata olursa hint atlanır, akış bozulmaz.
+                if _is_followup and followup_anchor_tables:
+                    try:
+                        from app.services.db_smart.join_planner import (
+                            load_fk_edges, find_join_path, render_join_hint,
+                        )
+                        _aset = {a.lower() for a in followup_anchor_tables}
+                        _targets = [
+                            t for t in (entity_matched_tables or [])
+                            if t and t.lower() not in _aset
+                        ]
+                        if _targets:
+                            # code-review fix: GERÇEK scope predicate. lambda:True idi → yetkisiz
+                            # KÖPRÜ tablo üzerinden join önerilip LLM'e "AYNEN kullan" deniyordu
+                            # (bridge-leak). Artık yalnız TÜM yol scope-içiyse deterministik join
+                            # verilir; aksi halde uyarı (LLM uydurmasın). Yetki yine execution'da.
+                            def _scope_ok(_t):
+                                if _exec_scope is None or getattr(_exec_scope, "all_tables", False):
+                                    return True
+                                try:
+                                    return bool(
+                                        _exec_scope.allows_table_name(_t)
+                                        or _exec_scope.allows_table_name(_t.rsplit(".", 1)[-1])
+                                    )
+                                except Exception:
+                                    return True  # fail-open (yalnız HINT); execution gate yetkili
+                            _jp = find_join_path(
+                                load_fk_edges(source["id"]),
+                                followup_anchor_tables[0],
+                                _targets,
+                                _scope_ok,
+                            )
+                            _hint = ""
+                            if _jp["ok"] and _jp["joins"]:
+                                _hint = "\n\n" + render_join_hint(_jp)
+                            elif _jp["missing_scope"]:
+                                _hint = (
+                                    "\n\nKAPSAM UYARISI: İstenen ilişki yetkiniz dışındaki tablo(lar)dan "
+                                    "geçiyor: " + ", ".join(_jp["missing_scope"]) + ". Bu tablolara JOIN "
+                                    "yapma, kolon uydurma; ilişki bunlarsız kurulamıyorsa DIAGNOSTIC: ile açıkla."
+                                )
+                            # code-review fix: 'unreachable' uyarısı KALDIRILDI. join_planner çıpayı
+                            # (prev_sql alias/qualified mismatch) çözemezse hedefi yanlışça unreachable
+                            # işaretleyip "join uydurma/DIAGNOSTIC" diyerek GEÇERLİ follow-up'ı bastırabiliyordu.
+                            # Çözülemeyen durumda hiç hint verme → LLM eskisi gibi serbest üretir, downstream
+                            # whitelist/scope gate yetkisiz tabloyu yine yakalar.
+                            if _hint:
+                                schema_ctx_with_ml["extra_context"] = (
+                                    schema_ctx_with_ml.get("extra_context") or ""
+                                ) + _hint
+                                log_system_event(
+                                    "INFO",
+                                    f"DB-Only Follow-up join-planner: ok={_jp['ok']} "
+                                    f"joins={len(_jp['joins'])} missing={_jp['missing_scope']} "
+                                    f"unreachable={_jp['unreachable']}",
+                                    "deep_think", user_id,
+                                )
+                    except Exception as _jp_err:
+                        log_warning(f"DB-Only: join_planner hint atlandı: {_jp_err}", "deep_think")
 
                 sql_result = generate_sql(
                     query=query,
@@ -3322,6 +3402,10 @@ def _is_infra_db_error(err: str) -> bool:
     e = (err or "").lower()
     return any(k in e for k in (
         "ora-28547", "ora-12154", "ora-12541", "ora-12505", "ora-12514",
+        # v3.42.x: ORA-12170 (outbound connect timeout) + ORA-12537/DPY-4011 (TNS conn closed)
+        # eksikti → Oracle servisi/PDB düşünce self-heal BOŞUNA retry'lıyordu (77s). Eklendi.
+        "ora-12170", "ora-12537", "ora-12537", "dpy-4011", "dpy-6005",
+        "outbound connect timeout", "cannot connect",
         "ora-03113", "ora-03114", "tns:", "oracle net", "no listener",
         "connection to server failed", "connection refused", "could not connect",
         "connection reset", "connection closed", "server closed the connection",

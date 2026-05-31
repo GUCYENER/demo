@@ -555,3 +555,70 @@ mesajda yalnız tırnaklı id'leri striplyor → "Tablo erişim yetkisi yok: sip
 adı, scope çözülemediğinde (`_exec_scope is None` → `_scope_restricted=False`) kullanıcıya sızabilir.
 v3.41.6 öncesi de vardı (gate değişmedi). Sanitizer'a "... erişim yetkisi yok: X" ham desenini de
 maskeleme ekle. Düşük olasılık (scope-resolve fail).
+
+## RB-v3.42.0 — join_planner FK-BFS konsolidasyonu (code-review altitude, P2/P3)
+
+v3.42.0 (`join_planner.py` + deep_think/wizard wiring) `/code-review high` bulguları. İki correctness
+bug (bridge-leak `lambda:True` + reddedilen-FK filtresiz) COMMIT'te düzeltildi; aşağıdakiler altitude:
+
+**1) (P2 — reuse) join_planner FK-BFS 4. kopya.** `join_planner._shortest_path`/`_adjacency`, şunları
+tekrarlıyor: `deep_think_service.FKGraph` (adj/adj_full + BFS ~3191-3282), `db_learning/fk_graph_resolver.
+resolve_best_path` (weighted, column-aware, junction-aware), `db_smart/fk_graph.suggest_join_path` (k-alt,
+cache'li). Çözüm: join_planner'ı sil, iki wiring'i `suggest_join_path`(wizard, table_id var) /
+`resolve_best_path`(deep_think, schema/table) üzerine kur. **Ön-koşul:** mevcut resolver'lar `rejected_at`
+filtrelemiyor (join_planner ediyor) — konsolidasyonda rejected/conf filtresi resolver'a da taşınmalı,
+yoksa regresyon. is_junction/composite-FK desteği de resolver'da daha olgun.
+
+**2) (P2 — efficiency) `load_fk_edges` her istekte ds_db_relationships sorguluyor.** deep_think'te
+`schema_ctx_with_ml["relationships"]`, wizard'da `fk_context` ZATEN bellekte. `db_smart/fk_graph.expand_with_fk`
+1h Redis cache (_FK_CACHE) var; join_planner cache'siz. Çözüm: in-memory relationships'i find_join_path'e
+geçir veya cache'li expand_with_fk'i kullan.
+
+**3) (P3 — altitude) İki wiring (deep_think + wizard) neredeyse aynı** (lazy import + load+find + render +
+extra_context'e ekle + fail-soft try/except). Tek `augment_prompt_with_joins(...)` helper'ı; wizard
+`render_join_hint` kullanmıyor (kendi formatı — drift).
+
+**4) (P3) case tutarsızlığı:** wizard fk_lines lowercase (join_planner node), "Ana tablo" bloğu orijinal-case
+→ case-sensitive dialect'te uyumsuz. render_join_hint paylaşımı + qualified-koru bunu çözer.
+
+**5) (P3) Faz1 latency:** takip her zaman golden/cache atlar (self-contained rephrase olsa bile) → her
+takipte tam LLM. Kabul edildi (doğruluk > hız); ileride "takip ama bağlamsız" tespiti eklenebilir.
+
+### Code-review round-2 (post-fix) ertelenenler (v3.42.0):
+**6) (P2) Faz3b ok=False'da rehber YOK** (Faz2c missing_scope uyarısı verir, Faz3b vermez). Köprü
+seçilmemişse wizard fk_lines boş kalır → LLM yine yanlış-kolon (FATURALAR.MUSTERI_ID) join'i uydurabilir;
+yalnız route enforce_sql_scope (tablo-seviyesi, kolon değil) yakalar. Faz3b'ye de "doğrudan FK yok, join
+uydurma" rehberi (Faz2c paritesi) eklenmeli.
+**7) (P3) `_resolve_node` çok-şemalı belirsizlik:** aynı bare ad 2+ şemada → çözülmez → unreachable →
+deterministik join kaybı. Tek-şemalı kaynakta sorun yok.
+**8) (P2, pre-existing) `_scope_ok` + `check_table_whitelist` ŞEMA-KÖR (bare-ad).** Farklı şemada aynı bare
+adlı tablo (sales.orders vs billing.orders) yetki/scope karışabilir — RB-v3.39.0 ile aynı sınıf, NEW değil.
+**9) (P3) Union scope kısmi-başarı yok:** hedeflerden biri scope-dışı köprü gerektirirse TÜM plan ok=False
+→ scope-içi geçerli join'ler de düşer. Per-target partial emit eklenebilir.
+**10) (P3) Export raw-fetch api_client 401-refresh'i bypass eder** (blob, vyraFetch JSON-only). dialog_chat
+export'u da aynı — paylaşılan "auth'lu blob indirme + refresh" helper'ı. Süresi dolmuş token → generic hata.
+
+### Embedding singleton (v3.42.x hang fix) code-review ertelenenler:
+**11) (P3) EmbeddingManager singleton → cross-caller coupling.** Artık tüm çağıranlar (rag/service,
+learned_qa, text_to_sql, ds_qa, search_db_knowledge...) AYNI instance'ı paylaşır. `rag/service.py:66`
+`_backend` setter'ı global singleton'ı mutate eder; per-instance izolasyon varsayan kod (test/yeniden-init)
+artık paylaşılan state görür. En kötü durum (zorlanmış backend → None model) `_model_loaded()` obje-kontrolü
+ile kapatıldı; ama setter'ın global etkisi + olası test izolasyon kaybı kaldı. Setter'ı kaldır veya
+singleton-aware yap. Düşük olasılık (setter nadir kullanılır).
+
+### Akıllı Keşif WHERE/ORDER BY uçtan uca (v3.42.0) code-review ertelenenler:
+**12) (P2) Metric + WHERE/ORDER BY kompozisyonu yok.** `query_assembler.assemble` metric template'inde
+erken döner → filters/order_by atlanır (preview + saved SQL + LLM-icra). Wizard hem metric hem WHERE/ORDER
+BY seçtirebilir → sessizce düşer (yanıltıcı). Metric SQL'i subquery'leyip (`SELECT * FROM (metric_sql) WHERE
+... ORDER BY ...`) veya metric+filters ortak AST path gerekli.
+**13) (P2) İcra LLM-prompt'a dayanır, %100 deterministik değil.** `/generate-report` WHERE/ORDER BY'ı LLM'e
+ZORUNLU kısıt verir — açık kısıt için güvenilir ama deterministik garanti değil. Tam-deterministik için
+empty-note Çalıştır → `/execute/stream` (assemble+binds, SSE) yönlendirmesi; ENGEL: `inject_rls` dış-kaynak
+non-admin'de `company_id` enjekte eder (Oracle'da o kolon yok) → external-source için RLS-bypass (company_
+scoped_aliases boş + source-level tenant gate) path gerekli. Bkz. project_db_smart_dual_sql (auto-memory).
+**14) (P3) Export 500-satır sessiz truncation.** `_exportResultData` TÜM `data.rows`'u gönderir; backend
+`MAX_EXPORT_ROWS=500` cap'ler, kullanıcı uyarılmaz → >500 satırda "tamamı indirildi" yanılgısı. Cap aşımında
+FE uyarısı (#10 ile aynı export yüzeyi).
+**15) (P3) Fallback (LLM down) WHERE/ORDER BY uygulamaz.** `_build_fallback_sql` = `SELECT *` (filtresiz);
+route artık rationale'da UYARIR ama deterministik uygulamaz. `_build_fallback_sql`'e filters/order_by
+deterministik inject (`inline_binds` + dialect-quote) eklenebilir (rare path; filtre güvenlik sınırı değil).

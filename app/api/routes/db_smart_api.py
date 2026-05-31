@@ -225,6 +225,10 @@ class GenerateReportReq(BaseModel):
     user_note: str = Field(default="", max_length=2000)
     # fk_context: [{from_table, to_table, from_col, to_col}]
     fk_context: List[Dict[str, Any]] = Field(default_factory=list)
+    # v3.42.0: yapılandırılmış WHERE/ORDER BY (wizard AST editör + SIRALAMA chip barı).
+    # filters: [{expr|column, op, value}]  order_by: [{expr|column, dir}]
+    filters: List[Dict[str, Any]] = Field(default_factory=list)
+    order_by: List[Dict[str, Any]] = Field(default_factory=list)
     limit: int = Field(default=100, ge=1, le=1000)
     # v3.40.1: True → SQL üret + döndür ama ÇALIŞTIRMA (wizard SQL-önizleme modalı
     # "nihai SQL"i çalıştırmadan göstermek için). Scope gate yine uygulanır.
@@ -805,8 +809,12 @@ def post_preview(
         cost=cost, estimated_rows=estimated_rows,
     )
 
+    # v3.42.0 (D): görüntülenen deterministik SQL'de bind placeholder'larını
+    # (%(v_1)s) gerçek değerle göster — kullanıcı "v_1" değil "1" görsün. EXPLAIN
+    # yukarıda parametreli sql + binds ile çalıştı (doğru); inline yalnız display.
+    sql_display = query_assembler.inline_binds(sql, out.get("binds"), dialect) if sql else sql
     return PreviewResponse(
-        sql=sql or "-- assembly failed: " + "; ".join(out.get("errors") or []),
+        sql=sql_display or "-- assembly failed: " + "; ".join(out.get("errors") or []),
         dialect=dialect,
         explain=explain,
         estimated_rows=estimated_rows,
@@ -2817,10 +2825,19 @@ def post_generate_report(
         fk_context=list(req.fk_context or []),
         current_user=current_user,
         limit=int(req.limit),
+        filters=list(req.filters or []),
+        order_by=list(req.order_by or []),
     )
     generated_sql: str = gen.get("sql") or ""
     rationale: str = gen.get("rationale") or ""
     fallback: bool = bool(gen.get("fallback"))
+    # v3.42.0 (code-review): fallback (LLM erişilemedi → SELECT *) WHERE/ORDER BY
+    # uygulamaz. Filtre/sıralama verilmişse kullanıcıyı uyar (sonucu filtreli sanmasın).
+    if fallback and (req.filters or req.order_by):
+        rationale = (
+            rationale + " ⚠️ WHERE/ORDER BY filtreleriniz bu varsayılan sorguda "
+            "uygulanmadı (LLM erişilemedi); bağlantı düzelince tekrar çalıştırın."
+        ).strip()
 
     if not generated_sql:
         # Service should always return a non-empty SQL (fallback path), but

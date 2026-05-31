@@ -468,9 +468,17 @@ class SafeSQLExecutor:
         except Exception as e:
             elapsed = (time.time() - start) * 1000
             log_error(f"SQL yürütme hatası: {e}", "hybrid_router")
+            # code-review fix: orijinal hata generic mesaja sarılıp ATILIYORDU → downstream
+            # _is_infra_db_error ORA-12170/DPY-4011'i göremeyip BOŞUNA self-heal'liyordu (77s).
+            # Bağlantı/altyapı KODUNU (ORA-/DPY-/TNS-) ekle (host/port sızdırmadan — Fortify) →
+            # infra sınıflandırması çalışsın, fail-fast olsun. Kullanıcıya gösterim katmanı sanitize eder.
+            _code = ""
+            _m = re.search(r"(ORA-\d{3,5}|DPY-\d{3,5}|TNS-\d{3,5})", str(e), re.IGNORECASE)
+            if _m:
+                _code = f" [{_m.group(1).upper()}]"
             return SQLResult(
                 success=False,
-                error="SQL çalıştırma sırasında beklenmeyen bir hata oluştu",
+                error=f"SQL çalıştırma sırasında beklenmeyen bir hata oluştu{_code}",
                 sql_executed=adapted_sql[:200],
                 elapsed_ms=elapsed,
             )

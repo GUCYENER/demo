@@ -785,7 +785,9 @@ def process_user_message_stream(
                     # WebSocket push — kullanıcı farklı ekrandaysa bildirim alacak
                     try:
                         import asyncio
-                        from app.core.websocket_manager import manager as ws_manager
+                        # code-review fix: instance adı 'ws_manager' (websocket_manager.py:111);
+                        # 'manager' diye import → ImportError → WebSocket push sessizce başarısızdı.
+                        from app.core.websocket_manager import ws_manager
                         short_q = (search_query[:50] + "...") if len(search_query) > 50 else search_query
                         ws_payload = {
                             "type": "db_query_complete",

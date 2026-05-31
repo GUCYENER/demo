@@ -39392,6 +39392,20 @@ window.ThemePickerPopup = (function () {
     // Step 4 — Preview (SQL + cost)
     // ============================================
 
+    // v3.42.0: ORDER BY shape köprüsü — chip bar {column_name,direction} ↔
+    // ast_renderer {expr,dir}. Tek kaynak: _buildWizardState (renderer'a) +
+    // iki hydration path (chip bar'a) aynı maptan beslenir.
+    function _orderByToRenderer(arr) {
+        return (Array.isArray(arr) ? arr : [])
+            .map(function (o) { return { expr: o.expr || o.column_name || o.column, dir: (o.dir || o.direction || 'ASC') }; })
+            .filter(function (o) { return o.expr; });
+    }
+    function _orderByToChip(arr) {
+        return (Array.isArray(arr) ? arr : [])
+            .map(function (o) { return { column_name: o.column_name || o.expr || o.column, direction: (o.direction || o.dir || 'ASC') }; })
+            .filter(function (o) { return o.column_name; });
+    }
+
     // P20-D: wizard_state üretimi tek bir yere alındı (preview + AST mount paylaşır).
     function _buildWizardState() {
         const tableName = _state.selectedTableObjectName ||
@@ -39459,6 +39473,28 @@ window.ThemePickerPopup = (function () {
         // restore eden alandır — _loadSavedReport ve _hydrateFromSavedReport
         // burayı arıyor.
         ws.reportColumns = rc.slice();
+        // v3.42.0 (kullanıcı bulgusu 2026-05-31): Önizleme/Kaydet SQL'i WHERE +
+        // ORDER BY'ı yansıtsın diye assemble payload'ına ekle. Backend
+        // query_assembler + ast_renderer bunları zaten tüketiyor
+        // (filters {expr,op,value} / order_by {expr,dir}). WHERE = canlı AST
+        // editör state'i (getAst); ORDER BY = wizard "SIRALAMA" chip barı.
+        let _liveFilters = null;
+        try {
+            const _ed = window.DbSmartAstEditor;
+            const _liveAst = (_ed && typeof _ed.getAst === 'function') ? _ed.getAst() : null;
+            if (_liveAst && Array.isArray(_liveAst.filters)) _liveFilters = _liveAst.filters;
+        } catch (e) { /* defansif — editör yoksa _state fallback */ }
+        if (_liveFilters === null) {
+            if (_state.currentAst && Array.isArray(_state.currentAst.filters)) {
+                _liveFilters = _state.currentAst.filters;
+            } else {
+                _liveFilters = Array.isArray(_state.filters) ? _state.filters : [];
+            }
+        }
+        // ast_renderer expr|column kabul ediyor; expr'siz girdileri ele.
+        ws.filters = _liveFilters.filter(function (f) { return f && (f.expr || f.column); });
+        // Chip bar {column_name,direction} → renderer {expr,dir} (column_name/direction tanınmıyor).
+        ws.order_by = _orderByToRenderer(_state.order_by);
         return ws;
     }
 
@@ -39690,6 +39726,10 @@ window.ThemePickerPopup = (function () {
         const metricsArr = (_state.selectedMetrics && _state.selectedMetrics.size > 0)
             ? Array.from(_state.selectedMetrics).map(mk => _state._metricsIndex[mk] || { metric_key: mk })
             : [];
+        // v3.42.0: Yapılandırılmış WHERE/ORDER BY'ı LLM'e ZORUNLU kısıt olarak ilet.
+        // _buildWizardState canlı AST editör filtrelerini + SIRALAMA chip barını
+        // assembler/renderer shape'ine ({expr,op,value} / {expr,dir}) normalize eder.
+        const _ws = _buildWizardState();
         return {
             source_id: Number(_state.sourceId),
             primary_table_id: Number(primaryId),
@@ -39699,6 +39739,8 @@ window.ThemePickerPopup = (function () {
             metrics: metricsArr,
             user_note: _state.userNote || '',
             fk_context: fkContext,
+            filters: Array.isArray(_ws.filters) ? _ws.filters : [],
+            order_by: Array.isArray(_ws.order_by) ? _ws.order_by : [],
             limit: 100,
         };
     }
@@ -39717,6 +39759,65 @@ window.ThemePickerPopup = (function () {
         _resultModalEls = null;
         if (opener && typeof opener.focus === 'function') {
             try { opener.focus(); } catch (_) {}
+        }
+    }
+
+    // v3.42.0: Rapor Sonucu export (Excel/Word/PDF) — mevcut /api/db/export/{format}
+    // endpoint'ini (db_export.py) yeniden kullanır. Endpoint List[Dict] satır bekler;
+    // wizard sonuç satırları POZİSYONEL dizi (v3.38.7) → kolon adına göre dict'e çevir.
+    // Blob döndüğü için vyraFetch (JSON-only) yerine raw fetch + token.
+    async function _exportResultData(format, data, btn) {
+        const cols = Array.isArray(data && data.columns) ? data.columns : [];
+        const rawRows = Array.isArray(data && data.rows) ? data.rows : [];
+        if (!cols.length || !rawRows.length) { _notify('Dışa aktarılacak veri yok', 'info'); return; }
+        const rows = rawRows.map(function (r) {
+            const o = {};
+            if (Array.isArray(r)) {
+                cols.forEach(function (c, i) { o[c] = (r[i] == null ? '' : r[i]); });
+            } else if (r && typeof r === 'object') {
+                cols.forEach(function (c) { o[c] = (r[c] == null ? '' : r[c]); });
+            }
+            return o;
+        }).filter(function (o) { return Object.keys(o).length > 0; });
+        // code-review fix: canonical anahtar 'access_token' (api_client/auth.js bunu yazar) önce.
+        const token = localStorage.getItem('access_token')
+            || localStorage.getItem('vyra_access_token')
+            || localStorage.getItem('token') || '';
+        const orig = btn ? btn.innerHTML : '';
+        try {
+            if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
+            const resp = await fetch('/api/db/export/' + format, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                body: JSON.stringify({
+                    columns: cols,
+                    rows: rows,
+                    title: 'Rapor Sonucu',
+                    sql: (data && data.sql) || '',
+                    // code-review fix: narrative backend'de `query` ister; wizard query göndermiyor →
+                    // bayrak ölüydü. Sonuç+SQL yeterli; gereksiz senkron LLM çağrısını da önler.
+                    include_narrative: false,
+                }),
+            });
+            if (!resp.ok) {
+                // code-review fix: backend'in spesifik mesajını (ör. "kütüphane yüklü değil") yüzeye çıkar
+                let _detail = 'HTTP ' + resp.status;
+                try { const _j = await resp.json(); _detail = (_j && (_j.detail || _j.message)) || _detail; } catch (_) { /* blob/text */ }
+                throw new Error(_detail);
+            }
+            const blob = await resp.blob();
+            const ext = format === 'excel' ? 'xlsx' : (format === 'word' ? 'docx' : 'pdf');
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = 'rapor_sonucu_' + Date.now() + '.' + ext;
+            document.body.appendChild(a); a.click();
+            setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 2000);
+            _notify('İndirme başladı', 'success');
+        } catch (e) {
+            console.error('[db_smart_wizard] export hatası:', e);
+            _notify('Dışa aktarma başarısız: ' + ((e && e.message) || ''), 'error');
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = orig; }
         }
     }
 
@@ -39774,6 +39875,28 @@ window.ThemePickerPopup = (function () {
             sqlPre.textContent = _prettyPrintSql(data.sql);
             sqlWrap.appendChild(sqlSummary);
             sqlWrap.appendChild(sqlPre);
+            // v3.42.0: Üretilen SQL'i kopyala (HAM SQL — pretty değil, çalıştırılabilir).
+            const sqlBar = document.createElement('div');
+            sqlBar.className = 'dsw-result-sql-bar';
+            const copySqlBtn = document.createElement('button');
+            copySqlBtn.type = 'button';
+            copySqlBtn.className = 'dsw-result-sql-copy';
+            copySqlBtn.setAttribute('aria-label', 'Üretilen SQL\'i kopyala');
+            copySqlBtn.setAttribute('data-tooltip', 'SQL\'i kopyala');
+            copySqlBtn.innerHTML = '<i class="fa-solid fa-copy"></i> Kopyala';
+            copySqlBtn.addEventListener('click', function () {
+                const raw = (data && data.sql) || '';
+                if (!raw) return;
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(raw)
+                        .then(function () { _notify('SQL kopyalandı', 'success'); })
+                        .catch(function () { _notify('Kopyalama başarısız', 'error'); });
+                } else {
+                    _notify('Tarayıcı kopyalamayı desteklemiyor', 'error');
+                }
+            });
+            sqlBar.appendChild(copySqlBtn);
+            sqlWrap.appendChild(sqlBar);
             body.appendChild(sqlWrap);
         }
 
@@ -39859,6 +39982,29 @@ window.ThemePickerPopup = (function () {
         // Footer actions
         const actions = document.createElement('div');
         actions.className = 'dsw-result-modal-actions';
+
+        // v3.42.0: Sonuçları dışa aktar (Excel/Word/PDF) — yalnız başarılı + satır varsa.
+        // Mevcut /api/db/export/{format} endpoint'i (db_export.py) yeniden kullanılır.
+        if (success && Array.isArray(data.columns) && data.columns.length
+            && Array.isArray(data.rows) && data.rows.length) {
+            const exportGroup = document.createElement('div');
+            exportGroup.className = 'dsw-result-export-group';
+            [
+                { fmt: 'excel', icon: 'fa-file-excel', label: 'Excel', aria: 'Excel (xlsx) olarak indir' },
+                { fmt: 'word', icon: 'fa-file-word', label: 'Word', aria: 'Word (docx) olarak indir' },
+                { fmt: 'pdf', icon: 'fa-file-pdf', label: 'PDF', aria: 'PDF olarak indir' },
+            ].forEach(function (ex) {
+                const b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'dsw-result-action dsw-result-export dsw-result-export-' + ex.fmt;
+                b.setAttribute('aria-label', ex.aria);
+                b.setAttribute('data-tooltip', ex.aria);
+                b.innerHTML = '<i class="fa-solid ' + ex.icon + '"></i> ' + ex.label;
+                b.addEventListener('click', function () { _exportResultData(ex.fmt, data, b); });
+                exportGroup.appendChild(b);
+            });
+            actions.appendChild(exportGroup);
+        }
 
         const chartBtn = document.createElement('button');
         chartBtn.type = 'button';
@@ -39955,7 +40101,11 @@ window.ThemePickerPopup = (function () {
             dialect: ws.dialect,
             from: { schema: ws.base_table.schema || null, table: ws.base_table.table, alias: 't' },
             select: (ws.selected_columns || []).map(c => c.expr || '*'),
-            filters: [],
+            // v3.42.0: rehydrate edilen WHERE editör chip'lerinde görünsün (editör
+            // state.ast.filters'ı render eder). order_by editörde render EDİLMİYOR —
+            // chip barı _state.order_by'ı kullanır; starter AST'e koymak ölü/desync
+            // veri olurdu (code-review) → boş bırak.
+            filters: Array.isArray(ws.filters) ? ws.filters.slice() : [],
             order_by: [],
             joins: [],
             limit: ws.limit || 100,
@@ -40428,6 +40578,8 @@ window.ThemePickerPopup = (function () {
                 _state._metricsIndex[ws.metric.metric_key] = ws.metric;
             }
             if (Array.isArray(ws.filters)) _state.filters = ws.filters;
+            // v3.42.0: kaydedilen ORDER BY'ı chip bar shape'ine geri map'le.
+            if (Array.isArray(ws.order_by)) _state.order_by = _orderByToChip(ws.order_by);
             // F21b (HEBE+ATHENA 2026-05-25): old reports may not have these top-level
             // fields — fall back to base_table for primary identity (table_id absent
             // ise picker reopen sınırlı kalır ama chip görüntüsü tutarlı olur).
@@ -40680,6 +40832,8 @@ window.ThemePickerPopup = (function () {
                 _state._metricsIndex[ws.metric.metric_key] = ws.metric;
             }
             if (Array.isArray(ws.filters)) _state.filters = ws.filters.slice();
+            // v3.42.0: kaydedilen ORDER BY'ı chip bar shape'ine geri map'le.
+            if (Array.isArray(ws.order_by)) _state.order_by = _orderByToChip(ws.order_by);
             if (typeof ws.userNote === 'string') _state.userNote = ws.userNote;
             if (data.last_sql) _state.lastGeneratedSql = data.last_sql;
 
@@ -41347,6 +41501,7 @@ window.ThemePickerPopup = (function () {
                 if (!it) return;
                 it.direction = (it.direction === 'ASC') ? 'DESC' : 'ASC';
                 _renderOrderByChips();
+                try { _refreshPreviewIfActive(); } catch (e) { /* v3.42.0: ORDER BY → SQL tazele */ }
             });
         });
         host.querySelectorAll('[data-order-remove]').forEach(function (btn) {
@@ -41355,6 +41510,7 @@ window.ThemePickerPopup = (function () {
                 if (isNaN(idx)) return;
                 _state.order_by.splice(idx, 1);
                 _renderOrderByChips();
+                try { _refreshPreviewIfActive(); } catch (e) { /* v3.42.0: ORDER BY → SQL tazele */ }
             });
         });
         const addSel = host.querySelector('[data-order-add-select]');
@@ -41368,6 +41524,7 @@ window.ThemePickerPopup = (function () {
                 }
                 addSel.value = '';
                 _renderOrderByChips();
+                try { _refreshPreviewIfActive(); } catch (e) { /* v3.42.0: ORDER BY → SQL tazele */ }
             });
         }
         // HTML5 native drag-reorder
@@ -41396,6 +41553,7 @@ window.ThemePickerPopup = (function () {
                 arr.splice(target, 0, moved);
                 _state.order_by = arr;
                 _renderOrderByChips();
+                try { _refreshPreviewIfActive(); } catch (e) { /* v3.42.0: ORDER BY → SQL tazele */ }
             });
         });
     }
@@ -41470,6 +41628,9 @@ window.ThemePickerPopup = (function () {
         const note = (_state.user_intent || _state.userNote || '').trim();
         const cols = (Array.isArray(_state.reportColumns) ? _state.reportColumns : [])
             .map(function (c) { return c.column_name; });
+        // code-review: WHERE/ORDER BY değişince nihai SQL cache'i invalidate olsun
+        // — _buildWizardState payload ile BİREBİR aynı filters/order_by'ı verir.
+        const _ws = _buildWizardState();
         return JSON.stringify({
             t: _state.selectedTableId || null,
             j: _state.selectedTables || null,
@@ -41477,6 +41638,8 @@ window.ThemePickerPopup = (function () {
             m: _state.metric ? _state.metric.metric_key : null,
             sm: _state.selectedMetrics ? Array.from(_state.selectedMetrics) : null,
             n: note,
+            f: _ws.filters || [],
+            o: _ws.order_by || [],
         });
     }
 
@@ -41544,18 +41707,33 @@ window.ThemePickerPopup = (function () {
         }
         const basePretty = _prettyPrintSql(base);
         const note = (_state.user_intent || _state.userNote || '').trim();
+        // v3.42.0 (B): Serbest talep BOŞ ise nihai (LLM) SQL bölümü gösterilmez —
+        // üstteki deterministik SQL (WHERE/ORDER BY dahil) zaten çalıştırılacak olan.
         const noteHtml = note
             ? '<div class="dsw-sql-modal-note"><span class="dsw-sql-modal-note-label">📝 Talebiniz:</span> '
                 + _escape(note) + '</div>'
-            : '<div class="dsw-sql-modal-note dsw-sql-modal-note-empty">📝 Serbest talep girilmedi '
-                + '— nihai SQL = seçim SQL\'i.</div>';
+            : '';
+        const baseLabel = note
+            ? '1) Seçimlerinizden oluşan SQL (deterministik):'
+            : 'Üretilen SQL (seçimlerinizden — WHERE/ORDER BY dahil):';
         // v3.41.6 (G3): wrapper class → modal.css bounded-height `:has(.dsw-sql-modal)`
-        // kuralları eşleşsin (geniş + sabit 85vh + iç scroll). Wrapper SADECE sarmalar;
-        // id'ler (#dswSqlBasePre/#dswSqlFinalPre) ve _sqlModalSeq guard'ı değişmez.
+        // kuralları eşleşsin (geniş + sabit 85vh + iç scroll).
+        const finalSectionHtml = note
+            ? ('<div class="dsw-sql-modal-label dsw-sql-modal-label-final">2) Talebinizle oluşan NİHAİ SQL '
+                + '(LLM — Çalıştır bunu koşar):</div>'
+                + '<pre class="dsw-sql-modal-pre" id="dswSqlFinalPre" tabindex="0" aria-label="Nihai SQL">'
+                + '⏳ Talebiniz LLM ile uygulanıyor…</pre>'
+                + '<div class="dsw-sql-modal-bar">'
+                + '<button type="button" id="dswSqlFinalCopy" class="dsw-sql-modal-copy" '
+                + 'aria-label="Nihai SQL\'i kopyala">📋 Kopyala</button>'
+                + '<span id="dswSqlFinalCopyStatus" class="dsw-sql-modal-copy-status" '
+                + 'role="status" aria-live="polite"></span>'
+                + '</div>')
+            : '';
         const html =
             '<div class="dsw-sql-modal">' +
             noteHtml +
-            '<div class="dsw-sql-modal-label">1) Seçimlerinizden oluşan SQL (deterministik):</div>' +
+            '<div class="dsw-sql-modal-label">' + baseLabel + '</div>' +
             '<pre class="dsw-sql-modal-pre" id="dswSqlBasePre" tabindex="0" '
               + 'aria-label="Seçimlerden oluşan SQL">' + _escape(basePretty) + '</pre>' +
             '<div class="dsw-sql-modal-bar">' +
@@ -41564,27 +41742,17 @@ window.ThemePickerPopup = (function () {
               '<span id="dswSqlBaseCopyStatus" class="dsw-sql-modal-copy-status" '
                 + 'role="status" aria-live="polite"></span>' +
             '</div>' +
-            '<div class="dsw-sql-modal-label dsw-sql-modal-label-final">2) Talebinizle oluşan NİHAİ SQL '
-              + '(LLM — Çalıştır bunu koşar):</div>' +
-            '<pre class="dsw-sql-modal-pre" id="dswSqlFinalPre" tabindex="0" aria-label="Nihai SQL">'
-              + (note ? '⏳ Talebiniz LLM ile uygulanıyor…' : _escape(basePretty)) + '</pre>' +
-            '<div class="dsw-sql-modal-bar">' +
-              '<button type="button" id="dswSqlFinalCopy" class="dsw-sql-modal-copy" '
-                + 'aria-label="Nihai SQL\'i kopyala">📋 Kopyala</button>' +
-              '<span id="dswSqlFinalCopyStatus" class="dsw-sql-modal-copy-status" '
-                + 'role="status" aria-live="polite"></span>' +
-            '</div>' +
+            finalSectionHtml +
             '</div>';
         window.VyraModal.info({
-            title: 'SQL Önizleme — Seçim vs Nihai',
+            title: note ? 'SQL Önizleme — Seçim vs Nihai' : 'SQL Önizleme',
             htmlMessage: html,
             confirmText: 'Kapat',
         });
         // Modal body DOM'da — base kopyala bağla.
         _wireSqlCopy('dswSqlBaseCopy', 'dswSqlBaseCopyStatus', function () { return basePretty; });
         if (!note) {
-            // Talep yok → nihai = base; kopyala base ile bağlı.
-            _wireSqlCopy('dswSqlFinalCopy', 'dswSqlFinalCopyStatus', function () { return basePretty; });
+            // v3.42.0 (B): talep yok → nihai bölümü yok; deterministik üst yeterli.
             return;
         }
         // Talep var → LLM ile nihai SQL'i hesapla (generate_only), pre'yi doldur.

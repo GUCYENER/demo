@@ -146,6 +146,55 @@ def _substitute_template(template: str, placeholders: Dict[str, Any]) -> str:
 
 
 # ─────────────────────────────────────────────────────────────
+# Bind inline (v3.42.0) — display + structured-execute literal SQL
+# ─────────────────────────────────────────────────────────────
+
+def _literal(v: Any) -> str:
+    """Tek bir bind değerini injection-safe SQL literal'ine çevir.
+
+    Sayısal/bool Python tipleri çıplak; diğer her şey tek-tırnak escape'li
+    string literal (`'` → `''`). Değer kullanıcının kendi filtre girdisidir;
+    string'ler quote+escape edildiği için injection yüzeyi kapanır.
+    """
+    if v is None:
+        return "NULL"
+    if isinstance(v, bool):
+        return "TRUE" if v else "FALSE"
+    if isinstance(v, (int, float)):
+        return str(v)
+    s = str(v).replace("'", "''")
+    return f"'{s}'"
+
+
+def inline_binds(sql: str, binds: Optional[Dict[str, Any]], dialect: str = "postgresql") -> str:
+    """`%(name)s` / `:name` / `@name` placeholder'larını literal değerle değiştir.
+
+    İki kullanım:
+      1. Display — önizleme SQL'inde `%(v_1)s` yerine `1` göster (okunabilirlik).
+      2. Structured-execute — SafeSQLExecutor.execute binds ALMADIĞI için, boş-not
+         tek-tablo deterministik yolda assemble çıktısını literal SQL'e indir.
+    Her iki halde de _literal injection-safe (escape) üretir.
+    """
+    if not sql or not binds:
+        return sql or ""
+    out = sql
+    d = (dialect or "postgresql").strip().lower()
+    # code-review: Oracle (:name) / MSSQL (@name) placeholder'larında kapanış
+    # sınırı YOK → :v_1 değişimi :v_10'u bozar (prefix-overlap). UZUN isimleri
+    # ÖNCE değiştirerek engelle (pyformat %(..)s için de zararsız).
+    for name in sorted(binds.keys(), key=len, reverse=True):
+        val = binds[name]
+        if d == "oracle":
+            ph = f":{name}"
+        elif d in ("mssql", "sqlserver"):
+            ph = f"@{name}"
+        else:
+            ph = f"%({name})s"
+        out = out.replace(ph, _literal(val))
+    return out
+
+
+# ─────────────────────────────────────────────────────────────
 # assemble (orchestrator)
 # ─────────────────────────────────────────────────────────────
 
