@@ -2858,6 +2858,21 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 elif getattr(exec_result, "cancelled", False):
                     content_msg = "🛑 Sorgu kullanıcı tarafından iptal edildi."
                     error_kind = "cancelled"
+                elif bool(exec_result.error) and _is_infra_db_error(exec_result.error):
+                    # v3.41.4: Bağlantı/altyapı hatası (ORA-12537/DPY-4011/TNS/listener vb.) —
+                    # SQL DOĞRU üretildi (follow-up context dahil), sorun veritabanı BAĞLANTISI.
+                    # Generic "sorunuzu farklı şekilde ifade edin" YANLIŞ yönlendirme: soruyu
+                    # değiştirmek bağlantıyı düzeltmez, kullanıcı boşuna uğraşır (kullanıcı raporu).
+                    # _is_infra_db_error final error üzerinde yeniden değerlendirilir (self-heal
+                    # sonrası bağlantı hatası da kapsansın).
+                    content_msg = (
+                        "🔌 Veritabanına şu anda ulaşılamıyor.\n\n"
+                        "Sorgunuz doğru oluşturuldu ancak veritabanı bağlantısı kurulamadı "
+                        "(sunucu bağlantıyı kapattı ya da yanıt vermiyor). Bu geçici bir altyapı "
+                        "sorunudur — **sorunuzu değiştirmenize gerek yok**. Lütfen birkaç dakika "
+                        "sonra tekrar deneyin; sorun sürerse sistem yöneticinize bildirin."
+                    )
+                    error_kind = "infra_error"
                 else:
                     content_msg = (
                         "❌ Sorgu çalıştırılırken bir hata oluştu.\n\n"
