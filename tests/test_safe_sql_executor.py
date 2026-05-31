@@ -153,6 +153,127 @@ class TestTableWhitelist:
 
 
 # =============================================================================
+# TEST: Generate-report whitelist regresyonu (v3.41.6 KÖK fix)
+# -----------------------------------------------------------------------------
+# Bug: post_generate_report whitelist'i YALNIZ picker'da seçilen tablolardan
+# kuruyordu → LLM'in NOT'tan eklediği YETKİLİ-ama-seçilmemiş tablo (ADRESLER)
+# yanlışça reddediliyordu. Fix: whitelist tam can_execute kapsamından kurulur.
+# Bu testler check_table_whitelist'in (signature DEĞİŞMEDEN) doğru davrandığını
+# ve _execute_scope_whitelist helper'ının kapsam → varyant listesini doğru
+# ürettiğini kilitler.
+# =============================================================================
+
+class TestGenerateReportWhitelistRegression:
+    """v3.41.6: üretilen-SQL whitelist kapsam regresyon kilidi."""
+
+    # LLM'in NOT'tan ADRESLER ekleyip MUSTERILER ile join'lediği üretilen SQL.
+    GEN_SQL = (
+        "SELECT m.ad, a.sehir FROM musteriler m "
+        "JOIN adresler a ON a.musteri_id = m.id"
+    )
+
+    def test_picked_only_wrongly_denies_authorized_neighbor(self):
+        """BUG repro: whitelist sadece picked (MUSTERILER) ise ADRESLER reddedilir."""
+        is_valid, error = check_table_whitelist(
+            self.GEN_SQL,
+            allowed_tables=["musteriler"],
+        )
+        assert is_valid is False
+        assert "adresler" in (error or "")
+
+    def test_full_execute_scope_allows_authorized_neighbor(self):
+        """FIX: whitelist tam can_execute kapsamı (MUSTERILER+ADRESLER+FATURALAR)
+        ise üretilen SQL geçer."""
+        is_valid, error = check_table_whitelist(
+            self.GEN_SQL,
+            allowed_tables=["musteriler", "adresler", "faturalar"],
+        )
+        assert is_valid is True
+        assert error is None
+
+    def test_full_scope_still_denies_unauthorized_table(self):
+        """GÜVENLİK KORUNUR: kapsam dışı SIPARISLER hâlâ reddedilir."""
+        sql = (
+            "SELECT m.ad, s.tutar FROM musteriler m "
+            "JOIN siparisler s ON s.musteri_id = m.id"
+        )
+        is_valid, error = check_table_whitelist(
+            sql,
+            allowed_tables=["musteriler", "adresler", "faturalar"],
+        )
+        assert is_valid is False
+        assert "siparisler" in (error or "")
+
+
+class TestExecuteScopeWhitelistHelper:
+    """v3.41.6: _execute_scope_whitelist + yardımcı helper unit testleri."""
+
+    def test_all_tables_scope_returns_empty(self):
+        """all_tables (admin/all grant) → boş liste (whitelist kontrolü atlanır)."""
+        from app.api.routes.db_smart_api import _execute_scope_whitelist
+        from app.services.data_source_access import AccessScope
+
+        result = _execute_scope_whitelist(AccessScope(all_tables=True))
+        assert result == []
+
+    def test_restricted_scope_contains_all_authorized_variants(self):
+        """restricted → kapsamdaki HER tablo (sadece picked değil) varyantlarıyla.
+
+        Kök fix: ADRESLER seçilmese de kapsamda olduğu için whitelist'te olmalı.
+        """
+        from app.api.routes.db_smart_api import _execute_scope_whitelist
+        from app.services.data_source_access import AccessScope
+
+        scope = AccessScope(
+            all_tables=False,
+            tables=frozenset({
+                ("vyra_test", "musteriler"),
+                ("vyra_test", "adresler"),
+                ("vyra_test", "faturalar"),
+            }),
+        )
+        result = _execute_scope_whitelist(scope)
+        # Tüm yetkili tablolar — schema-qualified + çıplak + case varyantları.
+        for tbl in ("musteriler", "adresler", "faturalar"):
+            assert tbl in result
+            assert tbl.upper() in result
+            assert f"vyra_test.{tbl}" in result
+        # Kapsam dışı tablo whitelist'te OLMAMALI.
+        assert "siparisler" not in result
+        assert "SIPARISLER" not in result
+        # Üretilen whitelist check_table_whitelist ile uçtan uca geçmeli.
+        is_valid, error = check_table_whitelist(
+            "SELECT m.ad, a.sehir FROM musteriler m "
+            "JOIN adresler a ON a.musteri_id = m.id",
+            allowed_tables=result,
+        )
+        assert is_valid is True
+        # Kapsam dışı SIPARISLER hâlâ reddedilir (güvenlik korunur).
+        is_valid2, error2 = check_table_whitelist(
+            "SELECT * FROM siparisler", allowed_tables=result
+        )
+        assert is_valid2 is False
+        assert "siparisler" in (error2 or "")
+
+    def test_parse_denied_ref_formats(self):
+        """_parse_denied_ref: tablo/şema red mesajlarını (schema, table)'a böler."""
+        from app.api.routes.db_smart_api import _parse_denied_ref
+
+        assert _parse_denied_ref(
+            "Tablo erişim yetkisi yok: vyra_test.adresler"
+        ) == ("vyra_test", "adresler")
+        assert _parse_denied_ref(
+            "Tablo erişim yetkisi yok: adresler"
+        ) == ("", "adresler")
+        assert _parse_denied_ref(
+            "Şema erişim yetkisi yok: other_schema.musteriler"
+        ) == ("other_schema", "musteriler")
+        # Tanınmayan / boş mesaj → None (çağıran generic dala düşer).
+        assert _parse_denied_ref(None) is None
+        assert _parse_denied_ref("beklenmedik mesaj") is None
+
+
+# =============================================================================
 # TEST: Hassas Alan Maskeleme
 # =============================================================================
 

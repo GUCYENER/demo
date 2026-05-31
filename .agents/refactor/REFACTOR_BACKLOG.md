@@ -522,3 +522,36 @@ dosyası + selektörler `var(--z-*)` kullanır. Yan fayda: yeni modal yanlış k
 (v3.41.3-tipi tıklama-tuzağı regresyonu önlenir). Ayrıca düşük öncelik: `session_timeout` (11000)
 artık VyraModal (11500) altında — güvenlik geri sayımı bir onay diyaloğuyla örtülebilir (uç durum,
 zaten kaydet-modalı 11100 altındaydı); ölçek refaktöründe session_timeout en üst app-katmanına alın.
+
+## RB-v3.41.6 — Diagnostic/denial-parse altitude (code-review, P2/P3 — regresyon DEĞİL)
+
+v3.41.6 (deep_think/text_to_sql + wizard/llm_generate_report DIAGNOSTIC surface fix) sonrası
+`/code-review high` bulguları. Bloklayıcı bug (extract_diagnostic raw-scan) commit'te düzeltildi;
+aşağıdakiler altitude/consistency, ayrı PR:
+
+**1) (P2 — reuse/altitude) Üç paralel "DIAGNOSTIC/yorum-only" + "denial-mesaj parse" implementasyonu.**
+`text_to_sql._is_comment_only_sql`, `llm_generate_report._extract_diagnostic` (aynı yorum-strip regex'i
++ DIAGNOSTIC search; text_to_sql:451 DIAGNOSTIC search'ü de tekrarlıyor), `db_smart_api._parse_denied_ref`
++ `deep_think._is_scope_denial_error` (ikisi de `check_table_whitelist`'in "Tablo/Şema erişim yetkisi
+yok: {ref}" formatını ayrı modüllerde, ayrı stratejiyle kodluyor). `check_table_whitelist` mesaj
+formatının kontratı yok → bir edit iki tüketiciyi sessizce bozar. Çözüm: tek paylaşılan util
+(`db_smart/sql_diag.py`: `is_comment_only(sql)` + `extract_diagnostic(text)` + `classify_denial(err)->(schema,table)|None`),
+`check_table_whitelist`'in yanına. RB-v3.41.5 #2 (`_is_infra_db_error` dup) ile aynı sınıf → birlikte yapılabilir.
+
+**2) (P3 — altitude) `_is_comment_only_sql` parser'a değil çağrana eklendi.** `parse_sql_from_llm`
+(text_to_sql:281) hâlâ yorum-only çıktıyı SQL gibi döndürüyor; sadece generate_sql:~440 onu None'a
+çeviriyor. Diğer call-site'lar (self-heal retry: ~477/529/696) yorum-only string alabilir. Doğrusu:
+yorum-only reddi `parse_sql_from_llm`/`_clean_sql` içinde → her çağıran faydalanır.
+
+**3) (P3 — consistency, hafif existence-oracle audit riski) Reddedilen-tablo adlandırma 3 farklı politika.**
+db_smart_api site-1 (picker 403): `obj`'i ham, can_view re-check'siz adlandırır (implicit "picker⇒can_view"
+varsayımı — yorum, guard değil). site-2: `_d_table.upper()` + can_view-gated. deep_think
+`_scope_restricted_message`: tabloyu HİÇ adlandırmaz (yetkili listesi verir). + `.upper()` cross-dialect
+(PG/MySQL lowercase metadata) yanlış-case gösterir. Çözüm: tek `describe_denied_table(scope, schema, table)`
+helper'ı (can_view gate + casing tek yerde).
+
+**4) (P3 — pre-existing leak, nadir path) `_sanitize_error_for_user` (deep_think:~3392) "tablo" içeren
+mesajda yalnız tırnaklı id'leri striplyor → "Tablo erişim yetkisi yok: siparisler" gibi ÇIPLAK komşu-tablo
+adı, scope çözülemediğinde (`_exec_scope is None` → `_scope_restricted=False`) kullanıcıya sızabilir.
+v3.41.6 öncesi de vardı (gate değişmedi). Sanitizer'a "... erişim yetkisi yok: X" ham desenini de
+maskeleme ekle. Düşük olasılık (scope-resolve fail).

@@ -164,6 +164,35 @@ def _validate_select_sql(sql: str) -> Optional[str]:
     return None
 
 
+def _extract_diagnostic(sql_candidate: str, raw: str) -> Optional[str]:
+    """v3.41.6: LLM, seçilen tablolar arasında ilişki/yol bulamayınca 'sql' alanına
+    '-- DIAGNOSTIC: ...' / açıklama / yorum koyabiliyor. Eski akış bunu `_validate_select_sql`
+    ile reddedip SESSİZCE 'SELECT * FROM <primary>' fallback'ine düşüyordu — kullanıcı istediği
+    join yerine sebepsiz sadece ana tabloyu görüyordu ("saçmaladı"). DIAGNOSTIC/yorum-only
+    metnini döndür ki çağıran NET bir sebep gösterebilsin; yoksa None.
+    """
+    # code-review fix: GEÇERLİ bir SQL statement varsa DIAGNOSTIC'e DÜŞME. Aksi halde
+    # rationale/raw içinde tesadüfen "DIAGNOSTIC:" geçen (ör. "DIAGNOSTIC: müşteri_id ile bağlı")
+    # GEÇERLİ bir JOIN sorgusu sessizce 'SELECT * FROM <primary>' fallback'ine çevriliyordu —
+    # tam da bu değişikliğin kapatmaya çalıştığı "saçmaladı" semptomu. Yalnız SQL yok/yorum-only
+    # iken DIAGNOSTIC açıklamasını çıkar.
+    has_real_sql = bool(
+        sql_candidate
+        and re.sub(r"--[^\n]*|/\*.*?\*/", "", sql_candidate, flags=re.DOTALL).strip()
+    )
+    if has_real_sql:
+        return None
+    # Gerçek SQL yok (boş veya yorum-only) → açıklamayı önce sql alanından, sonra raw'dan al.
+    for src in (sql_candidate or "", raw or ""):
+        m = re.search(r"DIAGNOSTIC:\s*(.+)", src, re.IGNORECASE | re.DOTALL)
+        if m:
+            return m.group(1).strip()[:300]
+    # sql alanı yalnızca yorumdan ibaretse (DIAGNOSTIC token'ı yoksa bile) metni döndür
+    if sql_candidate:
+        return sql_candidate.strip()[:300]
+    return None
+
+
 # ─────────────────────────────────────────────────────────────
 # B4 (v3.37.9 — METIS+ARES+POSEIDON): glued garbage keyword-prefix repair
 # ─────────────────────────────────────────────────────────────
@@ -516,6 +545,25 @@ def generate_report(
             "(upstream LLM artifact); repaired_head=%r",
             sql_candidate[:200],
         )
+
+    # ── 4c. (v3.41.6) DIAGNOSTIC / yorum-only çıktı → SESSİZ 'SELECT *' fallback yerine
+    # net sebep. LLM, seçilen tablolar arasında ilişki kuramayınca açıklama döndürüyor;
+    # bunu kullanıcıya iletmeden ana tabloya düşmek "saçmaladı" algısı yaratıyordu. ───────
+    _diag = _extract_diagnostic(sql_candidate, raw)
+    if _diag:
+        logger.info(
+            "[llm_generate_report] LLM DIAGNOSTIC/yorum-only çıktı → net rationale (fallback): %r",
+            _diag[:160],
+        )
+        return {
+            "sql": _build_fallback_sql(dialect, primary_name, limit),
+            "rationale": (
+                "Seçtiğiniz tablolar arasında istenen ilişki kurulamadı: " + _diag
+                + " — yalnızca ana tablo listelendi (ilgili tabloyu da seçin veya yetki alın)."
+            ),
+            "fallback": True,
+            "validation_error": "diagnostic",
+        }
 
     # ── 5. Validate SELECT-only / single-statement ──────────
     ve = _validate_select_sql(sql_candidate)

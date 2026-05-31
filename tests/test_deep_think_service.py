@@ -598,3 +598,41 @@ class TestScopeRestrictedMessage:
         sc = AccessScope(all_tables=False, tables=frozenset())
         msg = _scope_restricted_message(sc)
         assert "yetkili tablonuz bulunmuyor" in msg.lower()
+
+
+class TestIsScopeDenialError:
+    """v3.41.6 (bug #3): "Yetki Notu" yalnız GERÇEK kapsam reddinde gösterilmeli.
+    Eliptik follow-up'taki parse/DIAGNOSTIC/LLM hatası YETKİ sorunu sayılmamalı —
+    aksi halde kullanıcının YETKİLİ olduğu tablo (MUSTERILER) yanlışça reddediliyordu."""
+
+    def test_whitelist_table_denial_is_scope(self):
+        from app.services.deep_think_service import _is_scope_denial_error
+        assert _is_scope_denial_error("Tablo erişim yetkisi yok: vyra_test.siparisler") is True
+
+    def test_whitelist_schema_denial_is_scope(self):
+        from app.services.deep_think_service import _is_scope_denial_error
+        assert _is_scope_denial_error("Şema erişim yetkisi yok: baska_sema.x") is True
+
+    def test_no_executable_table_is_scope(self):
+        from app.services.deep_think_service import _is_scope_denial_error
+        assert _is_scope_denial_error("Bu kaynakta çalıştırma yetkiniz olan tablo bulunmuyor.") is True
+
+    def test_parse_failure_is_NOT_scope(self):
+        # KÖK bug: bu hata eskiden "yetkiniz yok" diye yorumlanıyordu — artık değil.
+        from app.services.deep_think_service import _is_scope_denial_error
+        assert _is_scope_denial_error(
+            "Sorgu için geçerli SQL üretilemedi — sistem sorunuz için geçerli bir tablo eşleştirememiş olabilir."
+        ) is False
+
+    def test_diagnostic_failure_is_NOT_scope(self):
+        from app.services.deep_think_service import _is_scope_denial_error
+        assert _is_scope_denial_error("DIAGNOSTIC: talebi şemaya eşleyemedim, lütfen netleştirin.") is False
+
+    def test_infra_failure_is_NOT_scope(self):
+        from app.services.deep_think_service import _is_scope_denial_error
+        assert _is_scope_denial_error("ORA-12537: TNS:connection closed") is False
+
+    def test_none_and_nonstr_safe(self):
+        from app.services.deep_think_service import _is_scope_denial_error
+        assert _is_scope_denial_error(None) is False
+        assert _is_scope_denial_error(12345) is False

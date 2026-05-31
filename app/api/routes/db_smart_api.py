@@ -38,7 +38,7 @@ import json
 import logging
 import threading
 import time as _time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
 from fastapi.responses import StreamingResponse
@@ -2606,6 +2606,75 @@ def post_suggest_column_order(
 # Council: APOLLO + POSEIDON + ARES + HEBE
 # ─────────────────────────────────────────────────────────────
 
+
+def _table_whitelist_variants(schema: str, obj: str) -> List[str]:
+    """Tek (schema, tablo) için whitelist eşleşme varyantlarını üretir.
+
+    F15 (defense in depth): Oracle metadata genelde UPPERCASE, LLM PG/MySQL
+    tarzı lowercase üretebilir (veya tersi). SafeSQLExecutor parser tarafında
+    .lower() yapar; biz hem orijinal hem upper hem lower formatları
+    (`schema.tablo` + çıplak `tablo`) ekleyerek herhangi bir karşılaştırma
+    yolunun eşleşmesini garantiliyoruz. Sıra korunur, dedup çağıran tarafta.
+    """
+    variants: List[str] = []
+    if schema:
+        qual = f"{schema}.{obj}"
+        variants.extend([qual, qual.lower(), qual.upper()])
+    if obj:
+        variants.extend([obj, obj.lower(), obj.upper()])
+    return variants
+
+
+def _execute_scope_whitelist(exec_scope) -> List[str]:
+    """Kullanıcının TAM can_execute kapsamından üretilen-SQL whitelist'i kurar.
+
+    v3.41.6 (KÖK fix): Picker'da SEÇİLEN tablolar yalnız 403 kontrolü içindir;
+    üretilen SQL whitelist'i ise kullanıcının kapsamındaki TÜM yetkili tabloları
+    içermeli — aksi halde LLM'in NOT'tan eklediği YETKİLİ-AMA-SEÇİLMEMİŞ tablo
+    (örn. ADRESLER) whitelist'te olmadığı için yanlışça reddedilir.
+
+    - ``all_tables=True`` (admin/all grant) → ``[]`` (whitelist boş = kontrol
+      atlanır; restricted değil, executor zaten kapsam-dışı sızdırmaz).
+    - restricted → kapsamdaki her ``(schema, tablo)`` için varyantlar (dedup).
+
+    `exec_scope.tables` lowercase `(schema, tablo)` tuple frozenset'idir.
+    """
+    if exec_scope.all_tables:
+        return []
+    out: List[str] = []
+    _seen: set = set()
+    for schema, table in sorted(exec_scope.tables):
+        for v in _table_whitelist_variants(schema or "", table or ""):
+            if v and v not in _seen:
+                _seen.add(v)
+                out.append(v)
+    return out
+
+
+def _parse_denied_ref(err: Optional[str]) -> Optional[Tuple[str, str]]:
+    """`check_table_whitelist` red mesajından reddedilen (schema, table)'ı çıkarır.
+
+    Mesaj formatları (safe_sql_executor.check_table_whitelist):
+      - ``"Tablo erişim yetkisi yok: {ref}"``
+      - ``"Şema erişim yetkisi yok: {ref}"``
+    ref lowercase; ``schema.table`` veya çıplak ``table`` olabilir. Eşleşme yoksa
+    ``None`` (mesaj formatı değişmiş → çağıran generic dala düşer).
+    """
+    if not err:
+        return None
+    ref: Optional[str] = None
+    for prefix in ("Tablo erişim yetkisi yok:", "Şema erişim yetkisi yok:"):
+        if err.startswith(prefix):
+            ref = err[len(prefix):].strip()
+            break
+    if not ref:
+        return None
+    if "." in ref:
+        schema, table = ref.rsplit(".", 1)
+        return schema.strip(), table.strip()
+    return "", ref
+
+
 @router.post("/generate-report", response_model=GenerateReportResp)
 def post_generate_report(
     req: GenerateReportReq,
@@ -2697,12 +2766,9 @@ def post_generate_report(
                 """,
                 (int(req.source_id), list({int(t) for t in all_ids})),
             )
-            # F15: allowed_tables case-insensitive defense in depth.
-            # Oracle metadata genelde UPPERCASE saklar; LLM PG/MySQL tarzı
-            # lowercase üretebilir veya tersi. SafeSQLExecutor parser tarafında
-            # .lower() yapar; biz de hem orijinal hem upper hem lower formatları
-            # ekleyerek herhangi bir karşılaştırma yolunun match etmesini sağlıyoruz.
-            _seen: set = set()
+            # v3.41.6: bu döngü yalnız PICKER'da seçilen yetkisiz tabloyu 403 ile
+            # reddetmek içindir; allowed_tables artık tam can_execute kapsamından
+            # (_execute_scope_whitelist) kurulur (aşağıda).
             for r in cur.fetchall() or []:
                 schema = (r.get("schema_name") if isinstance(r, dict) else r[0]) or ""
                 obj = (r.get("object_name") if isinstance(r, dict) else r[1]) or ""
@@ -2716,25 +2782,26 @@ def post_generate_report(
                         "[db_smart] generate_report unauthorized table user=%s source=%s %s.%s",
                         current_user.get("id"), req.source_id, schema, obj,
                     )
+                    # v3.41.6: red mesajında tablo adını söyle. Picker'dan SEÇİLEN
+                    # tablo zaten kullanıcının can_view kapsamındadır → güvenle adlandırılır
+                    # (existence-oracle yok; kullanıcı bu tabloyu zaten görebiliyordu).
                     raise HTTPException(
                         status_code=403,
-                        detail="Seçilen tablolardan biri için çalıştırma yetkiniz yok.",
+                        detail=f"'{obj}' tablosu için çalıştırma yetkiniz yok.",
                     )
-                variants: List[str] = []
-                if schema:
-                    qual = f"{schema}.{obj}"
-                    variants.extend([qual, qual.lower(), qual.upper()])
-                variants.extend([obj, obj.lower(), obj.upper()])
-                for v in variants:
-                    if v and v not in _seen:
-                        _seen.add(v)
-                        allowed_tables.append(v)
         except HTTPException:
             raise  # v3.38.0: yetki reddini (403) yutma — yukarı taşı.
         except Exception as e:
             logger.warning(
                 "[db_smart] generate_report allowed_tables lookup failed: %s", e
             )
+
+        # v3.41.6 (KÖK fix): üretilen-SQL whitelist'i picker seçimiyle DEĞİL,
+        # kullanıcının TAM can_execute kapsamıyla kurulur. Yukarıdaki döngü yalnız
+        # picker'da seçilen yetkisiz tabloyu 403 ile reddetmek içindir. LLM, NOT'tan
+        # YETKİLİ-ama-seçilmemiş tablo (örn. ADRESLER) ekleyebilir → kapsamdaysa izinli.
+        # restricted: tüm kapsam varyantları; all_tables: [] (executor zaten sızdırmaz).
+        allowed_tables = _execute_scope_whitelist(exec_scope)
 
     # ── LLM SQL generation (service handles all defensive paths) ──
     from app.services.db_smart import llm_generate_report
@@ -2789,12 +2856,31 @@ def post_generate_report(
                 "[db_smart] generate_report üretilen SQL yetkisiz tablo içeriyor user=%s source=%s: %s",
                 current_user.get("id"), req.source_id, _gen_err,
             )
+            # v3.41.6: red mesajında tablo adını VER — ama yalnız kullanıcının can_view
+            # kapsamındaysa (existence-oracle koruması). LLM'in NOT'tan eklediği YETKİLİ
+            # tablo (örn. ADRESLER) → adıyla söyle, kullanıcı yöneticiden yetki istesin.
+            # Kullanıcının GÖREMEDİĞİ görünmez FK-komşu tablo → generic mesaj (sızdırma yok).
+            _err_msg = (
+                "Üretilen sorgu yetkili olmadığınız bir tabloya erişiyor — gösterilmedi."
+            )
+            _denied = _parse_denied_ref(_gen_err)
+            if _denied is not None:
+                _d_schema, _d_table = _denied
+                view_scope = resolve_scope(
+                    req.source_id, current_user, permission="can_view"
+                )
+                if view_scope.all_tables or view_scope.allows(_d_schema, _d_table):
+                    # Oracle metadata uppercase; display .upper() makul. schema'sızsa bare.
+                    _err_msg = (
+                        f"'{_d_table.upper()}' tablosuna çalıştırma yetkiniz yok. "
+                        "Bu tablo için yöneticinizden yetki isteyin."
+                    )
             return GenerateReportResp(
                 sql="",  # leak guard: yetkisiz tablo içeren SQL kullanıcıya gösterilmez
                 rationale=rationale,
                 success=False,
                 fallback=fallback,
-                error="Üretilen sorgu yetkili olmadığınız bir tabloya erişiyor — gösterilmedi.",
+                error=_err_msg,
             )
     # v3.40.1: generate_only — SQL'i üret + döndür ama ÇALIŞTIRMA (modal "nihai SQL" önizlemesi).
     if req.generate_only:

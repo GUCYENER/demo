@@ -101,10 +101,38 @@
         const m = String(raw).match(/(\d{3})/);
         const status = m ? m[1] : null;
         const msg = (e && e.message) || '';
-        if (status === '403') return _t('wizard.error.permission_denied');
+        if (status === '403') {
+            // v3.41.6 (G2): backend 403 detail'ine tablo adı koyuyor (kullanıcı-dostu
+            // Türkçe, örn. "'ADRESLER' tablosu için çalıştırma yetkiniz yok."). api_client.js
+            // bunu err.data.detail (string|dict) olarak taşır; anlamlıysa GÖSTER, yoksa
+            // generic i18n'e düş (auth-expiry vb. detailsiz 403'ler korunur). Yalnız
+            // detail/message field'ı okunur — raw HTML body sızdırılmaz.
+            const detail = _serverDetailMessage(e);
+            if (detail) return detail;
+            return _t('wizard.error.permission_denied');
+        }
         if (status === '401') return _t('wizard.error.auth_expired');
         if (status === '404') return _t('wizard.error.not_found');
         return _t('wizard.error.generic', { message: msg });
+    }
+
+    // v3.41.6 (G2): vyraFetch friendly-error (api_client.js) parse edilmiş response
+    // body'sini err.data'ya koyar. FastAPI HTTPException `detail` string ya da dict
+    // (`{message, ...}`) olabilir; non-JSON body ise `{ raw }`. Anlamlı bir kullanıcı
+    // mesajını DETAIL/MESSAGE field'larından çıkar — `raw`'ı asla döndürme (HTML sızıntısı).
+    function _serverDetailMessage(e) {
+        const data = e && e.data;
+        if (!data) return null;
+        const detail = data.detail != null ? data.detail : data.message;
+        if (typeof detail === 'string') {
+            const trimmed = detail.trim();
+            return trimmed ? trimmed : null;
+        }
+        if (detail && typeof detail === 'object') {
+            const inner = detail.message || detail.detail;
+            if (typeof inner === 'string' && inner.trim()) return inner.trim();
+        }
+        return null;
     }
 
     // FIX5 P2 (ATHENA+HEBE): Body scroll-lock ref-counter — modal stacking safe.
@@ -4015,7 +4043,11 @@
                 + _escape(note) + '</div>'
             : '<div class="dsw-sql-modal-note dsw-sql-modal-note-empty">📝 Serbest talep girilmedi '
                 + '— nihai SQL = seçim SQL\'i.</div>';
+        // v3.41.6 (G3): wrapper class → modal.css bounded-height `:has(.dsw-sql-modal)`
+        // kuralları eşleşsin (geniş + sabit 85vh + iç scroll). Wrapper SADECE sarmalar;
+        // id'ler (#dswSqlBasePre/#dswSqlFinalPre) ve _sqlModalSeq guard'ı değişmez.
         const html =
+            '<div class="dsw-sql-modal">' +
             noteHtml +
             '<div class="dsw-sql-modal-label">1) Seçimlerinizden oluşan SQL (deterministik):</div>' +
             '<pre class="dsw-sql-modal-pre" id="dswSqlBasePre" tabindex="0" '
@@ -4035,6 +4067,7 @@
                 + 'aria-label="Nihai SQL\'i kopyala">📋 Kopyala</button>' +
               '<span id="dswSqlFinalCopyStatus" class="dsw-sql-modal-copy-status" '
                 + 'role="status" aria-live="polite"></span>' +
+            '</div>' +
             '</div>';
         window.VyraModal.info({
             title: 'SQL Önizleme — Seçim vs Nihai',

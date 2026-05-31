@@ -339,6 +339,21 @@ def _clean_sql(sql: str) -> str:
     return sql
 
 
+def _is_comment_only_sql(sql: Optional[str]) -> bool:
+    """v3.41.6: Çıkarılan 'SQL' yalnızca yorumdan mı ibaret? (`--` satır / `/* */` blok)
+
+    LLM, join yolu bulamadığında '-- DIAGNOSTIC: ...' gibi bir YORUM döndürebiliyor;
+    `parse_sql_from_llm` bunu SQL gibi çıkarınca eski `if not sql` guard'ı DIAGNOSTIC'i
+    kaçırıp `validate_sql`'in generic 'Yalnızca SELECT' reddine düşürüyor → LLM'in açıklaması
+    (ör. 'FATURALAR ile MUSTERILER arasında doğrudan ilişki yok') kullanıcıya ulaşmıyordu.
+    Yorum-only ise çağıran 'SQL yok' sayar → DIAGNOSTIC yakalama devreye girer.
+    """
+    if not sql:
+        return False
+    stripped = re.sub(r'--[^\n]*|/\*.*?\*/', '', sql, flags=re.DOTALL).strip()
+    return not stripped
+
+
 # =====================================================
 # Ana Fonksiyon: LLM ile SQL Üretimi
 # =====================================================
@@ -417,6 +432,18 @@ def generate_sql(
 
     # 3. SQL parse et
     sql = parse_sql_from_llm(llm_response)
+
+    # v3.41.6 KÖK fix: parse_sql_from_llm "-- DIAGNOSTIC: ..." (veya başka yorum-only) çıktıyı
+    # SQL gibi döndürebiliyor → eski `if not sql` guard'ı DIAGNOSTIC'i kaçırıp validate_sql'in
+    # generic "Yalnızca SELECT" reddine düşürüyordu; LLM'in AÇIKLAMASI kullanıcıya ulaşmıyordu.
+    # Yorum-only çıktıyı "SQL yok" say → aşağıdaki DIAGNOSTIC yakalama + retry devreye girsin.
+    if _is_comment_only_sql(sql):
+        log_system_event(
+            "INFO",
+            f"Text-to-SQL: yorum-only LLM çıktısı (muhtemelen DIAGNOSTIC) — SQL yok sayıldı: {sql[:120]}",
+            "hybrid_router",
+        )
+        sql = None
 
     # M3: Parse başarısızsa bir kez daha basit prompt ile dene
     if not sql:

@@ -2542,13 +2542,17 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 _sql_err = sql_result.get("error", "Bilinmeyen SQL hatasi")
                 log_warning(f"DB-Only: SQL uretimi basarisiz: {_sql_err}", "deep_think")
 
-                # G3 (v3.40.0): restricted kullanıcıda başarısızlık GENELDE kapsam-dışı
-                # tablo kaynaklıdır. Generic "Yalnızca SELECT / farklı sorun" VEYA
-                # check_table_whitelist'in yanlış-komşu tablo adı sızıntısı
-                # ("Tablo erişim yetkisi yok: SİPARİŞLER") yerine tek, net yetki mesajı:
-                # kullanıcıya YETKİLİ tablolarını söyle. (all_tables kullanıcıda eski davranış.)
+                # v3.41.6 (KÖK fix — bug #3): "Yetki Notu" SADECE GERÇEK kapsam/whitelist
+                # reddinde gösterilir. Önceki kod (G3 v3.40.0) restricted kullanıcıdaki HER
+                # SQL üretim başarısızlığını "kapsam-dışı tablo" sanıyordu → eliptik follow-up'ta
+                # (örn. "müşteri listesinde dahil et") parse/DIAGNOSTIC/LLM hatası, kullanıcının
+                # YETKİLİ olduğu tabloyu (ör. MUSTERILER) yanlışça "yetkiniz yok" diye reddediyordu.
+                # Artık: gerçek scope reddi (whitelist "erişim yetkisi yok" VEYA hiç çalıştırılabilir
+                # tablo yok) → Yetki Notu; diğer üretim hataları → "farklı şekilde sorun"
+                # (DIAGNOSTIC açıklaması _sanitize_error_for_user içinde korunur).
                 _exec_restricted = bool(_exec_scope is not None and not _exec_scope.all_tables)
-                if _exec_restricted:
+                _scope_restricted = _exec_restricted and _is_scope_denial_error(_sql_err)
+                if _scope_restricted:
                     content_msg = _scope_restricted_message(_exec_scope)
                 else:
                     # v3.8.0 Error Sanitization: Teknik detayları kullanıcıya gösterme
@@ -2559,7 +2563,7 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
 
                 yield {"type": "done", "data": {
                     "content": content_msg,
-                    "metadata": {"db_only": True, "error": True, "scope_restricted": _exec_restricted}
+                    "metadata": {"db_only": True, "error": True, "scope_restricted": _scope_restricted}
                 }}
                 return
 
@@ -3344,6 +3348,29 @@ def _scope_restricted_message(exec_scope) -> str:
         "**Yetki Notu:** Bu soruyu yalnızca yetkili olduğunuz tablolarda yanıtlayabiliyorum.\n\n"
         f"Yetkili tablolarınız: **{allow_txt}**.\n\n"
         "Sorunuz yetkili olmadığınız bir tabloya ilişkin görünüyor — yetkili bir tablo için tekrar deneyin."
+    )
+
+
+def _is_scope_denial_error(err) -> bool:
+    """v3.41.6 (bug #3): Hata GERÇEK bir kapsam/whitelist reddi mi, yoksa parse/DIAGNOSTIC/
+    LLM/altyapı hatası mı?
+
+    `process_stream_db_only` başarısızlık dalında restricted kullanıcıya "Yetki Notu"
+    (yetkili tablolarınız: ...) gösterip göstermeyeceğini buna göre seçer. Önceki davranış
+    HER başarısızlığı yetki sorunu sayıyordu → eliptik follow-up'ta kullanıcının YETKİLİ
+    olduğu tablo (ör. MUSTERILER) yanlışça reddediliyordu.
+
+    True (gerçek yetki reddi):
+      - check_table_whitelist reddi: "Tablo/Şema erişim yetkisi yok: X" (safe_sql_executor)
+      - hiç çalıştırılabilir tablo yok: "...çalıştırma yetkiniz olan tablo bulunmuyor."
+    Aksi (parse/DIAGNOSTIC/connection/LLM vb.) → False → kullanıcıya "farklı şekilde sorun".
+    """
+    if not isinstance(err, str):
+        return False
+    e = err.lower()
+    return (
+        "erişim yetkisi yok" in e
+        or "çalıştırma yetkiniz olan tablo bulunmuyor" in e
     )
 
 

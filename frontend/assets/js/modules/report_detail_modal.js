@@ -845,10 +845,15 @@
                 )
                     .then(() => {
                         _toast('Rapor silindi', 'success');
+                        // v3.41.6 KÖK fix: close() `_opts`'u SIFIRLIYOR (= {}). onDeleted callback'ini
+                        // ve id'yi close()'tan ÖNCE yakala — aksi halde `_opts.onDeleted` undefined olur,
+                        // optimistic removeItem()+refresh() HİÇ çağrılmaz → silinen kart ekranda kalır
+                        // (F5 gerekiyordu). v3.38.5 B4-3 kablajı bu sıra hatası yüzünden ÖLÜ kalmıştı.
                         const deletedId = _reportId;
+                        const onDeleted = _opts.onDeleted;
                         close();
-                        if (typeof _opts.onDeleted === 'function') {
-                            try { _opts.onDeleted(deletedId); } catch (e) { console.error('[ReportDetailModal] onDeleted error:', e); }
+                        if (typeof onDeleted === 'function') {
+                            try { onDeleted(deletedId); } catch (e) { console.error('[ReportDetailModal] onDeleted error:', e); }
                         }
                     })
                     .catch((err) => {

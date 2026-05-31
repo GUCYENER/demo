@@ -144,3 +144,32 @@ class TestBuildPrompt:
         }
         messages = build_text_to_sql_prompt("Test", schema_context)
         assert "mssql" in messages[0]["content"]
+
+
+class TestIsCommentOnlySql:
+    """v3.41.6: LLM join yolu bulamayıp '-- DIAGNOSTIC: ...' YORUMU döndürdüğünde,
+    parse_sql_from_llm bunu SQL gibi çıkarıyordu → validate_sql 'Yalnızca SELECT' reddi →
+    LLM'in açıklaması kayboluyordu. Yorum-only çıktı 'SQL yok' sayılmalı (DIAGNOSTIC yakalansın)."""
+
+    def test_diagnostic_comment_is_comment_only(self):
+        from app.services.text_to_sql import _is_comment_only_sql
+        assert _is_comment_only_sql(
+            "-- DIAGNOSTIC: FATURALAR ile MUSTERILER arasında doğrudan ilişki yok"
+        ) is True
+
+    def test_block_comment_only(self):
+        from app.services.text_to_sql import _is_comment_only_sql
+        assert _is_comment_only_sql("/* sadece açıklama */") is True
+
+    def test_real_select_is_not_comment_only(self):
+        from app.services.text_to_sql import _is_comment_only_sql
+        assert _is_comment_only_sql("SELECT * FROM faturalar") is False
+
+    def test_comment_then_select_is_not_comment_only(self):
+        from app.services.text_to_sql import _is_comment_only_sql
+        assert _is_comment_only_sql("-- not\nSELECT 1 FROM dual") is False
+
+    def test_empty_and_none(self):
+        from app.services.text_to_sql import _is_comment_only_sql
+        assert _is_comment_only_sql("") is False
+        assert _is_comment_only_sql(None) is False
