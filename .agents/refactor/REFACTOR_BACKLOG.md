@@ -496,3 +496,29 @@ dal). Sonuç: `VYRA_TEST.MUSTERILER` grant'ı, çok-şemalı kaynakta `BAŞKA_Ş
 şema-strict mod istenirse: ya gate'te `exec_scope.allows(schema,table)` ile SQL'den çıkarılan
 (schema,table) çiftlerini per-tablo doğrula, ya da check_table_whitelist'e opt-in `strict_schema`
 parametresi ekle (mevcut çağıranları bozmadan). Risk: düşük/orta; öncelik P2 (narrow edge).
+
+## RB-v3.41.5 — BİTİR code-review bulguları (altitude + cleanup, regresyon DEĞİL)
+
+Kapsam: `4577b4b..HEAD` (v3.41.3/4/5). Bloklayıcı bug çıkmadı; 3 iyileştirme adayı.
+
+**1) (P2 — altitude) Infra-error mesajı yalnız tek yüzeyde.** v3.41.4 net "🔌 Veritabanına
+ulaşılamıyor" mesajı SADECE `deep_think_service.process_stream_db_only`'de var. Aynı ORA-12537/
+DPY-4011 bağlantı hatası `query_builder_api`, `query_state_api` (preview execute) ve
+`schedule_runner` (zamanlanmış rerun) yollarında generic hataya düşüyor → tutarsız UX (aynı
+altyapı sorunu farklı yerde "SQL'i değiştir" der). Çözüm: ortak bir `infra_error_message(err)`
+helper'ı + bu yüzeylerde `_is_infra_db_error` kontrolü. (Not: bu yollar hata kontratları farklı —
+preview 4xx/string, schedule log — bu yüzden inline değil planlı.)
+
+**2) (P3 — cleanup) `_is_infra_db_error` desen duplikasyonu.** `deep_think_service._is_infra_db_error`
+(ORA-28547/12154/TNS/connection patterns) ile `data_sources_api.py`'deki bağlantı-hatası
+sınıflandırması örtüşüyor. Yeni Oracle hata kodu eklenince iki yer ayrı güncellenmeli → divergence
+riski. Çözüm: tek `app/services/db_smart/db_error_classify.py` modülüne çıkar.
+
+**3) (P3 — cleanup) z-index ölçek yok (magic number).** `modal.css` `.vyra-modal-overlay` 11500
+hardcoded; uygulamada 40+ z-index değeri 15 CSS dosyasına dağılmış (9500…100001), tek kaynak yok.
+v3.41.3 (10000→11500) ve v3.34.0 picker (1100→1300) gibi düzeltmeler her seferinde tüm yığını
+yeniden hesaplamayı gerektiriyor. Çözüm: `:root { --z-modal/--z-toast/--z-overlay … }` ölçek
+dosyası + selektörler `var(--z-*)` kullanır. Yan fayda: yeni modal yanlış katmana konmaz
+(v3.41.3-tipi tıklama-tuzağı regresyonu önlenir). Ayrıca düşük öncelik: `session_timeout` (11000)
+artık VyraModal (11500) altında — güvenlik geri sayımı bir onay diyaloğuyla örtülebilir (uç durum,
+zaten kaydet-modalı 11100 altındaydı); ölçek refaktöründe session_timeout en üst app-katmanına alın.
