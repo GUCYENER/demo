@@ -104,14 +104,26 @@ Aşağıdaki komutlar **büyük/küçük harf duyarsızdır** (başla=BAŞLA=Ba�
 ## 3. OTURUM BAŞLATMA (BAŞLA)
 
 1. **Graphify Baglam Yukleme (MNEMOSYNE-GRAPH — tek hafiza katmani):**
-   - `graphify_warmup()` — MCP server liveness probe
-   - `graphify_wakeup(project="vyra")` — VYRA DB ac, session summary al
-   - `graphify_status(project="vyra")` → entity/triple sayisini `[graphify_baslangic_E, baslangic_T]` olarak not al
+   - **MCP OTOMATIK baslar/baglanir** — `.mcp.json` `graphify` server'i WSL-safe komutla
+     (Windows python313 + `mcp_server.py` TAM PATH; **`cmd.exe /c "cd /d ..."` KULLANMA** —
+     Claude WSL'de calistigi icin cmd.exe WSL cwd'sinden "filename/directory syntax incorrect"
+     UNC hatasi verip server'i HIC baslatmaz; v3.42.0'da dogrulanip duzeltildi). Onay:
+     `enableAllProjectMcpServers: true` + `enabledMcpjsonServers: ["graphify"]`. Oturum
+     acilinca `mcp__graphify__{wakeup,status,search,mine,traverse}` hazirdir.
+   - **MCP-yolu:** `graphify_wakeup(project="vyra")` (session summary) +
+     `graphify_status(project="vyra")` → `[graphify_baslangic_E, baslangic_T]` not al.
+   - **CLI-fallback (MCP tool'lari gorunmuyorsa — ASLA "yapamiyorum" deme, CLI ile YAP):**
+     sistem Python313 + General_Graphify (VYRA venv DEGIL — orada sentence-transformers cakismasi):
+     ```bash
+     PY="/mnt/c/Users/EXT02D059293/AppData/Local/Programs/Python/Python313/python.exe"
+     PYTHONPATH='C:\Users\EXT02D059293\Documents\General_Graphify' USE_TF=0 USE_TORCH=1 PYTHONUTF8=1 PYTHONIOENCODING=utf-8 "$PY" -m core.cli wakeup --project vyra
+     # ayni env ile: status | mine | search --query "..." | traverse  (komutlar: core.cli --help)
+     ```
    - **Graphify Freshness Gate:**
      1. `git log -1 --format="%H"` ile son commit hash al
      2. `graphify_search(query=<son_commit_hash_short>, project="vyra", mode="graph", limit=3)` calistir
      3. **STALE kriteri:** Top-3 sonucta son commit hash bulunmuyor VEYA `graphify_status` son commit'i kapsayan Decision entity gostermiyor
-     4. **STALE ise:** `graphify_mine(project="vyra")` otomatik tetiklenir
+     4. **STALE ise:** `graphify_mine(project="vyra")` (MCP) VEYA CLI-fallback `... "$PY" -m core.cli mine --project vyra` otomatik tetiklenir
         - Mine basarili → "🌳 graphify mine tamamlandi (delta +E entity, +T triple)" notu, devam
         - Mine timeout (>300s) → 1 kez retry; ikinci timeout sonrası kullanıcıya `🔴 graphify mine timeout — manuel müdahale gerekli` uyarısı, BİTİR'e ertele
         - Mine hata → not dus, oturuma bayat grafla devam (uyar)
@@ -1108,11 +1120,20 @@ c) **Commit Mesajı:**
 
 **🌳 KAP 10 — Graphify Saglik (MNEMOSYNE-GRAPH — tek hafiza katmani)**
 
-`graphify_mine(project="vyra")` calistirildiktan sonra:
+Commit + push SONRASI son commit'i indexle — **excuse YOK, her zaman calisan yol var:**
+- **MCP-yolu:** `graphify_mine(project="vyra")`
+- **CLI-fallback (MCP tool'lari gorunmuyorsa):** verified WSL komutu (`cmd.exe /c "cd /d ..."` KULLANMA — UNC hatasi):
+  ```bash
+  PY="/mnt/c/Users/EXT02D059293/AppData/Local/Programs/Python/Python313/python.exe"
+  PYTHONPATH='C:\Users\EXT02D059293\Documents\General_Graphify' USE_TF=0 USE_TORCH=1 PYTHONUTF8=1 PYTHONIOENCODING=utf-8 "$PY" -m core.cli mine --project vyra
+  ```
+  (v3.42.0 kanit: 39 entity + 195 triple, embed_errors=0, exit 0.)
 
-1. `graphify_status(project="vyra")` → bitis entity/triple sayisi al. Delta = bitis - graphify_baslangic
-2. `graphify_add_decision(commit_msg=<son>, branch=<current>, council=<reviewers>, project="vyra")` ile commit→Decision triple yaz (closes refactor_ids/bug_ids varsa parametre olarak ver)
-3. Suphesiz durumda `graphify_search(query=<son_commit_msg_keywords>, project="vyra", mode="hybrid")` ile spot-check
+mine sonrasi:
+
+1. `status` (MCP `graphify_status` VEYA CLI `... "$PY" -m core.cli status --project vyra`) → bitis entity/triple sayisi. Delta = bitis - graphify_baslangic.
+2. `graphify_add_decision(commit_msg=<son>, branch=<current>, council=<reviewers>, project="vyra")` ile commit→Decision triple (closes refactor_ids/bug_ids varsa parametre) — **YALNIZ MCP tool (CLI'de `add-decision` YOK).** MCP baglıysa cagir; degilse mine'in `git` adapter'i commit'i ZATEN yakalar (freshness gate icin yeterli), bir sonraki MCP-li oturumda add_decision tamamlanir — tek satir not, BIRAKMA.
+3. Suphesiz durumda `search` (MCP `graphify_search` VEYA CLI `... -m core.cli search --query "<commit keywords>" --project vyra`) ile spot-check.
 4. Per-instance DB izolasyonu dogrula: `graphify_status` cikti'sinda sadece `vyra` projesi gozukmeli (cross-project leak yok)
 5. Disk size delta: `graphify_status` `db_size_mb` alani; soft cap 100MB, asarsa prune planlamasi acilir (ARIADNE v1.1)
 
