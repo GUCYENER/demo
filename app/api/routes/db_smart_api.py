@@ -1382,14 +1382,25 @@ def post_save_report_flat(
 def list_saved_reports(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    name_exact: Optional[str] = Query(None, max_length=200),
     current_user: Dict[str, Any] = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """Kullanıcının kayıtlı raporları (RLS-bound, updated_at DESC)."""
+    """Kullanıcının kayıtlı raporları (RLS-bound, updated_at DESC).
+
+    v3.41.5: ``name_exact`` verilirse case-insensitive TAM eşleşme filtresi
+    (LOWER(name)=LOWER(%s)). Frontend duplicate-name kontrolü bunu kullanır.
+    KÖK fix: param eskiden endpoint'te kabul EDİLMİYORDU → FastAPI bilinmeyen
+    query'i düşürüyor, isimden bağımsız EN SON rapor dönüyordu → her kayıtta
+    yanlış "aynı isimde var" + isim değişse de tetikleniyordu (kullanıcı raporu).
+    Servis (list_for_user) name_exact'i zaten destekliyordu; yalnız wiring eksikti.
+    """
     _require_user_id(current_user)
     with get_db_context() as conn:
         cur = conn.cursor()
         apply_vyra_user_context(cur, current_user)
-        items = saved_reports.list_for_user(cur, current_user, limit=limit, offset=offset)
+        items = saved_reports.list_for_user(
+            cur, current_user, limit=limit, offset=offset, name_exact=name_exact,
+        )
     return {"items": items, "count": len(items), "limit": limit, "offset": offset}
 
 
