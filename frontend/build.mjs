@@ -12,6 +12,7 @@ import * as esbuild from 'esbuild';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createHash } from 'crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isWatch = process.argv.includes('--watch');
@@ -236,6 +237,26 @@ async function build() {
         const p = path.join(__dirname, f);
         return sum + (fs.existsSync(p) ? fs.statSync(p).size : 0);
     }, 0);
+
+    // --- Otomatik cache-bust (v3.43.3): home.html'deki bundle ?v= damgasını içerik-hash'iyle güncelle.
+    // Önceden ?v= ELLE bump ediliyordu; unutulunca (v3.41.3'te kaldı) nginx immutable+30d cache
+    // eski bundle'ı servis ediyordu → frontend değişiklikleri görünmüyordu. Hash, bundle içeriği
+    // değişince otomatik değişir; aynı kalırsa home.html'e dokunulmaz (gereksiz diff yok).
+    try {
+        const jsBytes = fs.readFileSync(path.join(distDir, 'bundle.min.js'));
+        const hash = createHash('sha256').update(jsBytes).digest('hex').slice(0, 10);
+        const htmlPath = path.join(__dirname, 'home.html');
+        if (fs.existsSync(htmlPath)) {
+            const before = fs.readFileSync(htmlPath, 'utf-8');
+            const after = before.replace(/(dist\/bundle\.min\.(?:js|css)\?v=)[^"'\s]+/g, `$1${hash}`);
+            if (after !== before) {
+                fs.writeFileSync(htmlPath, after);
+                console.log(`📌 Cache-bust: home.html bundle ?v=${hash}`);
+            }
+        }
+    } catch (e) {
+        console.warn('⚠️  Cache-bust güncellenemedi:', e.message);
+    }
 
     console.log('\n╔══════════════════════════════════════════╗');
     console.log('║       VYRA Frontend Build Report         ║');

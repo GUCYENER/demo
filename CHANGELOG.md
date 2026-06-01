@@ -1,5 +1,18 @@
 # VYRA Changelog
 
+## v3.43.3 — 2026-06-01 — Frontend cache-bust KÖK fix (ATHENA + NIKE)
+
+> **Kullanıcı raporu:** v3.43.2'de eklenen Yetkilendirme "Tümünü Temizle"/"Seçilenleri Göster"
+> kontrolleri UI'da görünmüyor.
+> **Kök (varsayım değil):** `home.html` bundle'ı `?v=3.41.3` ile istiyordu (statik, ELLE bump
+> ediliyor) — 2 minor geride kalmıştı. nginx `js|css` için `immutable` + `expires 30d` → tarayıcı
+> eski bundle'ı servis ediyor. Kod + bundle DOĞRUydu (kontroller source ve bundle'da mevcut, render
+> yolu `_renderScopeBlock`); yalnız cache-bust damgası bayattı → v3.43.0-3.43.2 TÜM frontend
+> değişiklikleri (progress UI, scope kontrolleri, Etiketleme filtre) cache'li tarayıcıda görünmüyordu.
+> **Fix:** (1) `home.html` `?v=` güncellendi; (2) `build.mjs` artık `?v=`'yi **bundle içerik-hash'iyle
+> OTOMATİK** günceller (sha256[:10]) → drift bir daha olmaz (bundle değişmezse home.html'e dokunulmaz).
+> README v3.37.9'da da "version drift fix" geçiyordu — kalıcı çözüm.
+
 ## v3.43.2 — 2026-06-01 — Keşif/Yetkilendirme UX: 4 bulgu/istek (ATHENA + HEBE + HEPHAESTUS)
 
 > Kullanıcı raporu — kaynak DB keşfi sonrası yetkilendirme + etiketleme ekranı tutarsızlıkları.
