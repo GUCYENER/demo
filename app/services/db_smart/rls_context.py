@@ -112,8 +112,19 @@ def apply_vyra_user_context(cur: Any, user_ctx: Dict[str, Any]) -> None:
 
     # 1) Input validation — fail BEFORE touching DB.
     user_id = _coerce_tenant_int(user_ctx.get("id"), "user_id")
-    company_id = _coerce_tenant_int(user_ctx.get("company_id"), "company_id")
+    # is_admin'i company_id'den ÖNCE hesapla: admin kullanıcılar çok-şirketlidir,
+    # users.company_id NULL olabilir (örn. tüm firmaları yöneten Yönetici hesabı).
     is_admin = _coerce_is_admin(user_ctx)
+    # v3.43.1 fix (ARES + APOLLO): admin + NULL company_id artık 500 vermez.
+    # RLS policy admin'i `vyra.is_admin='true'` ile ZATEN bypass ettiğinden admin için
+    # company_id zorunlu değil → sentinel 0 (geçerli int, ::int cast güvenli; OR is_admin
+    # clause erişimi açar). NON-admin + NULL company_id GERÇEK fail-closed durumudur
+    # (tenant scope yok → cross-tenant sızıntı) → hata KORUNUR, güvenlik bozulmaz.
+    raw_company = user_ctx.get("company_id")
+    if is_admin and raw_company is None:
+        company_id = 0
+    else:
+        company_id = _coerce_tenant_int(raw_company, "company_id")
 
     # 2) DB calls — herhangi biri patlarsa RLSContextError fırlat.
     try:

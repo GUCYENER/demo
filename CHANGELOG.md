@@ -1,5 +1,18 @@
 # VYRA Changelog
 
+## v3.43.1 — 2026-06-01 — Hotfix: Admin kullanıcı db-smart 500 (NULL company_id)
+
+> **Canlı kök fix (ARES + APOLLO).** Admin kullanıcılar `/api/db-smart/sources`, `/saved-reports`,
+> `/sessions` vb. tüm db-smart endpoint'lerinde **500** alıyordu (yetki vardı ama çöküyordu).
+> **Kök:** admin'ler tasarımca NULL `company_id`'li (`schema.py:764` backfill yalnız `is_admin=FALSE`
+> kullanıcılara firma atar); `apply_vyra_user_context` ise `_coerce_tenant_int(company_id)`'i is_admin
+> kontrolünden ÖNCE çağırıp NULL'da `RLSContextError` → 500. Localde admin'in company_id'si dolu
+> (çalışıyor), canlıda NULL (çöküyor).
+> **Fix:** `is_admin` company_id'den ÖNCE hesaplanır; **admin + NULL company_id → sentinel 0**
+> (RLS `is_admin='true'` bypass'ı erişimi zaten açar, `::int` cast güvenli). **Non-admin + NULL
+> company_id fail-closed KORUNUR** (cross-tenant sızıntı guard'ı bozulmaz). 5 senaryo sahte-cursor ile
+> doğrulandı (admin/non-admin × NULL/dolu).
+
 ## v3.43.0 — 2026-06-01 — DB Keşif Sertleştirme (P0-A/B + P1-C/D + P2-E) + canlı düzeltmeler
 
 > DB keşif/enrichment hattının 4 fazlı iyileştirmesi + canlıda gözlenen 2 hatanın kökten giderilmesi.
