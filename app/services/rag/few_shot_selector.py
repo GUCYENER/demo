@@ -44,6 +44,15 @@ GAMMA_PRIORITY = 0.20
 INTENT_MISMATCH_PENALTY = 0.7
 SIGNATURE_MISMATCH_PENALTY = 0.5
 
+# v3.44.0 P1 — sentetik (FK Loop/LLM template) few-shot ağırlıklama
+SYNTHETIC_WEIGHT = 0.85          # sentetik örnek final skoru × 0.85 (gerçek kullanıcı niyeti > generic)
+SYNTHETIC_PRIORITY_FLOOR = 0.30  # cold-start: usage_count=0 → priority=0 cezasını kır (yeni sentetik seçilebilsin)
+MAX_SYNTHETIC_IN_TOPK = 1        # prompt'ta en fazla 1 sentetik (gerçeği kovmasın)
+
+# Modül-cache: few_shot_examples.origin/is_active kolonları mevcut mu (migration 051 uygulandı mı)?
+# None=bilinmiyor; True/False=tespit edildi. Şema runtime'da değişmez → tek tespit yeterli.
+_HAS_ORIGIN_COLS = None
+
 
 def _pgvector_available(cur) -> bool:
     """pgvector extension yüklü mü?"""
@@ -52,6 +61,32 @@ def _pgvector_available(cur) -> bool:
         return bool(cur.fetchone()[0])
     except Exception:
         return False
+
+
+def _has_origin_columns(cur) -> bool:
+    """few_shot_examples.origin + is_active kolonları var mı (mig 051)? Cache'li.
+
+    migration 051 uygulanmadıysa (örn. Alembic timeout fallback) False → kod sentetik
+    ayrımı YAPMADAN eski davranışa düşer (graceful, few-shot devre dışı kalmaz)."""
+    global _HAS_ORIGIN_COLS
+    # Yalnız POZİTİF sonucu kalıcı cache'le. False cache'lenmez → migration 051 süreç
+    # ayaktayken uygulanırsa (online migration / Alembic timeout fallback) bir sonraki çağrı
+    # yeniden sorgular ve kolonları görür (kalıcı-False kilidi yok).
+    if _HAS_ORIGIN_COLS:
+        return True
+    try:
+        cur.execute(
+            """
+            SELECT COUNT(*) FROM information_schema.columns
+            WHERE table_name = 'few_shot_examples' AND column_name IN ('origin', 'is_active')
+            """
+        )
+        if int(cur.fetchone()[0]) >= 2:
+            _HAS_ORIGIN_COLS = True
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def _signature_jaccard(sig_a: str, sig_b: str) -> float:
@@ -138,18 +173,26 @@ def select_few_shots(
     has_pgvec = _pgvector_available(cur) and query_embedding is not None
     qt = query_text.strip()
 
-    # Candidate pool çek (filtre: company + source/null)
+    # v3.44.0 P1: origin/is_active kolonları (mig 051) varsa sentetik ayrımı + aktif filtresi;
+    # yoksa graceful fallback (origin='user' sabit, is_active filtresi yok).
+    has_origin = _has_origin_columns(cur)
+    origin_sel = "COALESCE(origin, 'user')" if has_origin else "'user'"
+
+    # Candidate pool çek (filtre: company + source/null + aktif)
     base_where = """
         company_id = %(company_id)s
         AND (source_id = %(source_id)s OR source_id IS NULL)
     """
+    if has_origin:
+        base_where += "\n        AND COALESCE(is_active, TRUE) = TRUE"
 
     if has_pgvec:
         sql = f"""
         SELECT id, question, sql_query, intent, schema_signature,
                usage_count, success_rate,
                COALESCE(1 - (embedding <=> %(qe)s::vector), 0.0) AS sem_sim,
-               COALESCE(ts_rank(tsv, plainto_tsquery('pg_catalog.simple', %(qt)s)), 0.0) AS lex_rank
+               COALESCE(ts_rank(tsv, plainto_tsquery('pg_catalog.simple', %(qt)s)), 0.0) AS lex_rank,
+               {origin_sel} AS origin
           FROM few_shot_examples
          WHERE {base_where}
          ORDER BY (
@@ -171,7 +214,8 @@ def select_few_shots(
         SELECT id, question, sql_query, intent, schema_signature,
                usage_count, success_rate,
                0.0 AS sem_sim,
-               COALESCE(ts_rank(tsv, plainto_tsquery('pg_catalog.simple', %(qt)s)), 0.0) AS lex_rank
+               COALESCE(ts_rank(tsv, plainto_tsquery('pg_catalog.simple', %(qt)s)), 0.0) AS lex_rank,
+               {origin_sel} AS origin
           FROM few_shot_examples
          WHERE {base_where}
          ORDER BY COALESCE(ts_rank(tsv, plainto_tsquery('pg_catalog.simple', %(qt)s)), 0.0) DESC,
@@ -195,8 +239,13 @@ def select_few_shots(
     # Score + post-process (intent + signature boost)
     results: List[Dict[str, Any]] = []
     for r in rows:
-        rid, question, sql_query, ex_intent, ex_sig, usage, succ, sem, lex = r
+        rid, question, sql_query, ex_intent, ex_sig, usage, succ, sem, lex, ex_origin = r
+        # v3.44.0 P1: sentetik (FK Loop/LLM template) — cold-start floor (usage_count=0 → priority=0
+        # cezasını kır, yeni sentetik seçilebilsin)
+        is_syn = isinstance(ex_origin, str) and ex_origin.startswith("synthetic")
         prio = _priority_boost(usage or 0, succ if succ is not None else 1.0)
+        if is_syn:
+            prio = max(prio, SYNTHETIC_PRIORITY_FLOOR)
         base = ALPHA_SEMANTIC * float(sem or 0.0) + BETA_LEXICAL * float(lex or 0.0) + GAMMA_PRIORITY * prio
 
         # Intent match factor
@@ -230,6 +279,9 @@ def select_few_shots(
             cx_factor *= 0.4
 
         final_score = base * intent_factor * sig_factor * cx_factor
+        # v3.44.0 P1: sentetik örnek hafif düşük ağırlık (gerçek kullanıcı niyeti > generic template)
+        if is_syn:
+            final_score *= SYNTHETIC_WEIGHT
 
         results.append({
             "id": rid,
@@ -244,17 +296,39 @@ def select_few_shots(
             "usage_count": int(usage or 0),
             "success_rate": float(succ if succ is not None else 1.0),
             "complexity_score": cx,
+            "origin": ex_origin or "user",
         })
 
     results.sort(key=lambda x: x["score"], reverse=True)
-    # v3.29.4 G5 — multi-table garantisi: top-K içinde en az 1 complex örnek varsa
-    # olduğu gibi dön; yoksa havuzdan en yüksek skorlu complex'i ekleyip 1 tek-tablo
-    # örneği düşür.
-    top = results[:top_k]
+    # v3.44.0 P1 — sentetik cap: top_k içine en fazla MAX_SYNTHETIC_IN_TOPK sentetik gir
+    # (gerçek kullanıcı örnekleri prompt'ta çoğunlukta kalsın). Cap aşılırsa sıradaki gerçek
+    # örnek öne çekilir; havuzda yeterli gerçek yoksa overflow sentetiklerle tamamlanır.
+    syn_used = 0
+    top: List[Dict[str, Any]] = []
+    overflow_syn: List[Dict[str, Any]] = []
+    for r in results:
+        if len(top) >= top_k:
+            break
+        if str(r.get("origin") or "user").startswith("synthetic"):
+            if syn_used >= MAX_SYNTHETIC_IN_TOPK:
+                overflow_syn.append(r)
+                continue
+            syn_used += 1
+        top.append(r)
+    if len(top) < top_k and overflow_syn:
+        top.extend(overflow_syn[: top_k - len(top)])
+        top.sort(key=lambda x: x["score"], reverse=True)
+    _picked = {r["id"] for r in top}
+
+    # v3.29.4 G5 — multi-table garantisi: top-K içinde en az 1 complex örnek varsa olduğu gibi
+    # dön; yoksa havuzdan en yüksek skorlu complex'i ekleyip 1 tek-tablo örneği düşür.
     if require_multi_table and top:
         has_complex = any((r.get("complexity_score") or 1) >= 3 for r in top)
         if not has_complex:
-            complex_pool = [r for r in results[top_k:] if (r.get("complexity_score") or 1) >= 3]
+            complex_pool = [
+                r for r in results
+                if r["id"] not in _picked and (r.get("complexity_score") or 1) >= 3
+            ]
             if complex_pool:
                 top = top[:-1] + [complex_pool[0]]
                 top.sort(key=lambda x: x["score"], reverse=True)
@@ -304,7 +378,11 @@ def upsert_example(
     embedding: Optional[Sequence[float]] = None,
     created_by: Optional[int] = None,
 ) -> Optional[int]:
-    """Yeni örnek ekle (duplicate question için INSERT-ON-CONFLICT yok — uniqueness kontrolünü caller yapar)."""
+    """Yeni örnek ekle (duplicate question için INSERT-ON-CONFLICT yok — uniqueness kontrolünü caller yapar).
+
+    NOT (v3.44.0 P1): `origin` kolonu (mig 051) DEFAULT 'user' olduğundan manuel/API yolu için ayrı
+    parametre gerekmez — INSERT origin yazmaz, DB 'user' atar. Sentetik terfi AYRI yoldan gider
+    (few_shot_auto_populator.promote_synthetic → dedup + origin='synthetic_fk')."""
     try:
         if embedding is not None and _pgvector_available(cur):
             cur.execute("""

@@ -1,18 +1,39 @@
 # VYRA Changelog
 
-## v3.44.0 (DEVAM EDEN) — FK Loop → Few-Shot Entegrasyonu — P0 Gürültü Temizliği (HEPHAESTUS + ORACLE + ARES)
+## v3.44.0 (DEVAM EDEN) — FK Loop → Few-Shot Entegrasyonu — P0 Gürültü + P1 Few-Shot Terfi (HEPHAESTUS + ORACLE + ARES)
 
 > Plan: `.agents/plans/2026-06-01_1830_fk_loop_fewshot_integration_v1.md`. FK Loop'un ürettiği
-> doğrulanmış sentetik sorguları LLM few-shot kütüphanesine terfi etme yolculuğunun 1. fazı.
-> **P0 (bu commit):** `fk_synthetic_generator._fetch_relationships` artık **sistem/extension şemaları**
+> doğrulanmış sentetik sorguları LLM few-shot kütüphanesine terfi etme yolculuğu.
+>
+> **P0:** `fk_synthetic_generator._fetch_relationships` artık **sistem/extension şemaları**
 > (`_EXCLUDED_SCHEMAS` SSOT — pg_catalog/information_schema/partman/sys/mysql/...) + **düşük-confidence
 > (<0.85) admin-doğrulanmamış inferred FK** + **admin-reddedilen FK**'leri sentetik üretimden dışlar.
 > Kullanıcının gördüğü 2 hata + 16 boş deneme `pg_partman.part_config` (TEXT↔TEXT, gerçek FK değil)
-> anlamsız JOIN'lerindendi → giderildi. **Declared FK + admin_verified inferred KORUNUR** (over-filter
-> yok; public/dbo dışlanmaz). `/code-review`: sıfır bug (kolon varlığı mig 031, NULL/empty edge'leri,
-> caller default'ları temiz).
-> **Sıradaki:** P1 (few-shot terfi — `origin` kolonu + selector ağırlık/cap), P2 (tip-farkında çok-dialect
-> template motoru — AGGREGATE_STATS/EXISTS/TIME-BUCKETED + 4 dialect), P3 (ops).
+> anlamsız JOIN'lerindendi → giderildi. **Declared FK + admin_verified inferred KORUNUR**.
+>
+> **P1 (bu commit) — Few-Shot Terfi:** FK Loop'un `learned_db_queries`'e yazdığı doğrulanmış sentetik
+> sorgu artık `few_shot_examples`'a da TERFİ ediyor (origin='synthetic_fk') → cache-hit'in ötesinde LLM
+> prompt few-shot SEÇİMİNE girer. (1) **mig 051**: `few_shot_examples.origin` + `is_active` (+indeksler,
+> idempotent). (2) **Terfi mevcut altyapıyı yeniden kullanır** — `few_shot_auto_populator.promote_synthetic`
+> dedup (L1 normalize + L2 cosine≥0.92), canonical embedding (`_embed_question`), `schema_signature`
+> (`build_schema_signature`) ve vector/array insert'i ZATEN sağlayan `_find_duplicate`/`_insert_new`'i
+> kullanır → ayrı/çift insert yolu YOK; farklı FK/kind'lerin ürettiği aynı soru bump'a iner (tablo şişmez).
+> (3) **selector ağırlıklama** (`select_few_shots`): `origin` SELECT + `is_active=TRUE` filtresi + sentetik
+> `SYNTHETIC_WEIGHT=0.85` (gerçek niyet > generic template) + cold-start `SYNTHETIC_PRIORITY_FLOOR=0.30`
+> (usage_count=0 cezasını kır) + `MAX_SYNTHETIC_IN_TOPK=1` cap (havuz tükenirse fallback doldurur).
+> (4) **Graceful**: `_has_origin_columns` mig 051 yoksa eski davranışa düşer (yalnız POZİTİF cache → online
+> migration kilidi yok). Terfi kendi SAVEPOINT'inde best-effort (FK-loop/ana txn bozulmaz).
+>
+> **`/code-review medium` (7 angle × verify):** **REUSE bulgusu** ile mimari düzeltildi — ilk taslak
+> `upsert_example`'ı dinamik-kolonla genişletip embedding'i elle çağırıyordu; mevcut `few_shot_auto_populator`
+> (dedup+embedding+signature) varken bu çift-yol/driftti → terfi populator'a devredildi, `upsert_example`
+> orijinaline döndü. **intent çift-ceza** düzeltildi (sentetik intent gerçek niyetle eşleşmez →
+> INTENT_MISMATCH 0.7 × WEIGHT 0.85 ≈ 0.6 özelliği etkisiz kılıyordu → `intent=None`). `_has_origin_columns`
+> kalıcı-False kilidi + `_picked` id() kırılganlığı (→ DB `id`) giderildi. Sahte-cursor smoke: cap/floor/
+> weight/graceful 4 senaryo yeşil.
+>
+> **Sıradaki:** P2 (tip-farkında çok-dialect template motoru — AGGREGATE_STATS/EXISTS/TIME-BUCKETED +
+> Oracle/MSSQL/MySQL FETCH/TOP/LIMIT + dialect tarih fonksiyonları), P3 (ops).
 
 ## v3.43.4 — 2026-06-01 — Akıllı Keşif admin KÖK fix (admin company_id NULL) (HERMES + ARES + APOLLO)
 

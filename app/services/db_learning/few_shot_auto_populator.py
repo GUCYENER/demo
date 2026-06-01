@@ -328,7 +328,98 @@ def populate_from_pipeline_state(cur, state: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "error", "id": None, "reason": str(e)[:200]}
 
 
+# ─────────────────────────────────────────────────────────────
+# v3.44.0 P1 — Sentetik (FK Loop) terfi
+# ─────────────────────────────────────────────────────────────
+
+def _set_origin(cur, fs_id: int, origin: str) -> None:
+    """origin kolonu (mig 051) varsa kaydın kaynağını işaretle — yoksa sessiz atla.
+
+    Kolon varlığı önce kontrol edilir (cache'li) → UPDATE yalnız kolon mevcutsa koşar, bu yüzden
+    'column does not exist' ile transaction poison'lanmaz."""
+    try:
+        from app.services.rag.few_shot_selector import _has_origin_columns
+        if not _has_origin_columns(cur):
+            return
+        cur.execute(
+            f"UPDATE {TABLE_NAME} SET origin = %s WHERE id = %s",
+            (origin, fs_id),
+        )
+    except Exception as e:
+        logger.debug("[few_shot.set_origin] %s", e)
+
+
+def promote_synthetic(
+    cur,
+    *,
+    company_id: int,
+    source_id: Optional[int],
+    question: str,
+    sql: str,
+    tables: Optional[List[str]] = None,
+    origin: str = "synthetic_fk",
+    intent: Optional[str] = None,
+    created_by: Optional[int] = None,
+) -> Dict[str, Any]:
+    """FK Loop'un doğrulanmış sentetik sorgusunu few_shot_examples'a terfi et.
+
+    Mevcut auto-populator altyapısını YENİDEN KULLANIR: dedup (L1 normalize + L2 cosine≥0.92),
+    canonical embedding (_embed_question), schema_signature (build_schema_signature), vector/array
+    insert (_insert_new). Bu sayede sentetik örnekler gerçek pipeline örnekleriyle AYNI havuzda,
+    AYNI dedup ve embedding sözleşmesiyle yaşar (çift insert yolu / drift yok).
+
+    intent=None bilinçli: sentetik intent ('synthetic_lookup_join' gibi) gerçek kullanıcı niyetiyle
+    asla eşleşmez → selector'da yapay INTENT_MISMATCH_PENALTY (0.7) oluşurdu. None ile sentetik
+    yalnız SYNTHETIC_WEIGHT (0.85) ile ağırlıklanır (tasarlanan tek-ceza).
+
+    origin='synthetic_fk' insert SONRASI işaretlenir (kolon mig 051 ile geldiyse).
+
+    Returns: {'status': 'inserted'|'bumped'|'skipped'|'error', 'id': int|None, 'reason': str}.
+    Best-effort: caller SAVEPOINT'i sağlamalı (poison'da rollback caller'ın sorumluluğu)."""
+    if company_id is None:
+        return {"status": "skipped", "id": None, "reason": "no_company"}
+    q = (question or "").strip()
+    s = (sql or "").strip()
+    if not q or not s:
+        return {"status": "skipped", "id": None, "reason": "empty"}
+
+    schema_signature = build_schema_signature(tables) if tables else None
+    embedding = _embed_question(q)  # best-effort; None ise lex-only few-shot yine seçilebilir
+
+    try:
+        dup_id = _find_duplicate(
+            cur,
+            company_id=int(company_id),
+            source_id=int(source_id) if source_id is not None else None,
+            intent=intent,
+            question=q,
+            embedding=embedding,
+        )
+        if dup_id:
+            _bump_existing(cur, dup_id)
+            return {"status": "bumped", "id": dup_id, "reason": "duplicate"}
+
+        new_id = _insert_new(
+            cur,
+            company_id=int(company_id),
+            source_id=int(source_id) if source_id is not None else None,
+            question=q,
+            sql=s,
+            intent=intent,
+            schema_signature=schema_signature,
+            embedding=embedding,
+            created_by=created_by,
+        )
+        if new_id and origin and origin != "user":
+            _set_origin(cur, new_id, origin)
+        return {"status": "inserted", "id": new_id, "reason": "new"}
+    except Exception as e:
+        logger.warning("[few_shot.promote_synthetic] error: %s", e)
+        return {"status": "error", "id": None, "reason": str(e)[:200]}
+
+
 __all__ = [
     "populate_from_pipeline_state",
+    "promote_synthetic",
     "FEW_SHOT_MAX_LATENCY_MS",
 ]

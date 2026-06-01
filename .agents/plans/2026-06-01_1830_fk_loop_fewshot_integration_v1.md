@@ -40,16 +40,22 @@ fonksiyon istiyor.
   (generic "beklenmeyen hata" yerine sınıflandırılmış: permission/type/timeout). UI /synthetic-failures'da göster.
 - **Verify:** partman kaynağında re-run → 0 partman denemesi; başarısız=0/anlamlı; failures'da gerçek sebep.
 
-### P1 — Few-Shot Entegrasyonu (Konsey: METIS + PROMETHEUS + HEPHAESTUS)
-- **Migration 051:** `few_shot_examples` + `origin VARCHAR(16) DEFAULT 'user'` + `is_active BOOLEAN DEFAULT TRUE`
-  (+ schema.py SSOT). Mevcut insert'ler default 'user' alır.
-- **Terfi:** `fk_synthetic_generator` başarılı örneği learned_db_queries'e yazarken few_shot_examples'a da
-  terfi etsin (`origin='synthetic_fk'`), mevcut 3-katman dedup (sql_hash/cosine/Jaccard) ile. Ortak helper
-  (`few_shot_selector.upsert_example` veya auto_populator dedup) — kod tekrarı yok.
-- **Selector:** sentetik için taban-priority (cold-start cezasını kır) + gerçeğe göre hafif düşük ağırlık
-  (`SYNTHETIC_WEIGHT`); prompt başına sentetik **cap** (max 1-2, gerçeği kovmasın). `origin` kolonuyla.
-- **Verify:** FK Loop sonrası few_shot_examples'ta origin='synthetic_fk' kayıtlar; FK-tablolarına dair soruda
-  select_few_shots sentetiği seçer (signature match); gerçek örnek varsa onu öncelikler; token cap aşılmaz.
+### P1 — Few-Shot Entegrasyonu (Konsey: METIS + PROMETHEUS + HEPHAESTUS) — ✅ TAMAM (v3.44.0)
+- ✅ **Migration 051:** `few_shot_examples.origin VARCHAR(16) DEFAULT 'user'` + `is_active BOOLEAN DEFAULT TRUE`
+  (+idx_few_shot_origin/active, idempotent). Mevcut insert'ler default 'user' alır.
+- ✅ **Terfi:** `fk_synthetic_generator._promote_to_few_shot` → `few_shot_auto_populator.promote_synthetic`.
+  **Kod tekrarı YOK** (code-review REUSE bulgusu): mevcut `_find_duplicate` (L1 normalize + L2 cosine≥0.92),
+  `_embed_question` (canonical embedding), `build_schema_signature`, `_insert_new` (vector/array) yeniden
+  kullanıldı. Yalnız `learned_db_queries` status='inserted' iken çağrılır; populator dedup'ı farklı FK/kind'in
+  aynı sorusunu bump'a indirir (tablo şişmez). origin insert-sonrası `_set_origin` ile işaretlenir.
+- ✅ **Selector** (`select_few_shots`): `origin` SELECT + `is_active=TRUE` filtre + cold-start floor
+  (`SYNTHETIC_PRIORITY_FLOOR=0.30`) + hafif düşük ağırlık (`SYNTHETIC_WEIGHT=0.85`) + cap
+  (`MAX_SYNTHETIC_IN_TOPK=1`, havuz tükenirse fallback doldurur). `_has_origin_columns` yalnız-pozitif cache.
+- ✅ **code-review medium (7 angle × verify):** REUSE mimari fix (ilk taslak upsert_example'ı genişletiyordu →
+  revert), intent çift-ceza fix (`intent=None`), `_has_origin_columns` kalıcı-False kilidi, `_picked` id()→DB id.
+  Sahte-cursor smoke: cap/floor/weight/graceful 4 senaryo yeşil.
+- **Verify (canlı, bekliyor):** FK Loop sonrası few_shot_examples'ta origin='synthetic_fk' kayıtlar; FK-tablo
+  sorusunda select_few_shots sentetiği seçer; gerçek örnek varsa onu öncelikler; token cap aşılmaz.
 
 ### P2 — Tip-Farkında + Çok-Dialect Template Motoru (Konsey: ORACLE + POSEIDON + METIS)
 - **Tip-farkındalık:** template seçimi enrichment `semantic_type` (amount/date/status) + kolon tipiyle —

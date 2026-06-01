@@ -78,6 +78,7 @@ class GenerationSummary:
     skipped_cardinality: int = 0        # 1:1 için AGGREGATE_COUNT atlandı vb.
     junction_attempts: int = 0
     junction_success: int = 0
+    promoted_few_shot: int = 0          # v3.44.0 P1: few_shot_examples'a terfi edilen sentetik örnek
 
     def __post_init__(self):
         if self.errors is None:
@@ -115,6 +116,54 @@ _EXCLUDED_SCHEMAS = sorted({
 # v3.44.0 (P0): inferred FK'ler bu confidence eşiğinin altındaysa sentetik üretime girmez
 # (declared FK'ler — is_inferred=FALSE — her zaman geçer). pg_partman naming-skoru ~0.80 → elenir.
 _MIN_INFERRED_CONFIDENCE = 0.85
+
+
+def _promote_to_few_shot(
+    cur, *, source_id: int, company_id: Optional[int],
+    rq: "RenderedQuery", kind: str, summary: "GenerationSummary",
+) -> None:
+    """v3.44.0 P1 — doğrulanmış sentetik sorguyu few_shot_examples'a terfi et (origin='synthetic_fk').
+
+    İcrayı few_shot_auto_populator.promote_synthetic'e devreder → mevcut dedup (L1+L2 cosine),
+    canonical embedding ve schema_signature altyapısı yeniden kullanılır (çift insert yolu yok).
+    Yalnız learned_db_queries'e YENİ eklenen (status='inserted') sorgular için çağrılır; ayrıca
+    populator'ın kendi dedup'ı farklı FK/kind'lerin ürettiği aynı soruyu da bump'a indirir.
+
+    Dayanıklılık: kendi SAVEPOINT'i içinde çalışır → embedding/INSERT hatası ne FK-loop'u ne ana
+    txn'ı bozar (best-effort). company_id None ise (admin/global) terfi edilmez — few_shot_examples.
+    company_id NOT NULL.
+    """
+    if company_id is None:
+        return  # few_shot_examples.company_id NOT NULL → firma bağlamsız sentetik terfi edilemez
+    _sp = "sp_fewshot_promote"
+    try:
+        cur.execute(f"SAVEPOINT {_sp}")
+    except Exception:
+        return
+    try:
+        from app.services.db_learning.few_shot_auto_populator import promote_synthetic
+
+        res = promote_synthetic(
+            cur,
+            company_id=company_id,
+            source_id=source_id,
+            question=rq.question_tr,
+            sql=rq.sql,
+            tables=rq.tables,
+            origin="synthetic_fk",
+            intent=None,  # sentetik intent gerçek niyetle eşleşmez → yapay mismatch cezasını önle
+            created_by=None,
+        )
+        cur.execute(f"RELEASE SAVEPOINT {_sp}")
+        if res.get("status") == "inserted":
+            summary.promoted_few_shot += 1
+    except Exception as e:
+        try:
+            cur.execute(f"ROLLBACK TO SAVEPOINT {_sp}")
+            cur.execute(f"RELEASE SAVEPOINT {_sp}")
+        except Exception:
+            pass
+        logger.warning("[fk_gen.fewshot_promote] kind=%s rel-promote atlandı: %s", kind, e)
 
 
 def _fetch_relationships(
@@ -725,6 +774,12 @@ def generate_for_source(
                        elapsed_ms=exec_ms, error_message=None,
                        learned_query_id=learned_id)
             summary.success += 1
+            # v3.44.0 P1: yalnız YENİ öğrenilen (inserted) sorgu few-shot'a terfi → re-run'da tekrar yok
+            if _st == "inserted":
+                _promote_to_few_shot(
+                    cur, source_id=source_id, company_id=company_id,
+                    rq=rq, kind=kind, summary=summary,
+                )
             try:
                 cur.execute(f"RELEASE SAVEPOINT {_sp_name}")
             except Exception:
@@ -899,6 +954,12 @@ def generate_for_source(
                    elapsed_ms=exec_ms, error_message=None,
                    learned_query_id=learned_id)
         summary.junction_success += 1
+        # v3.44.0 P1: junction sentetiği de few-shot'a terfi (yalnız yeni eklenen)
+        if _st == "inserted":
+            _promote_to_few_shot(
+                cur, source_id=source_id, company_id=company_id,
+                rq=rq, kind="JUNCTION_N2M", summary=summary,
+            )
         try:
             cur.execute(f"RELEASE SAVEPOINT {_sp_name}")
         except Exception:
