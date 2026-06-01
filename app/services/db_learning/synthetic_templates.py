@@ -20,6 +20,9 @@ TEMPLATE_KINDS = (
     # G1
     "LOOKUP_JOIN",
     "AGGREGATE_COUNT",
+    # G6 (v3.45.0 P2) — tip-farkında, 4-dialect per-FK
+    "AGGREGATE_STATS",
+    "EXISTS_ANTI_JOIN",
     # G3 — multi-table
     "CHAIN_JOIN_3HOP",
     "CHAIN_JOIN_NHOP",
@@ -35,6 +38,8 @@ TEMPLATE_KINDS = (
 COMPLEXITY_BY_KIND: Dict[str, int] = {
     "LOOKUP_JOIN": 2,
     "AGGREGATE_COUNT": 2,
+    "AGGREGATE_STATS": 3,
+    "EXISTS_ANTI_JOIN": 3,
     "CHAIN_JOIN_3HOP": 3,
     "CHAIN_JOIN_NHOP": 4,
     "CTE_LATEST_N_PER_GROUP": 4,
@@ -305,6 +310,154 @@ def render_aggregate_count(rel: Relationship, dialect: str = "postgresql", limit
         tables=[full_from, full_to],
         columns_meta=columns_meta,
         complexity_score=COMPLEXITY_BY_KIND["AGGREGATE_COUNT"],
+        join_path=[full_to, full_from],
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# G6 (v3.45.0 P2) — Tip-farkında, 4-dialect per-FK template'leri
+# ─────────────────────────────────────────────────────────────
+
+def render_aggregate_stats(
+    rel: Relationship,
+    value_column: str,
+    dialect: str = "postgresql",
+    limit: int = DEFAULT_LIMIT,
+) -> RenderedQuery:
+    """Her parent (1-tarafı) için child'ın SAYISAL bir kolonunun istatistikleri.
+
+    AGGREGATE_COUNT yalnız satır sayar; bu template SUM/AVG/MIN/MAX da verir → "her
+    müşterinin toplam/ortalama sipariş tutarı" gibi. `value_column` child (rel.from)
+    tablosunda SAYISAL bir ölçü kolonudur — generator tip-keşfiyle seçip geçer
+    (FK/PK/other kolonlar elenir). 4 dialect: standart agregat + TOP/FETCH/LIMIT.
+    """
+    d = dialect.lower()
+    from_q = _qualify(rel.from_schema, rel.from_table, d)   # child (N)
+    to_q = _qualify(rel.to_schema, rel.to_table, d)         # parent (1)
+    sel_prefix = _select_prefix(d, limit)
+    limit_suffix = _limit_clause(d, limit)
+
+    pairs = _fk_column_pairs(rel)
+    if not pairs:
+        pairs = [(rel.from_column, rel.to_column)]
+
+    sel_parts: List[str] = []
+    on_parts: List[str] = []
+    group_parts: List[str] = []
+    columns_meta: List[Dict[str, str]] = []
+    for i, (fc, tc) in enumerate(pairs, start=1):
+        fcq = _quote_identifier(fc, d)
+        tcq = _quote_identifier(tc, d)
+        role = f"ref_key{i}" if len(pairs) > 1 else "ref_key"
+        sel_parts.append(f"b.{tcq} AS {role}")
+        on_parts.append(f"a.{fcq} = b.{tcq}")
+        group_parts.append(f"b.{tcq}")
+        columns_meta.append({"name": tc, "table": rel.to_table, "role": role})
+
+    vq = _quote_identifier(value_column, d)
+    columns_meta.append({"name": value_column, "table": rel.from_table, "role": "measure"})
+
+    stats = (
+        f"COUNT(a.{vq}) AS cnt, "
+        f"SUM(a.{vq}) AS toplam, "
+        f"AVG(a.{vq}) AS ortalama, "
+        f"MIN(a.{vq}) AS en_dusuk, "
+        f"MAX(a.{vq}) AS en_yuksek"
+    )
+    select_clause = ", ".join(sel_parts) + f", {stats}"
+    on_clause = " AND ".join(on_parts)
+    group_clause = ", ".join(group_parts)
+
+    # INNER JOIN (child'ı OLAN parent'lar): AGGREGATE_COUNT zero-count için LEFT kullanır
+    # ama STATS'ta child'sız parent'ın SUM/AVG'i NULL olur → ORDER BY toplam DESC'te NULL'lar
+    # dialect'e göre farklı sıralanıp (PG'de başa) LIMIT penceresini doldurur. INNER ile NULL
+    # toplam yok → sıralama deterministik ve 4 dialect tutarlı.
+    sql = (
+        f"{sel_prefix} {select_clause} "
+        f"FROM {to_q} b JOIN {from_q} a ON {on_clause} "
+        f"GROUP BY {group_clause} ORDER BY toplam DESC"
+    )
+    if limit_suffix:
+        sql += f" {limit_suffix}"
+
+    if rel.is_self_ref:
+        question_tr = f"Her {rel.from_table} parent'ı için alt kayıtların {value_column} istatistikleri (toplam/ortalama/min/max)"
+    else:
+        question_tr = f"Her {rel.to_table} için {rel.from_table}.{value_column} istatistikleri (toplam/ortalama/min/max)"
+
+    full_from = _full_name(rel.from_schema, rel.from_table)
+    full_to = _full_name(rel.to_schema, rel.to_table)
+    return RenderedQuery(
+        template_kind="AGGREGATE_STATS",
+        dialect=d,
+        sql=sql,
+        question_tr=question_tr,
+        schema_signature=",".join(sorted({full_from.lower(), full_to.lower()})),
+        tables=[full_from, full_to],
+        columns_meta=columns_meta,
+        complexity_score=COMPLEXITY_BY_KIND["AGGREGATE_STATS"],
+        join_path=[full_to, full_from],
+    )
+
+
+def render_exists_anti_join(
+    rel: Relationship,
+    dialect: str = "postgresql",
+    limit: int = DEFAULT_LIMIT,
+) -> RenderedQuery:
+    """Hiç child kaydı OLMAYAN parent satırları (orphan/kullanılmamış tespiti).
+
+    "Siparişi olmayan müşteriler", "hiç hareketi olmayan hesaplar" gibi veri-kalitesi
+    sorularını karşılar. NOT EXISTS standart SQL → 4 dialect (kolon tipi GEREKMEZ).
+    """
+    d = dialect.lower()
+    from_q = _qualify(rel.from_schema, rel.from_table, d)   # child (N)
+    to_q = _qualify(rel.to_schema, rel.to_table, d)         # parent (1)
+    sel_prefix = _select_prefix(d, limit)
+    limit_suffix = _limit_clause(d, limit)
+
+    pairs = _fk_column_pairs(rel)
+    if not pairs:
+        pairs = [(rel.from_column, rel.to_column)]
+
+    on_parts: List[str] = []
+    order_parts: List[str] = []
+    columns_meta: List[Dict[str, str]] = []
+    for i, (fc, tc) in enumerate(pairs, start=1):
+        fcq = _quote_identifier(fc, d)
+        tcq = _quote_identifier(tc, d)
+        on_parts.append(f"a.{fcq} = b.{tcq}")
+        order_parts.append(f"b.{tcq}")
+        columns_meta.append({"name": tc, "table": rel.to_table, "role": f"pk{i}" if len(pairs) > 1 else "pk"})
+    on_clause = " AND ".join(on_parts)
+    order_clause = ", ".join(order_parts)
+
+    # ORDER BY parent anahtarı: TOP/LIMIT/FETCH ile deterministik subset → re-run'da aynı
+    # orphan satırlar (idempotent öğrenme/önizleme).
+    sql = (
+        f"{sel_prefix} b.* FROM {to_q} b "
+        f"WHERE NOT EXISTS (SELECT 1 FROM {from_q} a WHERE {on_clause}) "
+        f"ORDER BY {order_clause}"
+    )
+    if limit_suffix:
+        sql += f" {limit_suffix}"
+
+    if rel.is_self_ref:
+        question_tr = f"{rel.from_table} tablosunda hiç alt (child) kaydı olmayan kayıtlar"
+    else:
+        question_tr = f"Hiç {rel.from_table} kaydı olmayan {rel.to_table} satırları"
+
+    full_from = _full_name(rel.from_schema, rel.from_table)
+    full_to = _full_name(rel.to_schema, rel.to_table)
+    return RenderedQuery(
+        template_kind="EXISTS_ANTI_JOIN",
+        dialect=d,
+        sql=sql,
+        question_tr=question_tr,
+        schema_signature=",".join(sorted({full_from.lower(), full_to.lower()})),
+        tables=[full_from, full_to],
+        columns_meta=columns_meta,
+        complexity_score=COMPLEXITY_BY_KIND["EXISTS_ANTI_JOIN"],
         join_path=[full_to, full_from],
     )
 
@@ -654,12 +807,27 @@ def render(
     template_kind: str,
     dialect: str = "postgresql",
     limit: int = DEFAULT_LIMIT,
+    col_ctx: Optional[Dict[str, str]] = None,
 ) -> RenderedQuery:
-    """G1 + tek-Relationship temelli G3 template'leri için dispatch."""
+    """G1 + tek-Relationship temelli G3/G6 template'leri için dispatch.
+
+    `col_ctx` (v3.45.0 P2): generator'ın tip-keşfiyle bulduğu kolonlar —
+    {'numeric': <child sayısal kolon>, 'temporal': ..., 'text': ...}. Tip-bağımlı
+    template'ler (AGGREGATE_STATS) gerekli kolonu buradan alır; generator kolon
+    yoksa o kind'i ZATEN render'a göndermez (KeyError defansif fallback ile korunur).
+    """
+    cc = col_ctx or {}
     if template_kind == "LOOKUP_JOIN":
         return render_lookup_join(rel, dialect, limit)
     if template_kind == "AGGREGATE_COUNT":
         return render_aggregate_count(rel, dialect, limit)
+    if template_kind == "AGGREGATE_STATS":
+        value_column = cc.get("numeric")
+        if not value_column:
+            raise ValueError("AGGREGATE_STATS requires a numeric child column (col_ctx['numeric'])")
+        return render_aggregate_stats(rel, value_column, dialect=dialect, limit=limit)
+    if template_kind == "EXISTS_ANTI_JOIN":
+        return render_exists_anti_join(rel, dialect=dialect, limit=limit)
     if template_kind == "STRING_AGG_DETAILS":
         return render_string_agg_details(rel, dialect=dialect, limit=limit)
     if template_kind == "TIME_SERIES_GENERATE":
@@ -690,6 +858,8 @@ __all__ = [
     "RenderedQuery",
     "render_lookup_join",
     "render_aggregate_count",
+    "render_aggregate_stats",
+    "render_exists_anti_join",
     "render_chain_join",
     "render_cte_latest_n_per_group",
     "render_lateral_top_k",

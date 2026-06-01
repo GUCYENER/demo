@@ -18,7 +18,9 @@ Hatalar:
 """
 from __future__ import annotations
 
+import json
 import logging
+import re
 import time
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
@@ -35,6 +37,7 @@ from app.services.db_learning.synthetic_templates import (
     render,
     render_junction_n2m,
 )
+from app.services.db_learning.synthetic_dialect import CAT_NUMERIC, classify_data_type
 
 # v3.29.2 G3: tek-Relationship temelli ("per-FK") render edilebilen kinds.
 # Chain-only kinds (CHAIN_JOIN_*, CTE_LATEST_N_PER_GROUP, LATERAL_TOP_K,
@@ -42,10 +45,23 @@ from app.services.db_learning.synthetic_templates import (
 SINGLE_REL_KINDS: tuple = (
     "LOOKUP_JOIN",
     "AGGREGATE_COUNT",
+    # v3.45.0 P2 (G6) — tip-farkında, 4-dialect per-FK
+    "AGGREGATE_STATS",
+    "EXISTS_ANTI_JOIN",
     "STRING_AGG_DETAILS",
     "TIME_SERIES_GENERATE",
     "WINDOW_RUNNING_TOTAL",
 )
+
+# v3.45.0 P2: 1:1 ilişkide agregasyon (her parent için N child) mantıksız → bu kind'ler
+# 1:1'de elenir (AGGREGATE_COUNT zaten eleniyordu, STATS/ANTI_JOIN de aynı sınıf).
+_AGGREGATE_KINDS_SKIP_ON_1TO1 = frozenset({
+    "AGGREGATE_COUNT", "AGGREGATE_STATS", "EXISTS_ANTI_JOIN",
+})
+# Default kind seti (caller template_kinds vermezse): "2 örnek yeter" → v3.45.0'da
+# tip-farkında STATS + orphan ANTI_JOIN ile genişledi (1:N FK'ler için ~4 örnek;
+# 1:1'de yalnız LOOKUP_JOIN). STRING_AGG/WINDOW/TIME_SERIES P2b'de 4-dialect olunca eklenecek.
+_DEFAULT_KINDS = ["LOOKUP_JOIN", "AGGREGATE_COUNT", "AGGREGATE_STATS", "EXISTS_ANTI_JOIN"]
 # v3.29.2 G3: yeni v2 template'ler — template_version=2 işaretlenir.
 V2_KINDS: frozenset = frozenset({
     "CHAIN_JOIN_3HOP", "CHAIN_JOIN_NHOP", "CTE_LATEST_N_PER_GROUP",
@@ -79,6 +95,7 @@ class GenerationSummary:
     junction_attempts: int = 0
     junction_success: int = 0
     promoted_few_shot: int = 0          # v3.44.0 P1: few_shot_examples'a terfi edilen sentetik örnek
+    skipped_no_column: int = 0          # v3.45.0 P2: tip-bağımlı kind için uygun kolon yok (örn. STATS sayısal kolon)
 
     def __post_init__(self):
         if self.errors is None:
@@ -116,6 +133,101 @@ _EXCLUDED_SCHEMAS = sorted({
 # v3.44.0 (P0): inferred FK'ler bu confidence eşiğinin altındaysa sentetik üretime girmez
 # (declared FK'ler — is_inferred=FALSE — her zaman geçer). pg_partman naming-skoru ~0.80 → elenir.
 _MIN_INFERRED_CONFIDENCE = 0.85
+
+
+# v3.45.0 P2: AGGREGATE_STATS ölçü-kolonu seçiminde tercih edilen isim ipuçları (TR+EN).
+# Sayısal-ama-anahtar (id/no/code) kolonlar ölçü değildir → elenir.
+_MEASURE_NAME_HINTS = (
+    "amount", "tutar", "price", "fiyat", "total", "toplam", "qty", "quantity",
+    "miktar", "adet", "cost", "maliyet", "balance", "bakiye", "sum", "value", "deger",
+)
+
+
+def _load_table_columns(cur, source_id: int, schema: Optional[str], table: str) -> List[Dict[str, Any]]:
+    """ds_db_objects.columns_json → [{name, data_type, cat}]. JSONB psycopg2'de list/str
+    gelebilir → ikisi de ele alınır. Hata/yokluk → boş liste (tip-bağımlı kind skip edilir)."""
+    try:
+        cur.execute(
+            """
+            SELECT columns_json FROM ds_db_objects
+            WHERE source_id = %s
+              AND COALESCE(LOWER(schema_name), '') = COALESCE(LOWER(%s), '')
+              AND LOWER(object_name) = LOWER(%s)
+            LIMIT 1
+            """,
+            (source_id, schema, table),
+        )
+        row = cur.fetchone()
+    except Exception as e:
+        logger.debug("[fk_gen.cols] %s.%s yüklenemedi: %s", schema, table, e)
+        return []
+    if not row:
+        return []
+    raw = row.get("columns_json") if hasattr(row, "get") else row[0]
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return []
+    if not isinstance(raw, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for c in raw:
+        if not isinstance(c, dict):
+            continue
+        name = c.get("name")
+        if not name:
+            continue
+        dt = c.get("data_type")
+        out.append({
+            "name": name,
+            "data_type": dt,
+            "cat": classify_data_type(dt),
+            "is_pk": bool(c.get("is_pk")),   # discovery doldurur (4 dialect)
+        })
+    return out
+
+
+def _is_keyish_name(name: str) -> bool:
+    nl = (name or "").lower()
+    return nl == "id" or nl.endswith("_id") or nl.endswith("_no") or nl.endswith("_code")
+
+
+# v3.45.0 P2: ölçü kolonu adı güvenlik guard'ı. _quote_identifier zaten tırnaklar; bu guard
+# SADECE tırnak-kaçışı/kontrol baytı/ayraç içeren PATOLOJİK adları eler. Unicode harfler
+# (Türkçe ş/ı/ğ/ö/ç/ü) İZİNLİDİR — hedef kitle TR şemaları (is_safe_identifier ASCII-only
+# olduğundan 'değer'/'işlem_tutarı' gibi gerçek ölçü kolonlarını yanlışlıkla eliyordu).
+_UNSAFE_MEASURE_CHARS = re.compile(r'[\x00-\x1f"\'`;\[\]\\]')
+
+
+def _safe_measure_name(name: str) -> bool:
+    if not name or not isinstance(name, str) or len(name) > 128:
+        return False
+    return not _UNSAFE_MEASURE_CHARS.search(name)
+
+
+def _pick_numeric_measure(cols: List[Dict[str, Any]], exclude_names: List[str]) -> Optional[str]:
+    """Child tablodan agregasyona uygun SAYISAL ÖLÇÜ kolonu seç. Elenenler: FK kolonları,
+    PK (is_pk — discovery'den, otoriter), id/no/code benzeri anahtar adları, patolojik adlar.
+    İsim ipucu (amount/tutar/...) varsa öncelikli. **Temiz ölçü yoksa None** (keyish/PK'ya
+    DÜŞMEZ — 'sipariş_id toplamı' gibi anlamsız SUM önlenir → AGGREGATE_STATS skip)."""
+    excl = {(e or "").lower() for e in (exclude_names or [])}
+    candidates = [
+        c for c in cols
+        if c.get("cat") == CAT_NUMERIC
+        and (c["name"] or "").lower() not in excl
+        and not c.get("is_pk")
+        and not _is_keyish_name(c["name"])
+        and _safe_measure_name(c["name"])
+    ]
+    if not candidates:
+        return None
+    for c in candidates:
+        if any(h in (c["name"] or "").lower() for h in _MEASURE_NAME_HINTS):
+            return c["name"]
+    return candidates[0]["name"]
 
 
 def _promote_to_few_shot(
@@ -546,7 +658,7 @@ def generate_for_source(
     # Caller ister tek-FK temelli G3 kinds (STRING_AGG_DETAILS, TIME_SERIES_*,
     # WINDOW_*) ekleyebilir. Chain-only kinds bu loop'tan üretilmez.
     caller_provided_kinds = template_kinds is not None
-    kinds = template_kinds or ["LOOKUP_JOIN", "AGGREGATE_COUNT"]
+    kinds = template_kinds or list(_DEFAULT_KINDS)
     # Render() çağrılabilir olmayan chain-only kinds'i sessizce filtrele
     kinds = [k for k in kinds if k in SINGLE_REL_KINDS]
 
@@ -599,8 +711,19 @@ def generate_for_source(
         cf = (rel_.cardinality_from or "").strip()
         ct = (rel_.cardinality_to or "").strip()
         if cf == "1" and ct == "1":
-            return [k for k in kinds if k != "AGGREGATE_COUNT"]
+            return [k for k in kinds if k not in _AGGREGATE_KINDS_SKIP_ON_1TO1]
         return list(kinds)
+
+    # v3.45.0 P2: tip-keşfi — child tablo kolonları tablo-bazında cache'lenir (aynı child
+    # birden çok FK'de gelebilir → tek SELECT). AGGREGATE_STATS için sayısal ölçü seçer.
+    _col_cache: Dict[tuple, List[Dict[str, Any]]] = {}
+
+    def _measure_for(rel_: Relationship) -> Optional[str]:
+        ckey = ((rel_.from_schema or "").lower(), (rel_.from_table or "").lower())
+        if ckey not in _col_cache:
+            _col_cache[ckey] = _load_table_columns(cur, source_id, rel_.from_schema, rel_.from_table)
+        exclude = list(rel_.from_columns or ([rel_.from_column] if rel_.from_column else []))
+        return _pick_numeric_measure(_col_cache[ckey], exclude)
 
     for rel in rels:
         per_rel_kinds = _cardinality_aware_kinds(rel)
@@ -634,9 +757,23 @@ def generate_for_source(
                         pass
                     continue
 
+            # v3.45.0 P2: tip-bağımlı kind'ler için kolon context'i. Uygun kolon yoksa
+            # (örn. STATS için child'da sayısal ölçü yok) RENDER ETME → skipped_no_column.
+            col_ctx: Optional[Dict[str, str]] = None
+            if kind == "AGGREGATE_STATS":
+                measure = _measure_for(rel)
+                if not measure:
+                    summary.skipped_no_column += 1
+                    try:
+                        cur.execute(f"RELEASE SAVEPOINT {_sp_name}")
+                    except Exception:
+                        pass
+                    continue
+                col_ctx = {"numeric": measure}
+
             # Render
             try:
-                rq = render(rel, kind, dialect=dialect)
+                rq = render(rel, kind, dialect=dialect, col_ctx=col_ctx)
             except Exception as e:
                 summary.failed_execute += 1
                 if len(summary.errors) < 50:

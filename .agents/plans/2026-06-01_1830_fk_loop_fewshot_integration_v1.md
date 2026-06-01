@@ -58,13 +58,28 @@ fonksiyon istiyor.
   sorusunda select_few_shots sentetiği seçer; gerçek örnek varsa onu öncelikler; token cap aşılmaz.
 
 ### P2 — Tip-Farkında + Çok-Dialect Template Motoru (Konsey: ORACLE + POSEIDON + METIS)
-- **Tip-farkındalık:** template seçimi enrichment `semantic_type` (amount/date/status) + kolon tipiyle —
-  SUM/AVG→sayısal kolon, TIME-BUCKET→tarih kolonu. Kör FK işleme YOK (partman TEXT↔TEXT engellenir).
-- **Yeni template'ler:** AGGREGATE_STATS (SUM/AVG/MIN/MAX), EXISTS/ANTI-JOIN (orphan/kapsam), TIME-BUCKETED
-  (date_trunc+FK), DISTINCT-COUNT. + mevcut G3 (CHAIN_JOIN, LATERAL_TOP_K, WINDOW) base loop'a dahil.
-- **Çok-dialect:** her template 4 dialect (PG/Oracle/MSSQL/MySQL) — LIMIT/FETCH FIRST/TOP, date fonksiyonları
-  (date_trunc vs TRUNC vs DATEPART vs DATE_FORMAT), STRING_AGG vs LISTAGG vs STRING_AGG vs GROUP_CONCAT.
-- **Verify:** her template her dialekte syntax-geçerli üretir; tip-uygun kolon seçer; 4 dialect smoke.
+
+**P2a — ✅ TAMAM (v3.45.0):**
+- ✅ **Yeni modül `synthetic_dialect.py`:** `classify_data_type` (numeric/temporal/text/boolean/other,
+  4-dialect) + dialect SQL helper'ları (`string_agg` LISTAGG/GROUP_CONCAT/STRING_AGG, `to_day_expr`,
+  `current_date_expr`; sep injection-safe).
+- ✅ **2 yeni per-FK template (4-dialect):** AGGREGATE_STATS (numeric ölçü COUNT/SUM/AVG/MIN/MAX per
+  parent, INNER JOIN deterministik) + EXISTS_ANTI_JOIN (orphan parent, NOT EXISTS + ORDER BY pk).
+- ✅ **Tip-keşfi:** `_load_table_columns` (columns_json + is_pk) + `_pick_numeric_measure` (FK/PK/keyish/
+  patolojik-ad eler, temiz ölçü yoksa skip → `skipped_no_column`). Default kinds 2→4; 1:1'de yalnız LOOKUP.
+- ✅ **code-review:** TR kolon adı over-filter fix (unicode-toleranslı `_safe_measure_name`), is_pk-farkında
+  ölçü (anlamsız SUM(id) önlenir), INNER JOIN NULL-sıra, anti-join determinizm, classify bit/varbit. 4
+  dialect × composite smoke yeşil.
+
+**P2b — bekliyor:**
+- **Mevcut PG-hardcoded template'leri 4-dialect + gerçek kolon:** STRING_AGG_DETAILS (LISTAGG/GROUP_CONCAT
+  via `synthetic_dialect.string_agg` + text kolon keşfi), WINDOW_RUNNING_TOTAL (numeric+temporal kolon,
+  window fn standart), TIME_SERIES_GENERATE (4-dialect takvim — GENERATE_SERIES/CONNECT BY/recursive CTE
+  veya PG-gate). Bu template'ler şu an `d="postgresql"` hardcode → non-PG'de patlıyor + kolon TAHMİN ediyor.
+- **Altitude (code-review notu):** col_ctx tip-gate'i generator if-chain + render ValueError'da İKİ yerde —
+  P2b'de "kind→gerekli col_ctx anahtarları" tablosuyla genelleştir (yeni tip-bağımlı kind tek yerde tanımlansın).
+- **DISTINCT-COUNT / TIME-BUCKETED** (opsiyonel, ek değer).
+- **Verify:** her template her dialekte syntax-geçerli; tip-uygun kolon; 4 dialect smoke.
 
 ### P3 — Ops (Konsey: NIKE + TYCHE)
 - Hata sınıflandırma + metrik (cache-hit oranı, few-shot kullanım, sentetik başarı trendi).

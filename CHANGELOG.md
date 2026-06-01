@@ -1,5 +1,44 @@
 # VYRA Changelog
 
+## v3.45.0 (DEVAM EDEN) — FK Loop P2a: Tip-Farkında + 4-Dialect Template'ler (ORACLE + POSEIDON + METIS)
+
+> Plan: `.agents/plans/2026-06-01_1830_fk_loop_fewshot_integration_v1.md` (P2). Kullanıcı isteği:
+> "lookup/aggregation dışında FK ilişkili tablolar için daha fazla fonksiyon" + "db türüne göre
+> fonksiyonları arttır". FK Loop'un per-FK ürettiği örnek seti 2 → 4'e çıktı (1:N FK'ler için).
+>
+> **Yeni modül `synthetic_dialect.py`:** `classify_data_type` (ham data_type → numeric/temporal/text/
+> boolean/other; 4-dialect substring; `fk_inference_dialects.normalize_type` yalnız int/uuid/str/other
+> verdiği için agregasyona-uygun numeric-vs-temporal ayrımı burada) + dialect SQL helper'ları
+> (`string_agg` PG STRING_AGG / Oracle LISTAGG / MSSQL STRING_AGG WITHIN GROUP / MySQL GROUP_CONCAT,
+> `to_day_expr`, `current_date_expr` — P2b kullanacak; sep injection-safe tek-tırnak kaçışı).
+>
+> **2 yeni per-FK template** (`synthetic_templates.py`, 4-dialect): **AGGREGATE_STATS** — her parent
+> için child'ın SAYISAL ölçü kolonunun COUNT/SUM/AVG/MIN/MAX'i ("her müşterinin toplam/ortalama sipariş
+> tutarı"); **INNER JOIN** (child'ı olan parent'lar → NULL toplam yok → ORDER BY deterministik, 4
+> dialect tutarlı); TOP/FETCH/LIMIT dialect-doğru. **EXISTS_ANTI_JOIN** — hiç child'ı olmayan parent'lar
+> ("siparişi olmayan müşteriler"); NOT EXISTS + ORDER BY pk (re-run idempotent); tip GEREKMEZ.
+>
+> **Generator tip-keşfi** (`fk_synthetic_generator.py`): `_load_table_columns` (ds_db_objects.columns_json
+> + is_pk, JSONB list/str + dict/tuple cursor toleransı, tablo-bazında run-cache) + `_pick_numeric_measure`
+> (FK kolonları + **PK (is_pk otoriter)** + id/no/code anahtarları + patolojik adları eler; isim ipucu
+> amount/tutar/... öncelikli; **temiz ölçü yoksa None → skip** = `skipped_no_column`, anlamsız SUM(id)
+> önlenir). Default kinds 2→4 (1:1'de yalnız LOOKUP_JOIN — `_AGGREGATE_KINDS_SKIP_ON_1TO1`). `render()`
+> `col_ctx` ile tip-bağımlı kolonu alır.
+>
+> **`/code-review medium` (7 angle × verify) — düzeltmeler:** (1) **TR kolon adı over-filter** —
+> `is_safe_identifier` ASCII-only regex (`[A-Za-z_]...`) `değer`/`işlem_tutarı` gibi Türkçe ölçü
+> kolonlarını eliyordu (hedef kitle TR şemaları!) → unicode-toleranslı `_safe_measure_name` (yalnız
+> tırnak/kontrol/ayraç eler, `_quote_identifier` zaten tırnaklar). (2) **is_pk-farkında ölçü** —
+> surrogate PK / keyish numeric SUM/AVG'ı (anlamsız "id toplamı" few-shot'a sızıyordu) → is_pk + keyish
+> eleme, keyish-fallback KALDIRILDI. (3) **INNER JOIN** NULL-sıra fix. (4) anti-join determinizm.
+> (5) classify boolean guard (`bit varying`/`varbit` false-positive). Tüm template'ler 4 dialect ×
+> composite FK smoke yeşil.
+>
+> **Caller etkisi:** UI "öğrenme loop" butonu (`db_learning_api` — `template_kinds`/`max_fks` geçirir,
+> kullanıcı zaten daha fazla istiyor) + incremental sync (`skip_existing=True` → yeni kind'ler bir-kez
+> backfill, sonra steady-state). **Sıradaki:** P2b (STRING_AGG/WINDOW/TIME_SERIES 4-dialect + gerçek
+> kolon keşfi), P3 (ops).
+
 ## v3.44.0 (DEVAM EDEN) — FK Loop → Few-Shot Entegrasyonu — P0 Gürültü + P1 Few-Shot Terfi (HEPHAESTUS + ORACLE + ARES)
 
 > Plan: `.agents/plans/2026-06-01_1830_fk_loop_fewshot_integration_v1.md`. FK Loop'un ürettiği
