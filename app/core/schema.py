@@ -283,6 +283,11 @@ CREATE INDEX IF NOT EXISTS idx_system_logs_created_at ON system_logs(created_at 
 CREATE INDEX IF NOT EXISTS idx_system_logs_user_id ON system_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_system_logs_module ON system_logs(module);
 CREATE INDEX IF NOT EXISTS idx_system_logs_level_created ON system_logs(level, created_at DESC);
+-- v3.43.0: request_id kolonunu index'ten ÖNCE garanti et. Eski kurulumlarda system_logs
+-- tablosu request_id'siz mevcut olabilir (CREATE TABLE IF NOT EXISTS kolonu eklemez); Alembic
+-- 049 ALTER ile ekler ama Alembic timeout/atlanırsa SCHEMA_SQL kendi başına kalır → partial
+-- index "column request_id does not exist" ile patlardı. ADD COLUMN IF NOT EXISTS bunu önler.
+ALTER TABLE system_logs ADD COLUMN IF NOT EXISTS request_id VARCHAR(32);
 CREATE INDEX IF NOT EXISTS idx_system_logs_request_id ON system_logs(request_id) WHERE request_id IS NOT NULL;
 
 -- Prompt Templates indexes
@@ -894,6 +899,11 @@ CREATE INDEX IF NOT EXISTS idx_ds_disc_jobs_company ON ds_discovery_jobs(company
 CREATE INDEX IF NOT EXISTS idx_ds_disc_jobs_type ON ds_discovery_jobs(job_type);
 CREATE INDEX IF NOT EXISTS idx_ds_disc_jobs_status ON ds_discovery_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_ds_disc_jobs_created ON ds_discovery_jobs(created_at DESC);
+-- v3.43.0 (P1-D): Satır-bazlı ilerleme alanları (samples/enrichment X/N göstergesi)
+ALTER TABLE ds_discovery_jobs ADD COLUMN IF NOT EXISTS progress_current INTEGER DEFAULT 0;
+ALTER TABLE ds_discovery_jobs ADD COLUMN IF NOT EXISTS progress_total INTEGER DEFAULT 0;
+ALTER TABLE ds_discovery_jobs ADD COLUMN IF NOT EXISTS progress_stage VARCHAR(40);
+ALTER TABLE ds_discovery_jobs ADD COLUMN IF NOT EXISTS progress_updated_at TIMESTAMP;
 
 -- Keşfedilen DB Objeleri (tablolar, view'lar)
 CREATE TABLE IF NOT EXISTS ds_db_objects (

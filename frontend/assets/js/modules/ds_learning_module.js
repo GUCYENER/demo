@@ -417,6 +417,13 @@ window.DSLearningModule = (function () {
 
             try {
                 const check = await apiCall(`/${_currentSourceId}/check-running-job`);
+                // v3.43.0 (P1-D): satır-bazlı ilerleme varsa "X/N tablo" göster
+                if (statusEl && check.has_running && check.job && check.job.progress_total > 0) {
+                    const stageLabels = { samples: 'Veri toplama', enrichment: 'Zenginleştirme' };
+                    const stg = stageLabels[check.job.progress_stage] || check.job.progress_stage || 'İşleniyor';
+                    const cur = check.job.progress_current || 0;
+                    statusEl.textContent = `${stg}: ${cur}/${check.job.progress_total} tablo`;
+                }
                 if (!check.has_running) {
                     clearInterval(_wizardTimer);
                     _wizardTimer = null;

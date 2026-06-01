@@ -1,5 +1,36 @@
 # VYRA Changelog
 
+## v3.43.0 — 2026-06-01 — DB Keşif Sertleştirme (P0-A/B + P1-C/D + P2-E) + canlı düzeltmeler
+
+> DB keşif/enrichment hattının 4 fazlı iyileştirmesi + canlıda gözlenen 2 hatanın kökten giderilmesi.
+> Her faz code-review'den geçti; BİTİR `/code-review medium` HIGH bulgu (quote-aware JSON onarımı) giderildi.
+
+- **🔴 P0-A — Re-keşif admin onaylarını artık SİLMİYOR (veri kaybı kapatıldı):** `detect_objects`
+  koşulsuz `DELETE ds_table_enrichments/ds_column_enrichments` kaldırıldı; yerine diff-tabanlı
+  `_invalidate_enrichments_on_diff` — silinen tablo→`is_active=FALSE` (arşiv), değişen→`schema_hash=NULL`
+  (re-enrich, `admin_approved/admin_label_tr` KORUNUR), geri-eklenen→reaktivasyon (drop→recreate'te onay
+  geri kazanılır), kaldırılan kolon→selektif `ds_column_enrichments` temizliği.
+- **🔴 P0-B — Örnekleme temsil gücü:** `collect_samples` boyut-farkında RASTGELE örnekleme
+  (`_build_sample_query`: küçük→`ORDER BY random()/NEWID()/RAND()/DBMS_RANDOM`, büyük→`TABLESAMPLE/SAMPLE`,
+  4 dialect) + tablo başına `statement_timeout`/`call_timeout` + hata sonrası `rollback`. `randomize=False`
+  ile eski davranış (geri-uyumlu).
+- **🟠 P1-C — Enrichment hızlandırma:** `enrich_tables_batch` `ThreadPoolExecutor(max_workers=4)` sınırlı
+  eşzamanlılık; her worker kendi `get_db_conn()` (pool maxconn=15), `max_workers=1`→eski sıralı yol. ~4× hız.
+- **🟠 P1-D — Canlı ilerleme:** `ds_discovery_jobs.progress_current/total/stage/updated_at` (migration 050
+  + `schema.py` startup garantisi), `update_job_progress`, `check_running_job` progress döner, frontend
+  "X/N tablo" göstergesi.
+- **🟡 P2-E — Sağlamlaştırma:** `create_job` `pg_advisory_xact_lock` ile TOCTOU (çift running job önleme);
+  `_auto_invalidate_schema_records` silinen tabloda tüm `content_type`'ları temizler (orphan giderildi).
+- **🐞 Prod fix — Admin paneli çöp gösteriyordu:** `get_pending_approvals`/`get_approved_enrichments`
+  çıplak `dict(zip(cols, RealDictRow))` değer yerine kolon adı döndürüyordu (RealDictCursor) → dual-mode.
+- **🐞 Prod fix — `system_logs.request_id` UndefinedColumn crash:** SCHEMA_SQL partial index'ten ÖNCE
+  `ALTER TABLE system_logs ADD COLUMN IF NOT EXISTS request_id VARCHAR(32)`.
+- **🐞 Prod fix — LLM JSON parse hataları:** `_coerce_llm_json` çok-stratejili (json.loads →
+  `extract_json_obj` → quote-aware trailing-comma stripper + literal-newline collapse) + prompt sertleştirme;
+  `get_active_llm` `finally` ile connection iade (eşzamanlılık sızıntısı).
+- **🧪 Test:** dual-mode + 2 pre-existing test bug (limit pagination execute-index, olmayan fixture)
+  düzeltildi; batch testleri `max_workers=1` ile DB'siz deterministik.
+
 ## v3.38.8 — 2026-05-30 — BİTİR code-review düzeltmeleri
 
 > `/code-review medium` (BİTİR KAP 1 sonrası) v3.38.4-3.38.7'yi inceledi; gerçek bulgular giderildi.

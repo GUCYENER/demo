@@ -993,9 +993,12 @@ def detect_objects(source: dict, vyra_conn) -> dict:
         # VYRA DB'ye kaydet
         vyra_cur = vyra_conn.cursor()
 
-        # Eski objeleri ve enrichment kalıntılarını temizle (FK sırasına dikkat)
-        vyra_cur.execute("DELETE FROM ds_column_enrichments WHERE source_id = %s", (source_id,))
-        vyra_cur.execute("DELETE FROM ds_table_enrichments WHERE source_id = %s", (source_id,))
+        # Eski obje/sample/relationship kalıntılarını temizle (FK sırasına dikkat).
+        # v3.43.0 (P0-A): ds_table_enrichments / ds_column_enrichments ARTIK SİLİNMEZ —
+        # admin onayları (admin_approved/admin_label_tr/admin_notes) re-keşifte korunsun diye.
+        # Enrichment'lar objelere FK ile değil (schema_name, table_name) eşleşmesiyle bağlı,
+        # bu yüzden ds_db_objects DELETE'i onlara cascade etmez. Schema diff'e göre selektif
+        # invalidation _invalidate_enrichments_on_diff() ile yapılır (aşağıda, snapshot sonrası).
         vyra_cur.execute("DELETE FROM ds_db_samples WHERE source_id = %s", (source_id,))
         vyra_cur.execute("DELETE FROM ds_db_objects WHERE source_id = %s", (source_id,))
         vyra_cur.execute("DELETE FROM ds_db_relationships WHERE source_id = %s", (source_id,))
@@ -1093,6 +1096,11 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                 if snapshot_result.get("has_changes") and not snapshot_result.get("is_first_run"):
                     _auto_invalidate_schema_records(vyra_conn, source_id, snapshot_result.get("diff", {}))
 
+                    # v3.43.0 (P0-A): Enrichment'ları admin verisini KORUYARAK selektif invalidate et.
+                    # Silinen tablo → arşivle (is_active=FALSE), değişen tablo → schema_hash=NULL (re-enrich
+                    # tetiklenir, admin_approved korunur), kaldırılan kolon → enrichment'ı temizle (orphan).
+                    _invalidate_enrichments_on_diff(vyra_conn, source_id, snapshot_result.get("diff", {}))
+
                     # v3.27.0 G6: Schema drift → learned_db_queries + few_shot_examples + col_embeddings
                     try:
                         from app.services.db_learning.schema_drift_detector import apply_drift
@@ -1155,10 +1163,95 @@ def detect_objects(source: dict, vyra_conn) -> dict:
 # Adım 3: Örnek Veri Toplama
 # =====================================================
 
-def collect_samples(source: dict, vyra_conn, max_rows: int = 10, schema_filter: list = None) -> dict:
+# Tablo bu eşiğin üstündeyse full-scan ORDER BY random() yerine dialect-native
+# verimli örnekleme (TABLESAMPLE/SAMPLE) kullanılır (v3.43.0 P0-B).
+_SAMPLE_LARGE_TABLE_THRESHOLD = 50000
+
+
+def _build_sample_query(db_dialect: str, safe_schema: str, safe_name: str,
+                        safe_cols: list, max_rows: int,
+                        randomize: bool = True, row_count: int = 0) -> str:
+    """Dialect-aware örnek veri SQL'i üretir (v3.43.0 P0-B).
+
+    randomize=False → eski deterministik davranış (fiziksel ilk N satır, geri-uyumlu).
+    randomize=True  → temsil gücü için rastgele örnekleme. Büyük tabloda
+      (row_count > eşik) full-sort'tan kaçınmak için TABLESAMPLE/SAMPLE; küçük veya
+      boyutu bilinmeyen (row_count=0/None) tabloda ORDER BY random() (statement_timeout korur).
+
+    safe_schema/safe_name/safe_cols çağıran tarafından _safe_identifier ile temizlenmiş gelir.
+    """
+    is_large = bool(row_count) and row_count > _SAMPLE_LARGE_TABLE_THRESHOLD
+    star = (not safe_cols) or safe_cols[0] == "*"
+    # Büyük tabloda hedef ~max_rows*50 satır örnekle, LIMIT ile kırp (best-effort).
+    # Üst sınır 99.9999: Oracle SAMPLE() tam 100 kabul etmez (PG SYSTEM(100) sorun değil).
+    pct = min(99.9999, max(0.001, (max_rows * 5000.0) / row_count)) if (is_large and row_count) else 0.0
+
+    if db_dialect == "postgresql":
+        cols_str = "*" if star else ", ".join(f'"{c}"' for c in safe_cols)
+        fqn = f'"{safe_schema}"."{safe_name}"' if safe_schema else f'"{safe_name}"'
+        if not randomize:
+            return f"SELECT {cols_str} FROM {fqn} LIMIT {max_rows}"
+        if is_large:
+            return f"SELECT {cols_str} FROM {fqn} TABLESAMPLE SYSTEM ({pct:.4f}) LIMIT {max_rows}"
+        return f"SELECT {cols_str} FROM {fqn} ORDER BY random() LIMIT {max_rows}"
+
+    if db_dialect == "mssql":
+        cols_str = "*" if star else ", ".join(f'[{c}]' for c in safe_cols)
+        fqn = f"[{safe_schema}].[{safe_name}]" if safe_schema else f"[{safe_name}]"
+        if not randomize:
+            return f"SELECT TOP {max_rows} {cols_str} FROM {fqn}"
+        if is_large:
+            return f"SELECT TOP {max_rows} {cols_str} FROM {fqn} TABLESAMPLE ({max_rows * 100} ROWS)"
+        return f"SELECT TOP {max_rows} {cols_str} FROM {fqn} ORDER BY NEWID()"
+
+    if db_dialect == "mysql":
+        cols_str = "*" if star else ", ".join(f'`{c}`' for c in safe_cols)
+        fqn = f"`{safe_name}`"
+        if not randomize:
+            return f"SELECT {cols_str} FROM {fqn} LIMIT {max_rows}"
+        # MySQL'de TABLESAMPLE yok; ORDER BY RAND() — büyük tabloda statement_timeout korur
+        return f"SELECT {cols_str} FROM {fqn} ORDER BY RAND() LIMIT {max_rows}"
+
+    if db_dialect == "oracle":
+        cols_str = "*" if star else ", ".join(f'"{c}"' for c in safe_cols)
+        fqn = f'"{safe_schema}"."{safe_name}"' if safe_schema else f'"{safe_name}"'
+        if not randomize:
+            return f"SELECT {cols_str} FROM {fqn} WHERE ROWNUM <= {max_rows}"
+        if is_large:
+            return f"SELECT {cols_str} FROM {fqn} SAMPLE({pct:.4f}) WHERE ROWNUM <= {max_rows}"
+        return (f"SELECT {cols_str} FROM (SELECT {cols_str} FROM {fqn} "
+                f"ORDER BY DBMS_RANDOM.VALUE) WHERE ROWNUM <= {max_rows}")
+
+    return None
+
+
+def _apply_sample_timeout(db_conn, target_cur, db_dialect: str, timeout_ms: int) -> None:
+    """Örnek sorguları için per-statement/connection timeout ayarlar (best-effort, v3.43.0 P0-B).
+
+    Büyük tablolarda örnekleme sorgusunun backend'i kilitlemesini önler. Başarısız olursa
+    sessizce geçilir (örnekleme yine çalışır, sadece koruma yok)."""
+    if not timeout_ms or timeout_ms <= 0:
+        return
+    try:
+        if db_dialect == "postgresql":
+            target_cur.execute(f"SET statement_timeout = {int(timeout_ms)}")
+        elif db_dialect == "mysql":
+            target_cur.execute(f"SET SESSION MAX_EXECUTION_TIME = {int(timeout_ms)}")
+        elif db_dialect == "oracle":
+            db_conn.call_timeout = int(timeout_ms)
+        elif db_dialect == "mssql":
+            db_conn.timeout = max(1, int(timeout_ms / 1000))
+    except Exception as _to_err:
+        logger.debug("[DSLearning] sample timeout ayarlanamadı (%s): %s", db_dialect, _to_err)
+
+
+def collect_samples(source: dict, vyra_conn, max_rows: int = 10, schema_filter: list = None,
+                    randomize: bool = True, sample_timeout_ms: int = 15000) -> dict:
     """
     Keşfedilen tablolardan örnek SELECT sorguları hazırlayıp çalıştırır.
     schema_filter: Belirli schema adlarına göre filtreler (None = tüm şemalar).
+    randomize: True → temsil gücü için rastgele örnekleme (v3.43.0 P0-B); False → eski ilk-N satır.
+    sample_timeout_ms: Tablo başına örnek sorgu timeout'u (büyük tabloda hang önler).
     """
     source_id = source["id"]
     start = time.time()
@@ -1173,7 +1266,7 @@ def collect_samples(source: dict, vyra_conn, max_rows: int = 10, schema_filter: 
         if schema_filter:
             format_strings = ','.join(['%s'] * len(schema_filter))
             vyra_cur.execute(f"""
-                SELECT id, schema_name, object_name, object_type, columns_json
+                SELECT id, schema_name, object_name, object_type, columns_json, row_count_estimate
                 FROM ds_db_objects
                 WHERE source_id = %s AND object_type = 'table'
                   AND schema_name IN ({format_strings})
@@ -1183,7 +1276,7 @@ def collect_samples(source: dict, vyra_conn, max_rows: int = 10, schema_filter: 
                         len(schema_filter), schema_filter[:5])
         else:
             vyra_cur.execute("""
-                SELECT id, schema_name, object_name, object_type, columns_json
+                SELECT id, schema_name, object_name, object_type, columns_json, row_count_estimate
                 FROM ds_db_objects
                 WHERE source_id = %s AND object_type = 'table'
                 ORDER BY schema_name, object_name
@@ -1198,6 +1291,9 @@ def collect_samples(source: dict, vyra_conn, max_rows: int = 10, schema_filter: 
         failed_tables = []
         total_tables = len(db_objects)
 
+        # v3.43.0 (P0-B): Örnek sorguları için tablo başına timeout (büyük tabloda hang önler)
+        _apply_sample_timeout(db_conn, target_cur, db_dialect, sample_timeout_ms)
+
         # Eski sample'ları temizle
         vyra_cur.execute("DELETE FROM ds_db_samples WHERE source_id = %s", (source_id,))
 
@@ -1208,6 +1304,11 @@ def collect_samples(source: dict, vyra_conn, max_rows: int = 10, schema_filter: 
             schema_name = obj_row["schema_name"] if isinstance(obj_row, dict) else obj_row[1]
             object_name = obj_row["object_name"] if isinstance(obj_row, dict) else obj_row[2]
             columns_data = obj_row["columns_json"] if isinstance(obj_row, dict) else obj_row[4]
+            row_count_est = obj_row["row_count_estimate"] if isinstance(obj_row, dict) else obj_row[5]
+            try:
+                row_count_est = int(row_count_est) if row_count_est is not None else 0
+            except (TypeError, ValueError):
+                row_count_est = 0
 
             if isinstance(columns_data, str):
                 columns_data = json.loads(columns_data)
@@ -1232,22 +1333,12 @@ def collect_samples(source: dict, vyra_conn, max_rows: int = 10, schema_filter: 
             safe_name = _safe_identifier(object_name)
             safe_schema = _safe_identifier(schema_name or "")
 
-            if db_dialect == "postgresql":
-                cols_str = ", ".join([f'"{c}"' for c in safe_cols]) if safe_cols[0] != "*" else "*"
-                fqn = f'"{safe_schema}"."{safe_name}"' if safe_schema else f'"{safe_name}"'
-                query = f"SELECT {cols_str} FROM {fqn} LIMIT {max_rows}"
-            elif db_dialect == "mssql":
-                cols_str = ", ".join([f'[{c}]' for c in safe_cols]) if safe_cols[0] != "*" else "*"
-                fqn = f"[{safe_schema}].[{safe_name}]" if safe_schema else f"[{safe_name}]"
-                query = f"SELECT TOP {max_rows} {cols_str} FROM {fqn}"
-            elif db_dialect == "mysql":
-                cols_str = ", ".join([f'`{c}`' for c in safe_cols]) if safe_cols[0] != "*" else "*"
-                query = f"SELECT {cols_str} FROM `{safe_name}` LIMIT {max_rows}"
-            elif db_dialect == "oracle":
-                cols_str = ", ".join([f'"{c}"' for c in safe_cols]) if safe_cols[0] != "*" else "*"
-                fqn = f'"{safe_schema}"."{safe_name}"' if safe_schema else f'"{safe_name}"'
-                query = f"SELECT {cols_str} FROM {fqn} WHERE ROWNUM <= {max_rows}"
-            else:
+            # v3.43.0 (P0-B): boyut-farkında rastgele örnekleme SQL'i
+            query = _build_sample_query(
+                db_dialect, safe_schema, safe_name, safe_cols, max_rows,
+                randomize=randomize, row_count=row_count_est,
+            )
+            if not query:
                 continue
 
             try:
@@ -1283,6 +1374,14 @@ def collect_samples(source: dict, vyra_conn, max_rows: int = 10, schema_filter: 
             except Exception as table_err:
                 logger.error("[DSLearning] Tablo veri alma hatası (%s): %s", object_name, str(table_err))
                 failed_tables.append({"table": object_name, "error": "Veri okuma başarısız"})
+                # v3.43.0 (P0-B): timeout/hata sonrası hedef bağlantının transaction state'ini
+                # temizle — autocommit=False dialect'lerde (MySQL/Oracle/MSSQL) sonraki tabloların
+                # "transaction aborted/commands out of sync" ile zincirleme fail olmasını önler.
+                # PG autocommit=True olduğundan no-op (zararsız).
+                try:
+                    db_conn.rollback()
+                except Exception:
+                    pass
                 continue
 
         vyra_conn.commit()
@@ -1456,35 +1555,83 @@ def check_running_job(vyra_conn, source_id: int) -> dict:
         vyra_conn.commit()
         logger.warning("[DSLearning] %d stuck job temizlendi (source_id=%s)", cleaned, source_id)
 
-    # 2) Hâlâ running olan iş var mı?
-    cur.execute("""
-        SELECT id, job_type, started_at
-        FROM ds_discovery_jobs
-        WHERE source_id = %s AND status = 'running'
-        ORDER BY started_at DESC
-        LIMIT 1
-    """, (source_id,))
-    row = cur.fetchone()
+    # 2) Hâlâ running olan iş var mı? (v3.43.0 P1-D: progress alanları dahil;
+    #    eski DB'de kolonlar yoksa 3-kolon fallback ile core fonksiyon bozulmaz)
+    has_progress = True
+    try:
+        cur.execute("""
+            SELECT id, job_type, started_at, progress_current, progress_total, progress_stage
+            FROM ds_discovery_jobs
+            WHERE source_id = %s AND status = 'running'
+            ORDER BY started_at DESC
+            LIMIT 1
+        """, (source_id,))
+        row = cur.fetchone()
+    except Exception:
+        try:
+            vyra_conn.rollback()
+        except Exception:
+            pass
+        has_progress = False
+        cur = vyra_conn.cursor()
+        cur.execute("""
+            SELECT id, job_type, started_at
+            FROM ds_discovery_jobs
+            WHERE source_id = %s AND status = 'running'
+            ORDER BY started_at DESC
+            LIMIT 1
+        """, (source_id,))
+        row = cur.fetchone()
 
     if row:
         job_type = row["job_type"] if isinstance(row, dict) else row[1]
         started = row["started_at"] if isinstance(row, dict) else row[2]
         job_id = row["id"] if isinstance(row, dict) else row[0]
-        return {
-            "has_running": True,
-            "job": {
-                "id": job_id,
-                "job_type": job_type,
-                "started_at": started.isoformat() if started else None
-            }
+        job = {
+            "id": job_id,
+            "job_type": job_type,
+            "started_at": started.isoformat() if started else None
         }
+        if has_progress:
+            job["progress_current"] = (row["progress_current"] if isinstance(row, dict) else row[3]) or 0
+            job["progress_total"] = (row["progress_total"] if isinstance(row, dict) else row[4]) or 0
+            job["progress_stage"] = row["progress_stage"] if isinstance(row, dict) else row[5]
+        return {"has_running": True, "job": job}
 
     return {"has_running": False, "job": None}
 
 
+# v3.43.0 (P2-E): create_job advisory-lock namespace sabiti (iki-anahtar form →
+# db.py'deki tek-anahtar SCHEMA_LOCK_ID ile farklı lock uzayı, çakışmaz).
+_DS_JOB_LOCK_CLASS = 559230
+
+
 def create_job(vyra_conn, source_id: int, company_id: int, job_type: str, user_id: int = None) -> int:
-    """Yeni keşif job kaydı oluşturur, ID döner."""
+    """Yeni keşif job kaydı oluşturur, ID döner.
+
+    v3.43.0 (P2-E): TOCTOU önleme. check_running_job → create_job arasındaki yarış
+    penceresinde iki eşzamanlı istek çift "running" job açabiliyordu. Kaynak bazlı
+    transaction advisory lock ile create_job'lar serialize edilir; lock altında zaten
+    running bir job varsa YENİ açılmaz, mevcut job'ın id'si döner (duplicate önlenir,
+    çağrı sözleşmesi korunur — her zaman geçerli id). Lock commit'te serbest kalır.
+    """
     cur = vyra_conn.cursor()
+    cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", (_DS_JOB_LOCK_CLASS, int(source_id)))
+
+    # Lock altında: bu kaynak için zaten çalışan bir job var mı?
+    cur.execute("""
+        SELECT id FROM ds_discovery_jobs
+        WHERE source_id = %s AND status = 'running'
+        ORDER BY started_at DESC LIMIT 1
+    """, (source_id,))
+    existing = cur.fetchone()
+    if existing:
+        existing_id = existing["id"] if isinstance(existing, dict) else existing[0]
+        vyra_conn.commit()  # advisory lock serbest
+        logger.warning("[DSLearning] create_job: kaynak %s için zaten running job (#%s) var — "
+                       "yeni açılmadı (TOCTOU önleme)", source_id, existing_id)
+        return existing_id
+
     cur.execute("""
         INSERT INTO ds_discovery_jobs (source_id, company_id, job_type, status, started_at, created_by)
         VALUES (%s, %s, %s, 'running', NOW(), %s)
@@ -1492,7 +1639,7 @@ def create_job(vyra_conn, source_id: int, company_id: int, job_type: str, user_i
     """, (source_id, company_id, job_type, user_id))
     row = cur.fetchone()
     job_id = row["id"] if isinstance(row, dict) else row[0]
-    vyra_conn.commit()
+    vyra_conn.commit()  # advisory lock serbest
     return job_id
 
 
@@ -1511,6 +1658,32 @@ def complete_job(vyra_conn, job_id: int, result: dict):
         WHERE id = %s
     """, (status, elapsed, summary, error_msg, job_id))
     vyra_conn.commit()
+
+
+def update_job_progress(vyra_conn, job_id, current: int, total: int, stage: str = None) -> None:
+    """Job'ın satır-bazlı ilerlemesini günceller (v3.43.0 P1-D, X/N göstergesi).
+
+    job_id None ise no-op (job'sız çağrılar için güvenli). Progress kolonları henüz
+    yoksa (eski DB, restart öncesi) sessizce geçilir — keşif akışını asla bozmaz.
+    Çağıran tarafından throttle edilmeli (her satırda değil; örn. her 5 birimde bir)."""
+    if not job_id:
+        return
+    try:
+        cur = vyra_conn.cursor()
+        cur.execute("""
+            UPDATE ds_discovery_jobs
+            SET progress_current = %s, progress_total = %s,
+                progress_stage = COALESCE(%s, progress_stage),
+                progress_updated_at = NOW()
+            WHERE id = %s
+        """, (int(current), int(total), stage, job_id))
+        vyra_conn.commit()
+    except Exception as e:
+        logger.debug("[DSLearning] update_job_progress atlandı (kolon yok?): %s", str(e)[:120])
+        try:
+            vyra_conn.rollback()
+        except Exception:
+            pass
 
 
 def get_discovery_status(vyra_conn, source_id: int) -> dict:
@@ -1933,9 +2106,15 @@ def run_partial_enrichment(source: dict, object_ids: list, vyra_conn, user_id: i
         """, (source_id,))
         relationships = [dict(row) if hasattr(row, 'keys') else dict(zip([c[0] for c in cur.description], row)) for row in cur.fetchall()]
 
+        # v3.43.0 (P1-D): satır-bazlı ilerleme (throttle: her 5 tabloda/son tabloda)
+        def _enrich_progress(done, total):
+            if total and (done == total or done % 5 == 0):
+                update_job_progress(vyra_conn, job_id, done, total, stage="enrichment")
+
         enrichment_result = ds_enrichment_service.enrich_tables_batch(
             vyra_conn, source_id, company_id,
-            objects, samples_map, relationships
+            objects, samples_map, relationships,
+            progress_cb=_enrich_progress,
         )
         
         results["steps"].append({
@@ -2057,9 +2236,16 @@ def run_full_learning(source: dict, vyra_conn, user_id: int = None) -> dict:
 
                 # Enrichment çalıştır (sadece onaylı tablolar)
                 logger.info("[DSLearning] Enrichment: %d onaylı tablo işlenecek", len(objects))
+
+                # v3.43.0 (P1-D): satır-bazlı ilerleme (throttle: her 5 tabloda/son tabloda commit)
+                def _enrich_progress(done, total):
+                    if total and (done == total or done % 5 == 0):
+                        update_job_progress(vyra_conn, job_id, done, total, stage="enrichment")
+
                 enrichment_result = ds_enrichment_service.enrich_tables_batch(
                     vyra_conn, source_id, company_id,
-                    objects, samples_map, relationships
+                    objects, samples_map, relationships,
+                    progress_cb=_enrich_progress,
                 )
                 results["steps"].append({
                     "step": "enrichment",
@@ -2301,14 +2487,17 @@ def _auto_invalidate_schema_records(vyra_conn, source_id: int, diff: dict):
             """, (source_id, full_table))
             invalidated_count += cur.rowcount
 
-        # 2. Silinen tabloların schema_record'larını tamamen kaldır
+        # 2. Silinen tabloların TÜM learning kayıtlarını kaldır (v3.43.0 P2-E: orphan temizliği).
+        #    Eskiden yalnız content_type='schema_record' siliniyordu; qa_pair/hint gibi aynı
+        #    full_table'a bağlı diğer kayıtlar öksüz kalıyordu. Artık o tabloya ait tüm
+        #    content_type'lar temizlenir (metadata->>'full_table' eşleşen). full_table taşımayan
+        #    global kayıtlar eşleşmediği için etkilenmez.
         for full_table in diff.get("removed_tables", []):
             if not full_table:
                 continue
             cur.execute("""
                 DELETE FROM ds_learning_results
                 WHERE source_id = %s
-                  AND content_type = 'schema_record'
                   AND metadata->>'full_table' = %s
             """, (source_id, full_table))
 
@@ -2329,6 +2518,118 @@ def _auto_invalidate_schema_records(vyra_conn, source_id: int, diff: dict):
 
     except Exception as e:
         logger.warning("[DSLearning] Auto-invalidate hatası: %s — %s",
+                       type(e).__name__, str(e)[:200])
+        try:
+            vyra_conn.rollback()
+        except Exception:
+            pass
+
+
+def _parse_table_key(full_table: str):
+    """ds_diff_service._table_key formatı 'schema.table' (schema yoksa 'table') → (schema, table).
+
+    Not: schema_name içermeyen anahtarda schema=None döner; eşleşmede COALESCE ile NULL/'' kapsanır.
+    """
+    if full_table and "." in full_table:
+        sch, tbl = full_table.split(".", 1)
+        return sch, tbl
+    return None, full_table
+
+
+def _invalidate_enrichments_on_diff(vyra_conn, source_id: int, diff: dict):
+    """Schema diff sonrası enrichment'ları admin verisini KORUYARAK selektif günceller.
+
+    v3.43.0 (P0-A). detect_objects'teki eski "DELETE-all" davranışının yerini alır:
+      - removed_tables  → ds_table_enrichments.is_active=FALSE (admin label arşivlenir, kaybolmaz)
+      - modified_tables.removed_columns → ilgili ds_column_enrichments selektif sil (orphan engelle)
+      - modified_tables (added/removed/type/pk değişimi) → ds_table_enrichments.schema_hash=NULL
+        → enrich_table() skip mantığı FALSE döner, LLM tabloyu yeniden işler; admin_approved /
+        admin_label_tr / admin_notes UPDATE SET'te olmadığı için KORUNUR.
+      - added_tables → işlem yok (yeni enrichment normal akışta üretilir).
+
+    Diff yoksa / hata olursa enrichment'lara dokunulmaz (fail-safe: admin verisi asla silinmez).
+    """
+    try:
+        cur = vyra_conn.cursor()
+        archived = 0
+        rehashed = 0
+        dropped_cols = 0
+        reactivated = 0
+
+        # 0) Geri eklenen tablolar → varsa arşivlenmiş enrichment'ı yeniden aktive et + re-enrich'e
+        #    zorla. Drop→recreate / rename-back senaryosunda admin onayı geri kazanılır
+        #    (is_active sıfırlı kalıp learning sorgularında görünmez kalmasını önler).
+        for full_table in diff.get("added_tables", []):
+            if not full_table:
+                continue
+            sch, tbl = _parse_table_key(full_table)
+            cur.execute("""
+                UPDATE ds_table_enrichments
+                SET is_active = TRUE, schema_hash = NULL, updated_at = NOW()
+                WHERE source_id = %s
+                  AND table_name = %s
+                  AND COALESCE(schema_name, '') = COALESCE(%s, '')
+                  AND is_active = FALSE
+            """, (source_id, tbl, sch))
+            reactivated += cur.rowcount
+
+        # 1) Silinen tablolar → arşivle (admin onayı DB'de okunabilir kalır)
+        for full_table in diff.get("removed_tables", []):
+            if not full_table:
+                continue
+            sch, tbl = _parse_table_key(full_table)
+            cur.execute("""
+                UPDATE ds_table_enrichments
+                SET is_active = FALSE, updated_at = NOW()
+                WHERE source_id = %s
+                  AND table_name = %s
+                  AND COALESCE(schema_name, '') = COALESCE(%s, '')
+            """, (source_id, tbl, sch))
+            archived += cur.rowcount
+
+        # 2) Yapısı değişen tablolar
+        for mod in diff.get("modified_tables", []):
+            if not isinstance(mod, dict):
+                continue
+            key = mod.get("table", "")
+            if not key:
+                continue
+            sch, tbl = _parse_table_key(key)
+
+            # 2a) Kaldırılan kolonların enrichment'ını selektif sil (orphan engelle)
+            removed_cols = mod.get("removed_columns", [])
+            if removed_cols:
+                cur.execute("""
+                    DELETE FROM ds_column_enrichments
+                    WHERE column_name = ANY(%s)
+                      AND table_enrichment_id IN (
+                          SELECT id FROM ds_table_enrichments
+                          WHERE source_id = %s
+                            AND table_name = %s
+                            AND COALESCE(schema_name, '') = COALESCE(%s, '')
+                      )
+                """, (list(removed_cols), source_id, tbl, sch))
+                dropped_cols += cur.rowcount
+
+            # 2b) Tabloyu re-enrich'e zorla (schema_hash sıfırla) — admin alanları KORUNUR
+            cur.execute("""
+                UPDATE ds_table_enrichments
+                SET schema_hash = NULL, updated_at = NOW()
+                WHERE source_id = %s
+                  AND table_name = %s
+                  AND COALESCE(schema_name, '') = COALESCE(%s, '')
+            """, (source_id, tbl, sch))
+            rehashed += cur.rowcount
+
+        vyra_conn.commit()
+        logger.info(
+            "[DSLearning] Enrichment invalidate (admin-safe): %d arşivlendi, %d yeniden aktive, "
+            "%d re-enrich, %d kolon temizlendi (source_id=%s)",
+            archived, reactivated, rehashed, dropped_cols, source_id
+        )
+
+    except Exception as e:
+        logger.warning("[DSLearning] Enrichment invalidate hatası: %s — %s",
                        type(e).__name__, str(e)[:200])
         try:
             vyra_conn.rollback()

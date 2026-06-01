@@ -138,12 +138,15 @@ class VerifierResult:
 
 def get_active_llm() -> Optional[Dict[str, Any]]:
     """Veritabanından aktif LLM konfigürasyonunu çeker."""
+    # v3.43.0: connection finally'de iade edilir — eski kod exception path'inde
+    # conn.close() yapmıyordu, eşzamanlı enrichment (P1-C) altında nadir sorgu
+    # hatalarında pool sızıntısına yol açıyordu. finally ile her yolda kapatılır.
+    conn = None
     try:
         conn = get_db_conn()
         cur = conn.cursor()
         cur.execute("SELECT * FROM llm_config WHERE is_active = TRUE LIMIT 1")
         row = cur.fetchone()
-        conn.close()
         if row:
             log_system_event("INFO", f"Aktif LLM: {row['provider']} - {row['model_name']}", "llm")
             return dict(row)
@@ -152,6 +155,12 @@ def get_active_llm() -> Optional[Dict[str, Any]]:
     except Exception as e:
         log_error(f"Aktif LLM çekilirken hata: {str(e)}", "llm", error_detail=str(e))
         return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def get_llm_by_id(llm_config_id: int) -> Optional[Dict[str, Any]]:

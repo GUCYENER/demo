@@ -155,9 +155,10 @@ class TestGetLearningResults:
         from app.services.ds_learning_service import get_learning_results
         get_learning_results(mock_conn, source_id=2, limit=10)
 
-        call_args = mock_cursor.execute.call_args_list[0]
+        # v3.7.0: ilk execute COUNT(*) (pagination toplamı), limit ikinci (sayfalanmış) sorguda.
+        call_args = mock_cursor.execute.call_args_list[1]
         params = call_args[0][1]
-        assert 10 in params  # limit değeri SQL parametrelerinde olmalı
+        assert 10 in params  # limit değeri sayfalama sorgusunun parametrelerinde olmalı
 
     def test_handles_string_metadata(self, mock_learning_db, sample_type_counts):
         """metadata string olarak gelirse JSON parse yapmalı."""

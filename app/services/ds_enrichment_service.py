@@ -11,9 +11,17 @@ Version: 3.0.0
 import json
 import hashlib
 import logging
+import re
 import time
 
 logger = logging.getLogger(__name__)
+
+# v3.43.0: LLM JSON onarımı için toleranslı extractor (modül-seviyesi, döngü-içi import değil).
+# Guarded — llm.py ds_enrichment_service'i import etmez (circular yok), yine de güvenli düş.
+try:
+    from app.core.llm import extract_json_obj
+except Exception:  # pragma: no cover
+    extract_json_obj = None
 
 # =====================================================
 # Sabitler
@@ -114,82 +122,118 @@ def enrich_table(vyra_conn, source_id: int, company_id: int,
 
 def enrich_tables_batch(vyra_conn, source_id: int, company_id: int,
                         tables: list, samples_map: dict = None,
-                        relationships: list = None) -> dict:
+                        relationships: list = None,
+                        max_workers: int = 4, progress_cb=None) -> dict:
     """
-    Birden fazla tabloyu sırayla enrich eder.
+    Birden fazla tabloyu enrich eder.
+
+    v3.43.0 (P1-C): max_workers > 1 ise tablolar SINIRLI EŞZAMANLILIKLA işlenir
+    (LLM I/O-bound; ~max_workers kat hızlanma). Her worker KENDİ DB connection'ını
+    get_db_conn()'dan alır (psycopg2 connection thread-safe değil). max_workers=1 →
+    eski sıralı davranış (geçirilen vyra_conn kullanılır). enrich_table kendi içinde
+    commit ettiği için tablolar arası transaction izolasyonu korunur.
 
     Args:
         tables: detect_objects çıktısı (obje listesi)
         samples_map: {object_id: [sample_rows...]}
         relationships: FK ilişkileri
+        max_workers: eşzamanlı LLM worker sayısı (pool maxconn'u tüketmeyecek şekilde sınırlı)
+        progress_cb: opsiyonel callable(done:int, total:int) — ana thread'den çağrılır
 
     Returns:
         dict: {total, enriched, skipped, admin_required, errors, results}
     """
     start = time.time()
     results = []
-    enriched = 0
-    skipped = 0
-    admin_count = 0
-    errors = 0
+    counters = {"enriched": 0, "skipped": 0, "admin": 0, "errors": 0}
+    total = len(tables)
+    samples_map = samples_map or {}
+    relationships = relationships or []
 
-    for idx, tbl in enumerate(tables):
-        obj_id = tbl.get("id")
+    def _rels_for(table_name):
+        return [r for r in relationships
+                if r.get("from_table") == table_name or r.get("to_table") == table_name]
+
+    def _accumulate(res, done):
+        """Sonucu say + ilerlemeyi bildir. SADECE ana thread'den çağrılır (race yok)."""
+        results.append(res)
+        if res.get("error"):
+            counters["errors"] += 1
+        elif res.get("skipped"):
+            counters["skipped"] += 1
+        else:
+            counters["enriched"] += 1
+            if res.get("admin_required"):
+                counters["admin"] += 1
+        if progress_cb:
+            try:
+                progress_cb(done, total)
+            except Exception:
+                pass
+
+    def _run_one(tbl, conn):
         table_name = tbl.get("object_name", tbl.get("table_name", ""))
+        sample_data = samples_map.get(tbl.get("id"), [])
+        return enrich_table(conn, source_id, company_id, tbl, sample_data, _rels_for(table_name))
 
-        try:
-            # İlgili sample'ları bul
-            sample_data = (samples_map or {}).get(obj_id, [])
+    def _err_result(tbl, exc):
+        table_name = tbl.get("object_name", tbl.get("table_name", ""))
+        logger.error("[DSEnrich] Tablo enrich hatası (%s): %s — %s",
+                     table_name, type(exc).__name__, str(exc)[:200])
+        return {"enrichment_id": None, "table_name": table_name,
+                "error": str(exc)[:200], "skipped": False}
 
-            # İlgili ilişkileri bul
-            table_rels = [
-                r for r in (relationships or [])
-                if r.get("from_table") == table_name or r.get("to_table") == table_name
-            ]
+    workers = max(1, min(int(max_workers or 1), total)) if total else 1
 
-            result = enrich_table(
-                vyra_conn, source_id, company_id,
-                tbl, sample_data, table_rels
-            )
-            results.append(result)
+    if workers <= 1:
+        # Sıralı yol (eski davranış) — geçirilen connection kullanılır
+        for idx, tbl in enumerate(tables):
+            try:
+                res = _run_one(tbl, vyra_conn)
+            except Exception as e:
+                res = _err_result(tbl, e)
+            _accumulate(res, idx + 1)
+    else:
+        # Sınırlı eşzamanlılık — her worker kendi connection'ını alır/iade eder
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from app.core.db import get_db_conn
 
-            if result.get("skipped"):
-                skipped += 1
-            else:
-                enriched += 1
-                if result.get("admin_required"):
-                    admin_count += 1
+        def _worker(tbl):
+            wconn = None
+            try:
+                wconn = get_db_conn()
+                return _run_one(tbl, wconn)
+            except Exception as e:
+                return _err_result(tbl, e)
+            finally:
+                if wconn is not None:
+                    try:
+                        wconn.close()  # PooledConnection → pool'a iade
+                    except Exception:
+                        pass
 
-            # Progress log (her 10 tabloda bir)
-            if (idx + 1) % 10 == 0:
-                logger.info("[DSEnrich] İlerleme: %d/%d tablo işlendi", idx + 1, len(tables))
-
-        except Exception as e:
-            errors += 1
-            logger.error("[DSEnrich] Tablo enrich hatası (%s): %s — %s",
-                         table_name, type(e).__name__, str(e)[:200])
-            results.append({
-                "enrichment_id": None,
-                "table_name": table_name,
-                "error": str(e)[:200],
-                "skipped": False
-            })
+        done = 0
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="dsenrich") as ex:
+            futures = [ex.submit(_worker, t) for t in tables]
+            for fut in as_completed(futures):
+                done += 1
+                _accumulate(fut.result(), done)
 
     elapsed = int((time.time() - start) * 1000)
-
     summary = {
-        "total": len(tables),
-        "enriched": enriched,
-        "skipped": skipped,
-        "admin_required": admin_count,
-        "errors": errors,
+        "total": total,
+        "enriched": counters["enriched"],
+        "skipped": counters["skipped"],
+        "admin_required": counters["admin"],
+        "errors": counters["errors"],
         "elapsed_ms": elapsed,
         "results": results
     }
 
-    logger.info("[DSEnrich] Batch tamamlandı: %d toplam, %d yeni, %d atlandı, "
+    logger.info("[DSEnrich] Batch tamamlandı (workers=%d): %d toplam, %d yeni, %d atlandı, "
                 "%d admin bekliyor, %d hata (%dms)",
-                len(tables), enriched, skipped, admin_count, errors, elapsed)
+                workers, total, counters["enriched"], counters["skipped"],
+                counters["admin"], counters["errors"], elapsed)
 
     return summary
 
@@ -281,7 +325,10 @@ KURALLAR:
 - sample_questions: Bir kullanıcı bu tabloyu sorgularken sorabileceği doğal Türkçe sorular
 - synonyms_tr: Kullanıcıların bu sütuna atıfta bulunurken kullanabileceği ALTERNATİF Türkçe isimler listesi (en az 2-3 eşanlamlı). Örn: EMAIL → ["e-posta", "mail", "elektronik posta", "mail adresi"]
 - is_searchable: Bu sütun metin aramasında kullanılabilir mi? (isim, adres, açıklama gibi alanlar true; ID, FK, tarih gibi alanlar false)
-- Sadece JSON döndür, açıklama/yorum YAZMA"""
+- Sadece JSON döndür, açıklama/yorum YAZMA
+- JSON KESİNLİKLE GEÇERLİ olmalı: her alandan sonra (son alan hariç) VİRGÜL koy; string
+  değerlerin içindeki çift tırnağı \\" ile kaçır; string'leri TEK SATIRDA yaz (satır sonu koyma);
+  açıklamaları kısa tut. Geçersiz JSON kabul edilmez."""
 
     messages = [
         {"role": "system", "content": "Sen bir veritabanı analiz uzmanısın. Tabloları analiz edip iş anlamlarını çıkarırsın. Sadece istenen JSON formatında yanıt ver."},
@@ -340,6 +387,95 @@ Sadece JSON döndür."""
     return None
 
 
+def _strip_trailing_commas(s: str) -> str:
+    """JSON metnindeki YAPISAL trailing virgülleri kaldırır (,} ,] → } ]) — QUOTE-AWARE.
+
+    String içeriğine DOKUNMAZ: in-string durumunu (escape'lere saygılı) izleyerek yalnız
+    string DIŞINDA, '}' veya ']' önündeki virgülü siler. v3.43.0 code-review: çıplak regex
+    `,\\s*([}\\]])` string içi `"a,]"` desenini bozuyordu → quote-aware walker ile değişti."""
+    out = []
+    in_str = False
+    esc = False
+    n = len(s)
+    i = 0
+    while i < n:
+        ch = s[i]
+        if in_str:
+            out.append(ch)
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            i += 1
+            continue
+        if ch == '"':
+            in_str = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == ",":
+            j = i + 1
+            while j < n and s[j] in " \t\r\n":
+                j += 1
+            if j < n and s[j] in "}]":
+                i += 1  # yapısal trailing virgül — atla (string dışı)
+                continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _coerce_llm_json(text: str) -> dict:
+    """LLM çıktısından JSON sözlüğü elde eder; yaygın LLM kusurlarını toleranslı işler (v3.43.0).
+
+    Sıra:
+      1) Düz json.loads
+      2) app.core.llm.extract_json_obj — kod bloğu/çevre metin toleranslı balanced-brace raw_decode
+      3) GÜVENLİ onarım: ilk{..son} aralığı + quote-aware trailing virgül temizliği + string içi
+         literal control-char (newline/tab) → boşluk, sonra tekrar dene.
+
+    Riskli onarımlar (eksik virgül/kaçışsız tırnak enjeksiyonu) BİLİNÇLİ yapılmaz — string
+    içeriğini bozabilirler. Hepsi başarısızsa None (çağıran fallback heuristic'e düşer)."""
+    if not text:
+        return None
+
+    def _try(s):
+        try:
+            obj = json.loads(s)
+            return obj if isinstance(obj, dict) else None
+        except Exception:
+            return None
+
+    # 1) Düz
+    obj = _try(text)
+    if obj is not None:
+        return obj
+
+    # 2) Mevcut toleranslı extractor (modül-seviyesi import, döngü-içi değil)
+    if extract_json_obj is not None:
+        try:
+            obj = extract_json_obj(text)
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            pass
+
+    # 3) Güvenli onarım
+    s = text
+    i, j = s.find("{"), s.rfind("}")
+    if i != -1 and j != -1 and j > i:
+        s = s[i:j + 1]
+    s_no_trailing = _strip_trailing_commas(s)                 # quote-aware ,} ,] → } ]
+    s_no_ctrl = re.sub(r"[\r\n\t]+", " ", s_no_trailing)      # string içi literal newline/tab → boşluk
+    for cand in (s_no_trailing, s_no_ctrl):
+        obj = _try(cand)
+        if obj is not None:
+            return obj
+    return None
+
+
 def _parse_llm_analysis(response: str) -> dict:
     """LLM yanıtından JSON parse eder."""
     if not response:
@@ -354,7 +490,9 @@ def _parse_llm_analysis(response: str) -> dict:
         text = "\n".join(lines).strip()
 
     try:
-        data = json.loads(text)
+        data = _coerce_llm_json(text)
+        if data is None:
+            raise ValueError("JSON elde edilemedi (tüm stratejiler başarısız)")
 
         raw_columns = data.get("columns", {})
         if not isinstance(raw_columns, dict):
@@ -754,8 +892,14 @@ def get_pending_approvals(vyra_conn, source_id: int = None,
     query += " ORDER BY te.enrichment_score ASC, te.table_name ASC"
 
     cur.execute(query, params)
+    # v3.43.0: RealDictCursor (pool default) dict satır döner; çıplak dict(zip(cols,row))
+    # RealDictRow'u key'leriyle zip'leyip {kolon: kolon} çöpü üretiyordu (admin onay paneli
+    # değer yerine kolon adı gösteriyordu). Dual-mode ile dict satır doğru aktarılır.
+    rows = cur.fetchall()
+    if rows and hasattr(rows[0], 'keys'):
+        return [dict(row) for row in rows]
     cols = [desc[0] for desc in cur.description]
-    return [dict(zip(cols, row)) for row in cur.fetchall()]
+    return [dict(zip(cols, row)) for row in rows]
 
 
 def get_approved_enrichments(vyra_conn, source_id: int = None, company_id: int = None) -> list:
@@ -784,8 +928,12 @@ def get_approved_enrichments(vyra_conn, source_id: int = None, company_id: int =
     query += " ORDER BY te.table_name ASC"
 
     cur.execute(query, params)
+    # v3.43.0: RealDictCursor dict satır uyumu (bkz. get_pending_approvals notu)
+    rows = cur.fetchall()
+    if rows and hasattr(rows[0], 'keys'):
+        return [dict(row) for row in rows]
     cols = [desc[0] for desc in cur.description]
-    return [dict(zip(cols, row)) for row in cur.fetchall()]
+    return [dict(zip(cols, row)) for row in rows]
 
 
 def approve_enrichment(vyra_conn, enrichment_id: int, user_id: int,

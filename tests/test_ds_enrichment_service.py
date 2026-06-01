@@ -665,7 +665,9 @@ class TestEnrichTablesBatch:
         ]
 
         from app.services.ds_enrichment_service import enrich_tables_batch
-        result = enrich_tables_batch(mock_conn, 2, 1, tables)
+        # max_workers=1: sayım mantığı testi DB'siz/deterministik kalsın (concurrent yol
+        # worker başına get_db_conn açar; bu birim test mock conn ile sıralı yolu doğrular).
+        result = enrich_tables_batch(mock_conn, 2, 1, tables, max_workers=1)
 
         assert result["total"] == 3
         assert result["enriched"] == 2  # 2 yeni
@@ -691,7 +693,9 @@ class TestEnrichTablesBatch:
         ]
 
         from app.services.ds_enrichment_service import enrich_tables_batch
-        result = enrich_tables_batch(mock_conn, 2, 1, tables)
+        # max_workers=1: sayım mantığı testi DB'siz/deterministik kalsın (concurrent yol
+        # worker başına get_db_conn açar; bu birim test mock conn ile sıralı yolu doğrular).
+        result = enrich_tables_batch(mock_conn, 2, 1, tables, max_workers=1)
 
         assert result["total"] == 3
         assert result["enriched"] == 2
@@ -735,9 +739,10 @@ class TestConfidenceThreshold:
         assert score >= CONFIDENCE_THRESHOLD
 
 
-def test_get_all_tables_status(mock_get_db_conn):
+def test_get_all_tables_status():
+    # get_all_tables_status conn'u parametre olarak alır (get_db_conn kullanmaz),
+    # bu yüzden ayrı bir mock_get_db_conn fixture'ına gerek yok — conn doğrudan geçilir.
     conn_mock = MagicMock()
-    mock_get_db_conn.return_value = conn_mock
     cur_mock = MagicMock()
     conn_mock.cursor.return_value = cur_mock
     cur_mock.fetchall.return_value = [
