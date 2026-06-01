@@ -159,8 +159,33 @@ def _resolve_dialect(cur, source_id: int, override: Optional[str]) -> str:
 
 
 def _ensure_source_visible(cur, source_id: int) -> Dict[str, Any]:
-    """RLS scoped lookup — tenant'ın gerçekten kendi source'u mu?"""
-    cur.execute("SELECT id, name, db_type, company_id FROM data_sources WHERE id = %s", (source_id,))
+    """Tenant gate — tenant'ın gerçekten kendi source'u mu?
+
+    v3.47.0 (ARES): RLS'e GÜVENMEZ — canlı DB rolü superuser (rolbypassrls) olduğunda RLS policy'leri
+    OTOMATİK bypass olur, dolayısıyla yalnız RLS'e dayanan eski sürüm cross-tenant okumaya açıktı
+    (A firması B'nin source_id'siyle çağırırsa B'nin satırı dönerdi). Çözüm: SORGUNUN KENDİSİNE
+    açık company guard — `apply_company_scope` ZATEN set ettiği `app.current_company_id` GUC'sini
+    okur (set_config superuser'da da çalışır; bypass olan policy enforcement, GUC DEĞİL). GUC
+    NULL/boş ise (admin / scope-set edilmemiş) passthrough → admin tüm kaynakları görür; set ise
+    yalnız o company'nin kaynağı görünür → yabancı source 404. RLS/superuser'dan BAĞIMSIZ fail-closed.
+
+    NOT: Caller bu çağrıdan ÖNCE apply_company_scope(company_id) çağırmalı (mevcut tüm callsite'lar
+    çağırıyor). Çağırmazsa GUC NULL → passthrough (regresyon yok; o callsite eskisi gibi RLS'e düşer).
+    """
+    cur.execute(
+        """
+        SELECT id, name, db_type, company_id
+        FROM data_sources
+        WHERE id = %s
+          AND (
+            current_setting('app.current_company_id', true) IS NULL
+            OR current_setting('app.current_company_id', true) = ''
+            OR current_setting('app.bypass_rls', true) = 'on'
+            OR company_id::text = current_setting('app.current_company_id', true)
+          )
+        """,
+        (source_id,),
+    )
     row = cur.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Veri kaynağı bulunamadı")
