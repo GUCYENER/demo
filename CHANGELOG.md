@@ -1,5 +1,19 @@
 # VYRA Changelog
 
+## v3.44.0 (DEVAM EDEN) — FK Loop → Few-Shot Entegrasyonu — P0 Gürültü Temizliği (HEPHAESTUS + ORACLE + ARES)
+
+> Plan: `.agents/plans/2026-06-01_1830_fk_loop_fewshot_integration_v1.md`. FK Loop'un ürettiği
+> doğrulanmış sentetik sorguları LLM few-shot kütüphanesine terfi etme yolculuğunun 1. fazı.
+> **P0 (bu commit):** `fk_synthetic_generator._fetch_relationships` artık **sistem/extension şemaları**
+> (`_EXCLUDED_SCHEMAS` SSOT — pg_catalog/information_schema/partman/sys/mysql/...) + **düşük-confidence
+> (<0.85) admin-doğrulanmamış inferred FK** + **admin-reddedilen FK**'leri sentetik üretimden dışlar.
+> Kullanıcının gördüğü 2 hata + 16 boş deneme `pg_partman.part_config` (TEXT↔TEXT, gerçek FK değil)
+> anlamsız JOIN'lerindendi → giderildi. **Declared FK + admin_verified inferred KORUNUR** (over-filter
+> yok; public/dbo dışlanmaz). `/code-review`: sıfır bug (kolon varlığı mig 031, NULL/empty edge'leri,
+> caller default'ları temiz).
+> **Sıradaki:** P1 (few-shot terfi — `origin` kolonu + selector ağırlık/cap), P2 (tip-farkında çok-dialect
+> template motoru — AGGREGATE_STATS/EXISTS/TIME-BUCKETED + 4 dialect), P3 (ops).
+
 ## v3.43.4 — 2026-06-01 — Akıllı Keşif admin KÖK fix (admin company_id NULL) (HERMES + ARES + APOLLO)
 
 > **Kullanıcı:** Akıllı Keşif wizard'ı admin'de bozuk — `create_session` 400 ("company_id zorunlu"),

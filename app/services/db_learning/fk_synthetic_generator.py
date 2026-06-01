@@ -92,7 +92,36 @@ class GenerationSummary:
 # Helpers
 # ─────────────────────────────────────────────────────────────
 
-def _fetch_relationships(cur, source_id: int) -> List[Relationship]:
+# v3.44.0 (P0): Sistem/extension şemaları sentetik üretimden DIŞLA. Bunlar config/metadata
+# tabloları (örn. pg_partman.part_config — TEXT kolonlar tablo adı tutar, gerçek FK değil) →
+# anlamsız JOIN'ler render+execute edilip başarısız/boş denemeye ve gürültüye yol açıyordu.
+# Tümü LOWERCASE (karşılaştırma LOWER() ile). 4 dialect sistem şemaları + yaygın extension'lar.
+_EXCLUDED_SCHEMAS = sorted({
+    # PostgreSQL sistem + yaygın extension
+    "pg_catalog", "information_schema", "pg_toast", "pg_temp_1", "pg_toast_temp_1",
+    "partman", "pglogical", "cron", "repack", "pg_repack",
+    "_timescaledb_catalog", "_timescaledb_internal", "timescaledb_information",
+    "topology", "tiger", "tiger_data",
+    # Oracle sistem
+    "sys", "system", "sysaux", "outln", "dbsnmp", "appqossys", "ctxsys",
+    "xdb", "mdsys", "ordsys", "ordeleem", "wmsys", "audsys", "lbacsys",
+    "gsmadmin_internal", "dvsys", "olapsys", "exfsys",
+    # MSSQL
+    "guest", "db_owner", "db_accessadmin", "sys",
+    # MySQL
+    "mysql", "performance_schema", "sys",
+})
+
+# v3.44.0 (P0): inferred FK'ler bu confidence eşiğinin altındaysa sentetik üretime girmez
+# (declared FK'ler — is_inferred=FALSE — her zaman geçer). pg_partman naming-skoru ~0.80 → elenir.
+_MIN_INFERRED_CONFIDENCE = 0.85
+
+
+def _fetch_relationships(
+    cur, source_id: int,
+    excluded_schemas: Optional[List[str]] = None,
+    min_inferred_confidence: float = _MIN_INFERRED_CONFIDENCE,
+) -> List[Relationship]:
     """ds_db_relationships'tan FK satırlarını çek.
 
     v3.32.0 G1:
@@ -113,6 +142,7 @@ def _fetch_relationships(cur, source_id: int) -> List[Relationship]:
     """
     # Tek SELECT — gerçek DB'de tüm meta kolonları döner; mock cursor'da
     # sadece pattern match ile sağlanan kolonlar gelir. Defansif row okuma.
+    _excl = [s.lower() for s in (excluded_schemas if excluded_schemas is not None else _EXCLUDED_SCHEMAS)]
     cur.execute(
         """
         SELECT id, from_schema, from_table, from_column,
@@ -125,10 +155,17 @@ def _fetch_relationships(cur, source_id: int) -> List[Relationship]:
           AND to_table IS NOT NULL AND to_table <> ''
           AND from_column IS NOT NULL AND from_column <> ''
           AND to_column IS NOT NULL AND to_column <> ''
+          -- v3.44.0 (P0): sistem/extension şema dışla + düşük-confidence inferred FK ele +
+          -- admin-reddedilen FK'yi atla (anlamsız sentetik üretimi/gürültü önleme).
+          -- Admin DOĞRULADIYSA (admin_verified) düşük confidence olsa da TUTULUR (admin "gerçek" dedi).
+          AND LOWER(COALESCE(from_schema, '')) <> ALL(%s)
+          AND LOWER(COALESCE(to_schema, '')) <> ALL(%s)
+          AND (is_inferred = FALSE OR COALESCE(confidence_score, 1.0) >= %s OR admin_verified = TRUE)
+          AND rejected_at IS NULL
         ORDER BY source_id, COALESCE(constraint_name, ''),
                  COALESCE(fk_position, 1), id
         """,
-        (source_id,),
+        (source_id, _excl, _excl, float(min_inferred_confidence)),
     )
     rows = cur.fetchall() or []
 
