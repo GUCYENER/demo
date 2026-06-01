@@ -256,26 +256,48 @@ def get_synthetic_status(
 
 # v3.28.9 Paket C: Hata detayları endpoint'i — ds_synthetic_query_runs'taki
 # son başarısız denemeleri çek; UI bunu modal'da listeler.
+def _synth_has_error_kind(cur) -> bool:
+    """ds_synthetic_query_runs.error_kind (mig 052) var mı — graceful (yoksa eski davranış)."""
+    try:
+        cur.execute(
+            """
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'ds_synthetic_query_runs' AND column_name = 'error_kind' LIMIT 1
+            """
+        )
+        return cur.fetchone() is not None
+    except Exception:
+        return False
+
+
 @router.get("/{source_id}/synthetic-failures")
 def list_synthetic_failures(
     source_id: int,
     limit: int = Query(50, ge=1, le=200),
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """Son başarısız sentetik denemeleri listele (FK + template + hata mesajı)."""
+    """Son başarısız sentetik denemeleri listele (FK + template + sınıflı hata + dağılım/trend).
+
+    v3.46.0 P3: her satıra `error_kind` (permission/not_found/type_mismatch/syntax/timeout/infra/
+    unknown) + insan-okur etiket/aksiyon; ayrıca `stats` bloğu (toplam/başarı/başarısız + hata
+    sınıfı dağılımı) ops panelinin "neden başarısız" sorusunu sınıf bazında yanıtlar."""
+    from app.services.db_learning.synthetic_errors import ERROR_KIND_LABELS
+
     company_id = current_user.get("company_id")
     with get_db_context() as conn:
         cur = conn.cursor()
         try:
             apply_company_scope(cur, company_id=company_id)
             _ensure_source_visible(cur, source_id)
+            has_ek = _synth_has_error_kind(cur)
+            ek_sel = "error_kind" if has_ek else "NULL AS error_kind"
             cur.execute(
-                """
+                f"""
                 SELECT id, relationship_id,
                        from_schema, from_table, from_column,
                        to_schema, to_table, to_column,
                        template_kind, dialect,
-                       rendered_sql, error_message, elapsed_ms, executed_at
+                       rendered_sql, error_message, elapsed_ms, executed_at, {ek_sel}
                 FROM ds_synthetic_query_runs
                 WHERE source_id = %s
                   AND success = FALSE
@@ -291,6 +313,8 @@ def list_synthetic_failures(
                     if hasattr(r, "get"):
                         return r.get(k)
                     return r[idx] if idx < len(r) else None
+                _ek = _g("error_kind", 14)
+                _lbl = ERROR_KIND_LABELS.get(_ek) if _ek else None
                 items.append({
                     "id": _g("id", 0),
                     "relationship_id": _g("relationship_id", 1),
@@ -304,11 +328,60 @@ def list_synthetic_failures(
                     "error_message": _g("error_message", 11),
                     "elapsed_ms": _g("elapsed_ms", 12),
                     "executed_at": str(_g("executed_at", 13)) if _g("executed_at", 13) else None,
+                    "error_kind": _ek,
+                    "error_label": _lbl[0] if _lbl else None,
+                    "error_action": _lbl[1] if _lbl else None,
                 })
+
+            # Ops istatistiği: genel başarı + hata sınıfı dağılımı (tüm audit geçmişi)
+            cur.execute(
+                """
+                SELECT COUNT(*) AS total,
+                       COUNT(*) FILTER (WHERE success) AS ok,
+                       COUNT(*) FILTER (WHERE NOT success) AS failed
+                FROM ds_synthetic_query_runs WHERE source_id = %s
+                """,
+                (source_id,),
+            )
+            srow = cur.fetchone()
+            def _sg(k, idx):
+                if srow is None:
+                    return 0
+                return (srow.get(k) if hasattr(srow, "get") else srow[idx]) or 0
+            total = int(_sg("total", 0)); ok = int(_sg("ok", 1)); failed = int(_sg("failed", 2))
+
+            distribution = []
+            if has_ek:
+                cur.execute(
+                    """
+                    SELECT error_kind, COUNT(*) AS cnt
+                    FROM ds_synthetic_query_runs
+                    WHERE source_id = %s AND success = FALSE AND error_kind IS NOT NULL
+                    GROUP BY error_kind ORDER BY cnt DESC
+                    """,
+                    (source_id,),
+                )
+                for dr in (cur.fetchall() or []):
+                    ek = dr.get("error_kind") if hasattr(dr, "get") else dr[0]
+                    cnt = dr.get("cnt") if hasattr(dr, "get") else dr[1]
+                    lbl = ERROR_KIND_LABELS.get(ek)
+                    distribution.append({
+                        "error_kind": ek, "count": int(cnt or 0),
+                        "label": lbl[0] if lbl else ek, "action": lbl[1] if lbl else None,
+                    })
+
             return {
                 "success": True,
                 "items": items,
                 "count": len(items),
+                "stats": {
+                    "total_runs": total,
+                    "success": ok,
+                    "failed": failed,
+                    "success_rate": round(ok / total, 4) if total else None,
+                    "error_distribution": distribution,
+                    "classified": has_ek,
+                },
             }
         finally:
             cur.close()

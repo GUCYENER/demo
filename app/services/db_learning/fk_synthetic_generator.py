@@ -43,6 +43,7 @@ from app.services.db_learning.synthetic_dialect import (
     CAT_TEXT,
     classify_data_type,
 )
+from app.services.db_learning.synthetic_errors import classify_synthetic_error
 
 # v3.29.2 G3: tek-Relationship temelli ("per-FK") render edilebilen kinds.
 # Chain-only kinds (CHAIN_JOIN_*, CTE_LATEST_N_PER_GROUP, LATERAL_TOP_K,
@@ -237,6 +238,31 @@ def _safe_measure_name(name: str) -> bool:
     if not name or not isinstance(name, str) or len(name) > 128:
         return False
     return not _UNSAFE_MEASURE_CHARS.search(name)
+
+
+# v3.46.0 P3: ds_synthetic_query_runs.error_kind kolonu (mig 052) var mı — yalnız-pozitif cache
+# (mig süreç ayaktayken uygulanırsa bir sonraki çağrı yeniden sorgular; kalıcı-False kilidi yok).
+_HAS_ERROR_KIND_COL: Optional[bool] = None
+
+
+def _has_error_kind_col(cur) -> bool:
+    global _HAS_ERROR_KIND_COL
+    if _HAS_ERROR_KIND_COL:
+        return True
+    try:
+        cur.execute(
+            """
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'ds_synthetic_query_runs' AND column_name = 'error_kind'
+            LIMIT 1
+            """
+        )
+        if cur.fetchone():
+            _HAS_ERROR_KIND_COL = True
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def _pick_numeric_measure(cols: List[Dict[str, Any]], exclude_names: List[str]) -> Optional[str]:
@@ -628,22 +654,45 @@ def _audit_run(
     _tv = 2 if rq.template_kind in V2_KINDS else 1
     _cs = getattr(rq, "complexity_score", None) or COMPLEXITY_BY_KIND.get(rq.template_kind, 1)
     _jp = list(getattr(rq, "join_path", None) or rq.tables or [])
+
+    # v3.46.0 P3: hata sınıflandırma (error_kind) — YALNIZ gerçek başarısızlık için (success=False).
+    # 'empty_result_skipped_learn' bir başarı marker'ı (success=True) → sınıflanmaz, NULL kalır.
+    # Kolon mig 052 ile gelir; yoksa (cache False) INSERT'e EKLENMEZ (audit satırı yine yazılır,
+    # graceful). TEK statement → ayrı UPDATE'in savepoint-poison riski yok.
+    _ek = (classify_synthetic_error(error_message, rq.dialect)
+           if (error_message and not success) else None)
+    _use_ek = _has_error_kind_col(cur)
+    _ek_col = ", error_kind" if _use_ek else ""
+    _ek_val = ", %s" if _use_ek else ""
+    _ek_upd = ", error_kind = EXCLUDED.error_kind" if _use_ek else ""
+
+    _params: List[Any] = [
+        source_id, company_id, rel.id,
+        rel.from_schema, rel.from_table, rel.from_column,
+        rel.to_schema, rel.to_table, rel.to_column,
+        rq.template_kind, rq.dialect, rq.sql, sql_hash(rq.sql),
+        success, row_count, elapsed_ms, error_message, learned_query_id,
+        _tv, _cs, _jp,
+    ]
+    if _use_ek:
+        _params.append(_ek)
+
     try:
         cur.execute(
-            """
+            f"""
             INSERT INTO ds_synthetic_query_runs
                 (source_id, company_id, relationship_id,
                  from_schema, from_table, from_column,
                  to_schema, to_table, to_column,
                  template_kind, dialect, rendered_sql, sql_hash,
                  success, row_count, elapsed_ms, error_message, learned_query_id,
-                 template_version, complexity_score, join_path)
+                 template_version, complexity_score, join_path{_ek_col})
             VALUES (%s, %s, %s,
                     %s, %s, %s,
                     %s, %s, %s,
                     %s, %s, %s, %s,
                     %s, %s, %s, %s, %s,
-                    %s, %s, %s)
+                    %s, %s, %s{_ek_val})
             ON CONFLICT (source_id, relationship_id, template_kind)
               DO UPDATE SET
                 rendered_sql = EXCLUDED.rendered_sql,
@@ -657,16 +706,9 @@ def _audit_run(
                 learned_query_id = COALESCE(EXCLUDED.learned_query_id, ds_synthetic_query_runs.learned_query_id),
                 template_version = EXCLUDED.template_version,
                 complexity_score = EXCLUDED.complexity_score,
-                join_path = EXCLUDED.join_path
+                join_path = EXCLUDED.join_path{_ek_upd}
             """,
-            (
-                source_id, company_id, rel.id,
-                rel.from_schema, rel.from_table, rel.from_column,
-                rel.to_schema, rel.to_table, rel.to_column,
-                rq.template_kind, rq.dialect, rq.sql, sql_hash(rq.sql),
-                success, row_count, elapsed_ms, error_message, learned_query_id,
-                _tv, _cs, _jp,
-            ),
+            tuple(_params),
         )
     except Exception as e:
         logger.warning("[fk_gen.audit] %s", e)

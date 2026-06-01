@@ -89,8 +89,22 @@ fonksiyon istiyor.
 recursive CTE) + TIME-BUCKETED (date_trunc+FK gruplama) + mevcut chain G3 (CHAIN_JOIN/LATERAL) base loop'a.
 
 ### P3 — Ops (Konsey: NIKE + TYCHE)
-- Hata sınıflandırma + metrik (cache-hit oranı, few-shot kullanım, sentetik başarı trendi).
-- Keşif/drift sonrası otomatik FK Loop tetik (schedule); job tracker Redis (multi-worker).
+
+**P3a — ✅ TAMAM (v3.46.0): Hata sınıflandırma + metrik**
+- ✅ `synthetic_errors.classify_synthetic_error` (4-dialect ham hata → permission/not_found/type_mismatch/
+  syntax/timeout/infra/empty/unknown) + ERROR_KIND_LABELS (etiket+aksiyon).
+- ✅ mig 052 `ds_synthetic_query_runs.error_kind` + kısmi index.
+- ✅ `_audit_run` error_kind'i INSERT'e ekler (success=False, graceful, tek-statement poison-safe).
+- ✅ `/synthetic-failures` → error_kind/label/action + stats (success_rate + error_distribution).
+- ✅ Frontend: renk-kodlu hata-sınıfı rozeti + dağılım özeti (bundle rebuild).
+- ✅ code-review: follow-up UPDATE→INSERT (poison fix), empty/success çelişki, bare relation/deadlock
+  yanlış-sınıflama, frontend görünürlük. 23 vaka + graceful yeşil.
+
+**P3b — ertelendi (altyapı-bağımlı, ayrı karar):**
+- Multi-worker job tracker Redis'e (şu an in-memory `_jobs` dict, db_learning_api.py:36 — Redis henüz
+  deploy değil; taşımak altyapı kararı).
+- Keşif/drift sonrası periyodik/otomatik FK Loop tetik (cron/APScheduler — proje genelinde scheduler yok).
+- few-shot kullanım metriği (usage_count/last_used_at trend) + cache-hit oranı dashboard genişletme.
 
 ## Critical Files
 - `app/services/db_learning/fk_synthetic_generator.py` (_fetch_relationships, generate_for_source, terfi)

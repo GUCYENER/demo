@@ -1,5 +1,37 @@
 # VYRA Changelog
 
+## v3.46.0 (DEVAM EDEN) — FK Loop P3a: Sentetik Hata Sınıflandırma + Ops Metrik (NIKE + TYCHE + ARES)
+
+> Plan: `.agents/plans/2026-06-01_1830_fk_loop_fewshot_integration_v1.md` (P3 ops). FK Loop'un başarısız
+> sentetik denemeleri şu ana dek ham (4-dialect karışık ORA-/MSSQL/MySQL/PG mesajları) saklanıyordu →
+> ops "neden başarısız" sorusunu SINIF bazında yanıtlayamıyordu.
+>
+> - **Yeni `synthetic_errors.py`:** `classify_synthetic_error(msg, dialect)` → kanonik kategori:
+>   `permission` (yetki) / `not_found` (tablo-kolon yok, drift) / `type_mismatch` (FK şüpheli) / `syntax`
+>   (dialect/template bug) / `timeout` (perf) / `infra` (DB erişilemez) / `empty` / `unknown`. Saf fonksiyon
+>   (substring, 4-dialect kodları); öncelik infra>timeout>permission>type_mismatch>not_found>syntax (PG
+>   "operator does not exist" tip hatası generic "does not exist"e düşmesin). + `ERROR_KIND_LABELS`
+>   (TR etiket + önerilen aksiyon).
+> - **mig 052:** `ds_synthetic_query_runs.error_kind VARCHAR(24)` + kısmi index (idempotent).
+> - **`_audit_run`:** error_kind'i INSERT'e ekler (conditional, mig 052 yoksa atlar — graceful), **yalnız
+>   gerçek başarısızlık** (success=False; 'empty_result_skipped_learn' bir başarı marker'ı, NULL kalır).
+>   Tek statement → ayrı UPDATE'in savepoint-poison riski yok.
+> - **`/synthetic-failures` endpoint:** her satıra `error_kind`/`error_label`/`error_action` + `stats`
+>   bloğu (total/success/failed/success_rate + `error_distribution` sınıf×sayı, etiket+aksiyon).
+> - **Frontend** (`ds_learning_module.js` + bundle): failures panelinde renk-kodlu hata-sınıfı rozeti
+>   (yetki/yok=amber, tip/syntax=kırmızı, timeout/infra=mavi/gri) + üstte "Hata dağılımı" özeti
+>   (sınıf bazında kaç kez + başarı oranı).
+>
+> **`/code-review medium` (3 finder × verify) düzeltmeleri:** (1) **savepoint poison** — error_kind ayrı
+> follow-up UPDATE idi (per-FK savepoint içinde, hata→RELEASE poison) → INSERT'e taşındı (tek statement);
+> (2) 'empty' success satırına error_kind yazılıyordu ama distribution success=FALSE filtreliyor (ölü
+> bucket) → yalnız failure'da yaz; (3) bare "relation" (not_found, çok geniş) + "deadlock" (timeout,
+> concurrency≠perf) yanlış-sınıflama → kaldırıldı; (4) sınıflandırma frontend'de görünmüyordu → rozet+
+> dağılım eklendi. 23 sınıflandırma vakası + graceful kolon kontrolü yeşil.
+>
+> **P3b ertelendi (altyapı-bağımlı):** Redis job tracker (multi-worker — Redis henüz deploy değil) + cron
+> oto-tetik (APScheduler yok). Bunlar ayrı altyapı kararı gerektirir.
+
 ## v3.45.0 (DEVAM EDEN) — FK Loop P2a+P2b: Tip-Farkında + 4-Dialect Template Motoru (ORACLE + POSEIDON + METIS)
 
 > **P2b (en güncel) — atıl PG-only template'leri kurtar + 4-dialect:** STRING_AGG/WINDOW/TIME_SERIES

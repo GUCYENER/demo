@@ -30154,21 +30154,48 @@ window.DSLearningModule = (function () {
         try {
             const res = await apiCall(`/${sourceId}/synthetic-failures?limit=50`);
             const items = (res && res.items) || [];
+            const stats = (res && res.stats) || null;
             if (!items.length) {
                 box.innerHTML = '<div class="ds-dbloop-empty">Hatalı deneme yok.</div>';
                 return;
             }
+            // v3.46.0 P3 — hata sınıfı rozet renkleri (ops "neden başarısız" görünürlüğü)
+            const _errKindStyle = (kind) => {
+                const map = {
+                    permission: ['#fef3c7', '#92400e'], not_found: ['#fef3c7', '#92400e'],
+                    type_mismatch: ['#fee2e2', '#991b1b'], syntax: ['#fee2e2', '#991b1b'],
+                    timeout: ['#dbeafe', '#1e40af'], infra: ['#e5e7eb', '#374151'],
+                    unknown: ['#e5e7eb', '#374151'],
+                };
+                const c = map[kind] || map.unknown;
+                return `background:${c[0]};color:${c[1]};padding:1px 7px;border-radius:9px;font-size:11px;font-weight:600;`;
+            };
+            // v3.46.0 P3 — hata dağılımı özeti (sınıf bazında: hangi sebep kaç kez)
+            let distHtml = '';
+            if (stats && Array.isArray(stats.error_distribution) && stats.error_distribution.length) {
+                const pills = stats.error_distribution.map(d =>
+                    `<span style="${_errKindStyle(d.error_kind)}" title="${_escapeHtml(d.action || '')}">${_escapeHtml(d.label || d.error_kind)} (${d.count})</span>`
+                ).join(' ');
+                const sr = (stats.success_rate != null) ? ` · Başarı: %${Math.round(stats.success_rate * 100)}` : '';
+                distHtml = `<div class="ds-dbloop-faildist" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px;font-size:12px;">
+                    <strong>Hata dağılımı:</strong> ${pills}<span style="color:#6b7280;">${_escapeHtml(`(${stats.failed}/${stats.total_runs} başarısız${sr})`)}</span>
+                </div>`;
+            }
             // v3.32.0 G2.3 — accessible failure rows: ellipsis msg + tooltip + icon-only expand/copy buttons
-            box.innerHTML = items.map((it, idx) => {
+            box.innerHTML = distHtml + items.map((it, idx) => {
                 const sqlId = `dsDbLoopFailSql_${idx}`;
                 const rawMsg = it.error_message || 'bilinmeyen hata';
                 const fromRel = `${it.from_table || ''}.${it.from_column || ''}`;
                 const toRel = `${it.to_table || ''}.${it.to_column || ''}`;
                 const renderedSql = it.rendered_sql || '';
+                const errBadge = it.error_kind
+                    ? `<span class="fail-errkind" style="${_errKindStyle(it.error_kind)}" title="${_escapeHtml(it.error_action || '')}">${_escapeHtml(it.error_label || it.error_kind)}</span>`
+                    : '';
                 return `
                 <div class="ds-dbloop-failrow-v2" data-idx="${idx}">
                     <div class="fail-head">
                         <span class="fail-kind">${_escapeHtml(it.template_kind || '?')}</span>
+                        ${errBadge}
                         <span class="fail-rel">${_escapeHtml(fromRel)}</span>
                         <span class="fail-arrow" aria-hidden="true">→</span>
                         <span class="fail-rel">${_escapeHtml(toRel)}</span>
