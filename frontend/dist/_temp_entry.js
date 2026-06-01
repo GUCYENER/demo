@@ -37925,6 +37925,11 @@ window.ThemePickerPopup = (function () {
 
     async function _ensureSession() {
         if (_state.sessionUid) return _state.sessionUid;
+        // v3.47.1: Kaynak SEÇİLMEDEN session AÇMA. Admin'in company_id'si NULL (tasarımca);
+        // backend admin için company'yi KAYNAKTAN çözer (resolve_effective_company_id). Kaynaksız
+        // create_session admin'de "user_id ve company_id zorunlu" 400 verir (v3.43.4 backend fix
+        // kaynaksız çağrıda devreye giremiyordu). Session, kaynak seçilince (aşağıda) açılır.
+        if (!_state.sourceId) return null;
         try {
             const data = await _fetchJson(API_BASE + '/sessions', {
                 method: 'POST',
@@ -37998,6 +38003,7 @@ window.ThemePickerPopup = (function () {
             return;
         }
         _state.sourceId = parseInt(sourceId, 10);
+        _ensureSession();  // v3.47.1: kaynak seçildi → session'ı KAYNAKLA aç (admin company çözülür)
         // v3.34.0 — Step 1 sadeleştirildi: dswSearchQ input artık DOM'da yok.
         // Picker kendi içinde arama yapıyor; initialQuery boş geçilir.
         const initialQ = '';
@@ -38163,6 +38169,7 @@ window.ThemePickerPopup = (function () {
             return;
         }
         _state.sourceId = parseInt(sourceId, 10);
+        _ensureSession();  // v3.47.1: kaynak seçildi → session'ı KAYNAKLA aç (admin company çözülür)
         _setBusy(results, true);
         results.innerHTML = '<div class="dsw-hint" role="status">' + _escape(_t('wizard.hint.searching')) + '</div>';
         try {
