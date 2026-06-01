@@ -1,5 +1,23 @@
 # VYRA Changelog
 
+## v3.43.2 — 2026-06-01 — Keşif/Yetkilendirme UX: 4 bulgu/istek (ATHENA + HEBE + HEPHAESTUS)
+
+> Kullanıcı raporu — kaynak DB keşfi sonrası yetkilendirme + etiketleme ekranı tutarsızlıkları.
+
+- **🗄️ Yetkilendirme keşfedilmiş VIEW'ı göstermiyordu:** `get_source_schema_tree`
+  (`data_sources_api.py`) `object_type = 'table'` ONLY sorguluyordu; Etiketleme paneli
+  (`get_all_tables_status`) ise `IN ('table','view')` → elysion'da **245 table vs 388 (table+view)**,
+  143 view Yetkilendirme'de yoktu ("kaynakta keşfedilen tablo aratınca gelmiyor"). Fix:
+  `object_type IN ('table','view')`. Liste zaten yalnız `ds_db_objects` (keşfedilmiş) → "yalnız
+  keşfedilmiş listelensin" isteği de karşılandı (artık tam küme).
+- **🌐 Etiketleme "Onaylıları Göster" keşif-bekleyenleri sızdırıyordu:** `_filterLowScore`
+  kapalıyken keşif-bekleyen (`enrichment_id` NULL) tablolar gizlenmiyordu. Yeni `discoveryMatch`:
+  enrichment_id NULL satırlar yalnız "Düşük Skor / İsimsizleri Göster" açıkken veya "Keşif
+  Bekleyenler"/"Devam Edenler" sekmesinde görünür; "Onaylıları Göster"de artık gelmez.
+- **💎 Yetkilendirme "Seçili tablolar" — global kontroller:** "Tümünü Temizle" (tüm seçili tabloları
+  temizle) + "Seçilenleri Göster" (yalnız seçili tabloları listele) eklendi. HEBE polish: aria-label,
+  data-tooltip, `:focus-visible` outline, marka CSS değişkenleri, disabled state.
+
 ## v3.43.1 — 2026-06-01 — Hotfix: Admin kullanıcı db-smart 500 (NULL company_id)
 
 > **Canlı kök fix (ARES + APOLLO).** Admin kullanıcılar `/api/db-smart/sources`, `/saved-reports`,

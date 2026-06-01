@@ -744,6 +744,46 @@
     margin-bottom: 8px;
 }
 
+/* v3.43.2: Yetkilendirme "Seçilenleri Göster" + "Tümünü Temizle" kontrol barı */
+.ds-scope-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+}
+.ds-scope-only-selected {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-2, #cbd5e1);
+    cursor: pointer;
+    user-select: none;
+}
+.ds-scope-only-selected input { cursor: pointer; accent-color: var(--blue, #3b82f6); }
+.ds-scope-clear-all {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+    border-radius: 6px;
+    background: var(--bg-2, rgba(255, 255, 255, 0.04));
+    color: var(--text-2, #cbd5e1);
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.ds-scope-clear-all:hover:not([disabled]) {
+    background: var(--bg-3, rgba(255, 255, 255, 0.08));
+    color: var(--text-1, #f1f5f9);
+    border-color: var(--blue, #3b82f6);
+}
+.ds-scope-clear-all[disabled] { opacity: 0.45; cursor: not-allowed; }
+.ds-scope-clear-all:focus-visible { outline: 2px solid var(--accent, var(--blue, #3b82f6)); outline-offset: 1px; }
+
 /* Arama temizle (X) — hem üst (ds-perm-search) hem scope arama kutusu */
 .ds-search-clear {
     position: absolute;

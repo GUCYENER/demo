@@ -560,10 +560,14 @@ def get_source_schema_tree(
             if not cur.fetchone():
                 raise HTTPException(status_code=404, detail="Veri kaynağı bulunamadı.")
 
+            # v3.43.2: object_type IN ('table','view') — eskiden yalnız 'table' idi,
+            # keşfedilmiş VIEW'lar Yetkilendirme listesinde GÖRÜNMÜYORDU (Etiketleme paneli
+            # get_all_tables_status ile tutarsız: orada table+view sayılıyor). Kullanıcı:
+            # "kaynakta keşfedilen tablo yetkilendirme ekranında aratınca gelmiyor".
             cur.execute("""
                 SELECT schema_name, object_name
                 FROM ds_db_objects
-                WHERE source_id = %s AND object_type = 'table'
+                WHERE source_id = %s AND object_type IN ('table', 'view')
                 ORDER BY schema_name NULLS FIRST, object_name
             """, (source_id,))
             rows = cur.fetchall()

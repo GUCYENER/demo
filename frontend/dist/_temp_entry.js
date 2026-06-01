@@ -27766,18 +27766,21 @@ window.DataSourcesModule = (function () {
 
         const q = (permState.scopeSearch[sk] || '').toLowerCase();
         const selected = sc.tables;
+        // v3.43.2: "Seçilenleri Göster" — yalnız seçili tabloları listele.
+        const onlySel = !!(permState.scopeOnlySelected && permState.scopeOnlySelected[sk]);
         const accParts = [];
         let visibleCount = 0;
 
         tree.schemas.forEach((schObj, idx) => {
             const schema = schObj.schema || '';
             const allTables = Array.isArray(schObj.tables) ? schObj.tables : [];
-            const tables = q ? allTables.filter(t => (t || '').toLowerCase().includes(q)) : allTables;
+            let tables = q ? allTables.filter(t => (t || '').toLowerCase().includes(q)) : allTables;
+            if (onlySel) tables = tables.filter(t => selected.has(_tblKey(schema, t)));
             if (!tables.length) return;
             visibleCount += tables.length;
 
             const accKey = sk + '|' + schema;
-            const isOpen = permState.accordionOpen.has(accKey) || !!q;
+            const isOpen = permState.accordionOpen.has(accKey) || !!q || onlySel;
             const panelId = `dsScopeAcc_${subjType}_${subjectId}_${idx}`;
             const headerId = `dsScopeAccHdr_${subjType}_${subjectId}_${idx}`;
             const schemaLabel = schema === '' ? '(varsayılan şema)' : _escapeHtml(schema);
@@ -27831,14 +27834,32 @@ window.DataSourcesModule = (function () {
             </div>
         `;
 
-        const body = accParts.length
-            ? accParts.join('')
+        // v3.43.2: global "Tümünü Temizle" + "Seçilenleri Göster" kontrolleri (HEBE)
+        const selectedTotal = (selected instanceof Set) ? selected.size : 0;
+        const controlsBar = `
+            <div class="ds-scope-controls">
+                <label class="ds-scope-only-selected" data-tooltip="Yalnız seçili tabloları göster">
+                    <input type="checkbox" class="ds-scope-only-selected-chk" data-sk="${sk}" ${onlySel ? 'checked' : ''}>
+                    <span>Seçilenleri Göster (${selectedTotal})</span>
+                </label>
+                <button type="button" class="ds-scope-clear-all" data-sk="${sk}"
+                    aria-label="Tüm seçili tabloları temizle" data-tooltip="Tüm seçimleri temizle"
+                    ${selectedTotal ? '' : 'disabled'}>
+                    <i class="fa-solid fa-broom" aria-hidden="true"></i> Tümünü Temizle
+                </button>
+            </div>
+        `;
+
+        const emptyMsg = onlySel
+            ? `<div class="ds-scope-empty"><i class="fa-solid fa-folder-open" aria-hidden="true"></i> Seçili tablo yok</div>`
             : `<div class="ds-scope-empty"><i class="fa-solid fa-folder-open" aria-hidden="true"></i> Eşleşen tablo yok</div>`;
+        const body = accParts.length ? accParts.join('') : emptyMsg;
 
         return `
             <div class="ds-perm-scope" data-sk="${sk}">
                 ${toggle}
                 ${searchBox}
+                ${controlsBar}
                 <div class="ds-scope-tree">${body}</div>
             </div>
         `;
@@ -27962,6 +27983,33 @@ window.DataSourcesModule = (function () {
                     again.focus();
                     try { again.setSelectionRange(caret, caret); } catch (_) {}
                 }
+            });
+        });
+
+        // v3.43.2: "Seçilenleri Göster" toggle — yalnız seçili tabloları listele
+        container.querySelectorAll('.ds-scope-only-selected-chk').forEach(cb => {
+            cb.addEventListener('change', (e) => {
+                const sk = e.target.dataset.sk;
+                if (!sk) return;
+                if (!permState.scopeOnlySelected) permState.scopeOnlySelected = {};
+                permState.scopeOnlySelected[sk] = !!e.target.checked;
+                _renderPermissionList();
+            });
+        });
+
+        // v3.43.2: "Tümünü Temizle" — bu subject'in TÜM seçili tablolarını temizle (mode restricted kalır)
+        container.querySelectorAll('.ds-scope-clear-all').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const sk = btn.dataset.sk;
+                if (!sk) return;
+                const cur = permState.scopeBySubject[sk] || { mode: 'restricted', tables: new Set() };
+                if (!(cur.tables instanceof Set)) cur.tables = new Set();
+                cur.tables.clear();
+                cur.mode = 'restricted';
+                permState.scopeBySubject[sk] = cur;
+                // seçim kalmadı → "Seçilenleri Göster" açıksa kapat (boş liste göstermesin)
+                if (permState.scopeOnlySelected) permState.scopeOnlySelected[sk] = false;
+                _renderPermissionList();
             });
         });
     }
@@ -31016,12 +31064,24 @@ const DSEnrichmentModule = (() => {
                 approvalMatch = false;
             }
 
+            // v3.43.2: Keşif bekleyen (enrichment_id NULL) tablolar YALNIZ "Onaylıları Göster"
+            // açıkken gizlenir (kullanıcı şikayeti: "Onaylıları Göster seçiliyken keşif bekleyenler
+            // de geliyor"). VARSAYILAN görünümde GÖRÜNÜR kalır — yoksa "Tümünü/Seçilenleri Keşfet"
+            // (_filteredData scope'unda çalışır) hiç tablo bulamaz, keşif iş akışı kırılırdı
+            // (v3.43.2 code-review #1/#3 regresyonu). "Düşük Skor/İsimsizleri Göster" veya
+            // Keşif/Devam sekmeleri de undiscovered'ı gösterir.
+            let discoveryMatch = true;
+            if (_showApproved && !item.enrichment_id && !_filterLowScore
+                && _statusFilter !== 'pending_disc' && _statusFilter !== 'discovering') {
+                discoveryMatch = false;
+            }
+
             let schemaMatch = true;
             if (_filterSchema) {
                 schemaMatch = (item.schema_name || '').toLowerCase() === _filterSchema.toLowerCase();
             }
 
-            return textMatch && scoreMatch && approvalMatch && schemaMatch;
+            return textMatch && scoreMatch && approvalMatch && discoveryMatch && schemaMatch;
         });
 
         // v3.30.1: Status filter (3-yönlü: Keşif Bekliyor / Devam Ediyor / Onay Bekliyor)

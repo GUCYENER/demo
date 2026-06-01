@@ -481,12 +481,24 @@ const DSEnrichmentModule = (() => {
                 approvalMatch = false;
             }
 
+            // v3.43.2: Keşif bekleyen (enrichment_id NULL) tablolar YALNIZ "Onaylıları Göster"
+            // açıkken gizlenir (kullanıcı şikayeti: "Onaylıları Göster seçiliyken keşif bekleyenler
+            // de geliyor"). VARSAYILAN görünümde GÖRÜNÜR kalır — yoksa "Tümünü/Seçilenleri Keşfet"
+            // (_filteredData scope'unda çalışır) hiç tablo bulamaz, keşif iş akışı kırılırdı
+            // (v3.43.2 code-review #1/#3 regresyonu). "Düşük Skor/İsimsizleri Göster" veya
+            // Keşif/Devam sekmeleri de undiscovered'ı gösterir.
+            let discoveryMatch = true;
+            if (_showApproved && !item.enrichment_id && !_filterLowScore
+                && _statusFilter !== 'pending_disc' && _statusFilter !== 'discovering') {
+                discoveryMatch = false;
+            }
+
             let schemaMatch = true;
             if (_filterSchema) {
                 schemaMatch = (item.schema_name || '').toLowerCase() === _filterSchema.toLowerCase();
             }
 
-            return textMatch && scoreMatch && approvalMatch && schemaMatch;
+            return textMatch && scoreMatch && approvalMatch && discoveryMatch && schemaMatch;
         });
 
         // v3.30.1: Status filter (3-yönlü: Keşif Bekliyor / Devam Ediyor / Onay Bekliyor)
