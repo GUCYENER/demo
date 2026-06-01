@@ -16,6 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence
 
+from app.services.db_learning.synthetic_dialect import string_agg
+
 TEMPLATE_KINDS = (
     # G1
     "LOOKUP_JOIN",
@@ -23,6 +25,7 @@ TEMPLATE_KINDS = (
     # G6 (v3.45.0 P2) — tip-farkında, 4-dialect per-FK
     "AGGREGATE_STATS",
     "EXISTS_ANTI_JOIN",
+    "DISTINCT_COUNT",
     # G3 — multi-table
     "CHAIN_JOIN_3HOP",
     "CHAIN_JOIN_NHOP",
@@ -40,6 +43,7 @@ COMPLEXITY_BY_KIND: Dict[str, int] = {
     "AGGREGATE_COUNT": 2,
     "AGGREGATE_STATS": 3,
     "EXISTS_ANTI_JOIN": 3,
+    "DISTINCT_COUNT": 3,
     "CHAIN_JOIN_3HOP": 3,
     "CHAIN_JOIN_NHOP": 4,
     "CTE_LATEST_N_PER_GROUP": 4,
@@ -462,6 +466,71 @@ def render_exists_anti_join(
     )
 
 
+def render_distinct_count(
+    rel: Relationship,
+    distinct_column: str,
+    dialect: str = "postgresql",
+    limit: int = DEFAULT_LIMIT,
+) -> RenderedQuery:
+    """Her parent için child'ın bir kolonundaki FARKLI değer sayısı ("her müşterinin kaç
+    farklı ürün/durum değeri var"). `distinct_column` child (rel.from) tablosunda kategorik
+    (text) bir kolon — generator tip-keşfiyle seçer. INNER JOIN + COUNT(DISTINCT), 4-dialect.
+    """
+    d = dialect.lower()
+    from_q = _qualify(rel.from_schema, rel.from_table, d)   # child (N)
+    to_q = _qualify(rel.to_schema, rel.to_table, d)         # parent (1)
+    sel_prefix = _select_prefix(d, limit)
+    limit_suffix = _limit_clause(d, limit)
+
+    pairs = _fk_column_pairs(rel)
+    if not pairs:
+        pairs = [(rel.from_column, rel.to_column)]
+
+    sel_parts: List[str] = []
+    on_parts: List[str] = []
+    group_parts: List[str] = []
+    columns_meta: List[Dict[str, str]] = []
+    for i, (fc, tc) in enumerate(pairs, start=1):
+        fcq = _quote_identifier(fc, d)
+        tcq = _quote_identifier(tc, d)
+        role = f"ref_key{i}" if len(pairs) > 1 else "ref_key"
+        sel_parts.append(f"b.{tcq} AS {role}")
+        on_parts.append(f"a.{fcq} = b.{tcq}")
+        group_parts.append(f"b.{tcq}")
+        columns_meta.append({"name": tc, "table": rel.to_table, "role": role})
+
+    dcq = _quote_identifier(distinct_column, d)
+    columns_meta.append({"name": distinct_column, "table": rel.from_table, "role": "distinct_target"})
+    select_clause = ", ".join(sel_parts) + f", COUNT(DISTINCT a.{dcq}) AS farkli_adet"
+
+    sql = (
+        f"{sel_prefix} {select_clause} "
+        f"FROM {to_q} b JOIN {from_q} a ON {' AND '.join(on_parts)} "
+        f"GROUP BY {', '.join(group_parts)} ORDER BY farkli_adet DESC"
+    )
+    if limit_suffix:
+        sql += f" {limit_suffix}"
+
+    if rel.is_self_ref:
+        question_tr = f"Her {rel.from_table} parent'ı için alt kayıtların farklı {distinct_column} değeri sayısı"
+    else:
+        question_tr = f"Her {rel.to_table} için kaç farklı {rel.from_table}.{distinct_column} değeri var?"
+
+    full_from = _full_name(rel.from_schema, rel.from_table)
+    full_to = _full_name(rel.to_schema, rel.to_table)
+    return RenderedQuery(
+        template_kind="DISTINCT_COUNT",
+        dialect=d,
+        sql=sql,
+        question_tr=question_tr,
+        schema_signature=",".join(sorted({full_from.lower(), full_to.lower()})),
+        tables=[full_from, full_to],
+        columns_meta=columns_meta,
+        complexity_score=COMPLEXITY_BY_KIND["DISTINCT_COUNT"],
+        join_path=[full_to, full_from],
+    )
+
+
 # ─────────────────────────────────────────────────────────────
 # G3 Helpers — Chain join utilities
 # ─────────────────────────────────────────────────────────────
@@ -640,37 +709,69 @@ def render_lateral_top_k(
 
 
 def render_string_agg_details(
-    parent: Relationship,
-    detail_label_column: str = "step_label",
-    detail_order_column: str = "acted_at",
+    rel: Relationship,
+    label_column: str,
+    order_column: Optional[str] = None,
     dialect: str = "postgresql",
     limit: int = DEFAULT_LIMIT,
 ) -> RenderedQuery:
-    """STRING_AGG ile parent satırının tüm detaylarını tek hücrede birleştir."""
-    d = "postgresql"
-    parent_q = _qualify(parent.from_schema, parent.from_table, d)
-    parent_pk = _quote_identifier(parent.from_column, d)
-    detail_q = _qualify(parent.to_schema, parent.to_table, d)
-    detail_fk = _quote_identifier(parent.to_column, d)
-    label_q = _quote_identifier(detail_label_column, d)
-    order_q = _quote_identifier(detail_order_column, d)
+    """Her PARENT için child detay etiketlerini tek hücrede birleştir (ordered).
+
+    v3.45.0 P2b — ORYANTASYON FIX: FK satırı from=child/to=parent gelir. Eski sürüm from'u
+    "parent" sanıp her child'a tek parent etiketini N kez birleştiriyordu (anlamsız). Doğrusu:
+    parent=rel.to (1-tarafı, GROUP key), detail=rel.from (N-tarafı). `label_column` (+opsiyonel
+    `order_column`) CHILD tablosunda — generator tip-keşfiyle seçer (text + temporal). 4-dialect
+    STRING_AGG/LISTAGG/GROUP_CONCAT (`synthetic_dialect.string_agg`).
+    """
+    d = dialect.lower()
+    parent_q = _qualify(rel.to_schema, rel.to_table, d)     # 1-tarafı (group)
+    child_q = _qualify(rel.from_schema, rel.from_table, d)  # N-tarafı (detay)
+    sel_prefix = _select_prefix(d, limit)
+    limit_suffix = _limit_clause(d, limit)
+
+    pairs = _fk_column_pairs(rel)
+    if not pairs:
+        pairs = [(rel.from_column, rel.to_column)]
+
+    sel_parts: List[str] = []
+    on_parts: List[str] = []
+    group_parts: List[str] = []
+    columns_meta: List[Dict[str, str]] = []
+    for i, (fc, tc) in enumerate(pairs, start=1):
+        fcq = _quote_identifier(fc, d)
+        tcq = _quote_identifier(tc, d)
+        role = f"ref_key{i}" if len(pairs) > 1 else "ref_key"
+        sel_parts.append(f"b.{tcq} AS {role}")
+        on_parts.append(f"a.{fcq} = b.{tcq}")
+        group_parts.append(f"b.{tcq}")
+        columns_meta.append({"name": tc, "table": rel.to_table, "role": role})
+
+    lblq = _quote_identifier(label_column, d)
+    order_expr = f"a.{_quote_identifier(order_column, d)}" if order_column else f"a.{lblq}"
+    agg = string_agg(f"a.{lblq}", order_expr, d)
+    columns_meta.append({"name": label_column, "table": rel.from_table, "role": "label"})
+
+    select_clause = ", ".join(sel_parts) + f", {agg} AS detay"
+    # ORDER BY group key → TOP/LIMIT/FETCH ile deterministik parent subset (diğer agregat
+    # template'lerle tutarlı; re-run idempotent öğrenme/önizleme).
     sql = (
-        f"SELECT p.*, STRING_AGG(d.{label_q}, ' → ' ORDER BY d.{order_q}) AS detail_chain\n"
-        f"FROM {parent_q} p\n"
-        f"LEFT JOIN {detail_q} d ON d.{detail_fk} = p.{parent_pk}\n"
-        f"GROUP BY p.{parent_pk}\n"
-        f"ORDER BY p.{parent_pk} DESC LIMIT {int(limit)}"
+        f"{sel_prefix} {select_clause} "
+        f"FROM {parent_q} b JOIN {child_q} a ON {' AND '.join(on_parts)} "
+        f"GROUP BY {', '.join(group_parts)} ORDER BY {', '.join(group_parts)}"
     )
-    full_parent = _full_name(parent.from_schema, parent.from_table)
-    full_detail = _full_name(parent.to_schema, parent.to_table)
+    if limit_suffix:
+        sql += f" {limit_suffix}"
+
+    full_parent = _full_name(rel.to_schema, rel.to_table)
+    full_detail = _full_name(rel.from_schema, rel.from_table)
     return RenderedQuery(
         template_kind="STRING_AGG_DETAILS",
         dialect=d,
         sql=sql,
-        question_tr=f"Her {parent.from_table} için detayları (sıra ile) tek metinde birleştir",
+        question_tr=f"Her {rel.to_table} için ilgili {rel.from_table} detaylarını ({label_column}) tek metinde birleştir",
         schema_signature=",".join(sorted({full_parent.lower(), full_detail.lower()})),
         tables=[full_parent, full_detail],
-        columns_meta=[{"name": detail_label_column, "table": parent.to_table, "role": "label"}],
+        columns_meta=columns_meta,
         complexity_score=COMPLEXITY_BY_KIND["STRING_AGG_DETAILS"],
         join_path=[full_parent, full_detail],
     )
@@ -722,11 +823,15 @@ def render_junction_n2m(
 
 def render_time_series_generate(
     fact: Relationship,
-    date_column: str = "created_at",
+    date_column: str,
     days: int = 30,
     dialect: str = "postgresql",
 ) -> RenderedQuery:
-    """GENERATE_SERIES + LEFT JOIN — boş günler dahil zaman serisi sayımı."""
+    """GENERATE_SERIES + LEFT JOIN — boş günler dahil zaman serisi sayımı.
+
+    v3.45.0 P2b: `date_column` artık generator tip-keşfinden gelir (eski 'created_at' tahmini
+    yerine gerçek tarih kolonu). Takvim CTE'si PG-spesifik (GENERATE_SERIES) → generator bu kind'i
+    non-PG'de ATLAR (_PG_ONLY_KINDS); 4-dialect takvim (CONNECT BY / recursive CTE) sonraki faza."""
     d = "postgresql"
     fact_q = _qualify(fact.from_schema, fact.from_table, d)
     date_q = _quote_identifier(date_column, d)
@@ -758,29 +863,36 @@ def render_time_series_generate(
 
 def render_window_running_total(
     fact: Relationship,
-    value_column: str = "amount",
-    date_column: str = "created_at",
+    value_column: str,
+    date_column: str,
     partition_column: Optional[str] = None,
     dialect: str = "postgresql",
     limit: int = DEFAULT_LIMIT,
 ) -> RenderedQuery:
-    """SUM() OVER — koşan toplam (cumulative sum)."""
-    d = "postgresql"
+    """SUM() OVER — koşan toplam (cumulative sum). Tek-tablo (fact = rel.from).
+
+    v3.45.0 P2b — 4-DIALECT + gerçek kolon: window fonksiyonu PG/Oracle/MSSQL/MySQL8 standart;
+    yalnız tırnaklama + TOP/FETCH/LIMIT ayrışır. `value_column` (sayısal) + `date_column` (tarih)
+    generator tip-keşfiyle seçilir (eski sürüm 'amount'/'created_at' TAHMİN edip non-PG'de
+    `d="postgresql"` ile PG SQL üretip patlıyordu)."""
+    d = dialect.lower()
     fact_q = _qualify(fact.from_schema, fact.from_table, d)
     value_q = _quote_identifier(value_column, d)
     date_q = _quote_identifier(date_column, d)
+    sel_prefix = _select_prefix(d, limit)
+    limit_suffix = _limit_clause(d, limit)
     partition_clause = ""
     if partition_column:
         pq = _quote_identifier(partition_column, d)
         partition_clause = f"PARTITION BY {pq} "
     sql = (
-        f"SELECT *, \n"
-        f"       SUM({value_q}) OVER ({partition_clause}ORDER BY {date_q} "
-        f"ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_total\n"
-        f"FROM {fact_q}\n"
-        f"ORDER BY {date_q}\n"
-        f"LIMIT {int(limit)}"
+        f"{sel_prefix} *, "
+        f"SUM({value_q}) OVER ({partition_clause}ORDER BY {date_q} "
+        f"ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_total "
+        f"FROM {fact_q} ORDER BY {date_q}"
     )
+    if limit_suffix:
+        sql += f" {limit_suffix}"
     full_fact = _full_name(fact.from_schema, fact.from_table)
     return RenderedQuery(
         template_kind="WINDOW_RUNNING_TOTAL",
@@ -828,12 +940,32 @@ def render(
         return render_aggregate_stats(rel, value_column, dialect=dialect, limit=limit)
     if template_kind == "EXISTS_ANTI_JOIN":
         return render_exists_anti_join(rel, dialect=dialect, limit=limit)
+    if template_kind == "DISTINCT_COUNT":
+        distinct_column = cc.get("text")
+        if not distinct_column:
+            raise ValueError("DISTINCT_COUNT requires a categorical/text child column (col_ctx['text'])")
+        return render_distinct_count(rel, distinct_column, dialect=dialect, limit=limit)
     if template_kind == "STRING_AGG_DETAILS":
-        return render_string_agg_details(rel, dialect=dialect, limit=limit)
+        label_column = cc.get("text")
+        if not label_column:
+            raise ValueError("STRING_AGG_DETAILS requires a text label child column (col_ctx['text'])")
+        return render_string_agg_details(rel, label_column, order_column=cc.get("temporal"),
+                                         dialect=dialect, limit=limit)
     if template_kind == "TIME_SERIES_GENERATE":
-        return render_time_series_generate(rel, dialect=dialect)
+        date_column = cc.get("temporal")
+        if not date_column:
+            raise ValueError("TIME_SERIES_GENERATE requires a temporal child column (col_ctx['temporal'])")
+        return render_time_series_generate(rel, date_column, dialect=dialect)
     if template_kind == "WINDOW_RUNNING_TOTAL":
-        return render_window_running_total(rel, dialect=dialect, limit=limit)
+        value_column = cc.get("numeric")
+        date_column = cc.get("temporal")
+        if not value_column or not date_column:
+            raise ValueError("WINDOW_RUNNING_TOTAL requires numeric + temporal child columns")
+        # FK kolonuyla PARTITION BY → her parent için AYRI koşan toplam (global cumsum yerine
+        # anlamlı: "her siparişin satır-bazında biriken tutarı"). İlişki-düzeyli (tablo-düzeyli değil).
+        return render_window_running_total(rel, value_column, date_column,
+                                           partition_column=rel.from_column,
+                                           dialect=dialect, limit=limit)
     raise ValueError(f"unknown or chain-only template_kind: {template_kind}")
 
 
@@ -860,6 +992,7 @@ __all__ = [
     "render_aggregate_count",
     "render_aggregate_stats",
     "render_exists_anti_join",
+    "render_distinct_count",
     "render_chain_join",
     "render_cte_latest_n_per_group",
     "render_lateral_top_k",

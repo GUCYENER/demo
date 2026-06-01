@@ -37,7 +37,12 @@ from app.services.db_learning.synthetic_templates import (
     render,
     render_junction_n2m,
 )
-from app.services.db_learning.synthetic_dialect import CAT_NUMERIC, classify_data_type
+from app.services.db_learning.synthetic_dialect import (
+    CAT_NUMERIC,
+    CAT_TEMPORAL,
+    CAT_TEXT,
+    classify_data_type,
+)
 
 # v3.29.2 G3: tek-Relationship temelli ("per-FK") render edilebilen kinds.
 # Chain-only kinds (CHAIN_JOIN_*, CTE_LATEST_N_PER_GROUP, LATERAL_TOP_K,
@@ -48,20 +53,44 @@ SINGLE_REL_KINDS: tuple = (
     # v3.45.0 P2 (G6) — tip-farkında, 4-dialect per-FK
     "AGGREGATE_STATS",
     "EXISTS_ANTI_JOIN",
+    "DISTINCT_COUNT",
     "STRING_AGG_DETAILS",
     "TIME_SERIES_GENERATE",
     "WINDOW_RUNNING_TOTAL",
 )
 
 # v3.45.0 P2: 1:1 ilişkide agregasyon (her parent için N child) mantıksız → bu kind'ler
-# 1:1'de elenir (AGGREGATE_COUNT zaten eleniyordu, STATS/ANTI_JOIN de aynı sınıf).
+# 1:1'de elenir (AGGREGATE_COUNT zaten eleniyordu, STATS/ANTI_JOIN/DISTINCT de aynı sınıf).
 _AGGREGATE_KINDS_SKIP_ON_1TO1 = frozenset({
     "AGGREGATE_COUNT", "AGGREGATE_STATS", "EXISTS_ANTI_JOIN",
+    "DISTINCT_COUNT", "STRING_AGG_DETAILS", "WINDOW_RUNNING_TOTAL",
 })
-# Default kind seti (caller template_kinds vermezse): "2 örnek yeter" → v3.45.0'da
-# tip-farkında STATS + orphan ANTI_JOIN ile genişledi (1:N FK'ler için ~4 örnek;
-# 1:1'de yalnız LOOKUP_JOIN). STRING_AGG/WINDOW/TIME_SERIES P2b'de 4-dialect olunca eklenecek.
-_DEFAULT_KINDS = ["LOOKUP_JOIN", "AGGREGATE_COUNT", "AGGREGATE_STATS", "EXISTS_ANTI_JOIN"]
+# Default kind seti (caller template_kinds vermezse): "2 örnek yeter" → v3.45.0'da tip-farkında
+# STATS + orphan ANTI_JOIN (P2a) + koşan-toplam WINDOW (P2b, 4-dialect) ile 5'e çıktı (1:N FK'ler;
+# 1:1'de yalnız LOOKUP_JOIN). DISTINCT_COUNT/STRING_AGG_DETAILS/TIME_SERIES opt-in (caller isterse).
+_DEFAULT_KINDS = [
+    "LOOKUP_JOIN", "AGGREGATE_COUNT", "AGGREGATE_STATS", "EXISTS_ANTI_JOIN", "WINDOW_RUNNING_TOTAL",
+]
+
+# v3.45.0 P2b: tip-bağımlı kind → child tablodan GEREKEN col_ctx anahtarları (hepsi mevcut
+# olmalı, yoksa skipped_no_column). Generator tek yerde keşfeder; render() defansif ValueError ile
+# yedekler. Burada OLMAYAN kind tip-bağımsızdır (LOOKUP/COUNT/ANTI_JOIN).
+_KIND_COL_REQUIREMENTS: Dict[str, tuple] = {
+    "AGGREGATE_STATS": ("numeric",),
+    "DISTINCT_COUNT": ("text",),
+    "STRING_AGG_DETAILS": ("text",),          # order_column (temporal) opsiyonel
+    "WINDOW_RUNNING_TOTAL": ("numeric", "temporal"),
+    "TIME_SERIES_GENERATE": ("temporal",),
+}
+# PG-spesifik kind'ler (takvim CTE GENERATE_SERIES) — non-PG'de ATLA (bozuk SQL üretme).
+# 4-dialect takvim (CONNECT BY / recursive CTE) sonraki faza ertelendi.
+_PG_ONLY_KINDS = frozenset({"TIME_SERIES_GENERATE"})
+_PG_DIALECTS = frozenset({"postgresql", "postgres", "pg"})
+# Tek-tablo (fact-level) kind'ler: FK başına değil TABLO başına 1 kez render (aynı fact'in
+# birden çok FK'sinde tekrar execute edilmesin → hedef DB yükü). NOT: WINDOW_RUNNING_TOTAL artık
+# FK kolonuyla PARTITION BY edilip İLİŞKİ-düzeyli olduğundan burada DEĞİL (her FK farklı/anlamlı).
+# Yalnız TIME_SERIES_GENERATE gerçekten tek-tablo (FK kullanmaz).
+_TABLE_LEVEL_KINDS = frozenset({"TIME_SERIES_GENERATE"})
 # v3.29.2 G3: yeni v2 template'ler — template_version=2 işaretlenir.
 V2_KINDS: frozenset = frozenset({
     "CHAIN_JOIN_3HOP", "CHAIN_JOIN_NHOP", "CTE_LATEST_N_PER_GROUP",
@@ -96,6 +125,8 @@ class GenerationSummary:
     junction_success: int = 0
     promoted_few_shot: int = 0          # v3.44.0 P1: few_shot_examples'a terfi edilen sentetik örnek
     skipped_no_column: int = 0          # v3.45.0 P2: tip-bağımlı kind için uygun kolon yok (örn. STATS sayısal kolon)
+    skipped_dialect: int = 0            # v3.45.0 P2b: PG-only kind non-PG kaynakta atlandı (TIME_SERIES)
+    skipped_table_dup: int = 0          # v3.45.0 P2b: tek-tablo kind aynı fact için tekrar (WINDOW/TIME_SERIES)
 
     def __post_init__(self):
         if self.errors is None:
@@ -226,6 +257,41 @@ def _pick_numeric_measure(cols: List[Dict[str, Any]], exclude_names: List[str]) 
         return None
     for c in candidates:
         if any(h in (c["name"] or "").lower() for h in _MEASURE_NAME_HINTS):
+            return c["name"]
+    return candidates[0]["name"]
+
+
+# v3.45.0 P2b: tarih/etiket kolonu isim ipuçları (sıralama/gruplama anlamlılığı için tercih).
+_TEMPORAL_NAME_HINTS = (
+    "created", "updated", "date", "tarih", "zaman", "time", "_at", "kayit", "islem", "tdate",
+)
+# Etiket/kategori ipuçları — STRING_AGG/DISTINCT_COUNT için KATEGORİK/kısa kolon tercih edilir.
+# Serbest-metin (desc/aciklama/note) BİLİNÇLİ olarak yok: STRING_AGG'de dev hücre, DISTINCT_COUNT'ta
+# satır-sayısına yakın anlamsız sonuç üretir (yalnız son-çare ilk-text kolonu olarak seçilebilir).
+_TEXT_LABEL_HINTS = (
+    "name", "ad", "title", "baslik", "label", "etiket", "status", "durum", "type", "tip",
+    "code", "kod", "category", "kategori",
+)
+
+
+def _pick_typed_column(
+    cols: List[Dict[str, Any]], exclude_names: List[str], cat: str, hints: tuple
+) -> Optional[str]:
+    """Verilen kategoride (temporal/text) uygun kolon seç. FK kolonları + PK + keyish + patolojik
+    adlar elenir; isim ipucu varsa öncelikli; yoksa ilk uygun. Hiç yoksa None."""
+    excl = {(e or "").lower() for e in (exclude_names or [])}
+    candidates = [
+        c for c in cols
+        if c.get("cat") == cat
+        and (c["name"] or "").lower() not in excl
+        and not c.get("is_pk")
+        and not _is_keyish_name(c["name"])
+        and _safe_measure_name(c["name"])
+    ]
+    if not candidates:
+        return None
+    for c in candidates:
+        if any(h in (c["name"] or "").lower() for h in hints):
             return c["name"]
     return candidates[0]["name"]
 
@@ -715,15 +781,23 @@ def generate_for_source(
         return list(kinds)
 
     # v3.45.0 P2: tip-keşfi — child tablo kolonları tablo-bazında cache'lenir (aynı child
-    # birden çok FK'de gelebilir → tek SELECT). AGGREGATE_STATS için sayısal ölçü seçer.
+    # birden çok FK'de gelebilir → tek SELECT). col_ctx tip-bağımlı template'lere kolon sağlar.
     _col_cache: Dict[tuple, List[Dict[str, Any]]] = {}
+    _table_level_done: set = set()   # (from_table, kind) → tek-tablo kind tekrarını engelle
 
-    def _measure_for(rel_: Relationship) -> Optional[str]:
+    def _build_col_ctx(rel_: Relationship) -> Dict[str, Optional[str]]:
+        """Child (rel.from) tablosundan numeric/temporal/text aday kolonları seç (cache'li).
+        Hepsi opsiyonel; gereklilik kontrolü _KIND_COL_REQUIREMENTS ile yapılır."""
         ckey = ((rel_.from_schema or "").lower(), (rel_.from_table or "").lower())
         if ckey not in _col_cache:
             _col_cache[ckey] = _load_table_columns(cur, source_id, rel_.from_schema, rel_.from_table)
+        cols = _col_cache[ckey]
         exclude = list(rel_.from_columns or ([rel_.from_column] if rel_.from_column else []))
-        return _pick_numeric_measure(_col_cache[ckey], exclude)
+        return {
+            "numeric": _pick_numeric_measure(cols, exclude),
+            "temporal": _pick_typed_column(cols, exclude, CAT_TEMPORAL, _TEMPORAL_NAME_HINTS),
+            "text": _pick_typed_column(cols, exclude, CAT_TEXT, _TEXT_LABEL_HINTS),
+        }
 
     for rel in rels:
         per_rel_kinds = _cardinality_aware_kinds(rel)
@@ -757,19 +831,40 @@ def generate_for_source(
                         pass
                     continue
 
-            # v3.45.0 P2: tip-bağımlı kind'ler için kolon context'i. Uygun kolon yoksa
+            # v3.45.0 P2b: PG-only kind (takvim CTE) non-PG kaynakta atlanır (bozuk SQL üretme).
+            if kind in _PG_ONLY_KINDS and dialect.lower() not in _PG_DIALECTS:
+                summary.skipped_dialect += 1
+                try:
+                    cur.execute(f"RELEASE SAVEPOINT {_sp_name}")
+                except Exception:
+                    pass
+                continue
+
+            # v3.45.0 P2b: tek-tablo (fact-level) kind aynı fact için yalnız 1 kez (FK başına
+            # tekrar execute etme — dedup zaten öğrenmede tekrarı engeller ama hedef DB yükü kalır).
+            if kind in _TABLE_LEVEL_KINDS:
+                _tkey = ((rel.from_schema or "").lower(), (rel.from_table or "").lower(), kind)
+                if _tkey in _table_level_done:
+                    summary.skipped_table_dup += 1
+                    try:
+                        cur.execute(f"RELEASE SAVEPOINT {_sp_name}")
+                    except Exception:
+                        pass
+                    continue
+
+            # v3.45.0 P2: tip-bağımlı kind'ler için kolon context'i. Gerekli kolon(lar) yoksa
             # (örn. STATS için child'da sayısal ölçü yok) RENDER ETME → skipped_no_column.
             col_ctx: Optional[Dict[str, str]] = None
-            if kind == "AGGREGATE_STATS":
-                measure = _measure_for(rel)
-                if not measure:
+            _req = _KIND_COL_REQUIREMENTS.get(kind)
+            if _req:
+                col_ctx = _build_col_ctx(rel)
+                if any(not col_ctx.get(k) for k in _req):
                     summary.skipped_no_column += 1
                     try:
                         cur.execute(f"RELEASE SAVEPOINT {_sp_name}")
                     except Exception:
                         pass
                     continue
-                col_ctx = {"numeric": measure}
 
             # Render
             try:
@@ -810,6 +905,13 @@ def generate_for_source(
                         pass
                     continue
                 row_count = int(res.row_count or 0)
+                # v3.45.0 P2b: tek-tablo kind BAŞARIYLA execute oldu → tabloyu işaretle (kardeş
+                # FK'ler skipped_table_dup). İşaret execute SONRASI → transient execute hatası
+                # kardeş FK denemesini bastırmaz (FIX: önce işaretleniyordu).
+                if kind in _TABLE_LEVEL_KINDS:
+                    _table_level_done.add(
+                        ((rel.from_schema or "").lower(), (rel.from_table or "").lower(), kind)
+                    )
                 # v3.32.0 G1.6 — row_count > 0 enforcement.
                 # Boş sonuç: tablo var, sorgu compile oluyor, ama veri yok →
                 # öğretmiyoruz (kullanıcıya "0 row" bir yanıt önermek değersiz).

@@ -71,15 +71,22 @@ fonksiyon istiyor.
   ölçü (anlamsız SUM(id) önlenir), INNER JOIN NULL-sıra, anti-join determinizm, classify bit/varbit. 4
   dialect × composite smoke yeşil.
 
-**P2b — bekliyor:**
-- **Mevcut PG-hardcoded template'leri 4-dialect + gerçek kolon:** STRING_AGG_DETAILS (LISTAGG/GROUP_CONCAT
-  via `synthetic_dialect.string_agg` + text kolon keşfi), WINDOW_RUNNING_TOTAL (numeric+temporal kolon,
-  window fn standart), TIME_SERIES_GENERATE (4-dialect takvim — GENERATE_SERIES/CONNECT BY/recursive CTE
-  veya PG-gate). Bu template'ler şu an `d="postgresql"` hardcode → non-PG'de patlıyor + kolon TAHMİN ediyor.
-- **Altitude (code-review notu):** col_ctx tip-gate'i generator if-chain + render ValueError'da İKİ yerde —
-  P2b'de "kind→gerekli col_ctx anahtarları" tablosuyla genelleştir (yeni tip-bağımlı kind tek yerde tanımlansın).
-- **DISTINCT-COUNT / TIME-BUCKETED** (opsiyonel, ek değer).
-- **Verify:** her template her dialekte syntax-geçerli; tip-uygun kolon; 4 dialect smoke.
+**P2b — ✅ TAMAM (v3.45.0):**
+- ✅ **WINDOW_RUNNING_TOTAL** 4-dialect + gerçek numeric+tarih kolon + **FK-partition** (per-parent koşan
+  toplam, ilişki-düzeyli) → default'a eklendi (5 fonksiyon).
+- ✅ **STRING_AGG_DETAILS** ORYANTASYON fix (parent=rel.to) + 4-dialect (LISTAGG/GROUP_CONCAT) + gerçek
+  kolon + ORDER BY. Opt-in.
+- ✅ **DISTINCT_COUNT** (yeni) — per-parent farklı değer sayısı, 4-dialect. Opt-in.
+- ✅ **TIME_SERIES_GENERATE** gerçek tarih kolonu + PG-gate (`_PG_ONLY_KINDS`; non-PG'de atla). Opt-in.
+- ✅ **Altitude çözüldü:** `_KIND_COL_REQUIREMENTS` tablosu (tek yer) + `_build_col_ctx` (numeric/temporal/
+  text picker, tablo-cache) + tek-tablo dedup (TIME_SERIES, execute-sonrası işaret).
+- ✅ **code-review:** bozulan test fix (16/16), WINDOW global→FK-partition, tablo-dedup mark-after-execute,
+  STRING_AGG ORDER BY, text picker serbest-metin eleme. 4 dialect × composite + 16 unit yeşil.
+- **Verify (canlı, bekliyor):** 4 dialect kaynakta FK Loop → her template syntax-geçerli; tip-uygun kolon
+  seçilir; non-PG'de TIME_SERIES skipped_dialect; uygun kolon yoksa skipped_no_column.
+
+**P2c — opsiyonel (ertelendi):** 4-dialect takvim CTE (TIME_SERIES non-PG: Oracle CONNECT BY / MSSQL/MySQL
+recursive CTE) + TIME-BUCKETED (date_trunc+FK gruplama) + mevcut chain G3 (CHAIN_JOIN/LATERAL) base loop'a.
 
 ### P3 — Ops (Konsey: NIKE + TYCHE)
 - Hata sınıflandırma + metrik (cache-hit oranı, few-shot kullanım, sentetik başarı trendi).

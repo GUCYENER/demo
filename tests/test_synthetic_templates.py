@@ -20,13 +20,22 @@ from app.services.db_learning.synthetic_templates import (
 # CTE_LATEST_N_PER_GROUP, LATERAL_TOP_K, JUNCTION_N2M). render() bunları
 # desteklemez (chain-only renderers ayrı orkestrasyon gerektirir). Test
 # parametrize için yalnız single-rel temelli renderable kinds kullanılır.
+#
+# v3.45.0 P2: tip-bağımlı kind'ler (STATS/DISTINCT/STRING_AGG/WINDOW/TIME_SERIES) render()'a
+# col_ctx ile kolon ister; tip-bağımsızlar (LOOKUP/COUNT/ANTI_JOIN) istemez.
 SINGLE_REL_RENDERABLE = (
     "LOOKUP_JOIN",
     "AGGREGATE_COUNT",
+    "AGGREGATE_STATS",
+    "EXISTS_ANTI_JOIN",
+    "DISTINCT_COUNT",
     "STRING_AGG_DETAILS",
     "TIME_SERIES_GENERATE",
     "WINDOW_RUNNING_TOTAL",
 )
+
+# v3.45.0 P2: tip-bağımlı template'lere geçirilen örnek kolon context'i.
+COL_CTX = {"numeric": "amount", "temporal": "created_at", "text": "status"}
 
 
 @pytest.fixture
@@ -45,7 +54,7 @@ def rel():
 class TestRender:
     @pytest.mark.parametrize("kind", list(SINGLE_REL_RENDERABLE))
     def test_each_kind_returns_non_empty_sql(self, rel, kind):
-        rq = render(rel, kind, dialect="postgresql")
+        rq = render(rel, kind, dialect="postgresql", col_ctx=COL_CTX)
         assert rq.sql.strip()
         assert rq.template_kind == kind
         assert rq.dialect == "postgresql"

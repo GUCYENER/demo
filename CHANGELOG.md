@@ -1,6 +1,34 @@
 # VYRA Changelog
 
-## v3.45.0 (DEVAM EDEN) — FK Loop P2a: Tip-Farkında + 4-Dialect Template'ler (ORACLE + POSEIDON + METIS)
+## v3.45.0 (DEVAM EDEN) — FK Loop P2a+P2b: Tip-Farkında + 4-Dialect Template Motoru (ORACLE + POSEIDON + METIS)
+
+> **P2b (en güncel) — atıl PG-only template'leri kurtar + 4-dialect:** STRING_AGG/WINDOW/TIME_SERIES
+> şu ana dek `d="postgresql"` hardcode edip kolon TAHMİN ediyordu (non-PG'de patlar, opt-in olduğu için
+> atıldı). Düzeltildi:
+> - **WINDOW_RUNNING_TOTAL** → 4-dialect (window fn standart; TOP/FETCH/LIMIT) + gerçek numeric+tarih
+>   kolon + **FK kolonuyla PARTITION BY** (global cumsum yerine per-parent "her siparişin satır-bazında
+>   biriken tutarı" → İLİŞKİ-düzeyli, anlamlı). **Default'a eklendi → 5 fonksiyon** (1:1'de elenir).
+> - **STRING_AGG_DETAILS** → **ORYANTASYON FIX** (FK from=child/to=parent; eski sürüm from'u "parent"
+>   sanıp her child'a tek parent etiketini N kez birleştiriyordu = anlamsız → doğrusu parent=rel.to grup,
+>   detail=rel.from) + 4-dialect (`synthetic_dialect.string_agg`: LISTAGG/GROUP_CONCAT) + gerçek text/tarih
+>   kolon + ORDER BY (determinizm). Opt-in.
+> - **DISTINCT_COUNT** (YENİ) → her parent için child'ın kategorik kolonundaki farklı değer sayısı; INNER
+>   JOIN + COUNT(DISTINCT), 4-dialect. Opt-in.
+> - **TIME_SERIES_GENERATE** → gerçek tarih kolonu + **PG-gate** (`_PG_ONLY_KINDS`: non-PG'de ATLA —
+>   takvim CTE'si GENERATE_SERIES PG-spesifik; 4-dialect CONNECT BY/recursive CTE sonraki faza). Opt-in.
+> - **Altitude (P2a review notu çözüldü):** `_KIND_COL_REQUIREMENTS` tablosu — tip-bağımlı kind→gerekli
+>   col_ctx anahtarları tek yerde; generator `_build_col_ctx` (numeric/temporal/text picker, tablo-cache)
+>   + tek-tablo dedup (TIME_SERIES) execute-başarı SONRASI işaretlenir.
+> - **`/code-review medium` (3 finder × verify) düzeltmeleri:** (1) bozulan `tests/test_synthetic_templates.py`
+>   (eski imza → col_ctx geçir; 16/16 yeşil); (2) WINDOW global-cumsum → FK-partition (anlamlı+ilişki-düzeyli,
+>   tablo-shoehorn kalktı); (3) tablo-dedup mark-before-execute → execute-sonrası (transient hata kardeş
+>   FK'leri bastırmaz); (4) STRING_AGG ORDER BY (determinizm); (5) text picker serbest-metin (desc/aciklama)
+>   eler (dev hücre/anlamsız distinct). 4 dialect × composite smoke + 16 unit test yeşil.
+>
+> **Default kind seti (5):** LOOKUP_JOIN, AGGREGATE_COUNT, AGGREGATE_STATS, EXISTS_ANTI_JOIN,
+> WINDOW_RUNNING_TOTAL. Opt-in: DISTINCT_COUNT, STRING_AGG_DETAILS, TIME_SERIES_GENERATE.
+
+## v3.45.0 (P2a) — FK Loop: Tip-Farkında + 4-Dialect Template'ler (ORACLE + POSEIDON + METIS)
 
 > Plan: `.agents/plans/2026-06-01_1830_fk_loop_fewshot_integration_v1.md` (P2). Kullanıcı isteği:
 > "lookup/aggregation dışında FK ilişkili tablolar için daha fazla fonksiyon" + "db türüne göre
