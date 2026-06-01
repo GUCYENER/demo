@@ -1,5 +1,42 @@
 # VYRA Changelog
 
+## v3.47.0 (DEVAM EDEN) — FK Loop P3b: Job State DB-Backed (Multi-Worker) (NIKE + TYCHE + ARES + HERMES)
+
+> Plan: `.agents/plans/2026-06-01_1830_fk_loop_fewshot_integration_v1.md` (P3b). Kullanıcının "job
+> tracker Redis (multi-worker)" isteği. **Konsey kararı (4 perspektif, gerçek kod okundu): Redis
+> GEREKSİZ** — `ds_discovery_jobs` (DB-backed, result_summary JSONB+status+company_id) multi-worker
+> görünürlüğü tam çözüyor, sıfır migration. Redis ikinci state store + serialization + cleanup yükü,
+> sıfır ek değer. **B2 periyodik cron ertelendi** — keşif-sonrası tetik `incremental_schema_integrator`'da
+> event-driven ZATEN var. Kullanıcı onayı: "B1 + yoldaşları".
+>
+> **Sorun:** FK Loop sentetik üretim job state'i in-memory dict (`db_learning_api._jobs`) idi → canlıda
+> 3 process (port 8002-8004) state'i paylaşmaz; `/synthetic-status` başlatan worker'dan başkasına düşerse
+> boş/yanıltıcı döner. **Fix (B1):** job state → `ds_discovery_jobs` (`job_type='fk_synthetic'` /
+> `'incremental_integration'`).
+> - **Reuse:** `ds_learning_service.create_or_get_running_job` (yeni — advisory-lock TOCTOU çekirdeği,
+>   `(id, created)` döner → caller yalnız YENİ açıldıysa background thread başlatır = çift-üretim engeli;
+>   `create_job` discovery için dokunulmadan korundu) + `complete_job` + mevcut `check_running_job`
+>   (any-type preflight mutual-exclusion + 30dk stuck-job reaper).
+> - **mig 053:** `ds_discovery_jobs` company-scoped RLS (mig 017 deseni; tablo bugüne dek RLS'siz idi).
+>   Defense-in-depth — asıl tenant gate endpoint'te (`_ensure_source_visible` + `apply_company_scope`).
+> - **Cross-tenant sızıntı fix:** eski `/synthetic-status` görünürlük gate'i OLMADAN salt `source_id` ile
+>   in-memory okuyordu (başka firmanın source_id'si bilinirse durumu görülürdü) → artık `apply_company_scope`
+>   + `_ensure_source_visible` (yabancı source 404).
+> - **eff_company kaynaktan** (`data_sources.company_id` NOT NULL SSOT) — admin NULL company_id'de bile job
+>   kaydı geçerli + background doğru tenant'a izole (ARES fail-closed).
+> - **Frontend uyumlu:** `_map_fk_job_row` DB satırını eski dict şekline map eder (status completed→done/
+>   failed→error, result_summary→summary, error_message→error) → `ds_learning_module.js` DEĞİŞMEDİ.
+> - **incremental_integration** endpoint'i de aynı kalıba alındı (in-memory tracker'ı paylaşıyordu).
+>
+> **`/code-review` (2 finder × verify) düzeltmeleri:** (1) ayrı scheduler reaper **redundant + çelişkili**
+> (`check_running_job` ZATEN ds_discovery_jobs'u 30dk'da reap'liyor; benim 45dk eşiğim çakışırdı) →
+> kaldırıldı; (2) her iki endpoint'e `check_running_job` preflight → **simetrik** mutual-exclusion (discovery
+> ↔ fk_synthetic ↔ incremental aynı kaynakta eşzamanlı koşmaz; `create_job` type-collision shield'lenir);
+> (3) bg success `complete_job` AYRI try/else → complete hatası üretilen işi yanlışlıkla 'failed' yapmaz;
+> (4) `apply_company_scope` SET LOCAL (txn-scoped) → `create_or_get_running_job` commit'i scope'u temizler:
+> job lifecycle izole connection'da, integrate request conn'da. Migration zinciri 051→052→053. Mantık smoke
+> (status map, advisory-lock created bayrağı) yeşil.
+
 ## v3.46.0 (DEVAM EDEN) — FK Loop P3a: Sentetik Hata Sınıflandırma + Ops Metrik (NIKE + TYCHE + ARES)
 
 > Plan: `.agents/plans/2026-06-01_1830_fk_loop_fewshot_integration_v1.md` (P3 ops). FK Loop'un başarısız

@@ -13,6 +13,7 @@ RLS: apply_company_scope ile her endpoint kendi connection'unda set eder
 """
 from __future__ import annotations
 
+import json
 import logging
 import threading
 from typing import Any, Dict, List, Optional
@@ -29,28 +30,42 @@ router = APIRouter(prefix="/api/data-sources", tags=["db_learning"])
 
 
 # ─────────────────────────────────────────────────────────────
-# In-memory job tracker (tek-makine; v3.27.0 Faz A için yeterli)
-# Faz B veya v3.28'de Redis'e taşınacak.
+# Job tracker — v3.47.0 P3b: in-memory dict YERİNE DB-backed (ds_discovery_jobs,
+# job_type='fk_synthetic'). Sebep: canlıda 3 process (port 8002-8004) → in-memory state
+# yalnız başlatan worker'da görünür, /synthetic-status başka worker'a düşerse boş döner.
+# ds_learning_service.create_or_get_running_job (advisory-lock TOCTOU) + complete_job + check_running_job
+# (preflight any-type mutual-exclusion + 30dk stuck reaper) yeniden kullanılır. Çift-üretim engeli
+# advisory-lock'ta; multi-worker görünürlük DB'de.
 # ─────────────────────────────────────────────────────────────
 
-_jobs: Dict[int, Dict[str, Any]] = {}   # source_id → state
-_jobs_lock = threading.Lock()
+_FK_JOB_TYPE = "fk_synthetic"
 
 
-def _set_job(source_id: int, **kwargs) -> None:
-    with _jobs_lock:
-        st = _jobs.get(source_id) or {}
-        st.update(kwargs)
-        _jobs[source_id] = st
+def _map_fk_job_row(row) -> Dict[str, Any]:
+    """ds_discovery_jobs satırı → frontend'in beklediği job dict (geriye uyumlu şekil).
 
-
-def _get_job(source_id: int) -> Dict[str, Any]:
-    with _jobs_lock:
-        return dict(_jobs.get(source_id) or {})
-
-
-def _is_running(source_id: int) -> bool:
-    return _get_job(source_id).get("status") == "running"
+    DB status {running,completed,failed} → FE {running,done,error}; result_summary→summary;
+    error_message→error; dialect summary içinden. Frontend (ds_learning_module.js) DEĞİŞMEZ."""
+    if not row:
+        return {"status": "idle"}
+    def _g(k):
+        return row.get(k) if hasattr(row, "get") else None
+    db_status = (_g("status") or "").lower()
+    fe_status = {"running": "running", "completed": "done", "failed": "error"}.get(db_status, "idle")
+    summary = _g("result_summary")
+    if isinstance(summary, str):
+        try:
+            summary = json.loads(summary)
+        except Exception:
+            summary = None
+    return {
+        "status": fe_status,
+        "summary": summary,
+        "dialect": (summary or {}).get("dialect") if isinstance(summary, dict) else None,
+        "error": _g("error_message"),
+        "job_id": _g("id"),
+        "completed_at": _g("completed_at").isoformat() if _g("completed_at") else None,
+    }
 
 
 # ─────────────────────────────────────────────────────────────
@@ -164,70 +179,110 @@ def trigger_synthetic_generation(
     body: GenerateRequest = GenerateRequest(),
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """FK ilişkilerinden örnek sorgular üret-çalıştır-öğret (background)."""
-    company_id = current_user.get("company_id")
+    """FK ilişkilerinden örnek sorgular üret-çalıştır-öğret (background).
+
+    v3.47.0 P3b: job state DB-backed (ds_discovery_jobs). eff_company KAYNAKTAN çözülür
+    (data_sources.company_id NOT NULL SSOT) — admin NULL company_id'de bile job kaydı geçerli +
+    background RLS doğru tenant'a izole (ARES fail-closed). create_or_get_running_job advisory-lock
+    ile çift-üretim engellenir; yalnız YENİ açıldıysa thread başlar."""
     user_id = current_user.get("id")
 
-    # Önce source visibility ve dialect tespiti
+    # Source visibility (tenant gate) + eff_company (kaynaktan) + dialect + preflight
+    from app.services.ds_learning_service import check_running_job, create_or_get_running_job
     with get_db_context() as conn:
         cur = conn.cursor()
         try:
-            apply_company_scope(cur, company_id=company_id)
+            apply_company_scope(cur, company_id=current_user.get("company_id"))
             src = _ensure_source_visible(cur, source_id)
             dialect = _resolve_dialect(cur, source_id, body.dialect)
+            # Preflight (any-type karşılıklı dışlama + 30dk stuck-job reaper reuse): discovery/
+            # incremental/fk_synthetic aynı kaynakta eşzamanlı koşmasın (ilişkiler okunurken
+            # yeniden yazılması = tutarsız üretim). check_running_job stuck job'ları da temizler.
+            rj = check_running_job(conn, source_id)
+            if rj.get("has_running"):
+                _job = rj.get("job") or {}
+                return {
+                    "success": False,
+                    "message": f"Bu kaynak için zaten çalışan bir iş var ({_job.get('job_type')}).",
+                    "source_id": source_id,
+                    "running_job": _job,
+                }
         finally:
             cur.close()
+    eff_company = src.get("company_id")
+    if eff_company is None:
+        # data_sources.company_id NOT NULL → normalde olmaz; fail-closed (cross-tenant üretim önle)
+        raise HTTPException(status_code=409, detail="Kaynağın firma bağlamı çözülemedi.")
 
-    if _is_running(source_id):
+    # Advisory-lock altında job aç (zaten running ise created=False → thread başlatma)
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        try:
+            apply_company_scope(cur, company_id=eff_company)
+            job_id, created = create_or_get_running_job(
+                conn, source_id, eff_company, _FK_JOB_TYPE, user_id
+            )
+        finally:
+            cur.close()
+    if not created:
         return {
             "success": False,
             "message": "Bu kaynak için zaten çalışan bir sentetik üretim işi var.",
-            "job": _get_job(source_id),
+            "source_id": source_id,
+            "job_id": job_id,
         }
 
-    _set_job(source_id, status="running", source_name=src.get("name"),
-             dialect=dialect, by_user=user_id, summary=None, error=None)
+    def _safe_complete(conn, jid, payload):
+        """complete_job best-effort — hata fırlatmaz (job 'running' kalırsa preflight reaper temizler)."""
+        try:
+            from app.services.ds_learning_service import complete_job
+            complete_job(conn, jid, payload)
+        except Exception:
+            logger.exception("[db_learning.generate.bg] complete_job yazılamadı (job 'running' kalabilir)")
 
     def _bg():
         bg_conn = None
         try:
             bg_conn = get_db_conn()
-            cur_bg = bg_conn.cursor()
+            summary = None
             try:
-                apply_company_scope(cur_bg, company_id=company_id)
-                # source_id RLS — ds_db_relationships set context (014 RLS pattern)
+                cur_bg = bg_conn.cursor()
                 try:
-                    cur_bg.execute(
-                        "SELECT set_config('app.current_source_id', %s, true)",
-                        (str(int(source_id)),),
+                    apply_company_scope(cur_bg, company_id=eff_company)
+                    # source_id RLS — ds_db_relationships set context (014 RLS pattern)
+                    try:
+                        cur_bg.execute(
+                            "SELECT set_config('app.current_source_id', %s, true)",
+                            (str(int(source_id)),),
+                        )
+                    except Exception:
+                        pass
+                    from app.services.db_learning.fk_synthetic_generator import (
+                        generate_for_source,
                     )
+                    summary = generate_for_source(
+                        cur_bg,
+                        source_id=source_id,
+                        dialect=dialect,
+                        company_id=eff_company,
+                        max_fks=body.max_fks,
+                        skip_existing=body.skip_existing,
+                        template_kinds=body.template_kinds,
+                    )
+                    bg_conn.commit()
+                finally:
+                    cur_bg.close()
+            except Exception as e:
+                logger.exception("[db_learning.generate.bg] hata")
+                try:
+                    bg_conn.rollback()
                 except Exception:
                     pass
-
-                from app.services.db_learning.fk_synthetic_generator import (
-                    generate_for_source,
-                )
-                summary = generate_for_source(
-                    cur_bg,
-                    source_id=source_id,
-                    dialect=dialect,
-                    company_id=company_id,
-                    max_fks=body.max_fks,
-                    skip_existing=body.skip_existing,
-                    template_kinds=body.template_kinds,
-                )
-                bg_conn.commit()
-                _set_job(source_id, status="done", summary=summary.to_dict(), error=None)
-            finally:
-                cur_bg.close()
-        except Exception as e:
-            logger.exception("[db_learning.generate.bg] hata")
-            try:
-                if bg_conn:
-                    bg_conn.rollback()
-            except Exception:
-                pass
-            _set_job(source_id, status="error", error=str(e)[:500])
+                _safe_complete(bg_conn, job_id, {"success": False, "error": str(e)[:500]})
+            else:
+                # Üretim commit'lendi → başarı complete'i AYRI (burada hata olsa bile job FAILED
+                # işaretlenmez; üretilen veri zaten kalıcı, job 'running' kalırsa preflight temizler).
+                _safe_complete(bg_conn, job_id, {"success": True, "data": summary.to_dict()})
         finally:
             if bg_conn:
                 try:
@@ -241,6 +296,7 @@ def trigger_synthetic_generation(
         "message": "Sentetik üretim başlatıldı (arka plan).",
         "source_id": source_id,
         "dialect": dialect,
+        "job_id": job_id,
     }
 
 
@@ -249,9 +305,30 @@ def get_synthetic_status(
     source_id: int,
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """Son sentetik üretim işinin durumu (running/done/error + summary)."""
-    state = _get_job(source_id)
-    return {"success": True, "source_id": source_id, "job": state or {"status": "idle"}}
+    """Son sentetik üretim işinin durumu (running/done/error + summary) — DB-backed (multi-worker).
+
+    v3.47.0 P3b: ds_discovery_jobs'tan okur. Tenant gate: apply_company_scope + _ensure_source_visible
+    (yabancı source → 404). Eski in-memory sürüm görünürlük gate'i OLMADAN salt source_id ile okuyup
+    cross-tenant sızdırıyordu — artık kapalı."""
+    company_id = current_user.get("company_id")
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        try:
+            apply_company_scope(cur, company_id=company_id)
+            _ensure_source_visible(cur, source_id)  # yabancı source → 404 (tenant gate)
+            cur.execute(
+                """
+                SELECT id, status, result_summary, error_message, completed_at
+                FROM ds_discovery_jobs
+                WHERE source_id = %s AND job_type = %s
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (source_id, _FK_JOB_TYPE),
+            )
+            row = cur.fetchone()
+        finally:
+            cur.close()
+    return {"success": True, "source_id": source_id, "job": _map_fk_job_row(row)}
 
 
 # v3.28.9 Paket C: Hata detayları endpoint'i — ds_synthetic_query_runs'taki
@@ -1562,45 +1639,80 @@ def integrate_new_tables_endpoint(
     from app.services.db_learning.incremental_schema_integrator import (
         integrate_new_tables,
     )
+    from app.services.ds_learning_service import (
+        check_running_job, create_or_get_running_job, complete_job,
+    )
 
-    if _is_running(source_id):
-        raise HTTPException(
-            status_code=409,
-            detail="Bu source için zaten bir öğrenme/keşif görevi çalışıyor",
-        )
-
+    user_id = current_user.get("id")
     company_id = current_user.get("company_id")
     with get_db_context() as conn:
         cur = conn.cursor()
         try:
             apply_company_scope(cur, company_id=company_id)
-            _ensure_source_visible(cur, source_id)
+            src = _ensure_source_visible(cur, source_id)
+            eff_company = src.get("company_id")
+            if eff_company is None:
+                raise HTTPException(status_code=409, detail="Kaynağın firma bağlamı çözülemedi.")
             source = _load_source_dict(cur, source_id, company_id=company_id)
             if not source:
                 raise HTTPException(status_code=404, detail="Data source bulunamadı")
+            # Preflight (any-type karşılıklı dışlama + 30dk stuck-job reaper reuse) — discovery/
+            # fk_synthetic/incremental aynı kaynakta eşzamanlı koşmasın.
+            rj = check_running_job(conn, source_id)
+            if rj.get("has_running"):
+                _job = rj.get("job") or {}
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Bu source için zaten bir iş çalışıyor ({_job.get('job_type')})",
+                )
         finally:
             cur.close()
 
-        _set_job(source_id, status="running", kind="incremental_integration")
+        # v3.47.0 P3b: DB-backed job (multi-worker görünür) + advisory-lock çift-çalıştırma engeli.
+        # AYRI connection: apply_company_scope SET LOCAL (txn-scoped) → create_or_get_running_job'un
+        # commit'i scope'u temizler; request conn'da yapılırsa scope/txn erken bozulur. Bu yüzden job
+        # yaşam döngüsü (create+complete) izole jconn'da. NOT: integrate_new_tables request conn'u KENDİ
+        # içinde commit'liyor (incremental_schema_integrator) → company scope onun ilk commit'inde
+        # zaten temizleniyor; integrate'in dokunduğu tablolar SOURCE-scoped (mig 007), company-scoped
+        # değil → company GUC'un temizlenmesi integrate'i etkilemez. eff_company yalnız job satırı için.
+        jconn = get_db_conn()
+        job_id = None
         try:
-            result = integrate_new_tables(
-                source,
-                conn,
-                dry_run=payload.dry_run,
-                auto_synthetic=payload.auto_synthetic,
-                auto_codevalues=payload.auto_codevalues,
-                auto_reflag_failures=payload.auto_reflag_failures,
-                max_new_tables=payload.max_new_tables,
+            jcur = jconn.cursor()
+            apply_company_scope(jcur, company_id=eff_company)
+            job_id, created = create_or_get_running_job(
+                jconn, source_id, eff_company, "incremental_integration", user_id
             )
-            _set_job(source_id, status="done", summary=result)
-            return {"success": True, "result": result}
-        except HTTPException:
-            _set_job(source_id, status="error")
-            raise
-        except Exception as exc:
-            _set_job(source_id, status="error", error=str(exc)[:300])
-            logger.exception("[integrate-new-tables] failed source_id=%s", source_id)
-            raise HTTPException(status_code=500, detail=str(exc)[:300])
+            jcur.close()
+            if not created:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Bu source için zaten bir öğrenme/keşif görevi çalışıyor",
+                )
+            try:
+                result = integrate_new_tables(
+                    source,
+                    conn,
+                    dry_run=payload.dry_run,
+                    auto_synthetic=payload.auto_synthetic,
+                    auto_codevalues=payload.auto_codevalues,
+                    auto_reflag_failures=payload.auto_reflag_failures,
+                    max_new_tables=payload.max_new_tables,
+                )
+                complete_job(jconn, job_id, {"success": True, "data": result if isinstance(result, dict) else {}})
+                return {"success": True, "result": result}
+            except HTTPException:
+                complete_job(jconn, job_id, {"success": False, "error": "http_error"})
+                raise
+            except Exception as exc:
+                complete_job(jconn, job_id, {"success": False, "error": str(exc)[:300]})
+                logger.exception("[integrate-new-tables] failed source_id=%s", source_id)
+                raise HTTPException(status_code=500, detail=str(exc)[:300])
+        finally:
+            try:
+                jconn.close()
+            except Exception:
+                pass
 
 
 # ─────────────────────────────────────────────────────────────

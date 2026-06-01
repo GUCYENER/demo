@@ -209,6 +209,12 @@ def _run_schedule_checker():
             except Exception as e:
                 log_error(f"[Scheduler] db_smart scheduled report hatasi: {e}", "scheduler")
 
+            # NOT (v3.47.0 P3b): FK Loop / incremental job'ları için AYRI reaper EKLENMEDİ —
+            # ds_learning_service.check_running_job ZATEN ds_discovery_jobs'taki 30dk'dan eski
+            # 'running' job'ları (her job_type, fk_synthetic dahil) 'failed'a çeviriyor ve her iki
+            # endpoint'in preflight'ından çağrılıyor. Ayrı bir scheduler reaper redundant + eşik
+            # çelişkisi (30 vs 45) yaratırdı. Stuck job bir sonraki preflight'ta self-heal olur.
+
         except Exception as e:
             log_error(f"[Scheduler] Kontrol hatasi: {e}", "scheduler")
     

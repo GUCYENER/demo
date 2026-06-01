@@ -1606,6 +1606,40 @@ def check_running_job(vyra_conn, source_id: int) -> dict:
 _DS_JOB_LOCK_CLASS = 559230
 
 
+def create_or_get_running_job(
+    vyra_conn, source_id: int, company_id: int, job_type: str, user_id: int = None
+):
+    """v3.47.0 P3b — TOCTOU-güvenli job aç/getir → ``(job_id, created)`` döner.
+
+    create_job ile aynı advisory-lock deseni AMA: (1) running-check ``job_type``'a da bakar (aynı
+    kaynakta farklı tipte job'lar — discovery vs fk_synthetic — birbirini BLOKLAMAZ; create_job'ın
+    "her tip" davranışı discovery için korunur, buraya taşınmaz), (2) ``created`` bayrağı döner —
+    caller yalnız YENİ açıldıysa background thread başlatsın (çift üretim engeli). FK Loop endpoint'i
+    bunu kullanır.
+    """
+    cur = vyra_conn.cursor()
+    cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", (_DS_JOB_LOCK_CLASS, int(source_id)))
+    cur.execute("""
+        SELECT id FROM ds_discovery_jobs
+        WHERE source_id = %s AND job_type = %s AND status = 'running'
+        ORDER BY started_at DESC LIMIT 1
+    """, (source_id, job_type))
+    existing = cur.fetchone()
+    if existing:
+        existing_id = existing["id"] if isinstance(existing, dict) else existing[0]
+        vyra_conn.commit()  # advisory lock serbest
+        return existing_id, False
+    cur.execute("""
+        INSERT INTO ds_discovery_jobs (source_id, company_id, job_type, status, started_at, created_by)
+        VALUES (%s, %s, %s, 'running', NOW(), %s)
+        RETURNING id
+    """, (source_id, company_id, job_type, user_id))
+    row = cur.fetchone()
+    job_id = row["id"] if isinstance(row, dict) else row[0]
+    vyra_conn.commit()  # advisory lock serbest
+    return job_id, True
+
+
 def create_job(vyra_conn, source_id: int, company_id: int, job_type: str, user_id: int = None) -> int:
     """Yeni keşif job kaydı oluşturur, ID döner.
 

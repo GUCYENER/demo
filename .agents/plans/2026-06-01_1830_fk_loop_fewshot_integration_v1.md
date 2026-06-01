@@ -100,11 +100,20 @@ recursive CTE) + TIME-BUCKETED (date_trunc+FK gruplama) + mevcut chain G3 (CHAIN
 - ✅ code-review: follow-up UPDATE→INSERT (poison fix), empty/success çelişki, bare relation/deadlock
   yanlış-sınıflama, frontend görünürlük. 23 vaka + graceful yeşil.
 
-**P3b — ertelendi (altyapı-bağımlı, ayrı karar):**
-- Multi-worker job tracker Redis'e (şu an in-memory `_jobs` dict, db_learning_api.py:36 — Redis henüz
-  deploy değil; taşımak altyapı kararı).
-- Keşif/drift sonrası periyodik/otomatik FK Loop tetik (cron/APScheduler — proje genelinde scheduler yok).
-- few-shot kullanım metriği (usage_count/last_used_at trend) + cache-hit oranı dashboard genişletme.
+**P3b — ✅ B1 TAMAM (v3.47.0): Multi-worker job state (DB-backed)**
+> DÜZELTME: P3a notundaki "Redis deploy değil / scheduler yok" YANLIŞTI — Redis aktif (port 6380, 6+ cache),
+> croniter scheduler çalışıyor. Konsey (NIKE/TYCHE/ARES/HERMES) gerçek kodu okuyup değerlendirdi.
+- ✅ **Konsey kararı:** Redis GEREKSİZ (ds_discovery_jobs DB-backed yeterli, sıfır migration). B2 cron
+  ertelendi (keşif-sonrası tetik incremental_schema_integrator'da event-driven zaten var). Kullanıcı onayı.
+- ✅ **B1:** in-memory `_jobs` → `ds_discovery_jobs` (job_type fk_synthetic/incremental_integration);
+  `create_or_get_running_job` (advisory-lock TOCTOU + (id,created)) + `complete_job` + `check_running_job`
+  reuse; mig 053 company-scoped RLS; `/synthetic-status` cross-tenant sızıntı fix; `_map_fk_job_row` geriye
+  uyumlu (frontend değişmedi); eff_company kaynaktan (admin-NULL fail-closed).
+- ✅ **code-review:** ayrı reaper redundant (check_running_job 30dk reap'liyor) → kaldırıldı; preflight
+  simetrik mutual-exclusion; bg success-complete ayrı try; SET LOCAL/commit scope (izole job connection).
+
+**P3b — B2 ertelendi (gerçek talep doğrulanınca):** periyodik/otomatik FK Loop tetik (cron) — keşif-sonrası
+event-driven mevcut; default-OFF cron ölü kod riski (TYCHE). few-shot kullanım metriği trend dashboard.
 
 ## Critical Files
 - `app/services/db_learning/fk_synthetic_generator.py` (_fetch_relationships, generate_for_source, terfi)
