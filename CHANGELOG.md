@@ -1,5 +1,26 @@
 # VYRA Changelog
 
+## v3.43.4 — 2026-06-01 — Akıllı Keşif admin KÖK fix (admin company_id NULL) (HERMES + ARES + APOLLO)
+
+> **Kullanıcı:** Akıllı Keşif wizard'ı admin'de bozuk — `create_session` 400 ("company_id zorunlu"),
+> `generate-report` 403 ("Şirket bağlamı tanımlı değil").
+> **Kök (kod+git+şema doğrulandı, regresyon DEĞİL):** Admin company_id tasarımca NULL (schema.py:764
+> backfill yalnız non-admin'e firma atar). db-smart wizard tabloları `company_id NOT NULL FK` ister
+> (`dbsmart_sessions` mig 032, `data_sources` mig 002). İki kontrol pre-existing (v3.30.0 session_manager,
+> v3.36.0 generate-report). v3.43.1 fix'i (RLS context admin NULL) GET adımlarını açtı → admin wizard'da
+> ilerleyebildi ve bu pre-existing company_id duvarlarına ulaştı (500→400/403).
+> **Fix:** yeni `resolve_effective_company_id(cur, user_ctx, source_id)` — admin+NULL ise **kaynağın
+> firması** (`data_sources.company_id`, NOT NULL). `create_session` + `generate-report` (tenant guard
+> admin bypass) + 2 `save` endpoint'i efektif company ile çalışır. **Tenant izolasyonu korunur:** oturum/
+> rapor kaynağın GERÇEK firmasına atanır (cross-tenant kaçış yok); **non-admin + NULL company_id
+> fail-closed** (kaynaktan çözülmez, reddedilir — ARES). `/code-review medium`: wizard fix TEMİZ
+> (güvenlik), is_admin tespiti tutarlı, helper fail-closed; 5-senaryo sahte-cursor doğrulandı.
+> **saved_reports CRUD da admin'e açıldı:** `_require_user_ctx` admin için company_id ZORUNLU değil
+> (`dbsmart_saved_reports` RLS user_id+is_admin tabanlı — company ile filtrelemez; manage/read izolasyonu
+> RLS'ten); `save()` ise net-400 guard'ı korur (admin+kaynaksız kayıtta INSERT NOT NULL ihlali=500 yerine
+> açık 400). 2. tur `/code-review`: admin+source_id'siz save edge'i yakalandı → save() guard ile giderildi.
+> `few_shot_store._require_user_ctx` ayrı flow (db-smart wizard'da değil) — kapsam dışı.
+
 ## v3.43.3 — 2026-06-01 — Frontend cache-bust KÖK fix (ATHENA + NIKE)
 
 > **Kullanıcı raporu:** v3.43.2'de eklenen Yetkilendirme "Tümünü Temizle"/"Seçilenleri Göster"

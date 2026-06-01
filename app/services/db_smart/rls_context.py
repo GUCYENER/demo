@@ -167,3 +167,39 @@ def clear_vyra_user_context(cur: Any) -> None:
         cur.execute("SELECT set_config('vyra.is_admin', '', true)")
     except Exception as e:
         logger.warning("[db_smart.rls] clear_vyra_user_context failed: %s", e)
+
+
+def resolve_effective_company_id(cur, user_ctx: Dict[str, Any], source_id=None):
+    """Kullanıcının efektif company_id'sini çözer (v3.43.4 — admin→kaynağın firması).
+
+    - Normal kullanıcı: user_ctx['company_id'] (zaten dolu) → onu döndür.
+    - Admin (company_id NULL, tasarımca — schema.py:764 backfill yalnız non-admin'e firma atar):
+      db-smart oturum/rapor tabloları `company_id NOT NULL FK` ister; admin'in firması yok.
+      Çözüm: KAYNAĞIN firması (`data_sources.company_id`, NOT NULL — mig 002). Böylece oturum/rapor
+      kaynağın GERÇEK firmasına atanır → tenant izolasyonu korunur (admin cross-tenant kaçmaz;
+      yalnız seçtiği kaynağın firması bağlamında çalışır).
+    - Çözülemezse None döner → caller fail-closed davranmalı (non-admin asla NULL'la geçmez).
+
+    Güvenlik: NON-admin + NULL company_id'de None döner (kaynaktan ÇÖZMEZ) — sadece admin için
+    kaynak firması kullanılır. cur, apply_vyra_user_context set edilmiş scoped cursor olmalı.
+    """
+    raw = user_ctx.get("company_id") if user_ctx else None
+    if raw is not None:
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
+
+    is_admin = bool(user_ctx.get("is_admin")) or user_ctx.get("role") == "admin"
+    if not is_admin or source_id is None:
+        return None
+    try:
+        cur.execute("SELECT company_id FROM data_sources WHERE id = %s", (int(source_id),))
+        row = cur.fetchone()
+        if row:
+            cid = row["company_id"] if isinstance(row, dict) else row[0]
+            return int(cid) if cid is not None else None
+    except Exception as e:
+        logger.warning("[db_smart.rls] resolve_effective_company_id source=%s failed: %s",
+                       source_id, e)
+    return None

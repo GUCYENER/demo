@@ -46,7 +46,7 @@ from pydantic import BaseModel, Field
 
 from app.api.routes.auth import get_current_user
 from app.core.db import get_db_context
-from app.services.db_smart.rls_context import apply_vyra_user_context
+from app.services.db_smart.rls_context import apply_vyra_user_context, resolve_effective_company_id
 from app.services.db_smart import (
     session_manager,
     state_machine,
@@ -273,9 +273,17 @@ def create_session(
     with get_db_context() as conn:
         cur = conn.cursor()
         apply_vyra_user_context(cur, current_user)
+        # v3.43.4: admin company_id NULL ise oturumu KAYNAĞIN firmasına ata (admin→kaynağın firması).
+        # dbsmart_sessions.company_id NOT NULL FK; admin'in firması yok → kaynağın firması (RLS user_id
+        # tabanlı + is_admin bypass → INSERT geçer, tenant izolasyonu korunur).
+        eff_ctx = current_user
+        if current_user.get("company_id") is None:
+            _cid = resolve_effective_company_id(cur, current_user, body.source_id)
+            if _cid is not None:
+                eff_ctx = {**current_user, "company_id": _cid}
         try:
             session_uid = session_manager.create_session(
-                cur, current_user, body.source_id,
+                cur, eff_ctx, body.source_id,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -1273,8 +1281,14 @@ def post_save_report(
             if not last_dialect and isinstance(wizard_state, dict):
                 last_dialect = wizard_state.get("dialect") or None
 
+            # v3.43.4: admin company_id NULL → kaynağın firması (admin→kaynağın firması).
+            _save_ctx = current_user
+            if current_user.get("company_id") is None and source_id:
+                _cid = resolve_effective_company_id(cur, current_user, source_id)
+                if _cid is not None:
+                    _save_ctx = {**current_user, "company_id": _cid}
             out = saved_reports.save(
-                cur, current_user,
+                cur, _save_ctx,
                 name=raw_name,
                 wizard_state=wizard_state,
                 last_sql=last_sql,
@@ -1352,8 +1366,14 @@ def post_save_report_flat(
         with get_db_context() as conn:
             cur = conn.cursor()
             apply_vyra_user_context(cur, current_user)
+            # v3.43.4: admin company_id NULL → kaynağın firması (admin→kaynağın firması).
+            _save_ctx = current_user
+            if current_user.get("company_id") is None and _eff_source_id:
+                _cid = resolve_effective_company_id(cur, current_user, _eff_source_id)
+                if _cid is not None:
+                    _save_ctx = {**current_user, "company_id": _cid}
             out = saved_reports.save(
-                cur, current_user,
+                cur, _save_ctx,
                 name=raw_name,
                 wizard_state=wizard_state,
                 last_sql=body.generated_sql,
@@ -2711,7 +2731,10 @@ def post_generate_report(
     _require_user_id(current_user)
 
     company_id = current_user.get("company_id")
-    if not company_id:
+    # v3.43.4: admin company_id NULL olabilir (tasarımca) → erken 403 yerine kaynağın firmasından
+    # çözülecek (aşağıda, source okunduktan sonra). Non-admin + NULL company_id hâlâ reddedilir.
+    _is_admin = bool(current_user.get("is_admin")) or current_user.get("role") == "admin"
+    if not company_id and not _is_admin:
         logger.warning(
             "[db_smart] generate_report: current_user.company_id boş (user_id=%s)",
             current_user.get("id"),
@@ -2747,7 +2770,11 @@ def post_generate_report(
         src = dict(row) if isinstance(row, dict) else dict(
             zip([d[0] for d in cur.description], row)
         )
-        if int(src.get("company_id") or 0) != int(company_id):
+        # v3.43.4: admin → kaynağın firması. Admin her kaynağa erişebilir; efektif company =
+        # kaynağın GERÇEK firması (cross-tenant kaçış yok). Non-admin'de cross-tenant guard korunur.
+        if _is_admin:
+            company_id = int(src.get("company_id") or 0)
+        elif int(src.get("company_id") or 0) != int(company_id):
             logger.warning(
                 "[db_smart] generate_report cross-tenant: source=%s belongs to co=%s, "
                 "current_user co=%s",

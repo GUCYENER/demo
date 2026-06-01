@@ -52,12 +52,22 @@ _UPDATE_COLS_WHITELIST: Dict[str, str] = {
 }
 
 
-def _require_user_ctx(user_ctx: Dict[str, Any]) -> Tuple[int, int]:
+def _require_user_ctx(user_ctx: Dict[str, Any]) -> Tuple[int, Optional[int]]:
+    """user_id zorunlu; company_id NON-ADMIN için zorunlu (v3.43.4).
+
+    dbsmart_saved_reports RLS user_id + is_admin tabanlı (mig 032 — company_id ile filtrelemez) →
+    manage/read fonksiyonları (list/get/update/mark_run/share/revoke) izolasyonu RLS'ten alır,
+    company_id'yi WHERE'de KULLANMAZ. Admin company_id tasarımca NULL olabilir (schema.py:764) →
+    admin için company_id ZORUNLU DEĞİL (None döner; RLS is_admin bypass korur). save() INSERT'i
+    company_id NOT NULL FK ister; endpoint'te eff_ctx (kaynağın firması) ile çözülür.
+    Non-admin + NULL company_id → fail-closed (raise — tenant güvenliği).
+    """
     uid = user_ctx.get("id") if user_ctx else None
     cid = user_ctx.get("company_id") if user_ctx else None
-    if uid is None or cid is None:
+    is_admin = bool(user_ctx and (user_ctx.get("is_admin") or user_ctx.get("role") == "admin"))
+    if uid is None or (cid is None and not is_admin):
         raise ValueError("user_ctx eksik (id, company_id zorunlu)")
-    return int(uid), int(cid)
+    return int(uid), (int(cid) if cid is not None else None)
 
 
 def _normalize_tags(tags: Optional[List[str]]) -> Optional[List[str]]:
@@ -96,6 +106,12 @@ def save(
 ) -> Optional[Dict[str, Any]]:
     """dbsmart_saved_reports INSERT. Dönüş: {id, created_at} | None (RLS reddi)."""
     user_id, company_id = _require_user_ctx(user_ctx)
+    # v3.43.4: save() company_id'yi INSERT'te kullanır (NOT NULL FK). _require_user_ctx admin için
+    # None döndürebilir (manage/read fonksiyonları RLS ile izole olduğundan company gerektirmez), ama
+    # save burada gerçek firma ister. Admin'in firması endpoint'te eff_ctx (kaynağın firması) ile
+    # çözülür; source_id yoksa çözülemez → INSERT NOT NULL ihlali (500) yerine net hata (400):
+    if company_id is None:
+        raise ValueError("Rapor kaydı için firma bağlamı gerekli (kaynak seçili olmalı).")
     if not isinstance(name, str) or not name.strip():
         raise ValueError("name boş olamaz")
     name_clean = name.strip()[:_MAX_NAME_LEN]
