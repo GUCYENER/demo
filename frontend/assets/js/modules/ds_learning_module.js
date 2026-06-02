@@ -317,7 +317,7 @@ window.DSLearningModule = (function () {
                 <div class="ds-scope-search ds-schema-search">
                     <i class="fa-solid fa-search" aria-hidden="true"></i>
                     <input type="text" id="dsSchemaSearch" class="ds-scope-search-input" placeholder="Şema ara..." aria-label="Şema ara" autocomplete="off">
-                    <button type="button" id="dsSchemaSearchClear" class="ds-search-clear" aria-label="Aramayı temizle" title="Aramayı temizle" hidden>×</button>
+                    <button type="button" id="dsSchemaSearchClear" class="ds-search-clear" aria-label="Aramayı temizle" data-tooltip="Temizle" hidden><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
                 </div>
                 <label class="ds-schema-show-selected">
                     <input type="checkbox" id="dsSchemaShowSelected">
