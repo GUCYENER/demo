@@ -244,8 +244,87 @@ def enrich_tables_batch(vyra_conn, source_id: int, company_id: int,
 
 # v3.60.0: eski sabit 30 kapağı → 30+ kolonlu tablolarda 31+ kolon LLM'e HİÇ gitmiyordu
 # (İŞ ADI/AÇIKLAMA boş "—", semantic 'other'). Modern LLM 100 kolonu tek prompt'ta rahat işler.
-# 100'ü aşan tablolar için tanılama loglanır (görünürlük) + ileride chunk'lanabilir.
 MAX_ENRICH_COLUMNS = 100
+# v3.66.0: 100'ü AŞAN kolonlar (ör. 313 kolonlu tablo) artık CHUNK'lı enrich edilir (kalan kolonlar
+# parça parça LLM'e gönderilir, merge). _COL_CHUNK_SIZE = chunk başına kolon; _MAX_TOTAL = patholojik
+# tabloya üst sınır (üstü etiketsiz kalır + WARNING).
+_COL_CHUNK_SIZE = 80
+_MAX_TOTAL_ENRICH_COLUMNS = 500
+
+
+def _llm_enrich_columns_only(table_name: str, cols_chunk: list) -> dict:
+    """v3.66.0: YALNIZ sütun enrichment (tablo-seviye analiz yok) — 100+ kolonlu tabloda taşan
+    kolonlar için. Döner: {col_name: {business_name_tr, description_tr, semantic_type, synonyms_tr,
+    is_searchable}}. Hata/boşta {} (non-blocking)."""
+    try:
+        from app.core.llm import call_llm_api
+    except ImportError:
+        return {}
+    col_lines = []
+    for c in cols_chunk:
+        cl = f"  - {c.get('name', '?')} ({c.get('data_type', '?')})"
+        if c.get("is_pk"):
+            cl += " [PK]"
+        col_lines.append(cl)
+    prompt = (
+        f"Tablo: {table_name}\n"
+        "Aşağıdaki sütunların HER BİRİ için Türkçe iş adı, kısa açıklama ve semantic tip üret.\n"
+        "Sütunlar:\n" + "\n".join(col_lines) + "\n\n"
+        "YANIT SADECE JSON (gönderilen HER sütunu ekle):\n"
+        '{"columns": {"sütun_adı": {"business_name_tr":"...","description_tr":"...",'
+        '"semantic_type":"id/name/date/amount/status/code/description/flag/quantity/other",'
+        '"synonyms_tr":["..."],"is_searchable":true}}}\n'
+        "JSON KESİNLİKLE GEÇERLİ olmalı (string'leri tek satır, çift tırnağı \\\" ile kaçır). Sadece JSON döndür."
+    )
+    messages = [
+        {"role": "system", "content": "Sen bir veritabanı analiz uzmanısın. Sadece istenen JSON'u döndür."},
+        {"role": "user", "content": prompt},
+    ]
+    try:
+        resp = call_llm_api(messages)
+        if not resp:
+            return {}
+        parsed = _parse_llm_analysis(resp)
+        cols = (parsed or {}).get("columns")
+        return cols if isinstance(cols, dict) else {}
+    except Exception as e:
+        logger.warning("[DSEnrich] kolon-chunk enrich hatası (%s): %s", table_name, str(e)[:150])
+        return {}
+
+
+def _enrich_overflow_columns(table_name: str, columns: list, parsed: dict,
+                             start: int = MAX_ENRICH_COLUMNS) -> None:
+    """v3.66.0: start'tan sonraki kolonları CHUNK'lı enrich edip parsed['columns']'a ekler (in-place).
+    Main yol: start=MAX_ENRICH_COLUMNS (ilk 100 ana çağrıda → 101+ chunk). Fallback yol: start=0
+    (mini-prompt columns boş döner → TÜM kolonlar chunk'lanır). 313 kolonlu tabloda hepsi etiketlenir."""
+    if not parsed or len(columns) <= start:
+        return
+    total_cap = min(len(columns), _MAX_TOTAL_ENRICH_COLUMNS)
+    remaining = columns[start:total_cap]
+    merged = parsed.get("columns")
+    if not isinstance(merged, dict):
+        merged = {}
+    got = 0
+    for i in range(0, len(remaining), _COL_CHUNK_SIZE):
+        chunk = remaining[i:i + _COL_CHUNK_SIZE]
+        chunk_cols = _llm_enrich_columns_only(table_name, chunk)
+        if chunk_cols:
+            merged.update(chunk_cols)
+            got += len(chunk_cols)
+    parsed["columns"] = merged
+    logger.info("[DSEnrich] %s: %d/%d taşan kolon chunk'lı enrich edildi",
+                table_name, got, len(remaining))
+    if len(columns) > _MAX_TOTAL_ENRICH_COLUMNS:
+        try:
+            from app.services.logging_service import log_system_event
+            log_system_event(
+                level="WARNING",
+                message=(f"[DSEnrich] {table_name}: {len(columns)} kolon — ilk {_MAX_TOTAL_ENRICH_COLUMNS} "
+                         f"enrich edildi, kalan {len(columns) - _MAX_TOTAL_ENRICH_COLUMNS} etiketsiz."),
+                module="ds_enrichment",
+            )
+        except Exception:
+            pass
 
 
 def _call_llm_for_table_analysis(table_name: str, columns: list,
@@ -279,18 +358,8 @@ def _call_llm_for_table_analysis(table_name: str, columns: list,
 
     columns_block = "\n".join(col_descriptions) if col_descriptions else "  (sütun bilgisi yok)"
 
-    # v3.60.0: kapağı aşan tablo → kalan kolonlar etiketlenmeden kalır; Hata İzleme'ye görünür yaz.
-    if len(columns) > MAX_ENRICH_COLUMNS:
-        try:
-            from app.services.logging_service import log_system_event
-            log_system_event(
-                level="WARNING",
-                message=(f"[DSEnrich] {table_name}: {len(columns)} kolon var, ilk {MAX_ENRICH_COLUMNS} "
-                         f"LLM'e gonderildi → {len(columns) - MAX_ENRICH_COLUMNS} kolon etiketlenmeyebilir."),
-                module="ds_enrichment",
-            )
-        except Exception:
-            pass
+    # v3.66.0: cap'i aşan kolonlar artık _enrich_overflow_columns ile CHUNK'lı enrich edilir
+    # (eski "etiketlenmeyebilir" WARNING'i kaldırıldı — her >100 tabloda gereksiz flood yaratıyordu).
 
     # Sample data ekle
     sample_block = ""
@@ -359,6 +428,8 @@ KURALLAR:
         if response:
             parsed = _parse_llm_analysis(response)
             if parsed:
+                # v3.66.0: cap'i aşan kolonları (101+) chunk'lı enrich et → "—" kalmasın.
+                _enrich_overflow_columns(table_name, columns, parsed)
                 return parsed
     except Exception as e:
         logger.warning("[DSEnrich] İlk LLM denemesi başarısız, daraltılmış prompt ile tekrar deneniyor. Hata: %s", type(e).__name__)
@@ -398,7 +469,12 @@ Sadece JSON döndür."""
     try:
         response2 = call_llm_api(messages)
         if response2:
-            return _parse_llm_analysis(response2)
+            parsed2 = _parse_llm_analysis(response2)
+            if parsed2:
+                # v3.66.0 code-review: fallback mini-prompt columns={} döner → TÜM kolonları (start=0)
+                # chunk'lı enrich et (yoksa fallback'e düşen tablonun kolonları "—" kalırdı).
+                _enrich_overflow_columns(table_name, columns, parsed2, start=0)
+            return parsed2
     except Exception as e:
         logger.error("[DSEnrich] LLM analiz hatası (2. Deneme): %s — %s",
                      type(e).__name__, str(e)[:200])

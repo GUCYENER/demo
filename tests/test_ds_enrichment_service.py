@@ -760,3 +760,32 @@ def test_get_all_tables_status():
     assert len(results) == 2
     assert results[0]['is_approved'] is True
     assert results[1]['is_approved'] is False
+
+
+# ─────────────────────────────────────────────────────────────
+# v3.66.0: 100+ kolonlu tabloda taşan kolonların CHUNK'lı enrichment'i
+# ─────────────────────────────────────────────────────────────
+def test_enrich_overflow_columns_chunks_all():
+    """313 kolonlu tablo: ilk 100 ana çağrıda, 101+ chunk'lı → hepsi etiketlenir (— kalmaz)."""
+    from unittest.mock import patch
+    import app.services.ds_enrichment_service as svc
+    cols = [{"name": f"c{i}", "data_type": "text"} for i in range(313)]
+    parsed = {"columns": {f"c{i}": {"business_name_tr": "x"} for i in range(100)}}
+
+    def _fake_chunk(table, chunk):
+        return {c["name"]: {"business_name_tr": "CH", "semantic_type": "other"} for c in chunk}
+
+    with patch.object(svc, "_llm_enrich_columns_only", side_effect=_fake_chunk):
+        svc._enrich_overflow_columns("T", cols, parsed)
+    assert len(parsed["columns"]) == 313  # 100 ana + 213 chunk
+
+
+def test_enrich_overflow_columns_noop_under_cap():
+    """<=100 kolon → ek LLM çağrısı YOK (no-op)."""
+    from unittest.mock import patch
+    import app.services.ds_enrichment_service as svc
+    parsed = {"columns": {"a": {}}}
+    with patch.object(svc, "_llm_enrich_columns_only") as m:
+        svc._enrich_overflow_columns("T", [{"name": f"c{i}"} for i in range(50)], parsed)
+    assert not m.called
+    assert parsed["columns"] == {"a": {}}
