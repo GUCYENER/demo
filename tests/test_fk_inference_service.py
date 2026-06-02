@@ -106,38 +106,49 @@ def test_type_compat_unknown_returns_false():
 # _score
 # ─────────────────────────────────────────────────────────────
 def test_score_naming_only():
-    # v3.60.0: _score artık match_kind alır ('full' = tam-root eşleşmesi)
+    # v3.65.0: _score match_kind alır ama method DB-constraint-valid kalır ('naming'); match_kind evidence'da.
     s, m = svc._score("full", False, None)
     assert s == 0.6
-    assert m == "naming:full"
+    assert m == "naming"
 
 
 def test_score_naming_type():
     s, m = svc._score("full", True, None)
     assert s == 0.8
-    assert m == "naming:full+type"
+    assert m == "naming+type"
 
 
 def test_score_with_sample_full_coverage():
     s, m = svc._score("full", True, {"coverage_ratio": 1.0})
     assert s == 1.0
-    assert m == "naming:full+type+sample"
+    assert m == "naming+type+sample"
 
 
 def test_score_partial_sample():
     s, m = svc._score("full", True, {"coverage_ratio": 0.5})
     assert s == 0.9
-    assert m == "naming:full+type+sample"
+    assert m == "naming+type+sample"
 
 
 def test_score_head_noun_lower_base():
     # v3.60.0: head-noun (rol-önekli) eşleşme daha düşük taban (0.45) → tek başına min_confidence altı,
-    # tip uyumuyla 0.65 → persist olur.
+    # tip uyumuyla 0.65 → persist olur. v3.65.0: method yine constraint-valid 'naming+type'.
     s_naming, _ = svc._score("head", False, None)
     assert s_naming == 0.45
     s_typed, m = svc._score("head", True, None)
     assert abs(s_typed - 0.65) < 1e-9
-    assert m == "naming:head+type"
+    assert m == "naming+type"
+
+
+def test_score_method_is_constraint_valid():
+    # v3.65.0 regresyon koruması: inference_method DB CHECK constraint izinli değerlerinden olmalı
+    # (ck_dsdrel_inference_method) — match_kind suffix'i ('naming:full') ASLA kolona yazılmamalı.
+    _allowed = {"naming", "naming+type", "naming+type+sample"}
+    for mk in ("full", "head"):
+        for tok in (False, True):
+            for si in (None, {"coverage_ratio": 1.0}):
+                _, m = svc._score(mk, tok, si)
+                assert m in _allowed, f"geçersiz inference_method: {m}"
 
 
 # ─────────────────────────────────────────────────────────────

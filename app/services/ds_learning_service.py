@@ -1365,10 +1365,13 @@ def _apply_sample_timeout(db_conn, target_cur, db_dialect: str, timeout_ms: int)
 
 
 def collect_samples(source: dict, vyra_conn, max_rows: int = 10, schema_filter: list = None,
-                    randomize: bool = True, sample_timeout_ms: int = 15000) -> dict:
+                    randomize: bool = True, sample_timeout_ms: int = 15000,
+                    table_filter: list = None) -> dict:
     """
     Keşfedilen tablolardan örnek SELECT sorguları hazırlayıp çalıştırır.
     schema_filter: Belirli schema adlarına göre filtreler (None = tüm şemalar).
+    table_filter: Belirli tablo adlarına göre filtreler (None = tümü). v3.65.0 — tablo-bazlı
+      yeniden-öğrenmede YALNIZ tıklanan tabloyu örneklemek için (tüm şemayı taramasın).
     randomize: True → temsil gücü için rastgele örnekleme (v3.43.0 P0-B); False → eski ilk-N satır.
     sample_timeout_ms: Tablo başına örnek sorgu timeout'u (büyük tabloda hang önler).
     """
@@ -1380,26 +1383,25 @@ def collect_samples(source: dict, vyra_conn, max_rows: int = 10, schema_filter: 
         password = _decrypt_password(source.get("db_password_encrypted", ""))
         db_conn, db_dialect = _get_db_connector(source, password)
 
-        # VYRA DB'den keşfedilmiş objeleri al (opsiyonel schema filtresi ile)
+        # VYRA DB'den keşfedilmiş objeleri al (opsiyonel schema/tablo filtresi ile)
         vyra_cur = vyra_conn.cursor()
+        _clauses = ["source_id = %s", "object_type = 'table'"]
+        _params: list = [source_id]
         if schema_filter:
-            format_strings = ','.join(['%s'] * len(schema_filter))
-            vyra_cur.execute(f"""
-                SELECT id, schema_name, object_name, object_type, columns_json, row_count_estimate
-                FROM ds_db_objects
-                WHERE source_id = %s AND object_type = 'table'
-                  AND schema_name IN ({format_strings})
-                ORDER BY schema_name, object_name
-            """, [source_id] + list(schema_filter))
-            logger.info("[DSLearning] Veri toplama: schema filtresi uygulandı (%d şema: %s)",
-                        len(schema_filter), schema_filter[:5])
-        else:
-            vyra_cur.execute("""
-                SELECT id, schema_name, object_name, object_type, columns_json, row_count_estimate
-                FROM ds_db_objects
-                WHERE source_id = %s AND object_type = 'table'
-                ORDER BY schema_name, object_name
-            """, (source_id,))
+            _clauses.append("schema_name IN (" + ','.join(['%s'] * len(schema_filter)) + ")")
+            _params += list(schema_filter)
+        if table_filter:
+            _clauses.append("LOWER(object_name) IN (" + ','.join(['%s'] * len(table_filter)) + ")")
+            _params += [str(t).lower() for t in table_filter]
+        vyra_cur.execute(
+            "SELECT id, schema_name, object_name, object_type, columns_json, row_count_estimate "
+            "FROM ds_db_objects WHERE " + " AND ".join(_clauses) +
+            " ORDER BY schema_name, object_name",
+            _params,
+        )
+        if schema_filter or table_filter:
+            logger.info("[DSLearning] Veri toplama filtre: schemas=%s tables=%s",
+                        (schema_filter or [])[:5], (table_filter or [])[:5])
         db_objects = vyra_cur.fetchall()
 
         if not db_objects:
@@ -2358,17 +2360,32 @@ def relearn_table(source: dict, schema_name: str, table_name: str,
         vyra_conn.commit()
         results["steps"].append({"step": "purge", "success": True})
 
-        # 2) Kaynaktan yeniden keşif (obje/kolon/FK) — kaynak-geneli, onaylıları korur
-        r2 = detect_objects(source, vyra_conn)
-        results["steps"].append({"step": "objects", "success": r2.get("success")})
-        # Code-review (CRITICAL): keşif başarısızsa SESSİZCE devam edip stale veriyle "başarılı"
-        # DEMEMELİ → hard fail (job FAILED + log_exception/Hata İzleme). Kullanıcı yanlış "tamam" görmesin.
-        if not r2.get("success"):
-            raise RuntimeError(f"Obje tespiti başarısız: {str(r2.get('error'))[:300]}")
+        # 2) FK ilişkilerini yeniden ÇIKAR — v3.65.0 KÖK fix (kullanıcı VERİ KAYBI bulgusu):
+        # Eskiden whole-source detect_objects çağrılıyordu; o snapshot-diff invalidation ile
+        # (özellikle CheckViolation/abort yarım kalınca) DİĞER tabloları "silindi" sanıp arşivliyordu
+        # → tablo seçince azalma. ARTIK detect_objects YOK. infer_fks_for_source idempotent + yalnız
+        # INSERT eder (skip-existing) → silinen HEDEF FK'larını yeniden kurar, diğer tablolara
+        # DOKUNMAZ. Kolonlar mevcut ds_db_objects'ten (son tam keşif). Kolon yapısı değiştiyse
+        # kullanıcı "Tümünü Keşfet" ile tam keşif yapmalı (bu güvenli per-tablo yoldur).
+        _dialect = (source.get("db_type") or "postgresql").strip().lower()
+        try:
+            from app.services.db_learning.fk_inference_service import infer_fks_for_source
+            _inf = infer_fks_for_source(cur, source_id, sample_validate=False,
+                                        min_confidence=0.60, dialect=_dialect)
+            vyra_conn.commit()
+            results["steps"].append({"step": "fk_infer", "success": True,
+                                     "data": {"persisted": _inf.get("persisted", 0)}})
+        except Exception as _fk_e:
+            try:
+                vyra_conn.rollback()
+            except Exception:
+                pass
+            results["steps"].append({"step": "fk_infer", "success": False, "error": str(_fk_e)[:200]})
 
-        # 3) Örnek toplama — hedefin şemasına filtreli (yoksa tümü). Örnek = iyileştirme; başarısızsa
-        # enrichment yine taze kolonlarla koşar → NON-BLOCKING ama dürüstçe success=False işaretlenir.
-        r3 = collect_samples(source, vyra_conn, schema_filter=[sch] if sch else None)
+        # 3) Örnek toplama — YALNIZ hedef tablo (tüm şemayı örnekleyip diğer tabloların timeout
+        # floodunu yaratmasın). Örnek = iyileştirme; başarısızsa enrichment taze kolonlarla koşar.
+        r3 = collect_samples(source, vyra_conn,
+                             schema_filter=[sch] if sch else None, table_filter=[tbl])
         _samples_ok = bool(r3.get("success"))
         results["steps"].append({"step": "samples", "success": _samples_ok})
         if not _samples_ok:

@@ -509,13 +509,17 @@ def _score(
     # v3.60.0: head-noun eşleşmesi (rol-önekli) full root'tan daha spekülatif → daha düşük taban.
     base = SCORE_NAMING if match_kind != "head" else SCORE_NAMING_HEAD
     score = base
-    method = f"naming:{match_kind}"
+    # v3.65.0 KÖK fix: inference_method DB kolonu CHECK constraint'li (ck_dsdrel_inference_method:
+    # 'naming'|'naming+type'|'naming+type+sample'|'manual'|'llm'). v3.60.0'da 'naming:full+type' yazınca
+    # HER insert CheckViolation → 0 FK + flood. method constraint-VALID kalır; match_kind (full/head)
+    # ayrıca evidence_json['match_kind']'de saklanır (bilgi kaybı yok).
+    method = "naming"
     if type_ok:
         score += SCORE_TYPE
-        method = f"naming:{match_kind}+type"
+        method = "naming+type"
     if sample_info is not None:
         score += SCORE_SAMPLE_MAX * float(sample_info.get("coverage_ratio", 0.0))
-        method = f"naming:{match_kind}+type+sample" if type_ok else f"naming:{match_kind}+sample"
+        method = "naming+type+sample"
     if score > 1.0:
         score = 1.0
     return round(score, 4), method
