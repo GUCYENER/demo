@@ -194,7 +194,10 @@ def _load_schema(
             cols = []
         pk_cols: List[str] = []
         for c in cols:
-            if isinstance(c, dict) and c.get("is_primary_key"):
+            # v3.56.0 KÖK fix: detect_objects columns_json'a `is_pk` yazıyor (ds_learning_service);
+            # burada `is_primary_key` okunuyordu → pk_cols HEP BOŞ → inference hedef PK'yı 'id'ye
+            # düşürüp XxxId PK'lı şemalarda candidate üretemiyordu. is_pk öncelik + eski key fallback.
+            if isinstance(c, dict) and (c.get("is_pk") or c.get("is_primary_key")):
                 pk_cols.append(c.get("name", ""))
         ns = dialect.normalize_ident(schema)
         nn = dialect.normalize_ident(name)
@@ -346,8 +349,17 @@ def _iter_fk_candidates(
     """
     # Build name → list[_TableInfo] index for fast plural/singular lookup.
     by_norm_name: Dict[str, List[_TableInfo]] = {}
+    # v3.56.0 KÖK fix: PREFIX-TOLERANT eşleştirme. Kurumsal şemalar tabloları modül prefix'iyle
+    # adlandırır (T_WF_INSTANCE, T_ORG_USER). Eski kod root'u TAM ada eşliyordu → "instance" ≠
+    # "t_wf_instance" → candidate üretmiyordu (FK İLİŞKİLERİ ~0). Son "_"-token indeksi: norm_name'in
+    # son token'ı → tablo ("t_wf_instance"→"instance", "t_org_user"→"user"). Exact match ÖNCE,
+    # son-token fallback SONRA (false-positive confidence + admin_verified ile sınırlı).
+    by_last_token: Dict[str, List[_TableInfo]] = {}
     for t in tables.values():
         by_norm_name.setdefault(t.norm_name, []).append(t)
+        _toks = [x for x in str(t.norm_name).split("_") if x]
+        if len(_toks) > 1:
+            by_last_token.setdefault(_toks[-1], []).append(t)
 
     for t in tables.values():
         for col in t.columns:
@@ -357,7 +369,8 @@ def _iter_fk_candidates(
             if not col_name:
                 continue
             # Skip PKs (auto-generated id columns aren't FKs to themselves).
-            if col.get("is_primary_key"):
+            # v3.56.0: is_pk öncelik (columns_json key'i), is_primary_key eski-fallback.
+            if col.get("is_pk") or col.get("is_primary_key"):
                 continue
             root = _extract_root(col_name)
             if not root:
@@ -367,12 +380,16 @@ def _iter_fk_candidates(
             target_tbl: Optional[_TableInfo] = None
             for cand in candidates:
                 cand_norm = dialect.normalize_ident(cand)
-                hits = by_norm_name.get(cand_norm)
+                # Exact ad eşleşmesi öncelikli; yoksa prefix-tolerant son-token eşleşmesi.
+                hits = by_norm_name.get(cand_norm) or by_last_token.get(cand_norm)
                 if not hits:
                     continue
                 # Prefer same schema if multiple.
                 same_schema = [h for h in hits if dialect.normalize_ident(h.schema) == dialect.normalize_ident(t.schema)]
-                target_tbl = (same_schema or hits)[0]
+                # v3.56.0 code-review: birden çok aday (özellikle son-token çakışması) →
+                # norm_name'e göre DETERMİNİSTİK seç (dict-iterasyon sırasına bağlı kalma →
+                # re-keşif idempotent, aynı inferred FK üretilir).
+                target_tbl = sorted(same_schema or hits, key=lambda h: h.norm_name)[0]
                 break
             if target_tbl is None:
                 continue

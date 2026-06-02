@@ -176,6 +176,33 @@ def test_infer_basic_one_fk():
     assert len(inserts) == 1
 
 
+def test_infer_prefixed_tables_and_is_pk_key():
+    """v3.56.0 KÖK fix: prefixed tablo (T_WF_*) + XxxId PK + columns_json `is_pk` key.
+
+    Eski kod: 0 candidate — (1) root 'instance' TAM ad 't_wf_instance' ile eşleşmez (prefix),
+    (2) is_primary_key okuyup is_pk'yı kaçırınca pk_cols boş → hedef PK 'id'ye düşer ama PK
+    'InstanceId'. Fix: son-token eşleşmesi + is_pk → candidate üretir + persist eder.
+    """
+    cur = MagicMock()
+    instance_cols = [{"name": "InstanceId", "type": "integer", "is_pk": True},
+                     {"name": "Name", "type": "varchar", "is_pk": False}]
+    biz_cols = [{"name": "BusinessInteractionId", "type": "integer", "is_pk": True},
+                {"name": "InstanceId", "type": "integer", "is_pk": False}]
+    objects = [
+        ("elysion", "T_WF_INSTANCE", "table", json.dumps(instance_cols)),
+        ("elysion", "T_WF_BUSINESSINTERACTION", "table", json.dumps(biz_cols)),
+    ]
+    _seed_objects(cur, objects)
+    res = svc.infer_fks_for_source(cur, source_id=42, dialect="postgresql")
+    assert res["tables_scanned"] == 2
+    # T_WF_BUSINESSINTERACTION.InstanceId → root 'instance' → son-token → T_WF_INSTANCE.InstanceId(PK)
+    assert res["candidates"] >= 1, f"prefixed/is_pk candidate üretilmeli: {res}"
+    assert res["persisted"] >= 1
+    inserts = [c for c in cur.execute.call_args_list
+               if "INSERT INTO ds_db_relationships" in c.args[0]]
+    assert len(inserts) >= 1
+
+
 def test_infer_skips_existing():
     cur = MagicMock()
     user_cols = [{"name": "id", "type": "integer", "is_primary_key": True}]
