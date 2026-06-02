@@ -161,6 +161,24 @@ class TestCompositeFKGrouping:
             assert list(rel.from_columns) == ["customer_id"]
             assert list(rel.to_columns) == ["id"]
 
+    def test_only_discovered_tables_filter_in_sql(self):
+        """v3.48.0: _fetch_relationships SELECT'i sentetiği YALNIZ keşfedilen
+        (ds_db_objects'te kayıtlı) tablolarla sınırlamalı — her iki FK ucu için
+        korelasyonlu EXISTS(ds_db_objects) içermeli (from_table + to_table)."""
+        rows = [
+            (1, "public", "orders", "customer_id",
+             "public", "customers", "id"),
+        ]
+        cur = _MockCursor(scripts=[("from ds_db_relationships", rows)])
+        fkgen._fetch_relationships(cur, source_id=42)
+        # İlk execute = ilişki SELECT'i
+        sql = cur.executed[0][0]
+        sql_l = sql.lower()
+        assert "ds_db_objects" in sql_l, "keşif tablosu (ds_db_objects) filtrede yok"
+        assert sql_l.count("exists") >= 2, "from_table + to_table için 2 EXISTS gerekli"
+        assert "lower(o.object_name) = lower(ds_db_relationships.from_table)" in sql_l
+        assert "lower(o2.object_name) = lower(ds_db_relationships.to_table)" in sql_l
+
     @pytest.mark.xfail(reason="awaiting Ajan-A G1 composite FK grouping", strict=False)
     def test_two_column_composite_groups_by_constraint_name(self):
         """Aynı constraint_name altında 2 satır -> tek composite Relationship.

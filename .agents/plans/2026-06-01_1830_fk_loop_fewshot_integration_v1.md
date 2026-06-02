@@ -2,9 +2,11 @@
 plan_id: fk_loop_fewshot_integration
 created: 2026-06-01
 branch: hira
-status: in_progress
+status: completed
 version_target: v3.44.0
 council_mod: 3
+closed: 2026-06-02
+closure_note: "Kapsam-içi tüm kod sevk edildi (v3.44.0→v3.47.0). 621 test yeşil (109 few_shot/synthetic + 512 dialect). Kalan: yalnız canlı-verify (operasyonel) + P2c/P3b-B2 (bilinçli ertelendi)."
 hebe_gate_required: false
 ---
 
@@ -31,7 +33,8 @@ fonksiyon istiyor.
 
 ## Faz/Gate Haritası (öncelik sırası)
 
-### P0 — Gürültü Temizliği (Konsey: HEPHAESTUS + ORACLE + ARES) [PREREQUISITE]
+### P0 — Gürültü Temizliği (Konsey: HEPHAESTUS + ORACLE + ARES) [PREREQUISITE] — ✅ TAMAM (v3.44.0)
+> Kanıt: `fk_synthetic_generator._EXCLUDED_SCHEMAS` (satır 149) + `_fetch_relationships` SELECT `AND (is_inferred = FALSE OR COALESCE(confidence_score,1.0) >= %s OR admin_verified = TRUE)` (satır 416). Hata şeffaflığı P3a'da (synthetic_errors).
 - SSOT `_EXCLUDED_SCHEMAS` sabiti (system + extension: pg_catalog, information_schema, pg_toast, partman,
   pglogical, cron, repack, ...). `_fetch_relationships` SELECT'ine `from_schema/to_schema NOT IN (...)`.
 - Confidence filtresi: declared FK (is_inferred=FALSE) VEYA `confidence_score >= 0.85` (param ile esnek).

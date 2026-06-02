@@ -415,6 +415,26 @@ def _fetch_relationships(
           AND LOWER(COALESCE(to_schema, '')) <> ALL(%s)
           AND (is_inferred = FALSE OR COALESCE(confidence_score, 1.0) >= %s OR admin_verified = TRUE)
           AND rejected_at IS NULL
+          -- v3.48.0: sentetik sorgu YALNIZ keşfedilen (ds_db_objects'te kayıtlı) tablolar
+          -- için üretilir. Her iki FK ucu da keşif çıktısında bulunmalı; aksi halde
+          -- keşfedilmemiş tabloya sorgu = anlamsız/yetkisiz gürültü. Şema eşleşmesi
+          -- NULL-tolerant (tablo adı eşit + şema yalnız iki tarafta da doluysa eşit) →
+          -- geçerli keşfedilmiş tablo over-filter edilmez. Aynı scoped cur (source/company
+          -- GUC) → ds_db_objects EXISTS de aynı RLS'e tabi.
+          AND EXISTS (
+              SELECT 1 FROM ds_db_objects o
+              WHERE o.source_id = ds_db_relationships.source_id
+                AND LOWER(o.object_name) = LOWER(ds_db_relationships.from_table)
+                AND (ds_db_relationships.from_schema IS NULL OR o.schema_name IS NULL
+                     OR LOWER(o.schema_name) = LOWER(ds_db_relationships.from_schema))
+          )
+          AND EXISTS (
+              SELECT 1 FROM ds_db_objects o2
+              WHERE o2.source_id = ds_db_relationships.source_id
+                AND LOWER(o2.object_name) = LOWER(ds_db_relationships.to_table)
+                AND (ds_db_relationships.to_schema IS NULL OR o2.schema_name IS NULL
+                     OR LOWER(o2.schema_name) = LOWER(ds_db_relationships.to_schema))
+          )
         ORDER BY source_id, COALESCE(constraint_name, ''),
                  COALESCE(fk_position, 1), id
         """,
