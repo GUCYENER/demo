@@ -242,6 +242,12 @@ def enrich_tables_batch(vyra_conn, source_id: int, company_id: int,
 # LLM Analiz
 # =====================================================
 
+# v3.60.0: eski sabit 30 kapağı → 30+ kolonlu tablolarda 31+ kolon LLM'e HİÇ gitmiyordu
+# (İŞ ADI/AÇIKLAMA boş "—", semantic 'other'). Modern LLM 100 kolonu tek prompt'ta rahat işler.
+# 100'ü aşan tablolar için tanılama loglanır (görünürlük) + ileride chunk'lanabilir.
+MAX_ENRICH_COLUMNS = 100
+
+
 def _call_llm_for_table_analysis(table_name: str, columns: list,
                                   sample_data: list = None,
                                   relationships: list = None) -> dict:
@@ -263,7 +269,7 @@ def _call_llm_for_table_analysis(table_name: str, columns: list,
 
     # Prompt oluştur
     col_descriptions = []
-    for c in columns[:30]:  # Max 30 sütun gönder
+    for c in columns[:MAX_ENRICH_COLUMNS]:
         col_str = f"  - {c.get('name', '?')} ({c.get('data_type', '?')})"
         if c.get("is_pk"):
             col_str += " [PRIMARY KEY]"
@@ -272,6 +278,19 @@ def _call_llm_for_table_analysis(table_name: str, columns: list,
         col_descriptions.append(col_str)
 
     columns_block = "\n".join(col_descriptions) if col_descriptions else "  (sütun bilgisi yok)"
+
+    # v3.60.0: kapağı aşan tablo → kalan kolonlar etiketlenmeden kalır; Hata İzleme'ye görünür yaz.
+    if len(columns) > MAX_ENRICH_COLUMNS:
+        try:
+            from app.services.logging_service import log_system_event
+            log_system_event(
+                level="WARNING",
+                message=(f"[DSEnrich] {table_name}: {len(columns)} kolon var, ilk {MAX_ENRICH_COLUMNS} "
+                         f"LLM'e gonderildi → {len(columns) - MAX_ENRICH_COLUMNS} kolon etiketlenmeyebilir."),
+                module="ds_enrichment",
+            )
+        except Exception:
+            pass
 
     # Sample data ekle
     sample_block = ""
@@ -351,7 +370,7 @@ KURALLAR:
     
     # Küçültülmüş prompt: Sadece tablo adı ve sütun adları, sample/relation YOK.
     col_names = []
-    for c in columns[:30]:
+    for c in columns[:MAX_ENRICH_COLUMNS]:
         col_names.append(f"  - {c.get('name', '?')}")
     mini_columns_block = "\n".join(col_names) if col_names else "  (sütun bilgisi yok)"
     
@@ -697,13 +716,21 @@ def _enrich_columns(vyra_conn, source_id: int, table_enrichment_id: int,
             except Exception:
                 pass
 
+    # v3.60.0: LLM kolon adını farklı kasada döndürebilir (ADGroupId → adgroupid) → exact key
+    # eşleşmezse etiket KAYBOLURDU. Önce exact, sonra case-insensitive (lower) indeks ile eşleştir.
+    raw_llm_columns = llm_columns if isinstance(llm_columns, dict) else {}
+    _llm_cols_ci = {
+        k.strip().lower(): v for k, v in raw_llm_columns.items() if isinstance(k, str)
+    }
+
     for col in columns:
         col_name = col.get("name", "")
         if not col_name:
             continue
 
-        raw_llm_columns = llm_columns if isinstance(llm_columns, dict) else {}
-        col_info = raw_llm_columns.get(col_name, {})
+        col_info = raw_llm_columns.get(col_name)
+        if not isinstance(col_info, dict) or not col_info:
+            col_info = _llm_cols_ci.get(col_name.strip().lower(), {})
         if not isinstance(col_info, dict):
             col_info = {}
 

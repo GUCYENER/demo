@@ -1086,7 +1086,7 @@ const DSEnrichmentModule = (() => {
                         </span>
                     </div>
                 </div>
-                <div class="ds-enrich-table-wrap">
+                <div class="ds-enrich-table-wrap" style="flex:1; min-height:0; overflow-y:auto; max-height:62vh; padding-right:4px;">
                     <table class="ds-enrich-table">
                         <thead>
                             <tr>

@@ -106,27 +106,103 @@ def test_type_compat_unknown_returns_false():
 # _score
 # ─────────────────────────────────────────────────────────────
 def test_score_naming_only():
-    s, m = svc._score(False, None)
+    # v3.60.0: _score artık match_kind alır ('full' = tam-root eşleşmesi)
+    s, m = svc._score("full", False, None)
     assert s == 0.6
-    assert m == "naming"
+    assert m == "naming:full"
 
 
 def test_score_naming_type():
-    s, m = svc._score(True, None)
+    s, m = svc._score("full", True, None)
     assert s == 0.8
-    assert m == "naming+type"
+    assert m == "naming:full+type"
 
 
 def test_score_with_sample_full_coverage():
-    s, m = svc._score(True, {"coverage_ratio": 1.0})
+    s, m = svc._score("full", True, {"coverage_ratio": 1.0})
     assert s == 1.0
-    assert m == "naming+type+sample"
+    assert m == "naming:full+type+sample"
 
 
 def test_score_partial_sample():
-    s, m = svc._score(True, {"coverage_ratio": 0.5})
+    s, m = svc._score("full", True, {"coverage_ratio": 0.5})
     assert s == 0.9
-    assert m == "naming+type+sample"
+    assert m == "naming:full+type+sample"
+
+
+def test_score_head_noun_lower_base():
+    # v3.60.0: head-noun (rol-önekli) eşleşme daha düşük taban (0.45) → tek başına min_confidence altı,
+    # tip uyumuyla 0.65 → persist olur.
+    s_naming, _ = svc._score("head", False, None)
+    assert s_naming == 0.45
+    s_typed, m = svc._score("head", True, None)
+    assert abs(s_typed - 0.65) < 1e-9
+    assert m == "naming:head+type"
+
+
+# ─────────────────────────────────────────────────────────────
+# v3.60.0: head-noun + Unicode (rol-önekli / Türkçe FK kolonları)
+# ─────────────────────────────────────────────────────────────
+def test_head_noun_role_prefixed():
+    assert svc._head_noun_from_name("CreateUserId") == "user"
+    assert svc._head_noun_from_name("PADCompanyId") == "company"
+    assert svc._head_noun_from_name("create_user_id") == "user"
+    assert svc._head_noun_from_name("PARTYID") == "party"   # all-caps → tek harfe bölünmez
+    assert svc._head_noun_from_name("ParentPartyId") == "party"
+
+
+def test_head_noun_unicode_turkish():
+    assert svc._head_noun_from_name("MüşteriId") == "müşteri"
+    assert svc._head_noun_from_name("SiparişRef") == "sipariş"
+
+
+def test_extract_root_unicode_snake():
+    # Türkçe snake_case FK kolonu — eski [a-z] regex'i kaçırıyordu
+    assert svc._extract_root("müşteri_id") == "müşteri"
+    assert svc._extract_root("siparis_ref") == "siparis"
+
+
+def test_iter_head_noun_resolves_role_prefixed_fk():
+    """elysion.T_ORG_PARTY.CreateUserId → head 'user' → T_ORG_USER (full root 'createuser' uymaz)."""
+    from app.services.db_learning.fk_inference_dialects import get_dialect
+    d = get_dialect("postgresql")
+    user = svc._TableInfo(
+        schema="elysion", name="T_ORG_USER", norm_name="t_org_user",
+        columns=[{"name": "PartyId", "type": "integer", "is_pk": True}],
+        pk_columns=["PartyId"],
+    )
+    party = svc._TableInfo(
+        schema="elysion", name="T_ORG_PARTY", norm_name="t_org_party",
+        columns=[
+            {"name": "PartyId", "type": "integer", "is_pk": True},
+            {"name": "CreateUserId", "type": "integer"},
+        ],
+        pk_columns=["PartyId"],
+    )
+    tables = {("elysion", "t_org_user"): user, ("elysion", "t_org_party"): party}
+    out = list(svc._iter_fk_candidates(tables, d, diag=[]))
+    rels = [(t.name, c.get("name"), kind, tt.name) for t, c, root, kind, tt, tc in out]
+    assert ("T_ORG_PARTY", "CreateUserId", "head", "T_ORG_USER") in rels
+
+
+def test_iter_unresolved_diagnostics_recorded():
+    """FK üretilemeyen referans-benzeri kolon diag'a 'no_target_table'/'no_pattern' ile yazılır."""
+    from app.services.db_learning.fk_inference_dialects import get_dialect
+    d = get_dialect("postgresql")
+    # Hedefi olmayan FK-benzeri kolon
+    t = svc._TableInfo(
+        schema="elysion", name="T_ORG_PARTY", norm_name="t_org_party",
+        columns=[
+            {"name": "PartyId", "type": "integer", "is_pk": True},
+            {"name": "GhostThingId", "type": "integer"},  # 'ghostthing'/'thing' → tablo yok
+        ],
+        pk_columns=["PartyId"],
+    )
+    tables = {("elysion", "t_org_party"): t}
+    diag = []
+    list(svc._iter_fk_candidates(tables, d, diag=diag))
+    reasons = {dd["column"]: dd["reason"] for dd in diag}
+    assert reasons.get("GhostThingId") == "no_target_table"
 
 
 # ─────────────────────────────────────────────────────────────

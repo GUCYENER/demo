@@ -1048,22 +1048,64 @@ def detect_objects(source: dict, vyra_conn) -> dict:
             vyra_conn.commit()
             logger.info(
                 "[DSLearning.fk_inference] source=%s dialect=%s declared=%d "
-                "candidates=%d persisted=%d skipped_existing=%d skipped_low=%d",
+                "candidates=%d persisted=%d skipped_existing=%d skipped_low=%d unresolved=%d",
                 source_id, db_dialect, len(relationships),
                 _inf.get("candidates", 0),
                 _inf.get("persisted", 0),
                 _inf.get("skipped_existing", 0),
                 _inf.get("skipped_low_confidence", 0),
+                _inf.get("unresolved_count", 0),
             )
+            # v3.60.0: FK üretilemeyen kolonları Hata İzleme'ye TABLO-ARANABİLİR yaz (kök neden).
+            # logger.* system_logs'a yazmaz → log_system_event ile tablo başına tek WARNING.
+            try:
+                from app.services.logging_service import log_system_event
+                _unresolved = _inf.get("unresolved") or []
+                _by_tbl = {}
+                for _u in _unresolved:
+                    _by_tbl.setdefault((_u.get("schema") or "", _u.get("table") or ""), []).append(_u)
+                for (_sch, _tbl), _items in _by_tbl.items():
+                    _cols = "; ".join(
+                        f"{_it.get('column')}({_it.get('reason')}"
+                        + (f"→{_it.get('root')}" if _it.get('root') else "") + ")"
+                        for _it in _items[:25]
+                    )
+                    log_system_event(
+                        level="WARNING",
+                        message=f"[FK Inference] {_sch}.{_tbl}: {len(_items)} kolon icin FK uretilemedi -> {_cols}",
+                        module="ds_learning.fk_inference",
+                        error_detail=json.dumps(_items[:50], ensure_ascii=False, default=str),
+                    )
+                if _inf.get("persisted", 0) == 0:
+                    log_system_event(
+                        level="WARNING",
+                        message=(f"[FK Inference] source={source_id} dialect={db_dialect}: "
+                                 f"declared={len(relationships)} inferred=0 "
+                                 f"(candidates={_inf.get('candidates', 0)} "
+                                 f"skipped_low={_inf.get('skipped_low_confidence', 0)} "
+                                 f"unresolved={_inf.get('unresolved_count', 0)}). "
+                                 f"Tablo secince 'FK yok' bunun sonucu."),
+                        module="ds_learning.fk_inference",
+                    )
+            except Exception:
+                pass
         except Exception as _fk_inf_err:
             try:
                 vyra_conn.rollback()
             except Exception:
                 pass
-            logger.warning(
-                "[DSLearning.fk_inference] failed source=%s: %s",
-                source_id, str(_fk_inf_err)[:200],
-            )
+            # v3.60.0: inference patlarsa system_logs'a tam traceback (eskiden logger.warning → UI'da yoktu).
+            try:
+                from app.services.logging_service import log_exception
+                log_exception(
+                    _fk_inf_err, module="ds_learning.fk_inference",
+                    context={"source_id": source_id, "dialect": db_dialect, "phase": "fk_inference"},
+                )
+            except Exception:
+                logger.warning(
+                    "[DSLearning.fk_inference] failed source=%s: %s",
+                    source_id, str(_fk_inf_err)[:200],
+                )
 
         # v3.29.11: inferred FK sayısını otoriter olarak DB'den oku (UI için)
         try:

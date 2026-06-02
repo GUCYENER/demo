@@ -44,7 +44,9 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────
 # Scoring weights
 # ─────────────────────────────────────────────────────────────
-SCORE_NAMING = 0.60
+SCORE_NAMING = 0.60       # full-root tablo eşleşmesi (user_id → users)
+SCORE_NAMING_HEAD = 0.45  # v3.60.0: head-noun (rol-önekli) eşleşme (CreateUserId → user) — daha spekülatif,
+                          # tek başına min_confidence(0.60) altında kalır → ancak tip uyumuyla (0.45+0.20=0.65) persist
 SCORE_TYPE = 0.20
 SCORE_SAMPLE_MAX = 0.20  # multiplied by coverage_ratio
 
@@ -62,14 +64,65 @@ DEFAULT_PK_COL_NAMES = ("id", "pk", "uuid")
 #   suffix Id         → userId      → root='user' (CamelCase)
 #   prefix id_        → id_user     → root='user'
 #   f_<root>_id       → f_user_id   → root='user'  (Hungarian)
+# v3.60.0: Unicode (re.UNICODE) → Türkçe kolon adları (müşteri_id, sipariş_ref) yakalanır.
+# [^\W\d_] = bir Unicode HARF (ç/ğ/ı/ö/ş/ü dahil); \w = harf/rakam/_ (Unicode). Eski [a-z] Türkçe'yi atıyordu.
 _NAMING_RES = [
-    re.compile(r"^f_(?P<root>[a-z][a-z0-9_]*?)_id$"),
-    re.compile(r"^id_(?P<root>[a-z][a-z0-9_]*)$"),
-    re.compile(r"^(?P<root>[a-z][a-z0-9_]*?)_id$"),
-    re.compile(r"^(?P<root>[a-z][a-z0-9_]*?)_ref$"),
+    re.compile(r"^f_(?P<root>[^\W\d_][\w]*?)_id$", re.UNICODE),
+    re.compile(r"^id_(?P<root>[^\W\d_][\w]*)$", re.UNICODE),
+    re.compile(r"^(?P<root>[^\W\d_][\w]*?)_id$", re.UNICODE),
+    re.compile(r"^(?P<root>[^\W\d_][\w]*?)_ref$", re.UNICODE),
 ]
-# CamelCase pattern checked separately on original ident (pre-normalize).
-_CAMEL_ID_RE = re.compile(r"^(?P<root>[a-zA-Z][a-zA-Z0-9]*?)Id$")
+# CamelCase / ayraçsız ID — ORIJİNAL ad üzerinde (normalize ÖNCESİ). v3.60.0: [Ii][Dd] → Id/ID/iD/id
+# (eski yalnız 'Id'; ALL-CAPS PARTYID + ayraçsız userid kaçıyordu). Unicode → MüşteriId yakalanır.
+# [^\W\d_] = Unicode harf, [\w] underscore içerir ama '_id' zaten _NAMING_RES'te (bu AYRAÇSIZ son-ek içindir).
+_CAMEL_ID_RE = re.compile(r"^(?P<root>[^\W\d_][^\W_]*?)[Ii][Dd]$", re.UNICODE)
+
+# v3.60.0: CamelCase/PascalCase sınırı (büyük harf öncesi) — Türkçe büyükler dahil.
+# Head-noun (son anlamlı entity token) çıkarımı için: 'CreateUser'→['Create','User'], son='User'.
+_CAMEL_SPLIT_RE = re.compile(r"(?<=.)(?=[A-ZÇĞİÖŞÜ])", re.UNICODE)
+# FK son-ekini ORİJİNAL adtan at (camel 'Id' / snake '_id' / caps 'ID' / 'ref'/'fk'); Unicode.
+_FK_SUFFIX_STRIP_RE = re.compile(r"(?:[_\s]?(?:[Ii][Dd]|[Rr][Ee][Ff]|[Ff][Kk]))$", re.UNICODE)
+
+
+def _head_noun_from_name(col_name: str) -> Optional[str]:
+    """v3.60.0: rol-önekli/bileşik FK kolonundan HEAD-NOUN (gerçek hedef entity) çıkar.
+
+    'CreateUserId'→'user', 'PADCompanyId'→'company', 'create_user_id'→'user',
+    'ParentPartyId'→'party', 'MüşteriId'→'müşteri'. Hedef tablo genelde son anlamlı token'dır
+    (önek = rol/sıfat: Create/Modify/Parent/PAD...). Döndürülen lower; PK adıysa None.
+    """
+    raw = (col_name or "").strip()
+    if not raw:
+        return None
+    stem = _FK_SUFFIX_STRIP_RE.sub("", raw).strip(" _-./")
+    if not stem:
+        return None
+    pieces = [p for p in re.split(r"[\s_\-./]+", stem) if p]
+    if not pieces:
+        return None
+    last_piece = pieces[-1]
+    # All-caps (PARTYID) veya all-lower (party): camelCase sınırı yok → bütün parça.
+    # Yalnız KARIŞIK kasa (PADCompany, CreateUser) camelCase-bölünür → son entity ('Company','User').
+    # Aksi halde 'PARTY' → P|A|R|T|Y → 'y' gibi yanlış token üretirdi.
+    if last_piece.upper() == last_piece or last_piece.lower() == last_piece:
+        tok = last_piece.lower()
+    else:
+        camel = [w for w in _CAMEL_SPLIT_RE.split(last_piece) if w]
+        tok = (camel[-1] if camel else last_piece).lower()
+    if not tok or tok in DEFAULT_PK_COL_NAMES:
+        return None
+    return tok
+
+# v3.60.0: tanılama amaçlı — kolon adı bir referans/FK'ya benziyor mu (kalıba uymasa bile)?
+# 'PARTYID'/'STATUS_CODE'/'OWNERREF' gibi adları Hata İzleme'de yüzeye çıkarmak için (kök neden).
+_REF_ISH_SUFFIXES = ("id", "ref", "code", "key", "no", "fk")
+
+
+def _looks_reference_ish(col_name: str) -> bool:
+    low = (col_name or "").strip().lower()
+    if not low or low in DEFAULT_PK_COL_NAMES:
+        return False
+    return low.endswith(_REF_ISH_SUFFIXES)
 
 
 def _extract_root(col_name: str) -> Optional[str]:
@@ -340,12 +393,17 @@ def _column_dict(t: _TableInfo, name_lower: str, dialect: FKInferenceDialect) ->
 def _iter_fk_candidates(
     tables: Dict[Tuple[str, str], _TableInfo],
     dialect: FKInferenceDialect,
+    diag: Optional[List[Dict[str, Any]]] = None,
 ) -> Iterable[Tuple[_TableInfo, Dict[str, Any], str, str, _TableInfo, Dict[str, Any]]]:
     """Yield (from_table, from_col, root, pattern_name, to_table, to_col).
 
     Iterates every non-PK column across all tables, parses naming pattern,
     and emits potential targets via singular/plural matching against
     other tables in the source.
+
+    v3.60.0: `diag` verilirse, FK üretilemeyen "yakın-ıska" kolonlar (root çıkmadı ama
+    referans-benzeri / hedef tablo bulunamadı / hedef PK yok) tablo+şema+kolon+sebep ile
+    kaydedilir → çağıran bunları Hata İzleme'ye tablo-aranabilir şekilde yazar (kök neden).
     """
     # Build name → list[_TableInfo] index for fast plural/singular lookup.
     by_norm_name: Dict[str, List[_TableInfo]] = {}
@@ -374,11 +432,25 @@ def _iter_fk_candidates(
                 continue
             root = _extract_root(col_name)
             if not root:
+                # Tanılama: kalıba uymadı ama referans-benzeri (PARTYID/STATUS_CODE) → kaydet.
+                if diag is not None and _looks_reference_ish(col_name):
+                    diag.append({
+                        "schema": t.schema, "table": t.name, "column": col_name,
+                        "reason": "no_pattern_match",
+                        "hint": "kolon adı FK kalıbına uymadı (_id/Id/_ref vb. çıkarılamadı)",
+                    })
                 continue
-            # Generate candidate target table names from root.
-            candidates = _candidates_from_root(root)
+            # Aday hedef tablo adları — ÖNCE full root (yüksek güven), SONRA head-noun (rol-önekli, düşük güven).
+            # v3.60.0: 'CreateUserId' root='createuser' (hiçbir tabloya uymaz) ama head='user' → T_ORG_USER.
+            head = _head_noun_from_name(col_name)
+            name_cands: List[Tuple[str, str]] = [(c, "full") for c in _candidates_from_root(root)]
+            if head and head != root:
+                for c in _candidates_from_root(head):
+                    name_cands.append((c, "head"))
+
             target_tbl: Optional[_TableInfo] = None
-            for cand in candidates:
+            match_kind = "full"
+            for cand, kind in name_cands:
                 cand_norm = dialect.normalize_ident(cand)
                 # Exact ad eşleşmesi öncelikli; yoksa prefix-tolerant son-token eşleşmesi.
                 hits = by_norm_name.get(cand_norm) or by_last_token.get(cand_norm)
@@ -389,9 +461,23 @@ def _iter_fk_candidates(
                 # v3.56.0 code-review: birden çok aday (özellikle son-token çakışması) →
                 # norm_name'e göre DETERMİNİSTİK seç (dict-iterasyon sırasına bağlı kalma →
                 # re-keşif idempotent, aynı inferred FK üretilir).
-                target_tbl = sorted(same_schema or hits, key=lambda h: h.norm_name)[0]
+                cand_tbl = sorted(same_schema or hits, key=lambda h: h.norm_name)[0]
+                # Self-FK head eşleşmesi gürültüsünü ele: head 'user' + tablo kendisi T_ORG_USER ise
+                # (kolon kendi tablosunun head'i) gerçek FK değil; full root self-FK'ya izin verir (parent_id).
+                if kind == "head" and dialect.normalize_ident(cand_tbl.name) == dialect.normalize_ident(t.name):
+                    continue
+                target_tbl = cand_tbl
+                match_kind = kind
                 break
             if target_tbl is None:
+                # Tanılama: root/head çıktı ama hedef tablo bulunamadı (prefix/adlandırma uyumsuzluğu).
+                if diag is not None:
+                    diag.append({
+                        "schema": t.schema, "table": t.name, "column": col_name,
+                        "root": root, "head": head, "reason": "no_target_table",
+                        "tried": [c for c, _ in name_cands],
+                        "hint": "root/head'den üretilen aday tablo adları hiçbir tabloya (tam/son-token) eşleşmedi",
+                    })
                 continue
             # Self-FK is allowed (org chart parent_id → org.id).
             # Find target PK column.
@@ -402,22 +488,34 @@ def _iter_fk_candidates(
                 target_pk_name = target_tbl.pk_columns[0]
             target_col = _column_dict(target_tbl, dialect.normalize_ident(target_pk_name), dialect)
             if target_col is None:
+                # Tanılama: hedef tablo bulundu ama PK kolonu metadata'da yok (columns_json/is_pk eksik).
+                if diag is not None:
+                    diag.append({
+                        "schema": t.schema, "table": t.name, "column": col_name,
+                        "root": root, "reason": "target_pk_not_found",
+                        "target": f"{target_tbl.schema}.{target_tbl.name}",
+                        "target_pk_tried": target_pk_name,
+                        "hint": "hedef tablonun PK kolonu metadata'da yok → eşleştirilemedi",
+                    })
                 continue
-            yield t, col, root, "naming", target_tbl, target_col
+            yield t, col, root, match_kind, target_tbl, target_col
 
 
 def _score(
+    match_kind: str,
     type_ok: bool,
     sample_info: Optional[Dict[str, Any]],
 ) -> Tuple[float, str]:
-    score = SCORE_NAMING
-    method = "naming"
+    # v3.60.0: head-noun eşleşmesi (rol-önekli) full root'tan daha spekülatif → daha düşük taban.
+    base = SCORE_NAMING if match_kind != "head" else SCORE_NAMING_HEAD
+    score = base
+    method = f"naming:{match_kind}"
     if type_ok:
         score += SCORE_TYPE
-        method = "naming+type"
+        method = f"naming:{match_kind}+type"
     if sample_info is not None:
         score += SCORE_SAMPLE_MAX * float(sample_info.get("coverage_ratio", 0.0))
-        method = "naming+type+sample"
+        method = f"naming:{match_kind}+type+sample" if type_ok else f"naming:{match_kind}+sample"
     if score > 1.0:
         score = 1.0
     return round(score, 4), method
@@ -463,13 +561,16 @@ def infer_fks_for_source(
             "persisted": 0,
             "skipped_existing": 0,
             "skipped_low_confidence": 0,
+            "unresolved_count": 0,
+            "unresolved": [],
             "sample": [],
         }
 
     existing = _load_existing_relationships(cur, source_id, d)
     candidates: List[_Candidate] = []
+    unresolved: List[Dict[str, Any]] = []  # v3.60.0: FK üretilemeyen yakın-ıska kolonlar (tanılama)
     skipped_existing = 0
-    for t_from, col_from, root, pattern, t_to, col_to in _iter_fk_candidates(tables, d):
+    for t_from, col_from, root, pattern, t_to, col_to in _iter_fk_candidates(tables, d, diag=unresolved):
         from_schema = t_from.schema
         from_table = t_from.name
         from_col = col_from.get("name") or ""
@@ -500,9 +601,10 @@ def infer_fks_for_source(
                 sample_rows, d,
             )
 
-        score, method = _score(type_ok, sample_info)
+        score, method = _score(pattern, type_ok, sample_info)
         evidence = {
             "naming_pattern": pattern,
+            "match_kind": pattern,
             "root": root,
             "from_type": from_type,
             "to_type": to_type,
@@ -554,10 +656,24 @@ def infer_fks_for_source(
                     "confidence": c.confidence,
                 })
         except Exception as e:
-            logger.warning(
-                "[fk_inference] persist failed for %s.%s.%s: %s",
-                c.from_schema, c.from_table, c.from_column, str(e)[:200],
-            )
+            # v3.60.0: persist hatası system_logs'a (Hata İzleme) tablo-aranabilir şekilde — eskiden
+            # yalnız logger.warning idi (UI'da görünmüyordu). Şifre/hassas veri yok; tablo+kolon bağlamı.
+            try:
+                from app.services.logging_service import log_exception
+                log_exception(
+                    e, module="fk_inference.persist",
+                    context={
+                        "source_id": source_id, "dialect": d.name,
+                        "schema": c.from_schema, "table": c.from_table,
+                        "column": c.from_column,
+                        "to_table": f"{c.to_schema}.{c.to_table}",
+                    },
+                )
+            except Exception:
+                logger.warning(
+                    "[fk_inference] persist failed for %s.%s.%s: %s",
+                    c.from_schema, c.from_table, c.from_column, str(e)[:200],
+                )
 
     return {
         "source_id": source_id,
@@ -567,5 +683,7 @@ def infer_fks_for_source(
         "persisted": persisted,
         "skipped_existing": skipped_existing,
         "skipped_low_confidence": skipped_low,
+        "unresolved_count": len(unresolved),
+        "unresolved": unresolved[:200],
         "sample": sample_out,
     }
