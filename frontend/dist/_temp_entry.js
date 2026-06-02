@@ -31350,6 +31350,9 @@ const DSEnrichmentModule = (() => {
                                 <button class="ds-enrich-btn columns" onclick="DSEnrichmentModule.showColumns(${item.enrichment_id})" data-tt="Sütunları göster">
                                     <i class="fa-solid fa-table-columns"></i>
                                 </button>
+                                <button class="ds-enrich-btn relearn" onclick="DSEnrichmentModule.relearnTable(${item.id})" data-tt="Sıfırdan yeniden öğren (eski bilgiyi sil + kaynaktan keşfet)" style="background:rgba(139,92,246,0.15);color:#a78bfa;border:1px solid rgba(139,92,246,0.3);">
+                                    <i class="fa-solid fa-arrows-rotate"></i>
+                                </button>
                                 ` : ''}
                             </div>
                         </td>
@@ -31560,6 +31563,41 @@ const DSEnrichmentModule = (() => {
     // ============================================
     // Quick Approve
     // ============================================
+
+    // v3.63.0: Tek tabloyu sıfırdan yeniden öğren (eski öğrenilmişi sil + kaynaktan keşfet).
+    async function relearnTable(objectId) {
+        const item = _pendingData.find(p => p.id === objectId);
+        if (!item) { _showToast('Tablo kaydı bulunamadı', 'error'); return; }
+        const schema = item.schema_name || '';
+        const table = item.table_name || item.object_name || '';
+        const label = (schema ? schema + '.' : '') + table;
+        VyraModal.confirm({
+            title: 'Sıfırdan Yeniden Öğren',
+            message: `"${label}" tablosunun ÖĞRENİLMİŞ bilgisi (etiket, açıklama, inferred FK, örnek) silinip kaynaktan SIFIRDAN yeniden öğrenilecek. Onaylı etiket kaybolur, yeniden onay gerekir. Devam edilsin mi?`,
+            confirmText: 'Yeniden Öğren',
+            cancelText: 'İptal',
+            onConfirm: async () => {
+                try {
+                    const data = await _authFetch(
+                        `/api/data-sources/${_currentSourceId}/relearn-table`,
+                        {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ schema_name: schema, table_name: table }),
+                        }
+                    );
+                    if (data.success) {
+                        _showToast(data.message || 'Yeniden öğrenme başlatıldı', 'success');
+                        if (typeof refreshData === 'function') refreshData();
+                    } else {
+                        _showToast(data.message || 'Başlatılamadı', 'error');
+                    }
+                } catch (err) {
+                    _showToast(err.message || 'Yeniden öğrenme başlatılamadı', 'error');
+                }
+            }
+        });
+    }
 
     async function quickApprove(objectId) {
         // _pendingData içinde id = object_id olarak map'lendi (satır 149)
@@ -32275,6 +32313,7 @@ const DSEnrichmentModule = (() => {
         openPanel,
         closePanel,
         quickApprove,
+        relearnTable,
         toggleEdit,
         saveEdit,
         showColumns,

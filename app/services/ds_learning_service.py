@@ -2292,6 +2292,143 @@ def run_partial_enrichment(source: dict, object_ids: list, vyra_conn, user_id: i
         complete_job(vyra_conn, job_id, {"success": False, "error": str(e)})
         return {"success": False, "error": str(e)}
 
+
+def relearn_table(source: dict, schema_name: str, table_name: str,
+                  vyra_conn, user_id: int = None) -> dict:
+    """v3.63.0: Tek tabloyu SIFIRDAN yeniden öğren (kullanıcı isteği — test kolaylığı).
+
+    Akış: hedef tablonun eski öğrenilmişini SİL (enrichment + sütun-enrichment + inferred FK +
+    örnek) → KAYNAKTAN yeniden keşfet (detect_objects: kolon+FK, collect_samples: örnek;
+    ikisi de kaynak-geneli koşar = 'sıfırdan kaynaktan' seçimi, v3.43.0 diff diğer onaylıları
+    KORUR) → YALNIZ hedef tabloyu yeniden enrich et (taze, onay bekler). Nested-job olmaması için
+    enrich çekirdeği inline (run_partial_enrichment çağrılmaz — o ayrı job açar).
+    """
+    source_id = source["id"]
+    company_id = source.get("company_id", 1)
+    sch = (schema_name or "").strip()
+    tbl = (table_name or "").strip()
+    results = {"schema": sch, "table": tbl, "steps": []}
+
+    job_id = create_job(vyra_conn, source_id, company_id, "relearn_table", user_id)
+    if not job_id:
+        return {"success": False, "error": "Devam eden bir işlem var (job açılamadı)."}
+
+    try:
+        from app.services import ds_enrichment_service
+        cur = vyra_conn.cursor()
+
+        # 1) Hedefin ÖĞRENİLMİŞİNİ sil (schema NULL-tolerant eşleşme)
+        _sch_match = "COALESCE(LOWER(schema_name),'') = COALESCE(LOWER(%s),'')"
+        cur.execute(
+            "DELETE FROM ds_column_enrichments WHERE table_enrichment_id IN ("
+            "  SELECT id FROM ds_table_enrichments WHERE source_id=%s AND LOWER(table_name)=LOWER(%s) "
+            f"   AND {_sch_match})",
+            (source_id, tbl, sch),
+        )
+        cur.execute(
+            f"DELETE FROM ds_table_enrichments WHERE source_id=%s AND LOWER(table_name)=LOWER(%s) AND {_sch_match}",
+            (source_id, tbl, sch),
+        )
+        # Yalnız inferred FK'yi sil (declared FK detect_objects'te zaten yeniden okunur)
+        cur.execute(
+            "DELETE FROM ds_db_relationships WHERE source_id=%s AND is_inferred=TRUE "
+            "AND (LOWER(from_table)=LOWER(%s) OR LOWER(to_table)=LOWER(%s))",
+            (source_id, tbl, tbl),
+        )
+        cur.execute(
+            "DELETE FROM ds_db_samples WHERE source_id=%s AND object_id IN ("
+            "  SELECT id FROM ds_db_objects WHERE source_id=%s AND LOWER(object_name)=LOWER(%s) "
+            f"   AND {_sch_match})",
+            (source_id, source_id, tbl, sch),
+        )
+        vyra_conn.commit()
+        results["steps"].append({"step": "purge", "success": True})
+
+        # 2) Kaynaktan yeniden keşif (obje/kolon/FK) — kaynak-geneli, onaylıları korur
+        r2 = detect_objects(source, vyra_conn)
+        results["steps"].append({"step": "objects", "success": r2.get("success")})
+        # Code-review (CRITICAL): keşif başarısızsa SESSİZCE devam edip stale veriyle "başarılı"
+        # DEMEMELİ → hard fail (job FAILED + log_exception/Hata İzleme). Kullanıcı yanlış "tamam" görmesin.
+        if not r2.get("success"):
+            raise RuntimeError(f"Obje tespiti başarısız: {str(r2.get('error'))[:300]}")
+
+        # 3) Örnek toplama — hedefin şemasına filtreli (yoksa tümü). Örnek = iyileştirme; başarısızsa
+        # enrichment yine taze kolonlarla koşar → NON-BLOCKING ama dürüstçe success=False işaretlenir.
+        r3 = collect_samples(source, vyra_conn, schema_filter=[sch] if sch else None)
+        _samples_ok = bool(r3.get("success"))
+        results["steps"].append({"step": "samples", "success": _samples_ok})
+        if not _samples_ok:
+            logger.warning("[DSLearning.relearn_table] örnekleme başarısız (enrichment devam): %s",
+                           str(r3.get("error"))[:200])
+
+        # 4) Hedef object_id çöz → YALNIZ onu yeniden enrich (inline; nested-job yok)
+        cur.execute(
+            "SELECT id, schema_name, object_name, object_type, column_count, "
+            "       row_count_estimate, columns_json "
+            f"FROM ds_db_objects WHERE source_id=%s AND LOWER(object_name)=LOWER(%s) AND {_sch_match} "
+            "AND object_type='table' LIMIT 1",
+            (source_id, tbl, sch),
+        )
+        orow = cur.fetchone()
+        if not orow:
+            results["steps"].append({"step": "enrichment", "success": False,
+                                     "message": "Tablo keşiften sonra bulunamadı (kaynakta yok olabilir)"})
+            complete_job(vyra_conn, job_id, {"success": True, "data": results})
+            return {"success": True, "data": results}
+
+        obj = dict(orow) if hasattr(orow, "keys") else dict(zip([c[0] for c in cur.description], orow))
+        obj_id = obj["id"]
+
+        cur.execute(
+            "SELECT object_id, sample_data FROM ds_db_samples WHERE source_id=%s AND object_id=%s",
+            (source_id, obj_id),
+        )
+        samples_map = {}
+        for row in cur.fetchall():
+            oid = row["object_id"] if hasattr(row, "keys") else row[0]
+            sd = row["sample_data"] if hasattr(row, "keys") else row[1]
+            if isinstance(sd, str):
+                try:
+                    sd = json.loads(sd)
+                except Exception:
+                    sd = []
+            samples_map[oid] = sd if isinstance(sd, list) else []
+
+        cur.execute(
+            "SELECT from_schema, from_table, from_column, to_schema, to_table, to_column, constraint_name "
+            "FROM ds_db_relationships WHERE source_id=%s",
+            (source_id,),
+        )
+        relationships = [dict(r) if hasattr(r, "keys") else dict(zip([c[0] for c in cur.description], r))
+                         for r in cur.fetchall()]
+
+        enr = ds_enrichment_service.enrich_tables_batch(
+            vyra_conn, source_id, company_id, [obj], samples_map, relationships,
+        )
+        results["steps"].append({"step": "enrichment", "success": True,
+                                  "data": {"enriched": enr.get("enriched", 0),
+                                           "errors": enr.get("errors", 0)}})
+
+        complete_job(vyra_conn, job_id, {"success": True, "data": results})
+        return {"success": True, "data": results}
+    except Exception as e:
+        try:
+            vyra_conn.rollback()
+        except Exception:
+            pass
+        try:
+            from app.services.logging_service import log_exception
+            log_exception(e, module="ds_learning.relearn_table",
+                          context={"source_id": source_id, "schema": sch, "table": tbl})
+        except Exception:
+            logger.exception("[DSLearning.relearn_table] hata")
+        try:
+            complete_job(vyra_conn, job_id, {"success": False, "error": str(e)[:500]})
+        except Exception:
+            pass
+        return {"success": False, "error": str(e)[:300]}
+
+
 def run_full_learning(source: dict, vyra_conn, user_id: int = None) -> dict:
     """
     5 adımlı tam öğrenme pipeline'ı (v3.0):

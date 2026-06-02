@@ -1809,6 +1809,66 @@ def enrich_selected_tables(
         return {"success": False, "message": "Seçili tablolar için keşif başlatılırken hata oluştu."}
 
 
+class RelearnTableRequest(BaseModel):
+    schema_name: Optional[str] = None
+    table_name: str
+
+
+@router.post("/{source_id}/relearn-table")
+def relearn_table_endpoint(
+    source_id: int,
+    body: RelearnTableRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """v3.63.0: Tek tabloyu SIFIRDAN yeniden öğren — eski öğrenilmişi sil + kaynaktan yeniden
+    keşfet + yeniden enrich (taze, onay bekler). Yıkıcı → admin-only + tek-iş kilidi."""
+    # Yıkıcı işlem (öğrenilmiş veri silinir) → admin şart
+    if not (current_user.get("is_admin") or str(current_user.get("role", "")).lower() == "admin"):
+        return {"success": False, "message": "Bu işlem için yönetici yetkisi gerekir."}
+    tbl = (body.table_name or "").strip()
+    if not tbl:
+        return {"success": False, "message": "Tablo adı zorunlu."}
+    try:
+        from app.services import ds_learning_service
+        with get_db_context() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM data_sources WHERE id = %s", (source_id,))
+            source = cur.fetchone()
+            if not source:
+                return {"success": False, "message": "Kaynak bulunamadı"}
+            source = dict(source) if hasattr(source, 'keys') else dict(zip([c[0] for c in cur.description], source))
+            current_user_id = current_user.get("id")
+
+            running_check = ds_learning_service.check_running_job(conn, source_id)
+            if running_check["has_running"]:
+                rj = running_check["job"]
+                return {"success": False, "message": f"Devam eden bir işlem var ({rj['job_type']})."}
+
+        def _bg_relearn():
+            bg_conn = None
+            try:
+                from app.core.db import get_db_conn
+                bg_conn = get_db_conn()
+                ds_learning_service.relearn_table(
+                    source, body.schema_name, tbl, bg_conn, current_user_id,
+                )
+            except Exception as e:
+                logger.error("[DataSources] BG relearn_table hatası: %s", str(e))
+            finally:
+                if bg_conn:
+                    try:
+                        bg_conn.close()
+                    except Exception:
+                        pass
+
+        import threading
+        threading.Thread(target=_bg_relearn, daemon=True).start()
+        return {"success": True, "message": f"'{tbl}' için sıfırdan yeniden öğrenme başlatıldı."}
+    except Exception as e:
+        logger.error("[DataSources] relearn-table hatası: %s", type(e).__name__)
+        return {"success": False, "message": "Yeniden öğrenme başlatılırken hata oluştu."}
+
+
 class EnrichmentApproveRequest(BaseModel):
     admin_label_tr: Optional[str] = None
     admin_notes: Optional[str] = None
