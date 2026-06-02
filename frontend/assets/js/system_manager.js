@@ -398,7 +398,7 @@ window.SystemManagerModule = (function () {
     function performSystemReset() {
         window.VyraModal.danger({
             title: "Dikkat! Bu İşlem Geri Alınamaz",
-            message: "Tüm ticket'lar, dialog'lar, RAG dosyaları, ML eğitim verileri, öğrenilmiş cevaplar, DS öğrenme verileri, agentic query öğrenme (v3.21–v3.29: learned_db_queries, synthetic, embeddings, feedback, CatBoost modelleri, few-shot, glossary, metric, pipeline traces, user prefs, ds_code_values, learned_query_failures), SQL audit logları ve sistem logları silinecek. Kaynak tanımları, admin kullanıcılar, LLM ve Prompt ayarları korunacak.",
+            message: "Tüm ticket'lar, dialog'lar, RAG dosyaları, ML eğitim verileri, öğrenilmiş cevaplar, DS öğrenme verileri, agentic query öğrenme (v3.21–v3.29: learned_db_queries, synthetic, embeddings, feedback, CatBoost modelleri, few-shot, glossary, metric, pipeline traces, user prefs, ds_code_values, learned_query_failures), SQL audit logları, sistem logları ve tablo yetkilendirmeleri silinecek. Kaynak tanımları, admin kullanıcılar, LLM ve Prompt ayarları korunacak.",
             confirmText: "Sistemi Sıfırla",
             cancelText: "İptal",
             onConfirm: async () => {

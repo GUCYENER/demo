@@ -338,7 +338,30 @@ async def reset_system(
         cur.execute("SELECT COUNT(*) as cnt FROM system_logs")
         deleted_counts["system_logs"] = cur.fetchone()["cnt"]
         cur.execute("DELETE FROM system_logs")
-        
+
+        # v3.58.0: Tablo-yetki tabloları (data_source_table_permissions + data_source_permissions).
+        # Kaynak-bazlı (source_id) yetki grant'ları — kullanıcılar AŞAĞIDA silindiğinden grant'lar
+        # zaten orphan kalırdı; reset'te temizlenir (admin yetkileri sıfırdan tanımlar). data_sources
+        # KORUNUR (yalnız grant satırları silinir). FK (subject_id→users) ihlalini önlemek için
+        # users silinmeden ÖNCE. information_schema guard (eski deploy'da tablo olmayabilir).
+        for _perm_tbl in ("data_source_table_permissions", "data_source_permissions"):
+            cur.execute(
+                "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s",
+                (_perm_tbl,),
+            )
+            if not cur.fetchone():
+                deleted_counts[_perm_tbl] = 0
+                continue
+            if company_id is not None:
+                _pw = "WHERE source_id IN (SELECT id FROM data_sources WHERE company_id = %s)"
+                _pp = co_params
+            else:
+                _pw = ""
+                _pp = []
+            cur.execute(f"SELECT COUNT(*) as cnt FROM {_perm_tbl} {_pw}", _pp)
+            deleted_counts[_perm_tbl] = cur.fetchone()["cnt"]
+            cur.execute(f"DELETE FROM {_perm_tbl} {_pw}", _pp)
+
         # 1️⃣3️⃣ Admin olmayan kullanıcıları sil
         if company_id is not None:
             cur.execute("SELECT COUNT(*) as cnt FROM users WHERE is_admin = FALSE AND company_id = %s", co_params)
