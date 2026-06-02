@@ -1095,8 +1095,15 @@ def format_schema_for_llm(schema_context: Dict[str, Any], query: str = "") -> st
         relevant_cols = []
         other_cols = []
         for c in cols[:80]:  # Max 80 kolon kontrol edilir
-            col_name = c['name']
-            col_dtype = c['data_type']
+            # v3.57.0 defansif: bozuk/eski columns_json kaydı (non-dict veya name/data_type
+            # eksik) KeyError ile format_schema_for_llm'i çökertip text_to_sql'i ŞEMASIZ
+            # bırakmasın → guard + .get. Halüsinasyon yasağı şemaya dayandığından şema kaybı kritik.
+            if not isinstance(c, dict):
+                continue
+            col_name = c.get('name') or ''
+            if not col_name:
+                continue
+            col_dtype = c.get('data_type') or ''
             enr = col_enrichments.get(col_name, {})
             bname_col = enr.get("business_name_tr", "")
             synonyms = enr.get("synonyms", [])
@@ -1153,7 +1160,7 @@ def format_schema_for_llm(schema_context: Dict[str, Any], query: str = "") -> st
         # 🆕 v3.1.0: Enrichment bilgilerini LLM context'e dahil et
         bname = t.get("admin_label_tr") or t.get("business_name_tr") or ""
         desc = t.get("description_tr", "")
-        label = f"📋 {t.get('schema', '')}.{t['name']}"
+        label = f"📋 {t.get('schema', '')}.{t.get('name', '')}"
         if bname:
             label += f" [{bname}]"
         label += f" (~{t.get('row_estimate', 0)} satır)"

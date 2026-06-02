@@ -173,3 +173,34 @@ class TestIsCommentOnlySql:
         from app.services.text_to_sql import _is_comment_only_sql
         assert _is_comment_only_sql("") is False
         assert _is_comment_only_sql(None) is False
+
+
+class TestFormatSchemaHardening:
+    """v3.57.0: format_schema_for_llm bozuk columns_json'da çökmemeli (defansif)."""
+
+    def test_malformed_columns_do_not_crash(self):
+        from app.services.text_to_sql import format_schema_for_llm
+        ctx = {
+            "source_name": "T", "dialect": "postgresql",
+            "tables": [{
+                "schema": "elysion", "name": "T_X",
+                "columns": [
+                    {"name": "Id", "data_type": "integer", "is_pk": True},
+                    {"name": "NoType"},        # data_type EKSİK → eski kod KeyError
+                    {"data_type": "text"},     # name EKSİK → atlanmalı
+                    "garbage",                 # non-dict → atlanmalı
+                    None,                      # non-dict → atlanmalı
+                ],
+            }],
+        }
+        out = format_schema_for_llm(ctx)   # KeyError fırlatmamalı
+        assert "T_X" in out
+        assert "Id" in out
+        assert "NoType" in out   # name var (tip boş) → gösterilir
+
+    def test_table_missing_name_no_crash(self):
+        from app.services.text_to_sql import format_schema_for_llm
+        ctx = {"source_name": "T", "dialect": "postgresql",
+               "tables": [{"schema": "elysion", "columns": []}]}  # name yok
+        out = format_schema_for_llm(ctx)   # KeyError fırlatmamalı
+        assert isinstance(out, str)
