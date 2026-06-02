@@ -435,6 +435,26 @@ def _fetch_relationships(
                 AND (ds_db_relationships.to_schema IS NULL OR o2.schema_name IS NULL
                      OR LOWER(o2.schema_name) = LOWER(ds_db_relationships.to_schema))
           )
+          -- v3.62.0 (kullanıcı isteği): sentetik SQL YALNIZ admin-ONAYLI + etiketli tablolar için.
+          -- Keşfedilmiş ama onaylanmamış tablolar (admin_approved=FALSE / enrichment yok) artık
+          -- üretmez (ör. elysion_customdata_ictsecurity gürültüsü). Her iki FK ucu da onaylı
+          -- enrichment'a sahip olmalı (admin_approved=TRUE AND is_active=TRUE). NULL-tolerant şema.
+          AND EXISTS (
+              SELECT 1 FROM ds_table_enrichments te
+              WHERE te.source_id = ds_db_relationships.source_id
+                AND te.admin_approved = TRUE AND te.is_active = TRUE
+                AND LOWER(te.table_name) = LOWER(ds_db_relationships.from_table)
+                AND (ds_db_relationships.from_schema IS NULL OR te.schema_name IS NULL
+                     OR LOWER(te.schema_name) = LOWER(ds_db_relationships.from_schema))
+          )
+          AND EXISTS (
+              SELECT 1 FROM ds_table_enrichments te2
+              WHERE te2.source_id = ds_db_relationships.source_id
+                AND te2.admin_approved = TRUE AND te2.is_active = TRUE
+                AND LOWER(te2.table_name) = LOWER(ds_db_relationships.to_table)
+                AND (ds_db_relationships.to_schema IS NULL OR te2.schema_name IS NULL
+                     OR LOWER(te2.schema_name) = LOWER(ds_db_relationships.to_schema))
+          )
         ORDER BY source_id, COALESCE(constraint_name, ''),
                  COALESCE(fk_position, 1), id
         """,
