@@ -524,8 +524,23 @@ def detect_objects(source: dict, vyra_conn) -> dict:
 
                 logger.info("[DSLearning] Bulunan FK ilişki sayısı: %d", len(relationships))
             except Exception as fk_err:
-                logger.error("[DSLearning] FK ilişki sorgusu başarısız: %s — %s", type(fk_err).__name__, str(fk_err)[:300])
-                # FK hatası obje tespitini engellemez, devam et
+                # v3.61.0: declared-FK okuma hatası system_logs'a (Hata İzleme) — eskiden yalnız
+                # logger.error idi (UI'da görünmüyordu). Canlıda yetki/erişim hatası (pg_constraint
+                # okunamıyor) burada yüzeye çıkar. FK hatası obje tespitini engellemez, devam et.
+                try:
+                    db_conn.rollback()  # non-autocommit dialect aborted-txn temizliği (PG autocommit→no-op)
+                except Exception:
+                    pass
+                try:
+                    from app.services.logging_service import log_exception
+                    log_exception(
+                        fk_err, module="ds_learning.fk_declared",
+                        context={"source_id": source_id, "dialect": "postgresql",
+                                 "phase": "declared_fk_read", "db_name": source.get("db_name", "")},
+                    )
+                except Exception:
+                    logger.error("[DSLearning] FK ilişki sorgusu başarısız: %s — %s",
+                                 type(fk_err).__name__, str(fk_err)[:300])
 
         elif db_dialect == "mssql":
             cur.execute("""
@@ -665,36 +680,53 @@ def detect_objects(source: dict, vyra_conn) -> dict:
             # MSSQL FK İlişkileri
             # v3.32.0: fk_position = fkc.constraint_column_id (composite FK
             # column sırası — 1..N).
-            cur.execute("""
-                SELECT
-                    SCHEMA_NAME(fk.schema_id) AS from_schema,
-                    OBJECT_NAME(fk.parent_object_id) AS from_table,
-                    COL_NAME(fkc.parent_object_id, fkc.parent_column_id) AS from_column,
-                    SCHEMA_NAME(pk_tab.schema_id) AS to_schema,
-                    OBJECT_NAME(fk.referenced_object_id) AS to_table,
-                    COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) AS to_column,
-                    fk.name AS constraint_name,
-                    fkc.constraint_column_id AS fk_position
-                FROM sys.foreign_keys fk
-                JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
-                JOIN sys.tables pk_tab ON fk.referenced_object_id = pk_tab.object_id
-                ORDER BY from_schema, from_table, constraint_name, fkc.constraint_column_id
-            """)
-            for row in cur.fetchall():
-                fs = row["from_schema"] if isinstance(row, dict) else row[0]
-                ft = row["from_table"] if isinstance(row, dict) else row[1]
-                fc = row["from_column"] if isinstance(row, dict) else row[2]
-                ts = row["to_schema"] if isinstance(row, dict) else row[3]
-                tt = row["to_table"] if isinstance(row, dict) else row[4]
-                tc = row["to_column"] if isinstance(row, dict) else row[5]
-                cn = row["constraint_name"] if isinstance(row, dict) else row[6]
-                fp_raw = row["fk_position"] if isinstance(row, dict) else (row[7] if len(row) > 7 else 1)
-                relationships.append({
-                    "from_schema": fs, "from_table": ft, "from_column": fc,
-                    "to_schema": ts, "to_table": tt, "to_column": tc,
-                    "constraint_name": cn,
-                    "fk_position": int(fp_raw) if fp_raw is not None else 1,
-                })
+            # v3.61.0: MSSQL FK okuma eskiden local try/except'siz → hata TÜM keşfi blokluyordu
+            # + FK-spesifik loglanmıyordu. Sar + log_exception (Hata İzleme) + non-blocking.
+            try:
+                cur.execute("""
+                    SELECT
+                        SCHEMA_NAME(fk.schema_id) AS from_schema,
+                        OBJECT_NAME(fk.parent_object_id) AS from_table,
+                        COL_NAME(fkc.parent_object_id, fkc.parent_column_id) AS from_column,
+                        SCHEMA_NAME(pk_tab.schema_id) AS to_schema,
+                        OBJECT_NAME(fk.referenced_object_id) AS to_table,
+                        COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) AS to_column,
+                        fk.name AS constraint_name,
+                        fkc.constraint_column_id AS fk_position
+                    FROM sys.foreign_keys fk
+                    JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
+                    JOIN sys.tables pk_tab ON fk.referenced_object_id = pk_tab.object_id
+                    ORDER BY from_schema, from_table, constraint_name, fkc.constraint_column_id
+                """)
+                for row in cur.fetchall():
+                    fs = row["from_schema"] if isinstance(row, dict) else row[0]
+                    ft = row["from_table"] if isinstance(row, dict) else row[1]
+                    fc = row["from_column"] if isinstance(row, dict) else row[2]
+                    ts = row["to_schema"] if isinstance(row, dict) else row[3]
+                    tt = row["to_table"] if isinstance(row, dict) else row[4]
+                    tc = row["to_column"] if isinstance(row, dict) else row[5]
+                    cn = row["constraint_name"] if isinstance(row, dict) else row[6]
+                    fp_raw = row["fk_position"] if isinstance(row, dict) else (row[7] if len(row) > 7 else 1)
+                    relationships.append({
+                        "from_schema": fs, "from_table": ft, "from_column": fc,
+                        "to_schema": ts, "to_table": tt, "to_column": tc,
+                        "constraint_name": cn,
+                        "fk_position": int(fp_raw) if fp_raw is not None else 1,
+                    })
+            except Exception as fk_err:
+                try:
+                    db_conn.rollback()  # MSSQL autocommit=False → aborted-txn temizliği
+                except Exception:
+                    pass
+                try:
+                    from app.services.logging_service import log_exception
+                    log_exception(
+                        fk_err, module="ds_learning.fk_declared",
+                        context={"source_id": source_id, "dialect": "mssql",
+                                 "phase": "declared_fk_read", "db_name": source.get("db_name", "")},
+                    )
+                except Exception:
+                    logger.error("[DSLearning] MSSQL FK sorgusu hatası: %s", str(fk_err)[:300])
 
         elif db_dialect == "mysql":
             db_name = source.get("db_name", "")
@@ -753,36 +785,53 @@ def detect_objects(source: dict, vyra_conn) -> dict:
 
             # MySQL FK İlişkileri
             # v3.32.0: fk_position = kcu.ORDINAL_POSITION (composite FK sırası)
-            cur.execute("""
-                SELECT
-                    TABLE_SCHEMA AS from_schema,
-                    TABLE_NAME AS from_table,
-                    COLUMN_NAME AS from_column,
-                    REFERENCED_TABLE_SCHEMA AS to_schema,
-                    REFERENCED_TABLE_NAME AS to_table,
-                    REFERENCED_COLUMN_NAME AS to_column,
-                    CONSTRAINT_NAME AS constraint_name,
-                    ORDINAL_POSITION AS fk_position
-                FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
-                WHERE TABLE_SCHEMA = %s
-                  AND REFERENCED_TABLE_NAME IS NOT NULL
-                ORDER BY TABLE_NAME, CONSTRAINT_NAME, ORDINAL_POSITION
-            """, (db_name,))
-            for row in cur.fetchall():
-                fs = row.get("from_schema", "") if isinstance(row, dict) else row[0]
-                ft = row.get("from_table", "") if isinstance(row, dict) else row[1]
-                fc = row.get("from_column", "") if isinstance(row, dict) else row[2]
-                ts = row.get("to_schema", "") if isinstance(row, dict) else row[3]
-                tt = row.get("to_table", "") if isinstance(row, dict) else row[4]
-                tc = row.get("to_column", "") if isinstance(row, dict) else row[5]
-                cn = row.get("constraint_name", "") if isinstance(row, dict) else row[6]
-                fp_raw = row.get("fk_position", 1) if isinstance(row, dict) else (row[7] if len(row) > 7 else 1)
-                relationships.append({
-                    "from_schema": fs, "from_table": ft, "from_column": fc,
-                    "to_schema": ts, "to_table": tt, "to_column": tc,
-                    "constraint_name": cn,
-                    "fk_position": int(fp_raw) if fp_raw is not None else 1,
-                })
+            # v3.61.0: MySQL FK okuma eskiden local try/except'siz → hata TÜM keşfi blokluyordu
+            # + FK-spesifik loglanmıyordu. Sar + log_exception (Hata İzleme) + non-blocking.
+            try:
+                cur.execute("""
+                    SELECT
+                        TABLE_SCHEMA AS from_schema,
+                        TABLE_NAME AS from_table,
+                        COLUMN_NAME AS from_column,
+                        REFERENCED_TABLE_SCHEMA AS to_schema,
+                        REFERENCED_TABLE_NAME AS to_table,
+                        REFERENCED_COLUMN_NAME AS to_column,
+                        CONSTRAINT_NAME AS constraint_name,
+                        ORDINAL_POSITION AS fk_position
+                    FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+                    WHERE TABLE_SCHEMA = %s
+                      AND REFERENCED_TABLE_NAME IS NOT NULL
+                    ORDER BY TABLE_NAME, CONSTRAINT_NAME, ORDINAL_POSITION
+                """, (db_name,))
+                for row in cur.fetchall():
+                    fs = row.get("from_schema", "") if isinstance(row, dict) else row[0]
+                    ft = row.get("from_table", "") if isinstance(row, dict) else row[1]
+                    fc = row.get("from_column", "") if isinstance(row, dict) else row[2]
+                    ts = row.get("to_schema", "") if isinstance(row, dict) else row[3]
+                    tt = row.get("to_table", "") if isinstance(row, dict) else row[4]
+                    tc = row.get("to_column", "") if isinstance(row, dict) else row[5]
+                    cn = row.get("constraint_name", "") if isinstance(row, dict) else row[6]
+                    fp_raw = row.get("fk_position", 1) if isinstance(row, dict) else (row[7] if len(row) > 7 else 1)
+                    relationships.append({
+                        "from_schema": fs, "from_table": ft, "from_column": fc,
+                        "to_schema": ts, "to_table": tt, "to_column": tc,
+                        "constraint_name": cn,
+                        "fk_position": int(fp_raw) if fp_raw is not None else 1,
+                    })
+            except Exception as fk_err:
+                try:
+                    db_conn.rollback()  # MySQL autocommit=False → aborted-txn temizliği
+                except Exception:
+                    pass
+                try:
+                    from app.services.logging_service import log_exception
+                    log_exception(
+                        fk_err, module="ds_learning.fk_declared",
+                        context={"source_id": source_id, "dialect": "mysql",
+                                 "phase": "declared_fk_read", "db_name": source.get("db_name", "")},
+                    )
+                except Exception:
+                    logger.error("[DSLearning] MySQL FK sorgusu hatası: %s", str(fk_err)[:300])
 
         elif db_dialect == "oracle":
             # Oracle: Tablo ve View keşfi
@@ -983,7 +1032,21 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                     })
                 logger.info("[DSLearning] Oracle FK ilişki sayısı: %d", len(relationships))
             except Exception as fk_err:
-                logger.error("[DSLearning] Oracle FK sorgusu hatası: %s", str(fk_err)[:300])
+                # v3.61.0: Oracle declared-FK okuma hatası system_logs'a (Hata İzleme). Canlıda
+                # all_constraints/all_cons_columns yetki/erişim hatası burada görünür. Non-blocking.
+                try:
+                    db_conn.rollback()  # non-autocommit dialect aborted-txn temizliği
+                except Exception:
+                    pass
+                try:
+                    from app.services.logging_service import log_exception
+                    log_exception(
+                        fk_err, module="ds_learning.fk_declared",
+                        context={"source_id": source_id, "dialect": "oracle",
+                                 "phase": "declared_fk_read", "db_name": source.get("db_name", "")},
+                    )
+                except Exception:
+                    logger.error("[DSLearning] Oracle FK sorgusu hatası: %s", str(fk_err)[:300])
 
             logger.info("[DSLearning] Oracle keşif tamamlandı: %d obje, %d ilişki", len(objects), len(relationships))
 

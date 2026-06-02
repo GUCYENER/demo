@@ -2,9 +2,11 @@
 plan_id: fk_stream_errlog_audit
 created: 2026-06-02
 branch: hira
-status: in_progress
+status: completed
 version_target: v3.52.0
-progress: "v3.52.0: G2 named cursor + G1 error-logging + G4 bg-job-failed (77 test). v3.53.0: G3 cancel multi-worker 404 DB-backed (sql_query_jobs + mig 054 + deep_think DB-poll + 6 test). TAMAM. KALAN (kullanıcı canlı testi yönlendirecek): FK declared keşfi PG + SS5 scope (artık log'lar canlı nedeni gösterir)."
+closed: 2026-06-03
+closure_note: "KALAN madde (declared-FK okuma görünürlüğü) v3.61.0'da tamamlandı: detect_objects 4 dialekt declared-FK okuma hatası log_exception(ds_learning.fk_declared)'a bağlandı (PG/Oracle logger.error→system_logs; MSSQL/MySQL try/except'siz→sarıldı, non-blocking). SS5 scope-deny diagnostic v3.52.0 G4'te zaten yapılmıştı. FK inference görünürlüğü + matching ise v3.60.0'da. Plan tüm fazlarıyla kapandı."
+progress: "v3.52.0: G2 named cursor + G1 error-logging + G4 bg-job-failed (77 test). v3.53.0: G3 cancel multi-worker 404 DB-backed (sql_query_jobs + mig 054 + deep_think DB-poll + 6 test). v3.61.0: declared-FK okuma 4 dialekt log_exception. TAMAM."
 council_mod: 3
 hebe_gate_required: false
 ---
