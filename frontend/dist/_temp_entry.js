@@ -24634,6 +24634,8 @@ window.LdapSettingsModule = (function () {
     // v3.34.0: vyraFetch /api + API_BASE_URL prefix'ini kendi ekliyor — burada sadece path tutuyoruz.
     let editingId = null;
     let domainOrgData = []; // domain_org_permissions cache
+    let currentCompanyId = null; // son yüklenen firma filtresi (load arg'ı olmadan refresh için)
+    let showDeleted = false;     // v3.59.0: "Silinenleri Göster" toggle
 
     // ---------------------------------------------------------
     //  Helper: HTML escape (XSS koruması)
@@ -24645,13 +24647,27 @@ window.LdapSettingsModule = (function () {
         return div.innerHTML;
     }
 
+    // v3.59.0: tek-tırnaklı JS string'in (çift-tırnaklı HTML attribute içinde, ör. onclick) içine
+    // güvenli gömme. _esc yalnız HTML-entity kaçar; ' " \ < > & gibi JS/HTML kıran karakterleri
+    // \uXXXX'e çevirir → ne JS string'i ne HTML attribute'ü bozulur (XSS/break önlenir).
+    function _jsAttr(str) {
+        return String(str == null ? '' : str).replace(/[\\'"<>&\r\n\t]/g, function (c) {
+            return '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0');
+        });
+    }
+
     // ---------------------------------------------------------
     //  Load LDAP Settings List
     // ---------------------------------------------------------
     async function load(companyId) {
+        // companyId verilmezse (save/delete/restore sonrası refresh) son firma korunur
+        if (companyId !== undefined) currentCompanyId = companyId;
         try {
             let path = `/ldap-settings`;
-            if (companyId) path += `?company_id=${companyId}`;
+            const qs = [];
+            if (currentCompanyId) qs.push(`company_id=${currentCompanyId}`);
+            if (showDeleted) qs.push('include_deleted=true');
+            if (qs.length) path += `?${qs.join('&')}`;
             // v3.34.0: vyraFetch — Auth + JSON + friendly error helper'da.
             const data = await window.vyraFetch(path);
             renderTable(data.settings || []);
@@ -24671,7 +24687,7 @@ window.LdapSettingsModule = (function () {
         if (!settings.length) {
             tbody.innerHTML = `
                 <tr class="empty-row">
-                    <td colspan="7">
+                    <td colspan="6">
                         <i class="fa-solid fa-inbox"></i>
                         Henüz LDAP sunucu tanımlanmamış
                     </td>
@@ -24679,30 +24695,40 @@ window.LdapSettingsModule = (function () {
             return;
         }
 
-        tbody.innerHTML = settings.map(s => `
-            <tr>
-                <td><span class="org-code-badge">${_esc(s.domain)}</span></td>
+        tbody.innerHTML = settings.map(s => {
+            const id = parseInt(s.id, 10);
+            const dom = _esc(s.domain);       // HTML metin bağlamı (hücre içeriği)
+            const domJs = _jsAttr(s.domain);  // JS-string bağlamı (onclick argümanı)
+            const deleted = s.is_deleted === true;
+
+            const statusCell = deleted
+                ? `<span class="status-badge deleted">Silindi</span>`
+                : `<span class="status-badge ${s.enabled ? 'active' : 'inactive'}">${s.enabled ? 'Aktif' : 'Pasif'}</span>`;
+
+            const actions = deleted
+                ? `<button class="btn-icon btn-restore" title="Geri Yükle" onclick="LdapSettingsModule.restoreSetting(${id}, '${domJs}')">
+                        <i class="fa-solid fa-rotate-left"></i>
+                   </button>`
+                : `<button class="btn-icon btn-test" title="Bağlantı Testi" onclick="LdapSettingsModule.testConnection(${id})">
+                        <i class="fa-solid fa-plug-circle-check"></i>
+                   </button>
+                   <button class="btn-icon btn-edit" title="Düzenle" onclick="LdapSettingsModule.openEdit(${id})">
+                        <i class="fa-solid fa-pen"></i>
+                   </button>
+                   <button class="btn-icon btn-delete" title="Sil" onclick="LdapSettingsModule.deleteSetting(${id}, '${domJs}')">
+                        <i class="fa-solid fa-trash"></i>
+                   </button>`;
+
+            return `
+            <tr class="${deleted ? 'ldap-row-deleted' : ''}">
+                <td><span class="org-code-badge">${dom}</span></td>
                 <td>${_esc(s.display_name)}</td>
                 <td class="text-mono">${_esc(s.url)}</td>
                 <td class="text-mono text-sm">${_esc(s.search_base)}</td>
-                <td>
-                    <span class="status-badge ${s.enabled ? 'active' : 'inactive'}">
-                        ${s.enabled ? 'Aktif' : 'Pasif'}
-                    </span>
-                </td>
-                <td class="actions-cell">
-                    <button class="btn-icon btn-test" title="Bağlantı Testi" onclick="LdapSettingsModule.testConnection(${parseInt(s.id, 10)})">
-                        <i class="fa-solid fa-plug-circle-check"></i>
-                    </button>
-                    <button class="btn-icon btn-edit" title="Düzenle" onclick="LdapSettingsModule.openEdit(${parseInt(s.id, 10)})">
-                        <i class="fa-solid fa-pen"></i>
-                    </button>
-                    <button class="btn-icon btn-delete" title="Sil" onclick="LdapSettingsModule.deleteSetting(${parseInt(s.id, 10)}, '${_esc(s.domain)}')">
-                        <i class="fa-solid fa-trash"></i>
-                    </button>
-                </td>
-            </tr>
-        `).join('');
+                <td>${statusCell}</td>
+                <td class="actions-cell">${actions}</td>
+            </tr>`;
+        }).join('');
     }
 
     // ---------------------------------------------------------
@@ -24964,6 +24990,28 @@ window.LdapSettingsModule = (function () {
     }
 
     // ---------------------------------------------------------
+    //  Restore Setting (soft-delete geri al) — v3.59.0
+    // ---------------------------------------------------------
+    async function restoreSetting(id, domain) {
+        VyraModal.confirm({
+            title: 'LDAP Sunucu Geri Yükle',
+            message: `"${domain}" silinmiş LDAP sunucusunu geri yüklemek istiyor musunuz?`,
+            confirmText: 'Geri Yükle',
+            cancelText: 'İptal',
+            onConfirm: async () => {
+                try {
+                    const data = await window.vyraFetch(`/ldap-settings/${id}/restore`, { method: 'POST' });
+                    if (window.showToast) window.showToast(data.message || 'Geri yüklendi', 'success');
+                    load();
+                } catch (err) {
+                    console.error('[LDAP] Restore error:', err);
+                    if (window.showToast) window.showToast(err.message, 'error');
+                }
+            }
+        });
+    }
+
+    // ---------------------------------------------------------
     //  Test Connection
     // ---------------------------------------------------------
     async function testConnection(id) {
@@ -25014,6 +25062,13 @@ window.LdapSettingsModule = (function () {
         const btnSave = document.getElementById('btnSaveLdap');
         if (btnSave) btnSave.addEventListener('click', save);
 
+        // v3.59.0: "Silinenleri Göster" toggle
+        const chkShowDeleted = document.getElementById('ldapShowDeleted');
+        if (chkShowDeleted) chkShowDeleted.addEventListener('change', () => {
+            showDeleted = chkShowDeleted.checked;
+            load();
+        });
+
         // Domain secildiginde org checkbox'larini guncelle
         const domainSel = document.getElementById('ldapDomain');
         if (domainSel) {
@@ -25048,6 +25103,7 @@ window.LdapSettingsModule = (function () {
         closeModal,
         save,
         deleteSetting,
+        restoreSetting,
         testConnection,
         init
     };

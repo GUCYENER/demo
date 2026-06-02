@@ -170,6 +170,47 @@
     border: 1px solid rgba(239, 68, 68, 0.15);
 }
 
+/* v3.59.0: soft-delete edilmiş kayıt rozeti + satır + geri-yükle + toggle */
+.status-badge.deleted {
+    background: rgba(148, 163, 184, 0.12);
+    color: #94a3b8;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+tr.ldap-row-deleted {
+    opacity: 0.55;
+}
+
+tr.ldap-row-deleted .org-code-badge {
+    text-decoration: line-through;
+}
+
+.btn-icon.btn-restore:hover {
+    border-color: #22c55e;
+    color: #22c55e;
+    background: rgba(34, 197, 94, 0.1);
+    box-shadow: 0 2px 8px rgba(34, 197, 94, 0.15);
+}
+
+.ldap-show-deleted {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-muted);
+    user-select: none;
+}
+
+.ldap-show-deleted input {
+    cursor: pointer;
+    accent-color: var(--primary);
+}
+
+.ldap-show-deleted:hover {
+    color: var(--text-2, var(--text-color));
+}
+
 @keyframes ldap-pulse {
 
     0%,

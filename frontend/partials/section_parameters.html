@@ -501,11 +501,15 @@
     <!-- LDAP Ayarları İçeriği (v2.46.0) -->
     <div id="contentLdapSettings" class="param-content hidden admin-only">
 
-        <div style="margin-bottom:16px">
+        <div style="margin-bottom:16px;display:flex;align-items:center;gap:20px;flex-wrap:wrap">
             <button id="btnNewLdapSetting" class="btn primary">
                 <i class="fa-solid fa-plus"></i>
                 Yeni LDAP Sunucu
             </button>
+            <label class="ldap-show-deleted" title="Soft-delete edilmiş kayıtları da listele">
+                <input type="checkbox" id="ldapShowDeleted">
+                <span><i class="fa-solid fa-trash-can-arrow-up"></i> Silinenleri göster</span>
+            </label>
         </div>
 
         <div class="card">
