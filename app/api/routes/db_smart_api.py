@@ -678,7 +678,12 @@ def post_explain_ast(
     # demektir — ast_renderer "SELECT requires at least one column" ValueError
     # fırlatıp 400'e yol açıyordu. Starter AST (kolon eklenmeden önce) ve F-9
     # öncesi tüm durumlar bu yolu kullanır.
-    _sel = ast.get("select") if isinstance(ast, dict) else None
+    # v3.51.0: kanonik AST kolonları "columns" key'inde (ast_renderer dual-key köprüsü, satır 437:
+    # "columns yoksa select'e düş"). Eskiden burada yalnız ast.get("select") bakılıyordu →
+    # normal "columns"-keyed AST has_ast:false yoluna düşüp EXPLAIN/cost HİÇ hesaplanmıyordu
+    # (sessiz devre-dışı). columns primary + select fallback → renderer ile bire bir; FE hangi
+    # key'i gönderirse göndersin doğru (regresyon imkansız).
+    _sel = (ast.get("columns") or ast.get("select")) if isinstance(ast, dict) else None
     _select_empty = not isinstance(_sel, list) or len(_sel) == 0
     if not ast or ast.get("type") != "select" or _select_empty:
         return {

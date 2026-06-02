@@ -216,7 +216,15 @@ def test_related_tables_returns_neighbors_envelope(client_authed):
     assert "neighbors" in data and "junctions" in data
 
 
-def test_list_columns_envelope(client_authed):
+def test_list_columns_envelope(client_authed, monkeypatch):
+    # v3.38.0: list_columns artık tablo-yetki gate'i uygular (resolve_scope + _fetch_table_columns;
+    # yetkisiz/bulunamayan table_id → 404). Bu test zarf yapısını ölçer → scope'u all_tables yap +
+    # _fetch_table_columns'u stub'la (gate ayrı dosyada test edilir).
+    from app.services.data_source_access import AccessScope as _AS
+    monkeypatch.setattr(db_smart_api, "resolve_scope", lambda *a, **k: _AS(all_tables=True))
+    monkeypatch.setattr(db_smart_api, "_fetch_table_columns",
+                        lambda *a, **k: {"columns": [{"name": "id"}]})
+    monkeypatch.setattr(db_smart_api.eligibility, "sample_preview", lambda *a, **k: None)
     resp = client_authed.get("/api/db-smart/sources/5/tables/12/columns")
     assert resp.status_code == 200
     assert "columns" in resp.json()
@@ -583,12 +591,15 @@ def test_ast_diff_identical_zero_changes(client_authed):
     assert resp.json()["summary"]["total_changes"] == 0
 
 
-def test_explain_endpoint_rejects_non_select(client_authed):
+def test_explain_endpoint_non_select_graceful(client_authed):
+    # F17 (2026-05-25): non-select / eksik AST eskiden 400 idi; artık 200 + has_ast:false
+    # (graceful skip — render/execute YOK, frontend cost badge'i temizler, console spam'i biter).
     resp = client_authed.post(
         "/api/db-smart/sessions/abcdefgh-1234-1234-1234-123456789abc/explain",
         json={"ast": {"type": "delete"}, "dialect": "postgresql"},
     )
-    assert resp.status_code == 400
+    assert resp.status_code == 200
+    assert resp.json()["has_ast"] is False
 
 
 def test_explain_endpoint_renders_and_caches(client_authed, monkeypatch):
@@ -742,7 +753,8 @@ def test_save_report_success(client_authed, monkeypatch):
 def test_list_saved_reports(client_authed, monkeypatch):
     monkeypatch.setattr(
         db_smart_api.saved_reports, "list_for_user",
-        lambda cur, user_ctx, *, limit, offset: [
+        # v3.41.5: endpoint name_exact kwarg geçiriyor (duplicate-name guard) → lambda kabul etmeli.
+        lambda cur, user_ctx, *, limit, offset, name_exact=None: [
             {"id": 1, "name": "R1"}, {"id": 2, "name": "R2"},
         ],
     )
@@ -848,7 +860,8 @@ def test_revoke_share_404(client_authed, monkeypatch):
 def test_mark_run_success(client_authed, monkeypatch):
     monkeypatch.setattr(
         db_smart_api.saved_reports, "mark_run",
-        lambda cur, rid, user_ctx: True,
+        # v3.38.7: mark_run snapshot kwarg alıyor (son çalıştırma sonucu) → lambda kabul etmeli.
+        lambda cur, rid, user_ctx, snapshot=None: True,
     )
     resp = client_authed.post("/api/db-smart/saved-reports/5/mark-run")
     assert resp.status_code == 200
@@ -931,11 +944,11 @@ def test_execute_stream_returns_sse_response(client_authed, mock_db, monkeypatch
         "app.services.data_source_access.user_can_access_source",
         lambda uid, sid, **kw: True,
     )
-    # v3.39.0: execute/stream artık tablo-yetki gate'i uygular (resolve_scope can_execute).
-    # Bu test SSE mekaniğini ölçer (tablo-yetkisini değil) → scope'u all_tables yap ki
-    # gate no-op olsun (allowed_tables=None). Gate'in kendi testi ayrı dosyada.
-    from app.services.data_source_access import AccessScope as _AS
-    monkeypatch.setattr(db_smart_api, "resolve_scope", lambda *a, **k: _AS(all_tables=True))
+    # v3.40.0: execute/stream gate'i artık table_guard.enforce_sql_scope (merkezi leak-free guard),
+    # resolve_scope DEĞİL. Bu test SSE mekaniğini ölçer (yetkiyi değil) → enforce_sql_scope'u
+    # all-access (ok=True, allowed_tables=None) yap. Gate'in kendi testi ayrı dosyada.
+    monkeypatch.setattr("app.services.db_smart.table_guard.enforce_sql_scope",
+                        lambda *a, **k: (True, None, None))
     # _load_source SELECT layout: (id, company_id, name, db_type, host, port,
     #                              db_name, db_user, db_password_encrypted)
     mock_db.fetchone.return_value = (
@@ -983,12 +996,13 @@ def test_execute_stream_rejects_unauthorized_table(client_authed, mock_db, monke
     mock_db.fetchone.return_value = (
         1, 42, "pg-src", "postgresql", "localhost", 5432, "db", "u", None,
     )
-    from app.services.data_source_access import AccessScope as _AS
-    # Kullanıcı yalnız public.orders'a yetkili; SQL faturalar'a erişiyor → reddedilmeli.
-    monkeypatch.setattr(
-        db_smart_api, "resolve_scope",
-        lambda *a, **k: _AS(all_tables=False, tables=frozenset({("public", "orders")})),
-    )
+    # v3.40.0 gate = table_guard.enforce_sql_scope (resolve_scope değil). Yetkisiz tablo →
+    # ok=False + leak-free Türkçe mesaj (_deny_scope) → endpoint 403 + bu mesajı döner; stream
+    # HİÇ çalışmaz. v3.39.2: mesaj "yetkili olmadığınız ... Yetkili tablolarınız: ...".
+    _deny_msg = ("Bu sorgu yetkili olmadığınız bir tabloya erişiyor. "
+                 "Yetkili tablolarınız: (yetkili tablonuz bulunmuyor).")
+    monkeypatch.setattr("app.services.db_smart.table_guard.enforce_sql_scope",
+                        lambda *a, **k: (False, None, _deny_msg))
     from app.services.db_smart import sql_executor_stream as _ses
 
     def _must_not_run(*a, **k):
@@ -1000,7 +1014,7 @@ def test_execute_stream_rejects_unauthorized_table(client_authed, mock_db, monke
         json={"sql": "SELECT * FROM faturalar", "source_id": 1, "dialect": "postgresql"},
     )
     assert resp.status_code == 403
-    assert "yetkiniz" in resp.json()["detail"].lower()
+    assert "yetkili" in resp.json()["detail"].lower()
 
 
 # ---------------------------------------------------------------------------
