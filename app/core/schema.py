@@ -905,6 +905,21 @@ ALTER TABLE ds_discovery_jobs ADD COLUMN IF NOT EXISTS progress_total INTEGER DE
 ALTER TABLE ds_discovery_jobs ADD COLUMN IF NOT EXISTS progress_stage VARCHAR(40);
 ALTER TABLE ds_discovery_jobs ADD COLUMN IF NOT EXISTS progress_updated_at TIMESTAMP;
 
+-- v3.53.0: Async SQL sorgu job'ları — cross-worker iptal (multi-worker 8002-8004).
+-- _SQL_JOB_REGISTRY in-memory worker-local idi → cancel başka worker'a düşünce 404 veriyordu.
+-- Bu tablo cross-worker cancel sinyali taşır: cancel endpoint status='cancel_requested' yazar,
+-- çalışan job (başka worker) bu satırı poll edip kendini iptal eder.
+CREATE TABLE IF NOT EXISTS sql_query_jobs (
+    job_id VARCHAR(64) PRIMARY KEY,
+    owner_user_id INTEGER NOT NULL,
+    dialog_id INTEGER,
+    status VARCHAR(20) NOT NULL DEFAULT 'running',  -- 'running','cancel_requested','done'
+    started_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_sql_query_jobs_status ON sql_query_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_sql_query_jobs_started ON sql_query_jobs(started_at);
+
 -- Keşfedilen DB Objeleri (tablolar, view'lar)
 CREATE TABLE IF NOT EXISTS ds_db_objects (
     id SERIAL PRIMARY KEY,

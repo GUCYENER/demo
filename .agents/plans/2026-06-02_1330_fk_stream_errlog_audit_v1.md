@@ -4,7 +4,7 @@ created: 2026-06-02
 branch: hira
 status: in_progress
 version_target: v3.52.0
-progress: "v3.52.0'da TAMAM: G2 named cursor fix (autocommit=False) + G1 error-logging (stream/_bg_collect/collect_samples/related_tables log_exception + enforce_sql_scope diagnostic WARNING) + G4 _bg_collect job-failed işaretleme. 77 test geçti. KALAN: G3 cancel multi-worker 404 (DB-backed cancel — ayrı faz) + FK declared keşfi PG canlı inceleme (artık log'lar yön gösterecek)."
+progress: "v3.52.0: G2 named cursor + G1 error-logging + G4 bg-job-failed (77 test). v3.53.0: G3 cancel multi-worker 404 DB-backed (sql_query_jobs + mig 054 + deep_think DB-poll + 6 test). TAMAM. KALAN (kullanıcı canlı testi yönlendirecek): FK declared keşfi PG + SS5 scope (artık log'lar canlı nedeni gösterir)."
 council_mod: 3
 hebe_gate_required: false
 ---

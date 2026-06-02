@@ -300,8 +300,18 @@ _JOB_REGISTRY_LOCK = _registry_threading.Lock()
 _SQL_JOB_REGISTRY: Dict[str, Dict[str, Any]] = {}
 
 
+def _job_db_conn():
+    """v3.53.0: cross-worker job registry için best-effort DB bağlantısı. Hata → None
+    (in-memory yol yine çalışır; DB yoksa cancel yalnız aynı worker'da etkili)."""
+    try:
+        from app.core.db import get_db_conn
+        return get_db_conn()
+    except Exception:
+        return None
+
+
 def register_sql_job(job_id: str, cancel_event, owner_user_id: int, dialog_id: Optional[int] = None) -> None:
-    """Async SQL job'unu iptal edilebilir olarak kaydeder."""
+    """Async SQL job'unu iptal edilebilir olarak kaydeder (in-memory + DB cross-worker)."""
     with _JOB_REGISTRY_LOCK:
         _SQL_JOB_REGISTRY[job_id] = {
             "cancel_event": cancel_event,
@@ -309,30 +319,137 @@ def register_sql_job(job_id: str, cancel_event, owner_user_id: int, dialog_id: O
             "dialog_id": dialog_id,
             "started_at": time.time(),
         }
+    # v3.53.0: multi-worker (8002-8004) — cancel başka worker'a düşebilir → DB'ye de yaz.
+    conn = _job_db_conn()
+    if conn is not None:
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO sql_query_jobs (job_id, owner_user_id, dialog_id, status, started_at, updated_at)
+                VALUES (%s, %s, %s, 'running', NOW(), NOW())
+                ON CONFLICT (job_id) DO UPDATE SET status='running', updated_at=NOW()
+                """,
+                (job_id, int(owner_user_id), dialog_id),
+            )
+            # v3.53.0 code-review: worker crash'inde unregister çağrılmazsa 'running' satır
+            # birikir. MAX_WAIT 900sn → 2 saatten eski satırlar kesin ölü; fırsatçı temizlik
+            # (job başına 1 kez, tabloyu sınırlar; reaper'a gerek yok).
+            cur.execute("DELETE FROM sql_query_jobs WHERE started_at < NOW() - INTERVAL '2 hours'")
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def unregister_sql_job(job_id: str) -> None:
-    """Job tamamlandığında registry'den siler."""
+    """Job tamamlandığında registry'den siler (in-memory + DB)."""
     with _JOB_REGISTRY_LOCK:
         _SQL_JOB_REGISTRY.pop(job_id, None)
+    conn = _job_db_conn()
+    if conn is not None:
+        try:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM sql_query_jobs WHERE job_id = %s", (job_id,))
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def is_cancel_requested(job_id: str) -> bool:
+    """v3.53.0: çalışan job (herhangi worker) cross-worker cancel sinyalini DB'den poll eder.
+    DB yoksa/hata → False (yalnız in-memory event geçerli kalır)."""
+    conn = _job_db_conn()
+    if conn is None:
+        return False
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT status FROM sql_query_jobs WHERE job_id = %s", (job_id,))
+        row = cur.fetchone()
+        if not row:
+            return False
+        status = row["status"] if isinstance(row, dict) else row[0]
+        return status == "cancel_requested"
+    except Exception:
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def cancel_sql_job(job_id: str, requesting_user_id: int) -> Tuple[bool, str]:
     """
     Job'u iptal eder. Sadece sahibi kullanıcı iptal edebilir.
+    v3.53.0: önce aynı-worker (in-memory event) hızlı yolu; bulunamazsa cross-worker DB sinyali
+    (status='cancel_requested' → işi çalıştıran worker poll edip kendini iptal eder).
     Returns (success, message).
     """
+    # 1) Aynı worker — in-memory event (anında)
     with _JOB_REGISTRY_LOCK:
         entry = _SQL_JOB_REGISTRY.get(job_id)
-        if entry is None:
-            return False, "Job bulunamadı veya zaten tamamlandı"
-        if int(entry["owner_user_id"]) != int(requesting_user_id):
-            return False, "Bu job'u iptal etme yetkiniz yok"
+        local_ok = False
+        if entry is not None:
+            if int(entry["owner_user_id"]) != int(requesting_user_id):
+                return False, "Bu job'u iptal etme yetkiniz yok"
+            try:
+                entry["cancel_event"].set()
+                local_ok = True
+            except Exception:
+                return False, "İptal sinyali gönderilemedi"
+
+    # 2) DB cross-worker sinyali (aynı worker'da da idempotent — başka worker çalıştırıyorsa şart)
+    db_found = False
+    db_owner = None
+    conn = _job_db_conn()
+    if conn is not None:
         try:
-            entry["cancel_event"].set()
+            cur = conn.cursor()
+            cur.execute("SELECT owner_user_id FROM sql_query_jobs WHERE job_id = %s", (job_id,))
+            row = cur.fetchone()
+            if row:
+                db_found = True
+                db_owner = row["owner_user_id"] if isinstance(row, dict) else row[0]
+                if db_owner is not None and int(db_owner) == int(requesting_user_id):
+                    cur.execute(
+                        "UPDATE sql_query_jobs SET status='cancel_requested', updated_at=NOW() WHERE job_id = %s",
+                        (job_id,),
+                    )
+                    conn.commit()
         except Exception:
-            return False, "İptal sinyali gönderilemedi"
-    return True, "İptal sinyali gönderildi"
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    if local_ok:
+        return True, "İptal sinyali gönderildi"
+    if db_found:
+        if db_owner is not None and int(db_owner) != int(requesting_user_id):
+            return False, "Bu job'u iptal etme yetkiniz yok"
+        return True, "İptal sinyali gönderildi (işlenmesi birkaç saniye sürebilir)"
+    return False, "Job bulunamadı veya zaten tamamlandı"
 
 
 # =====================================================

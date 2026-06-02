@@ -2803,6 +2803,17 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                         if cancel_event.is_set():
                             user_cancelled = True
                             break
+                        # v3.53.0: cross-worker cancel — "İptal Et" isteği işi çalıştırmayan başka
+                        # worker'a (8002-8004) düşmüş olabilir; local event set EDİLMEZ. DB cancel
+                        # sinyalini poll et (best-effort; her TICK ~10sn'de bir tek küçük sorgu).
+                        try:
+                            from app.services.safe_sql_executor import is_cancel_requested
+                            if is_cancel_requested(job_id):
+                                cancel_event.set()
+                                user_cancelled = True
+                                break
+                        except Exception:
+                            pass
                         remaining = MAX_WAIT - elapsed_so_far
                         wait_for = min(TICK_INTERVAL, remaining)
                         got_result = result_event.wait(timeout=wait_for)
