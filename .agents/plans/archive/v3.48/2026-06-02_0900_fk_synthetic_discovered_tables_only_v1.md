@@ -2,10 +2,12 @@
 plan_id: fk_synthetic_discovered_tables_only
 created: 2026-06-02
 branch: hira
-status: in_progress
+status: completed
 version_target: v3.48.0
 council_mod: 3
 hebe_gate_required: false
+closed: 2026-06-02
+closure_note: "v3.48.0 commit a23648e ile sevk edildi (EXISTS ds_db_objects filtresi + 48 test). Frontmatter status flip gecikmişti."
 ---
 
 # FK Loop Sentetik SQL — Yalnız Keşfedilen Tablolar İçin
