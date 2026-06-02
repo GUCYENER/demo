@@ -562,14 +562,39 @@ def get_source_schema_tree(
 
             # v3.43.2: object_type IN ('table','view') — eskiden yalnız 'table' idi,
             # keşfedilmiş VIEW'lar Yetkilendirme listesinde GÖRÜNMÜYORDU (Etiketleme paneli
-            # get_all_tables_status ile tutarsız: orada table+view sayılıyor). Kullanıcı:
-            # "kaynakta keşfedilen tablo yetkilendirme ekranında aratınca gelmiyor".
+            # get_all_tables_status ile tutarsız: orada table+view sayılıyor).
+            # v3.49.0: Yalnız KEŞFEDİLEN (=örneklenmiş) schema'lar listelenir — Etiketleme paneli
+            # (get_all_tables_status, ds_enrichment_service.py) ile birebir tutarlı. detect_objects
+            # tüm katalogu (ham, 269 tablo) ds_db_objects'e döker; kullanıcı yalnız Adım 3'te
+            # ÖRNEKLENMİŞ schema'ları Yetkilendirme'de görmek istiyor. Fallback: hiç sample yoksa
+            # (Adım 3 henüz yapılmamış) tümü gösterilir (admin keşif öncesi de yetki verebilsin).
             cur.execute("""
-                SELECT schema_name, object_name
-                FROM ds_db_objects
-                WHERE source_id = %s AND object_type IN ('table', 'view')
-                ORDER BY schema_name NULLS FIRST, object_name
+                SELECT DISTINCT o.schema_name
+                FROM ds_db_samples s
+                JOIN ds_db_objects o ON s.object_id = o.id
+                WHERE o.source_id = %s AND o.schema_name IS NOT NULL
             """, (source_id,))
+            sampled_schemas = [
+                (r["schema_name"] if isinstance(r, dict) else r[0])
+                for r in cur.fetchall()
+            ]
+            if sampled_schemas:
+                _fmt = ','.join(['%s'] * len(sampled_schemas))
+                cur.execute(f"""
+                    SELECT schema_name, object_name
+                    FROM ds_db_objects
+                    WHERE source_id = %s AND object_type IN ('table', 'view')
+                      AND schema_name IN ({_fmt})
+                    ORDER BY schema_name NULLS FIRST, object_name
+                """, [source_id] + sampled_schemas)
+            else:
+                # Fallback: henüz örnekleme yapılmamış → tüm keşfedilenler (Etiketleme ile aynı)
+                cur.execute("""
+                    SELECT schema_name, object_name
+                    FROM ds_db_objects
+                    WHERE source_id = %s AND object_type IN ('table', 'view')
+                    ORDER BY schema_name NULLS FIRST, object_name
+                """, (source_id,))
             rows = cur.fetchall()
     except HTTPException:
         raise

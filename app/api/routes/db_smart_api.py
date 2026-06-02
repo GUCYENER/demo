@@ -1870,6 +1870,7 @@ def list_sources(
 
 @router.get("/sources/{source_id}/tables")
 def search_tables(
+    response: Response,
     source_id: int = Path(..., ge=1),
     q: str = Query("", description="Doğal dil arama sorgusu"),
     limit: int = Query(20, ge=1, le=500),
@@ -1879,7 +1880,12 @@ def search_tables(
 
     Cap 500'e yükseltildi (v3.34.0): Tablo Seçici alt-modal'ı kaynağa ait
     tüm yetkili tabloları tek sayfada listeler (q boş + limit=200 default).
+
+    v3.49.0: Bu liste KULLANICI YETKİSİNE GÖRE scope'lanır (resolve_scope) — tarayıcı
+    cache'lememeli. Aksi halde admin yeni tablo yetkisi verdikten sonra picker ilk açılışta
+    ESKİ (stale) listeyi gösterip reopen'da düzeliyordu. no-store her açılışta taze garanti.
     """
+    response.headers["Cache-Control"] = "no-store"
     _require_user_id(current_user)
     with get_db_context() as conn:
         cur = conn.cursor()

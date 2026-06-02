@@ -854,13 +854,29 @@
     gap: 10px;
     margin-bottom: 12px;
 }
+/* v3.49.0: input + büyüteç + clear × tek relative field içinde → ikonlar input kenarlarına hizalanır */
+.dsw-picker-search-field {
+    position: relative;
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+}
+.dsw-picker-search-icon {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--vyra-fg-secondary, #9aa1ab);
+    font-size: 13px;
+    pointer-events: none;
+}
 .dsw-picker-search .dsw-input {
     flex: 1 1 auto;
     background: rgba(255, 255, 255, 0.03);
     color: var(--vyra-fg-primary, #e6e8eb);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;
-    padding: 10px 14px;
+    padding: 10px 38px;
     font-size: 14px;
     min-height: 40px;
 }
@@ -1141,21 +1157,21 @@
    (d) Search × clear · (f) FK guard warning
    ============================================================ */
 
-/* (d) Arama temizle (×) ikonu — input içinde değil, hemen sağında */
-.dsw-picker-search {
-    position: relative;
-}
+/* (d) Arama temizle (×) ikonu — v3.49.0: input-field içinde SAĞ kenarda absolute (büyüteç solda) */
 .dsw-picker-search-clear {
-    flex: 0 0 auto;
-    width: 28px;
-    height: 28px;
-    line-height: 24px;
-    font-size: 18px;
+    position: absolute;
+    right: 7px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 26px;
+    height: 26px;
+    line-height: 22px;
+    font-size: 16px;
     font-weight: 500;
     color: var(--vyra-fg-secondary, #9aa1ab);
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 8px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
     cursor: pointer;
     padding: 0;
     text-align: center;

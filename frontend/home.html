@@ -637,7 +637,7 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
 @media(max-width:660px){.n-sidebar{display:none}}
 </style>
 <link rel="stylesheet" href="assets/css/mode_cards.css?v=3.6.0" />
-<link rel="stylesheet" href="dist/bundle.min.css?v=a9db2aade9" />
+<link rel="stylesheet" href="dist/bundle.min.css?v=91c52420cf" />
 </head>
 <body>
 
@@ -900,7 +900,10 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
         <div class="dsw-picker-body">
           <section class="dsw-picker-pane dsw-picker-left" aria-label="Tablolar">
             <div class="dsw-picker-search">
-              <input type="text" id="dswPickerSearch" class="dsw-input" placeholder="Tablo adı ara… (Türkçe destekli)" aria-label="Tablo arama" autocomplete="off" />
+              <div class="dsw-picker-search-field">
+                <i class="fa-solid fa-search dsw-picker-search-icon" aria-hidden="true"></i>
+                <input type="text" id="dswPickerSearch" class="dsw-input" placeholder="Tablo adı ara… (Türkçe destekli)" aria-label="Tablo arama" autocomplete="off" />
+              </div>
               <span class="dsw-picker-count" id="dswPickerCount" aria-live="polite"></span>
             </div>
             <div class="dsw-picker-list" id="dswPickerList" role="listbox" aria-label="Yetkili tablolar" aria-busy="false"></div>
@@ -978,7 +981,7 @@ select.inp{-webkit-appearance:none;appearance:none;cursor:pointer}
     }
 })();
 </script>
-<script defer src="dist/bundle.min.js?v=a9db2aade9"></script>
+<script defer src="dist/bundle.min.js?v=91c52420cf"></script>
 <script>
 // v2.59.0: Favicon artık inline SVG kullanıyor, dev override gereksiz
 document.getElementById('themeToggleBtn').addEventListener('click', function(e) {

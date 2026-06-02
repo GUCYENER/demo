@@ -117,12 +117,19 @@
             btn.title = 'Aramayı temizle';
             btn.hidden = true;
             btn.textContent = '×';
-            // count span'in önüne koy → input × count layout
-            const count = $('dswPickerCount');
-            if (count && count.parentNode === searchWrap) {
-                searchWrap.insertBefore(btn, count);
+            // v3.49.0: clear × input-field içine (relative wrapper) → input'un SAĞ kenarında
+            // absolute hizalanır (büyüteç solda, × sağda). Eski: count'tan önce flex item =
+            // input dışında kayıyordu. Field yoksa eski davranışa düş (geriye uyum).
+            const field = searchWrap.querySelector('.dsw-picker-search-field');
+            if (field) {
+                field.appendChild(btn);
             } else {
-                searchWrap.appendChild(btn);
+                const count = $('dswPickerCount');
+                if (count && count.parentNode === searchWrap) {
+                    searchWrap.insertBefore(btn, count);
+                } else {
+                    searchWrap.appendChild(btn);
+                }
             }
         }
 
