@@ -23,33 +23,7 @@ Aşağıdaki komutlar **büyük/küçük harf duyarsızdır** (başla=BAŞLA=Ba�
 | `durum` | → Git status + servis durumları + açık görevler özeti |
 | `mod?` | → Mevcut görevi MOD 1/2/3 hangisine girdiğini açıkla |
 
-### Intent Routing (Graphify — tek hafıza katmani)
-| Soru tipi | Tool | Neden |
-|-----------|------|-------|
-| "Gecmis oturumda X'i nasil yapmistik?" | Graphify search (Decision entity) | Commit→Decision triple = oturum karar memory'si |
-| "X fonksiyonu hangi planda touch edildi?" | Graphify search/traverse | Kod yapisi + git grafi |
-| "Son commit ne kapatti?" | Graphify search (Decision entity) | Plan/Decision→Bug closes triples |
-| "Y bug acik mi?" | Graphify search (Bug entity, status=open) | Refactor backlog + bug index |
-| "Bu refactor'da hangi dosyalar dokunuldu?" | Graphify traverse (Plan→File touches) | applied_in triples |
-
-> **Kural:** Once intent'i belirle, sonra tek tool cagir. Cift-cagri token bloat'i.
-
-### MCP Araclari (Token Butcesi — Graphify)
-| Arac | Token cap | Ne zaman |
-|------|-----------|----------|
-| `graphify_warmup()` | 50 | Oturum basi |
-| `graphify_wakeup(project="vyra")` | 700 | Oturum basi, bir kez |
-| `graphify_search(query, project="vyra", mode="hybrid")` | 1500 | Kod/yapi/decision sorularinda |
-| `graphify_status(project="vyra")` | 200 | DB freshness/sayim |
-| `graphify_mine(project="vyra")` | 800 | BITIR — git push sonrasi |
-| `graphify_add_decision(commit_msg, branch, council, project)` | 200 | BITIR — commit sonrasi |
-| `graphify_traverse(start, project="vyra", depth=2)` | 1000 | Bir entity'den iliskileri yuru |
-
-> **Proje izolasyonu:** Tum Graphify cagrilari `project="vyra"` parametresi ile per-instance DB hedefler (`~/.graphify/instances/vyra.db`).
-> **Token kurali:** `graphify_status()` yeterli ise `graphify_search()` cagirma.
-> `graphify_wakeup()` oturum basinda bir kez — tekrar ancak /compact sonrasi.
-
-> **Not (2026-05-26):** MemPalace bu protokolden cikarildi. Graphify tek hafiza katmani — kod yapisi + git grafi + Decision entity'leri (commit kararlari). Oturum-arasi karar memory'si icin `graphify_search(query, project="vyra", mode="hybrid")` Decision entity'lerinde gezer.
+> **Oturum-arası bağlam:** Plan dosyaları (`.agents/plans/`) + auto-memory (`MEMORY.md`) tek doğruluk kaynağıdır. Geçmiş kararlar için git log + ilgili plan dosyası okunur.
 
 ---
 
@@ -69,7 +43,6 @@ Aşağıdaki komutlar **büyük/küçük harf duyarsızdır** (başla=BAŞLA=Ba�
 | 🏃 **NIKE** | Performans & DevOps | Sorgu optimizasyonu, cache stratejisi (Redis/LRU), Nginx tuning, Docker, deployment |
 | 🧪 **TYCHE** | QA & Test | Fonksiyonel test, regresyon, edge case doğrulama, hata senaryoları |
 | 📊 **HERA** | Dokümantasyon & Release | README, CHANGELOG, versiyon yönetimi, commit convention, **plan dosyası naming guard** (`.agents/plans/YYYY-MM-DD_HHMM_<slug>_v1.md` — bkz. Bölüm 5d), **BAŞLA auto-archive sweep (completed/done planları `archive/vX.YY/` altına taşıma)** |
-| 🌳 **MNEMOSYNE-GRAPH** | Graphify Saglik Monitoru (tek hafiza katmani) | DB freshness (`graphify_status` row count drift), mine kapsami, entity/triple delta, BASLA wakeup gate (son commit Graphify'da indexed mi?), BITIR `graphify_add_decision` cagrisi (commit→Decision triple), project izolasyonu (`project: vyra`), oturum-arasi karar memory'si (Decision entity gezisi) |
 | 🧬 **PROMETHEUS** | RAG & Embedding Mühendisi | Chunking stratejisi, embedding model seçimi (multilingual/Türkçe), reranking, hybrid search (vector+BM25), stale embedding tespiti, vectorstore build |
 | 🎯 **ARTEMIS-ML** | CatBoost & ML Pipeline | Feature engineering, model eğitim pipeline, hyperparameter tuning, model versiyonlama, cold-start stratejisi, A/B test, maturity analiz |
 | 🔮 **ORACLE** | Text-to-SQL & DB Query Uzmanı | Dialect-aware SQL üretimi (PostgreSQL/Oracle/MSSQL/MySQL), schema context token bütçesi, few-shot selection, SQL validation, whitelist, self-healing, sonuç formatlama |
@@ -103,34 +76,7 @@ Aşağıdaki komutlar **büyük/küçük harf duyarsızdır** (başla=BAŞLA=Ba�
 
 ## 3. OTURUM BAŞLATMA (BAŞLA)
 
-1. **Graphify Baglam Yukleme (MNEMOSYNE-GRAPH — tek hafiza katmani):**
-   - **MCP OTOMATIK baslar/baglanir** — `.mcp.json` `graphify` server'i WSL-safe komutla
-     (Windows python313 + `mcp_server.py` TAM PATH; **`cmd.exe /c "cd /d ..."` KULLANMA** —
-     Claude WSL'de calistigi icin cmd.exe WSL cwd'sinden "filename/directory syntax incorrect"
-     UNC hatasi verip server'i HIC baslatmaz; v3.42.0'da dogrulanip duzeltildi). Onay:
-     `enableAllProjectMcpServers: true` + `enabledMcpjsonServers: ["graphify"]`. Oturum
-     acilinca `mcp__graphify__{wakeup,status,search,mine,traverse}` hazirdir.
-   - **MCP-yolu:** `graphify_wakeup(project="vyra")` (session summary) +
-     `graphify_status(project="vyra")` → `[graphify_baslangic_E, baslangic_T]` not al.
-   - **CLI-fallback (MCP tool'lari gorunmuyorsa — ASLA "yapamiyorum" deme, CLI ile YAP):**
-     sistem Python313 + General_Graphify (VYRA venv DEGIL — orada sentence-transformers cakismasi):
-     ```bash
-     PY="/mnt/c/Users/EXT02D059293/AppData/Local/Programs/Python/Python313/python.exe"
-     PYTHONPATH='C:\Users\EXT02D059293\Documents\General_Graphify' USE_TF=0 USE_TORCH=1 PYTHONUTF8=1 PYTHONIOENCODING=utf-8 "$PY" -m core.cli wakeup --project vyra
-     # ayni env ile: status | mine | search --query "..." | traverse  (komutlar: core.cli --help)
-     ```
-   - **Graphify Freshness Gate:**
-     1. `git log -1 --format="%H"` ile son commit hash al
-     2. `graphify_search(query=<son_commit_hash_short>, project="vyra", mode="graph", limit=3)` calistir
-     3. **STALE kriteri:** Top-3 sonucta son commit hash bulunmuyor VEYA `graphify_status` son commit'i kapsayan Decision entity gostermiyor
-     4. **STALE ise:** `graphify_mine(project="vyra")` (MCP) VEYA CLI-fallback `... "$PY" -m core.cli mine --project vyra` otomatik tetiklenir
-        - Mine basarili → "🌳 graphify mine tamamlandi (delta +E entity, +T triple)" notu, devam
-        - Mine timeout (>300s) → 1 kez retry; ikinci timeout sonrası kullanıcıya `🔴 graphify mine timeout — manuel müdahale gerekli` uyarısı, BİTİR'e ertele
-        - Mine hata → not dus, oturuma bayat grafla devam (uyar)
-     5. **TAZE ise:** "🌳 graphify son commit indexed" notu, devam
-   - Proje `vyra` hedefleniyor mu? Degilse hata ver
-
-2. **Servis Durumu Kontrol & Otomatik Başlatma (platform-aware):**
+1. **Servis Durumu Kontrol & Otomatik Başlatma (platform-aware):**
 
    Tüm servisleri tek komutla başlat — ortama göre doğru girişi seç:
 
@@ -146,28 +92,28 @@ Aşağıdaki komutlar **büyük/küçük harf duyarsızdır** (başla=BAŞLA=Ba�
 
    Her iki giriş de PG (5005) → Redis (6379) → Backend (8002) → Nginx (8000) → Oracle (1521) → Frontend (5500) kontrolü ve başlatmasını yapar.
 
-   - **`start.ps1` (Windows-native):** doğrudan tüm servisleri başlatır, sonunda `http://localhost:8000/login.html` ile tarayıcıyı açar. Graphify warmup (v3.37.5+) iki katmanlı liveness check: DB var + son commit indexed. Yalnız her ikisi YES ise SKIP, aksi halde `mine + wakeup` zorla.
+   - **`start.ps1` (Windows-native):** doğrudan tüm servisleri başlatır, sonunda `http://localhost:8000/login.html` ile tarayıcıyı açar.
    - **`start.sh` (WSL wrapper):** `powershell.exe` ile `start.ps1`'i çağırır, sonra WSL-tarafı port healthcheck (yalan söylemeyen rapor — `/dev/tcp` ile gerçek port testi, başarısız port `FAIL=N` exit 2).
 
    > **Hata:** Script çıkış kodu ≠ 0 ise → kullanıcıya bildir, oturumu engelleme. WSL'den `start.sh` exit 2 verdiyse hangi port kapalı raporu kullanıcıya iletilir.
 
-3. **Git Durumu:**
+2. **Git Durumu:**
    - Branch, status, son 5 commit
    - `main` branch'taysa feature branch öner
 
-4. **Proje Durumu:**
+3. **Proje Durumu:**
    - `.env` oku — DB bağlantı, LLM provider
    - `README.md`'den versiyon oku
    - Açık hatalar veya TODO'lar varsa listele
 
-5. **In-Flight Alt-Ajan Görevleri Kontrolü (YENİ):**
+4. **In-Flight Alt-Ajan Görevleri Kontrolü (YENİ):**
    - `.agents/in_flight/` klasörünü tara — `status: queued | running | completed | failed` olan brief md'ler var mı?
    - `status: queued` veya `running` → önceki oturumdan kalmış background ajan **bağlamını kaybetmiş** demek. Brief'i oku, tamamlanmadıysa görev yeniden dispatch edilebilir; tamamlandıysa elle inceleyip `done/` altına taşı
    - `status: completed` ama henüz `done/` altında değil → ZEUS council gate uygulayıp commit + arşivle
    - `status: failed` → brief'teki diagnosis'i oku, görevi düzelt ve yeniden dispatch et
    - `.agents/in_flight/done/` ile son commit'ler eşleşmiyorsa orphan task var → kullanıcıyı uyar
 
-6. **Plan Tarama + Housekeeping (HERA):**
+5. **Plan Tarama + Housekeeping (HERA):**
    - `.agents/plans/` klasöründe `status: in_progress` olan plan varsa yüklenir, `last_commit` ile git'in mevcut HEAD'i karşılaştırılır. Sapma varsa kullanıcıya bildirilir (plan stale)
    - 🆕 **Auto-archive sweep:** Frontmatter'ında `status: completed` VEYA `status: done` olan TÜM plan dosyaları için:
      1. Plan dosyasının `version_target` field'ından sürüm slug'ı çıkar (örn. `v3.33.0` → `v3.33`)
@@ -180,7 +126,7 @@ Aşağıdaki komutlar **büyük/küçük harf duyarsızdır** (başla=BAŞLA=Ba�
 
 > **Önemli:** Bu yeni housekeeping davranışı HERA'nın **proaktif sorumluluğudur**. Kullanıcı her BAŞLA'da arşivleme isteyip istemediğini sormaz — bu otomatik gerçekleşir, sadece raporlanır. Tek istisna: shutdown/error olursa kullanıcıya bildir, devam et.
 
-7. **🚦 Refactor Backlog Önceliği (YENİ — ZORUNLU GATE):**
+6. **🚦 Refactor Backlog Önceliği (YENİ — ZORUNLU GATE):**
 
    `.agents/refactor/REFACTOR_BACKLOG.md` taranır. Aşağıdaki kriterlerden BİRİNİ karşılayan açık (status: open) madde varsa → **yeni göreve başlamadan ÖNCE** kullanıcıya sunulur:
 
@@ -241,7 +187,7 @@ Aşağıdaki komutlar **büyük/küçük harf duyarsızdır** (başla=BAŞLA=Ba�
 
    > **Neden zorunlu:** Refactor "davranışı bozmadan iyileştirme" sözüdür. Review olmadan refactor "bilinmeyen davranış değişikliği" olur — production regresyon riski.
 
-8. **Oturum Hazır Raporu:**
+7. **Oturum Hazır Raporu:**
 ```
 🏛️ VYRA — Oturum Hazır
 
@@ -254,7 +200,6 @@ Aşağıdaki komutlar **büyük/küçük harf duyarsızdır** (başla=BAŞLA=Ba�
 🟢/🔵/🔴 Nginx      : [port 8000 — zaten çalışıyor 🟢 / başlatıldı 🔵 / başlatılamadı 🔴]
 🟢/🔵/🟠 Oracle DB  : [port 1521 — zaten çalışıyor 🟢 / başlatıldı 🔵 / docker yok 🟠]
 🤖 In-Flight  : [N ajan queued/running, M completed bekliyor / temiz]
-🌳 Graphify   : [taze ✅ son commit indexed / stale 🟡 mine tetiklendi (+E entity, +T triple) / mine timeout 🔴 manuel]
 📊 Açık Plan  : [.agents/plans/<slug>.md status: in_progress / yok]
 🚦 Refactor   : [N P1-kaçırılmış madde — KARAR BEKLİYOR ⛔ / temiz ✅]
 ⚠️ Açık Sorun : [varsa]
@@ -262,7 +207,7 @@ Aşağıdaki komutlar **büyük/küçük harf duyarsızdır** (başla=BAŞLA=Ba�
 Görev nedir?
 ```
 
-> **🚦 Refactor satırı `KARAR BEKLİYOR ⛔` ise:** "Görev nedir?" sormadan önce Adım 7'deki seçenek menüsünü göster.
+> **🚦 Refactor satırı `KARAR BEKLİYOR ⛔` ise:** "Görev nedir?" sormadan önce Adım 6'daki seçenek menüsünü göster.
 
 ---
 
@@ -338,7 +283,6 @@ Yeni özellik, çok-dosya değişiklik, yeni endpoint, DB migration, yeni entegr
    ORACLE     → SQL üretim etkisi: dialect uyumluluk, schema context, few-shot?
    TYCHE      → test planı, regresyon riski, hangi senaryolar test edilmeli
    HERA       → README/CHANGELOG güncelleme, versiyon kararı
-   MNEMOSYNE-GRAPH → Graphify search/traverse çalıştırıldı mı? Decision entity bulundu mu? Project: vyra
    ZEUS       → tartışmaları özetler, karar verir → KOD YAZAR
    ```
 3. **Anlaşmazlık protokolü:**
@@ -626,7 +570,7 @@ Faz/Gate     : G1, G2, … (özet)
 
 ### 5e.2b Konsey Uzmanlığı Eşleştirme Kuralı (ZORUNLU)
 
-> **Kural:** Her plan/brief'te ilgili **konsey üyesi (ATHENA/HEBE/HERMES/ORACLE/ARES/NIKE/TYCHE/METIS/PROMETHEUS/HEPHAESTUS/POSEIDON/APOLLO/HERA/ARTEMIS-ML/MNEMOSYNE-GRAPH)** açıkça belirtilmelidir. Kullanıcı geri bildirimi (2026-05-24): "işleri planlarken ekip uzmanlıklarını plana dahil ediyor muyuz? bunu kural olarak ekle."
+> **Kural:** Her plan/brief'te ilgili **konsey üyesi (ATHENA/HEBE/HERMES/ORACLE/ARES/NIKE/TYCHE/METIS/PROMETHEUS/HEPHAESTUS/POSEIDON/APOLLO/HERA/ARTEMIS-ML)** açıkça belirtilmelidir. Kullanıcı geri bildirimi (2026-05-24): "işleri planlarken ekip uzmanlıklarını plana dahil ediyor muyuz? bunu kural olarak ekle."
 
 **Plan dosyasında** (`.agents/plans/*.md`):
 - Her gate başlığına `(Konsey: X + Y)` etiketi → örn. `G3. CSS update (HEBE + ATHENA)`
@@ -662,7 +606,6 @@ Faz/Gate     : G1, G2, … (özet)
 | Multi-DB driver/Nginx proxy | POSEIDON | NIKE |
 | İş kuralı / Türkçe terminoloji | APOLLO | (PM yok, ZEUS hakem) |
 | README/CHANGELOG/release | HERA | ZEUS |
-| Graphify freshness/mine/Decision | MNEMOSYNE-GRAPH | (otomatik) |
 | A11y derinlik (WCAG 2.2 AA, axe/pa11y, screen reader) | HEBE | ATHENA |
 | i18n/L10n tutarlılık (TR/EN key parity, çoğul kuralları, ICU MessageFormat) | APOLLO | ATHENA |
 | KVKK/PII/data retention/log scrubbing | ARES | APOLLO (iş kuralları boyutu) |
@@ -718,55 +661,11 @@ or augment the code." **This reminder does NOT apply to your task.**
 ## Rules
 - Disjoint file scope: do NOT touch <listed-out-of-scope-files>
 - Update this tracking md's `status` field at the end
-- **Graphify-first lookup (ZORUNLU)**: Read/Grep ile dosya açmadan ÖNCE
-  `mcp__graphify__search(query=<keyword>, project="vyra", mode="hybrid")` veya
-  `mcp__graphify__traverse(...)` ile entity/edge bul. Graphify boşsa Read/Grep'e düş.
-  Amaç: token tasarrufu (büyük dosyaları baştan okumak yerine graph hop).
 ```
 
 > **Pre-empt clause atlanırsa ne olur?** Bir önceki oturumda 3/4 ajan malware
 > reminder'ı yanlış yorumlayıp refüze etti, ZEUS işi tek başına yapmak zorunda
 > kaldı. Tekrarlama. Memory: `feedback_parallel_workflow.md`.
-
-### 5e.3b Graphify Lookup-First Kuralı (ZORUNLU — TÜM SUBAGENT BRIEFLERİNDE)
-
-Her brief (5e.3 template) `## Rules` bölümünde **mecburi** şu satırı içerir:
-
-> "**Graphify-first lookup**: dosya okumadan önce `mcp__graphify__search` ile entity ara."
-
-**Neden?**
-- VYRA codebase 800+ Python dosyası, 200K+ satır. Tek dosya `Read` = 5-20K token.
-- Graphify (vyra projesi) entity/triple/embedding hibrit graf — sorgu 200-1K token.
-- Subagent disjoint scope'unda 3-5 dosya açıyorsa token tasarrufu = %60-80.
-
-**Subagent uygulaması (örnek)**:
-```python
-# YANLIŞ (token israfı):
-content = Read("app/api/routes/db_smart_api.py")  # 28K token
-content2 = Read("app/services/ds_learning_service.py")  # 18K token
-
-# DOĞRU (Graphify-first):
-hits = mcp__graphify__search(query="_load_source db_type normalize", project="vyra", mode="hybrid")
-# hits içinde dosya path + satır no + snippet → sadece ilgili satırlar Read with offset/limit
-```
-
-**İstisna**: Henüz mine edilmemiş YENİ dosyalar (örn. yeni eklenmiş migration). Graphify ilk çağrıda 0 sonuç dönerse Read'e düş, sorun değil.
-
-### 5e.3c Onaylı Fix Sonrası Graphify Mine + Decision (ZORUNLU)
-
-**Tetikleyici**: Gate-2 (subagent spec-vs-output verifikasyonu) ✅ geçince, **henüz BITIR'a girmeden ÖNCE** her onaylı fix paketinin Graphify'a yansıtılması gerek.
-
-**Akış (ZEUS sorumluluğu, fix paketi başına)**:
-
-1. `mcp__graphify__mine(project="vyra", since="auto")` çalıştır → yeni eklenen/değişen dosyalardan entity/triple çıkar.
-2. `mcp__graphify__add_decision(commit_msg=<draft>, branch=<current>, council=<reviewers>, project="vyra", bug_ids=[...], refactor_ids=[...])` → Decision entity yaz, closes triple'ları bağla.
-3. Spot-check: `mcp__graphify__search(query=<fix_keyword>, project="vyra")` → yeni entity görünüyorsa OK.
-
-**Neden BITIR'a bırakmıyoruz?**
-- Çoklu fix paketlerinde (B1 + B4 + B5b + B8) BITIR'da tek mine yapılırsa **sonraki subagent'lar eski graph üzerinden lookup yapar** → token tasarrufu erozyonu.
-- Her Gate-2 sonrası mine = bir sonraki subagent zaten **bu fix'i bilen** graph'tan başlar.
-
-**KAP 10c (BITIR) zorunluluğu KORUNUR** — son commit'in Decision'ı + final mine BITIR'da yapılır. Gate-2 mine'lar incremental, BITIR mine final sweep.
 
 ### 5e.4 Dispatch ve Tracking
 
@@ -967,7 +866,7 @@ Index            : Sık sorgulanan FK/filter kolonlarına index
     | MEDIUM | `REFACTOR_BACKLOG.md`'ye `priority: P2 risk: medium target: v<next-minor>` madde | ALLOW + audit log |
     | LOW / INFO | Audit log only; backlog opsiyonel | ALLOW |
   - **Bootstrap (henüz kurulu değil — v3.38.0 PR'i):** `pip install pip-audit` + `requirements-dev.txt`'ye ekle; ARES bootstrap commit'i ayrı PR
-  - **Atlama koşulu:** Offline ortam veya OSV DB erişim hatası → `OFFLINE — fail-open + log` (graphify-guard ile aynı desen); üst üste 2 oturum atlanırsa süreç ihlali
+  - **Atlama koşulu:** Offline ortam veya OSV DB erişim hatası → `OFFLINE — fail-open + log`; üst üste 2 oturum atlanırsa süreç ihlali
   - **CHANGELOG bağlantısı:** CRITICAL/HIGH bulgular kapatıldığında commit message body'sinde CVE-ID + paket-versiyon delta yer alır (HERA convention'a uygun)
 - **Privacy / KVKK / PII recurring gate (ZORUNLU — her BITIR):**
   - **PII pattern taraması (ARES + APOLLO):** Diff'te yeni eklenen log/print/exception mesajları PII içeriyor mu? Pattern: TC kimlik (11 hane), telefon, email, IBAN, kredi kartı, plaka. Otomatik regex spot-check: `git diff --cached -U0 | grep -nE '\b[0-9]{11}\b|\b[A-Z]{2}[0-9]{2}[A-Z0-9]{1,30}\b'` → bulgular ARES manuel review
@@ -1118,40 +1017,6 @@ c) **Commit Mesajı:**
 - Background ajan output dosyaları (`.tasks/`) artık gereksizse temizle
 - Orphan tracking: brief var ama git'te hiç commit yok → süreç ihlali, kullanıcıyı uyar
 
-**🌳 KAP 10 — Graphify Saglik (MNEMOSYNE-GRAPH — tek hafiza katmani)**
-
-Commit + push SONRASI son commit'i indexle — **excuse YOK, her zaman calisan yol var:**
-- **MCP-yolu:** `graphify_mine(project="vyra")`
-- **CLI-fallback (MCP tool'lari gorunmuyorsa):** verified WSL komutu (`cmd.exe /c "cd /d ..."` KULLANMA — UNC hatasi):
-  ```bash
-  PY="/mnt/c/Users/EXT02D059293/AppData/Local/Programs/Python/Python313/python.exe"
-  PYTHONPATH='C:\Users\EXT02D059293\Documents\General_Graphify' USE_TF=0 USE_TORCH=1 PYTHONUTF8=1 PYTHONIOENCODING=utf-8 "$PY" -m core.cli mine --project vyra
-  ```
-  (v3.42.0 kanit: 39 entity + 195 triple, embed_errors=0, exit 0.)
-
-mine sonrasi:
-
-1. `status` (MCP `graphify_status` VEYA CLI `... "$PY" -m core.cli status --project vyra`) → bitis entity/triple sayisi. Delta = bitis - graphify_baslangic.
-2. `graphify_add_decision(commit_msg=<son>, branch=<current>, council=<reviewers>, project="vyra")` ile commit→Decision triple (closes refactor_ids/bug_ids varsa parametre) — **YALNIZ MCP tool (CLI'de `add-decision` YOK).** MCP baglıysa cagir; degilse mine'in `git` adapter'i commit'i ZATEN yakalar (freshness gate icin yeterli), bir sonraki MCP-li oturumda add_decision tamamlanir — tek satir not, BIRAKMA.
-3. Suphesiz durumda `search` (MCP `graphify_search` VEYA CLI `... -m core.cli search --query "<commit keywords>" --project vyra`) ile spot-check.
-4. Per-instance DB izolasyonu dogrula: `graphify_status` cikti'sinda sadece `vyra` projesi gozukmeli (cross-project leak yok)
-5. Disk size delta: `graphify_status` `db_size_mb` alani; soft cap 100MB, asarsa prune planlamasi acilir (ARIADNE v1.1)
-
-### KAP 10.3 — Coverage Threshold Assert
-
-BITIR commit ÖNCESİ:
-```bash
-python -m core.cli coverage-report --project vyra --threshold 0.95
-```
-
-Exit code 1 (FAIL) ise:
-- Eksik metrik(ler)i raporla (örn: `embedded_entities/total < 0.95`)
-- Console'a uyar: "Graphify coverage threshold altında — BITIR commit'i durdur, root cause araştır"
-- Commit ATMA — TYCHE/HERMES'i çağır
-- Threshold geçici düşürülebilir (örn: 0.80) **sadece** zorunluysa; bir sonraki sprintte refactor backlog'a girer
-
-Not: `coverage-report` komutu Graphify v1.2 (G8) ile geldi; eski sürümde fallback olarak `python -m core.cli status --project vyra` çıktısından manuel parse.
-
 **🗂️ KAP 10b — Auto-Memory Hijyeni (YENİ)**
 
 Claude Code'un dosya-tabanlı memory sistemi (`C:\Users\<user>\.claude\projects\d--demo-vyra\memory\`):
@@ -1163,11 +1028,7 @@ Claude Code'un dosya-tabanlı memory sistemi (`C:\Users\<user>\.claude\projects\
 2. **Stale memory testi:** Her memory dosyasının `description` alanı hâlâ güncel mi?
    - Memory dosyasında bahsedilen file path / function adı kodbase'de hâlâ var mı?
    - Yoksa: memory'yi güncelle veya sil
-3. **graphify cross-check (MNEMOSYNE-GRAPH):** Auto-memory ile Graphify `vyra` project Decision/File entity'leri tutarlı mı?
-   - Auto-memory: kullanıcı-yönlendirmeli, oturumlar arası persist (feedback/project memory)
-   - Graphify: kod-tabanlı + git-bazlı semantic search (kod yapısı + Decision triple)
-   - İkisi farklı katman; çelişen bilgi varsa kullanıcıya sun, hangisinin doğru olduğunu sor
-4. **Yeni eklenen memory rapor edilir:** Bitiş raporunda `🗂️ Memory : [+N yeni / temiz]` satırı
+3. **Yeni eklenen memory rapor edilir:** Bitiş raporunda `🗂️ Memory : [+N yeni / temiz]` satırı
 
 ```
 🗂️ Auto-Memory Sağlık Raporu:
@@ -1245,7 +1106,6 @@ git push origin [branch]
 📄 Docs      : [güncellendi / atlandı]
 🤖 Alt-Ajan  : [N commit / in-flight: temiz ✅ / in-flight: M açık ⚠️]
 🔄 Git       : [hash] → [branch]
-🌳 Graphify  : Entity [başlangıç_E]→[bitiş_E] (+ΔE) · Triple [başlangıç_T]→[bitiş_T] (+ΔT) · Decision yazıldı ✅ | Project: vyra | [SAĞLIKLI 🟢 / UYARI 🟡]
 🗂️ Memory    : MEMORY.md [N/200 satır] | +M yeni | [🟢/🟡/🔴]
 📋 Refactor  : Backlog [T madde] | bu oturum +M | priority: high P [🟢/🟡/🔴]
 
@@ -1274,7 +1134,6 @@ MOD 2'de 2-4 üye, MOD 3'te tüm üyeler:
 > 🎯 Artemis-ML (CatBoost)  : "..."
 > 🔮 Oracle     (Text-to-SQL): "..."
 > 📊 Hera      (Docs/Release): "..."
-> 🌳 Mnemosyne-Graph (Memory): "graphify_search/traverse çalıştırıldı mı? Decision entity bulundu mu? Project: vyra"
 > 🏛️ Zeus      (Karar)      : "..."
 ```
 
@@ -1284,15 +1143,15 @@ Gizli arka plan çalışması YASAK — tüm tartışma şeffaf.
 
 ## 10. BAĞLAM ÇÜRÜMESI — MID-SESSION REFRESH
 
-Uzun oturumlarda `graphify_wakeup` çıktısı sıkıştırılarak context window'dan kaybolur.
+Uzun oturumlarda erken bağlam (plan, dosya içerikleri, kararlar) sıkıştırılarak context window'dan kaybolur.
 
-**Refresh tetikleyicileri (herhangi biri oluşunca `graphify_wakeup(project="vyra")` tekrar çalıştır):**
+**Refresh tetikleyicileri (herhangi biri oluşunca aktif `.agents/plans/<slug>.md` + `MEMORY.md`'yi yeniden oku, ilgili dosyaları tazele):**
 - 10+ araç çağrısı yapıldı
 - `/compact` komutu çalıştırıldı
 - Konu büyük ölçüde değişti (farklı modül/özelliğe geçildi)
 - "Bu ne demekti?", "Hangi yapıyı kullanıyorduk?" gibi unutma sinyalleri
 
-> Refresh maliyeti ~700 token — zamanında yapılmayan refresh yanlış kodla çok daha pahalıya patlar.
+> Zamanında yapılmayan refresh yanlış kodla çok daha pahalıya patlar — plan.md tek doğruluk kaynağıdır.
 
 ## 11. /COMPACT ZAMANLAMA KURALI
 
@@ -1344,12 +1203,8 @@ Uzun oturumlarda `graphify_wakeup` çıktısı sıkıştırılarak context windo
 | A11y derinlik | 5c.2 (v3.39.0+): `pa11y --standard WCAG2AA` error=0 + WCAG 2.2 AA manuel checklist + kritik akışlar için NVDA/VoiceOver smoke |
 | Code review skill | Bölüm 2b: `/code-review medium\|high` BITIR öncesi KAP 1 sonrası tetikle; sonuç REFACTOR_BACKLOG veya `--fix` inline; `ultra` kullanıcı-only |
 | Anlaşmazlık | Konsey anlaşamazsa → her iki görüş kullanıcıya sunulur |
-| Graphify | Başla=warmup→wakeup (project:vyra), Bitir=mine→add_decision (project:vyra) — tek hafiza katmani |
-| MNEMOSYNE-GRAPH | KAP 10 atlanamaz, entity/triple delta sıfırsa mine tekrarla |
-| Project izolasyonu | Tüm Graphify çağrıları `project="vyra"` parametresi ile per-instance DB hedefler — `cosmos_mobile`/diğerleri karışmaz |
-| Stale bağlam | graphify_search son commit hash'ini içermiyorsa mine tekrarla |
 | /compact | Görev ortasında veya hata debug ederken çağırma |
-| Bağlam refresh | 10+ araç çağrısı veya /compact sonrası `graphify_wakeup(project="vyra")` tekrarla |
+| Bağlam refresh | 10+ araç çağrısı veya /compact sonrası aktif plan.md + MEMORY.md yeniden okunur |
 | RAG embedding | Embedding model değişikliği → mevcut tüm vectorlerin reindex gerekir |
 | CatBoost retrain | Feature ekleme/silme → model retrain zorunlu, eski model yedekle |
 | SQL temperature | Text-to-SQL'de temperature 0.0-0.2 — chat/genel için 0.7 |
