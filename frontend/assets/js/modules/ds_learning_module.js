@@ -314,7 +314,17 @@ window.DSLearningModule = (function () {
                         <p class="ds-schema-select-hint">Büyük veritabanlarında yalnızca ilgili şemaları seçerek zaman aşımını önleyebilirsiniz. (Toplam: ${totalTables} tablo)</p>
                     </div>
                 </div>
+                <div class="ds-scope-search ds-schema-search">
+                    <i class="fa-solid fa-search" aria-hidden="true"></i>
+                    <input type="text" id="dsSchemaSearch" class="ds-scope-search-input" placeholder="Şema ara..." aria-label="Şema ara" autocomplete="off">
+                    <button type="button" id="dsSchemaSearchClear" class="ds-search-clear" aria-label="Aramayı temizle" title="Aramayı temizle" hidden>×</button>
+                </div>
+                <label class="ds-schema-show-selected">
+                    <input type="checkbox" id="dsSchemaShowSelected">
+                    <span>Seçilenleri Göster</span>
+                </label>
                 <div class="ds-schema-list" id="dsSchemaList">${schemaListHtml}</div>
+                <div class="ds-schema-empty" id="dsSchemaEmpty" hidden>Eşleşen şema yok.</div>
                 <div class="ds-schema-select-actions">
                     <a href="#" id="dsSchemaSelectAll" class="ds-schema-link">Tümünü Seç</a>
                     <span class="ds-schema-link-sep">·</span>
@@ -338,7 +348,40 @@ window.DSLearningModule = (function () {
             const checked = selectionDiv.querySelectorAll('.ds-schema-cb:checked').length;
             const countEl = document.getElementById('dsSchemaSelectedCount');
             if (countEl) countEl.textContent = `${checked} / ${total} seçili`;
+            // v3.54.0: count değişince filtreyi tazele ("Seçilenleri Göster" aktifse seçim
+            // bırakılan şema anında gizlenir/görünür).
+            _applySchemaFilter();
         }
+
+        // v3.54.0: şema arama + "Seçilenleri Göster" filtre (ad + seçili-toggle birleşik).
+        // Filtre yalnız GÖRÜNÜMü etkiler — seçim/örnekleme tüm checked şemaları kapsar.
+        const _schemaSearch = document.getElementById('dsSchemaSearch');
+        const _schemaSearchClear = document.getElementById('dsSchemaSearchClear');
+        const _schemaShowSel = document.getElementById('dsSchemaShowSelected');
+        const _schemaEmpty = document.getElementById('dsSchemaEmpty');
+        function _applySchemaFilter() {
+            const q = (_schemaSearch && _schemaSearch.value ? _schemaSearch.value : '')
+                .trim().toLocaleLowerCase('tr');
+            const showSel = !!(_schemaShowSel && _schemaShowSel.checked);
+            let visible = 0;
+            selectionDiv.querySelectorAll('.ds-schema-check').forEach(lbl => {
+                const cb = lbl.querySelector('.ds-schema-cb');
+                const name = (cb && cb.value ? cb.value : '').toLocaleLowerCase('tr');
+                const okQ = !q || name.indexOf(q) !== -1;
+                const okSel = !showSel || (cb && cb.checked);
+                const show = okQ && okSel;
+                lbl.style.display = show ? '' : 'none';
+                if (show) visible++;
+            });
+            if (_schemaSearchClear) _schemaSearchClear.hidden = !q;
+            if (_schemaEmpty) _schemaEmpty.hidden = visible > 0;
+        }
+        if (_schemaSearch) _schemaSearch.addEventListener('input', _applySchemaFilter);
+        if (_schemaSearchClear) _schemaSearchClear.addEventListener('click', () => {
+            if (_schemaSearch) { _schemaSearch.value = ''; _schemaSearch.focus(); }
+            _applySchemaFilter();
+        });
+        if (_schemaShowSel) _schemaShowSel.addEventListener('change', _applySchemaFilter);
 
         document.getElementById('dsSchemaSelectAll').addEventListener('click', (e) => {
             e.preventDefault();

@@ -1468,6 +1468,29 @@
     line-height: 1.4;
 }
 
+/* v3.54.0: şema arama kutusu (.ds-scope-search reuse) + "Seçilenleri Göster" + boş-durum */
+.ds-schema-search {
+    margin-bottom: 6px;
+}
+.ds-schema-show-selected {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 8px;
+    font-size: 0.82rem;
+    color: var(--text-2, #9aa1ab);
+    cursor: pointer;
+    user-select: none;
+}
+.ds-schema-show-selected input {
+    cursor: pointer;
+}
+.ds-schema-empty {
+    padding: 14px;
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--text-3, #9aa1ab);
+}
 .ds-schema-list {
     max-height: 220px;
     overflow-y: auto;
