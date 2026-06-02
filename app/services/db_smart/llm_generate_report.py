@@ -51,6 +51,9 @@ logger = logging.getLogger(__name__)
 MAX_REPORT_COLUMNS = 50
 MAX_FK_LINES = 50
 MAX_USER_NOTE_LEN = 2000
+# v3.55.0: LLM'e tablo başına verilecek GERÇEK kolon sayısı capi (token bütçesi —
+# büyük tablolarda prompt'u şişirmemek için). Kolon grounding (halüsinasyon önleme).
+MAX_SCHEMA_COLUMNS_PER_TABLE = 80
 
 # Whole-word DML/DDL blocklist — kept in sync with safe_sql_executor.BLOCKED_KEYWORDS
 # but applied here as a fast pre-filter so we don't waste an execution attempt.
@@ -120,6 +123,62 @@ def _fetch_table_names(
             source_id, uniq, e,
         )
         return {}
+
+
+def _fetch_table_columns(
+    cur, source_id: int, table_ids: List[int]
+) -> Dict[str, List[tuple]]:
+    """Return {'schema.object_name': [(col_name, data_type), ...]} — ds_db_objects.columns_json.
+
+    v3.55.0: LLM'i GERÇEK kolonlara grounding'ler (halüsinasyon önleme — LLM olmayan kolon
+    'CreatedDate' uydurmasın). Aynı RLS-scoped cur. columns_json JSONB → psycopg2 list[dict]
+    döner; str gelirse json.loads (defensive). Hata → boş (fail-soft, eski davranışa düşer).
+    """
+    if not table_ids:
+        return {}
+    uniq = list({int(t) for t in table_ids})
+    out: Dict[str, List[tuple]] = {}
+    try:
+        import json as _json
+        cur.execute(
+            """
+            SELECT schema_name, object_name, columns_json
+            FROM ds_db_objects
+            WHERE source_id = %s AND id = ANY(%s)
+            """,
+            (int(source_id), uniq),
+        )
+        for row in cur.fetchall() or []:
+            if isinstance(row, dict):
+                schema = row.get("schema_name") or ""
+                obj = row.get("object_name") or ""
+                cols_raw = row.get("columns_json")
+            else:
+                schema, obj, cols_raw = (row[0] or ""), (row[1] or ""), row[2]
+            if not obj:
+                continue
+            if isinstance(cols_raw, str):
+                try:
+                    cols_raw = _json.loads(cols_raw)
+                except Exception:
+                    cols_raw = None
+            cols: List[tuple] = []
+            for c in (cols_raw or []):
+                if not isinstance(c, dict):
+                    continue
+                cn = (c.get("name") or "").strip()
+                if not cn:
+                    continue
+                dt = (c.get("data_type") or "").strip()
+                cols.append((cn, dt))
+            name = f"{schema}.{obj}" if schema else str(obj)
+            out[name] = cols
+    except Exception as e:
+        logger.warning(
+            "[llm_generate_report] _fetch_table_columns failed source=%s ids=%s: %s",
+            source_id, uniq, e,
+        )
+    return out
 
 
 # Bulgular3 / Review fix #3: shared balanced-brace parser (app.core.llm).
@@ -264,6 +323,7 @@ def _build_prompt(
     limit: int,
     filters: Optional[List[Dict[str, Any]]] = None,
     order_by: Optional[List[Dict[str, Any]]] = None,
+    table_columns: Optional[Dict[str, List[tuple]]] = None,
 ) -> List[Dict[str, str]]:
     """Return chat-messages list for `call_llm_api`."""
     d = _normalize_dialect(dialect)
@@ -292,6 +352,26 @@ def _build_prompt(
     if not tables_parts:
         tables_parts.append("Tablo bağlamı yok.")
     tables_block = "\n".join(tables_parts)
+
+    # v3.55.0: GERÇEK kolon envanteri (grounding — LLM olmayan kolon uydurmasın).
+    # Her tablo için columns_json'dan ad+tip; per-table cap (token bütçesi).
+    schema_cols_block = ""
+    if table_columns:
+        _parts: List[str] = []
+        for _tname, _cols in table_columns.items():
+            if not _cols:
+                continue
+            _capped = _cols[:MAX_SCHEMA_COLUMNS_PER_TABLE]
+            _col_strs = [
+                (f'"{cn}"({dt})' if dt else f'"{cn}"') for (cn, dt) in _capped
+            ]
+            _more = "" if len(_cols) <= MAX_SCHEMA_COLUMNS_PER_TABLE else f" …(+{len(_cols) - MAX_SCHEMA_COLUMNS_PER_TABLE})"
+            _parts.append(f"{_tname}: " + ", ".join(_col_strs) + _more)
+        if _parts:
+            schema_cols_block = (
+                "Tablo kolonları (GERÇEK şema — SADECE bu kolonları kullan; "
+                "listede OLMAYAN bir kolonu ASLA uydurma):\n" + "\n".join(_parts)
+            )
 
     # FK lines.
     fk_block_lines = (fk_lines or [])[:MAX_FK_LINES]
@@ -361,7 +441,8 @@ def _build_prompt(
         f"Dialect: {d}\n"
         f"Satır limiti: {int(limit)}  — Dialect kuralı: {limit_rule}\n\n"
         f"{tables_block}\n\n"
-        f"{fk_block}\n\n"
+        + (f"{schema_cols_block}\n\n" if schema_cols_block else "")
+        + f"{fk_block}\n\n"
         "Rapor kolonları (kullanıcı seçti):\n"
         + "\n".join(col_lines) + "\n\n"
         f"{metric_block}\n\n"
@@ -370,7 +451,12 @@ def _build_prompt(
         "Görev: Yukarıdaki kaynakları kullanarak BI kullanıcısının talebine cevap veren "
         "TEK bir SELECT üret. Mümkünse FK ile join yap; rapor kolonlarını öncelikli olarak "
         "listelerken metrik aggregate'ini ek kolon olarak ekleyebilirsin. "
-        "Identifier'ları dialect quote karakteri ile kapat "
+        + ("KRİTİK: Yalnızca yukarıdaki 'Tablo kolonları' listesinde GERÇEKTEN VAR OLAN "
+           "kolonları kullan. Listede olmayan bir kolon adı ASLA UYDURMA (ör. tarih/zaman "
+           "metriği gerekiyorsa yalnız listedeki gerçek timestamp/date kolonunu kullan; uygun "
+           "kolon YOKSA o metriği hesaplama ve rationale'da 'uygun kolon bulunamadı' belirt). "
+           if schema_cols_block else "")
+        + "Identifier'ları dialect quote karakteri ile kapat "
         "(PG/Oracle: çift tırnak, MSSQL: köşeli parantez, MySQL: backtick). "
         "F15 — Identifier case kuralı: Oracle dialect'inde şema ve tablo "
         "isimlerini UPPERCASE olarak çift tırnak içine yaz "
@@ -465,6 +551,7 @@ def generate_report(
     # ── 1. Resolve table names (best-effort) ────────────────
     primary_name: Optional[str] = None
     join_names: List[str] = []
+    table_columns: Dict[str, List[tuple]] = {}  # v3.55.0: gerçek kolon envanteri (grounding)
     try:
         with get_db_context() as conn:
             cur = conn.cursor()
@@ -481,6 +568,8 @@ def generate_report(
                 name_map[int(t)] for t in (join_table_ids or [])
                 if int(t) in name_map
             ]
+            # v3.55.0: LLM kolon grounding — gerçek kolonları çek (halüsinasyon önleme).
+            table_columns = _fetch_table_columns(cur, int(source_id), all_ids)
     except Exception as e:
         logger.warning("[llm_generate_report] table-name lookup failed: %s", e)
 
@@ -542,6 +631,7 @@ def generate_report(
         limit=int(limit),
         filters=filters or [],
         order_by=order_by or [],
+        table_columns=table_columns,
     )
 
     try:
