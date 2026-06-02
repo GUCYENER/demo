@@ -115,14 +115,16 @@ def apply_vyra_user_context(cur: Any, user_ctx: Dict[str, Any]) -> None:
     # is_admin'i company_id'den ÖNCE hesapla: admin kullanıcılar çok-şirketlidir,
     # users.company_id NULL olabilir (örn. tüm firmaları yöneten Yönetici hesabı).
     is_admin = _coerce_is_admin(user_ctx)
-    # v3.43.1 fix (ARES + APOLLO): admin + NULL company_id artık 500 vermez.
-    # RLS policy admin'i `vyra.is_admin='true'` ile ZATEN bypass ettiğinden admin için
-    # company_id zorunlu değil → sentinel 0 (geçerli int, ::int cast güvenli; OR is_admin
-    # clause erişimi açar). NON-admin + NULL company_id GERÇEK fail-closed durumudur
-    # (tenant scope yok → cross-tenant sızıntı) → hata KORUNUR, güvenlik bozulmaz.
+    # v3.43.1 (ARES + APOLLO): admin + NULL company_id artık 500 vermez (RLS admin'i
+    # `vyra.is_admin='true'` ile bypass eder). v3.50.0 (kullanıcı kararı): sentinel 0 yerine
+    # tanımlı İLK firmaya sabitlenir → company_id GUC gerçek bir firma olur (kaynaksız akışlarda
+    # tutarlılık). is_admin='true' GUC DEĞİŞMEZ → RLS bypass + çapraz-tenant erişim KORUNUR.
+    # Firma yoksa (boş DB) sentinel 0'a düş. NON-admin + NULL → fail-closed (hata) KORUNUR.
     raw_company = user_ctx.get("company_id")
     if is_admin and raw_company is None:
-        company_id = 0
+        company_id = _first_company_id(cur)
+        if company_id is None:
+            company_id = 0
     else:
         company_id = _coerce_tenant_int(raw_company, "company_id")
 
@@ -169,19 +171,38 @@ def clear_vyra_user_context(cur: Any) -> None:
         logger.warning("[db_smart.rls] clear_vyra_user_context failed: %s", e)
 
 
+def _first_company_id(cur) -> "int | None":
+    """Tanımlı İLK (en düşük id, aktif) firmanın id'si — admin NULL company_id sabitleme (v3.50.0).
+
+    Kullanıcı kararı (2026-06-02): admin tasarımca NULL company taşır; kaynaksız FK keşif/arama
+    akışlarında NULL→400/403 vermesin diye admin'in efektif firması "tanımlı ilk firma"ya sabitlenir.
+    Boş DB (hiç firma yok) → None (caller handle). dict/tuple cursor güvenli; hata→None (fail-soft).
+    """
+    try:
+        cur.execute("SELECT id FROM companies WHERE is_active = TRUE ORDER BY id LIMIT 1")
+        row = cur.fetchone()
+        if row:
+            cid = row["id"] if isinstance(row, dict) else row[0]
+            return int(cid) if cid is not None else None
+    except Exception as e:
+        logger.warning("[db_smart.rls] _first_company_id failed: %s", e)
+    return None
+
+
 def resolve_effective_company_id(cur, user_ctx: Dict[str, Any], source_id=None):
-    """Kullanıcının efektif company_id'sini çözer (v3.43.4 — admin→kaynağın firması).
+    """Kullanıcının efektif company_id'sini çözer (v3.50.0 — admin→kaynak firması veya ilk firma).
 
     - Normal kullanıcı: user_ctx['company_id'] (zaten dolu) → onu döndür.
     - Admin (company_id NULL, tasarımca — schema.py:764 backfill yalnız non-admin'e firma atar):
       db-smart oturum/rapor tabloları `company_id NOT NULL FK` ister; admin'in firması yok.
-      Çözüm: KAYNAĞIN firması (`data_sources.company_id`, NOT NULL — mig 002). Böylece oturum/rapor
-      kaynağın GERÇEK firmasına atanır → tenant izolasyonu korunur (admin cross-tenant kaçmaz;
-      yalnız seçtiği kaynağın firması bağlamında çalışır).
-    - Çözülemezse None döner → caller fail-closed davranmalı (non-admin asla NULL'la geçmez).
+      1) ÖNCE KAYNAĞIN firması (`data_sources.company_id`, NOT NULL — mig 002): oturum/rapor kaynağın
+         GERÇEK firmasına atanır → tenant izolasyonu korunur.
+      2) Kaynak yok/çözülemedi → **tanımlı İLK firma** (v3.50.0, kullanıcı kararı): kaynaksız FK
+         keşif/arama akışlarında NULL→400/403 hatasını önler. is_admin='true' RLS bypass'ı KORUNUR
+         (mig 032) → çapraz-tenant erişim bozulmaz; pin yalnız kaynaksız kaydın company'sini belirler.
+    - NON-admin + NULL → None döner (kaynaktan ÇÖZMEZ, ilk firmaya da düşmez) → caller fail-closed.
 
-    Güvenlik: NON-admin + NULL company_id'de None döner (kaynaktan ÇÖZMEZ) — sadece admin için
-    kaynak firması kullanılır. cur, apply_vyra_user_context set edilmiş scoped cursor olmalı.
+    cur, apply_vyra_user_context set edilmiş scoped cursor olmalı.
     """
     raw = user_ctx.get("company_id") if user_ctx else None
     if raw is not None:
@@ -191,15 +212,20 @@ def resolve_effective_company_id(cur, user_ctx: Dict[str, Any], source_id=None):
             return None
 
     is_admin = bool(user_ctx.get("is_admin")) or user_ctx.get("role") == "admin"
-    if not is_admin or source_id is None:
-        return None
-    try:
-        cur.execute("SELECT company_id FROM data_sources WHERE id = %s", (int(source_id),))
-        row = cur.fetchone()
-        if row:
-            cid = row["company_id"] if isinstance(row, dict) else row[0]
-            return int(cid) if cid is not None else None
-    except Exception as e:
-        logger.warning("[db_smart.rls] resolve_effective_company_id source=%s failed: %s",
-                       source_id, e)
-    return None
+    if not is_admin:
+        return None  # non-admin + NULL → fail-closed (cross-tenant guard KORUNUR)
+
+    # Admin: önce kaynağın firması
+    if source_id is not None:
+        try:
+            cur.execute("SELECT company_id FROM data_sources WHERE id = %s", (int(source_id),))
+            row = cur.fetchone()
+            if row:
+                cid = row["company_id"] if isinstance(row, dict) else row[0]
+                if cid is not None:
+                    return int(cid)
+        except Exception as e:
+            logger.warning("[db_smart.rls] resolve_effective_company_id source=%s failed: %s",
+                           source_id, e)
+    # Kaynak yok/çözülemedi → tanımlı ilk firmaya sabitle (v3.50.0)
+    return _first_company_id(cur)
