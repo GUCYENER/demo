@@ -1291,6 +1291,12 @@ def _build_sample_query(db_dialect: str, safe_schema: str, safe_name: str,
     # Üst sınır 99.9999: Oracle SAMPLE() tam 100 kabul etmez (PG SYSTEM(100) sorun değil).
     pct = min(99.9999, max(0.001, (max_rows * 5000.0) / row_count)) if (is_large and row_count) else 0.0
 
+    # v3.64.0 KÖK fix: boyut BİLİNMEYEN (row_count=0/None) tabloda ORDER BY random()/RAND()/NEWID()/
+    # DBMS_RANDOM TÜM tabloyu tarayıp SIRALADIĞINDAN büyük tabloda statement_timeout'a takılıyordu
+    # (canlıda yüzlerce [QueryCanceled]). Random YALNIZ boyutu BİLİNEN-küçük tabloda kullanılır;
+    # boyut bilinmiyorsa güvenli non-random fiziksel ilk-N (timeout yok; örnek temsil için yeterli).
+    size_known_small = bool(row_count) and 0 < row_count <= _SAMPLE_LARGE_TABLE_THRESHOLD
+
     if db_dialect == "postgresql":
         cols_str = "*" if star else ", ".join(f'"{c}"' for c in safe_cols)
         fqn = f'"{safe_schema}"."{safe_name}"' if safe_schema else f'"{safe_name}"'
@@ -1298,7 +1304,9 @@ def _build_sample_query(db_dialect: str, safe_schema: str, safe_name: str,
             return f"SELECT {cols_str} FROM {fqn} LIMIT {max_rows}"
         if is_large:
             return f"SELECT {cols_str} FROM {fqn} TABLESAMPLE SYSTEM ({pct:.4f}) LIMIT {max_rows}"
-        return f"SELECT {cols_str} FROM {fqn} ORDER BY random() LIMIT {max_rows}"
+        if size_known_small:
+            return f"SELECT {cols_str} FROM {fqn} ORDER BY random() LIMIT {max_rows}"
+        return f"SELECT {cols_str} FROM {fqn} LIMIT {max_rows}"  # boyut bilinmiyor → güvenli non-random
 
     if db_dialect == "mssql":
         cols_str = "*" if star else ", ".join(f'[{c}]' for c in safe_cols)
@@ -1307,15 +1315,19 @@ def _build_sample_query(db_dialect: str, safe_schema: str, safe_name: str,
             return f"SELECT TOP {max_rows} {cols_str} FROM {fqn}"
         if is_large:
             return f"SELECT TOP {max_rows} {cols_str} FROM {fqn} TABLESAMPLE ({max_rows * 100} ROWS)"
-        return f"SELECT TOP {max_rows} {cols_str} FROM {fqn} ORDER BY NEWID()"
+        if size_known_small:
+            return f"SELECT TOP {max_rows} {cols_str} FROM {fqn} ORDER BY NEWID()"
+        return f"SELECT TOP {max_rows} {cols_str} FROM {fqn}"  # boyut bilinmiyor → non-random
 
     if db_dialect == "mysql":
         cols_str = "*" if star else ", ".join(f'`{c}`' for c in safe_cols)
         fqn = f"`{safe_name}`"
         if not randomize:
             return f"SELECT {cols_str} FROM {fqn} LIMIT {max_rows}"
-        # MySQL'de TABLESAMPLE yok; ORDER BY RAND() — büyük tabloda statement_timeout korur
-        return f"SELECT {cols_str} FROM {fqn} ORDER BY RAND() LIMIT {max_rows}"
+        if size_known_small:
+            # MySQL'de TABLESAMPLE yok; ORDER BY RAND() yalnız bilinen-küçük tabloda güvenli
+            return f"SELECT {cols_str} FROM {fqn} ORDER BY RAND() LIMIT {max_rows}"
+        return f"SELECT {cols_str} FROM {fqn} LIMIT {max_rows}"  # büyük/bilinmeyen → non-random
 
     if db_dialect == "oracle":
         cols_str = "*" if star else ", ".join(f'"{c}"' for c in safe_cols)
@@ -1324,8 +1336,10 @@ def _build_sample_query(db_dialect: str, safe_schema: str, safe_name: str,
             return f"SELECT {cols_str} FROM {fqn} WHERE ROWNUM <= {max_rows}"
         if is_large:
             return f"SELECT {cols_str} FROM {fqn} SAMPLE({pct:.4f}) WHERE ROWNUM <= {max_rows}"
-        return (f"SELECT {cols_str} FROM (SELECT {cols_str} FROM {fqn} "
-                f"ORDER BY DBMS_RANDOM.VALUE) WHERE ROWNUM <= {max_rows}")
+        if size_known_small:
+            return (f"SELECT {cols_str} FROM (SELECT {cols_str} FROM {fqn} "
+                    f"ORDER BY DBMS_RANDOM.VALUE) WHERE ROWNUM <= {max_rows}")
+        return f"SELECT {cols_str} FROM {fqn} WHERE ROWNUM <= {max_rows}"  # bilinmeyen → non-random
 
     return None
 

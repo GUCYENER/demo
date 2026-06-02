@@ -625,11 +625,21 @@ def infer_fks_for_source(
     persisted = 0
     skipped_low = 0
     sample_out: List[Dict[str, Any]] = []
+    # v3.64.0: SAVEPOINT yalnız transaction'da geçerli (autocommit'te "can only be used in
+    # transaction blocks" atar). VYRA conn transactional (autocommit=False) → savepoint kullanılır;
+    # autocommit ise zaten cascade-abort olmaz → savepoint atlanır (bulletproof, riskli BEGIN yok).
+    _use_sp = not bool(getattr(getattr(cur, "connection", None), "autocommit", False))
     for c in candidates:
         if c.confidence < min_confidence:
             skipped_low += 1
             continue
         try:
+            # v3.64.0 KÖK fix: her INSERT'i SAVEPOINT ile izole et. Eskiden tek-insert hatası
+            # (ör. duplicate/constraint) transaction'ı abort ediyor → KALAN tüm insert'ler
+            # InFailedSqlTransaction ile cascade-fail edip her biri loglanıyordu (756 ERROR floodu).
+            # Savepoint → hata yalnız o adayı düşürür, batch devam eder + GERÇEK kök hata izole görünür.
+            if _use_sp:
+                cur.execute("SAVEPOINT fk_persist_sp")
             cur.execute(
                 """
                 INSERT INTO ds_db_relationships
@@ -647,6 +657,8 @@ def infer_fks_for_source(
                     c.method, json.dumps(c.evidence), c.confidence,
                 ),
             )
+            if _use_sp:
+                cur.execute("RELEASE SAVEPOINT fk_persist_sp")
             persisted += 1
             if len(sample_out) < 200:
                 sample_out.append({
@@ -656,8 +668,14 @@ def infer_fks_for_source(
                     "confidence": c.confidence,
                 })
         except Exception as e:
-            # v3.60.0: persist hatası system_logs'a (Hata İzleme) tablo-aranabilir şekilde — eskiden
-            # yalnız logger.warning idi (UI'da görünmüyordu). Şifre/hassas veri yok; tablo+kolon bağlamı.
+            # Savepoint'e geri dön → transaction kullanılabilir kalır (sonraki adaylar koşar).
+            if _use_sp:
+                try:
+                    cur.execute("ROLLBACK TO SAVEPOINT fk_persist_sp")
+                except Exception:
+                    pass
+            # v3.60.0: persist hatası system_logs'a (Hata İzleme) tablo-aranabilir. Artık yalnız
+            # GERÇEK hatalar loglanır (cascade savepoint ile bitti). Şifre/hassas veri yok.
             try:
                 from app.services.logging_service import log_exception
                 log_exception(

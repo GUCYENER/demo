@@ -457,11 +457,12 @@ def _build_prompt(
            "kolon YOKSA o metriği hesaplama ve rationale'da 'uygun kolon bulunamadı' belirt). "
            if schema_cols_block else "")
         + "Identifier'ları dialect quote karakteri ile kapat "
-        "(PG/Oracle: çift tırnak, MSSQL: köşeli parantez, MySQL: backtick). "
-        "F15 — Identifier case kuralı: Oracle dialect'inde şema ve tablo "
-        "isimlerini UPPERCASE olarak çift tırnak içine yaz "
-        '(ör. "VYRA_TEST"."MUSTERILER"). PostgreSQL/MySQL için lowercase. '
-        "Şüphede kalırsan metadata'da verildiği case'i birebir koru. "
+        "(PG/Oracle: çift tırnak \"...\", MSSQL: köşeli parantez [...], MySQL: backtick `...`). "
+        "F15 KÖK KURAL (v3.64.0) — Identifier CASE: şema, tablo ve kolon adlarını metadata'da "
+        "VERİLDİĞİ case ile BİREBİR yaz; ASLA lowercase/uppercase'e ÇEVİRME. Kaynak case-duyarlıdır: "
+        'ör. PostgreSQL\'de "T_ORG_USER" tablosunu t_org_user yaparsan "relation does not exist" '
+        "hatası alırsın. Yukarıdaki 'Tablo kolonları' ve tablo adlarında görünen büyük/küçük harfi "
+        "AYNEN kullan ve her identifier'ı tırnakla. Tabloyu şema ile nitele, şema case'ini de koru. "
         "Çıktı SADECE JSON: "
         '{"sql": "...", "rationale": "kısa Türkçe açıklama"}'
     )

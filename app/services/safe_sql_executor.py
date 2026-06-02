@@ -584,7 +584,17 @@ class SafeSQLExecutor:
             )
         except Exception as e:
             elapsed = (time.time() - start) * 1000
-            log_error(f"SQL yürütme hatası: {e}", "hybrid_router")
+            # v3.64.0 (kullanıcı isteği "log detaylı olsun"): hata mesajı BAŞLIKTA kalmasın —
+            # ÇALIŞTIRILAN TAM SQL + hata tipi error_detail'e (Hata İzleme'de açınca görünür).
+            # SQL = SELECT raporu (düşük hassasiyet); 4000 karakter cap.
+            try:
+                _detail = (
+                    f"Hata: {type(e).__name__}: {e}\n\n"
+                    f"--- Çalıştırılan SQL ({dialect}) ---\n{(adapted_sql or '')[:4000]}"
+                )
+            except Exception:
+                _detail = str(e)[:1000]
+            log_error(f"SQL yürütme hatası: {e}", "hybrid_router", error_detail=_detail)
             # code-review fix: orijinal hata generic mesaja sarılıp ATILIYORDU → downstream
             # _is_infra_db_error ORA-12170/DPY-4011'i göremeyip BOŞUNA self-heal'liyordu (77s).
             # Bağlantı/altyapı KODUNU (ORA-/DPY-/TNS-) ekle (host/port sızdırmadan — Fortify) →
