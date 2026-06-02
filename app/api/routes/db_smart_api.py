@@ -1977,8 +1977,16 @@ def related_tables(
                 subgraph["stats"] = stats
             junctions = fk_graph.detect_junctions(subgraph)
         except Exception as e:
-            logger.warning("[db_smart] related_tables failed source=%s table=%s: %s",
-                           source_id, table_id, e)
+            # v3.52.0: FK graf okuma hatası eskiden yalnız logger.warning idi → "FK ilişkili tablo
+            # bulunamadı" görünüp SEBEBİ (hata mı, gerçekten FK yok mu) görünmüyordu. MERKEZİ
+            # log_exception → Hata İzleme'de param+traceback (canlı PG'de FK neden boş ayırt edilir).
+            try:
+                from app.services.logging_service import log_exception
+                log_exception(e, module="db_smart.related_tables",
+                              context={"source_id": source_id, "table_id": table_id})
+            except Exception:
+                logger.warning("[db_smart] related_tables failed source=%s table=%s: %s",
+                               source_id, table_id, e)
     return {
         "neighbors": neighbors,
         "junctions": junctions,

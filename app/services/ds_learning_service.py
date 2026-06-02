@@ -1372,7 +1372,17 @@ def collect_samples(source: dict, vyra_conn, max_rows: int = 10, schema_filter: 
                 total_sampled += 1
 
             except Exception as table_err:
+                # v3.52.0: gerçek hata eskiden yutuluyordu (logger.error traceback'siz + generic
+                # "Veri okuma başarısız") → kullanıcı HANGİ tablo NEDEN örneklenmedi göremiyordu.
+                # MERKEZİ log_exception → Hata İzleme'de tablo adı + traceback + sorgu görünür.
                 logger.error("[DSLearning] Tablo veri alma hatası (%s): %s", object_name, str(table_err))
+                try:
+                    from app.services.logging_service import log_exception
+                    log_exception(table_err, module="ds.collect_samples",
+                                  context={"source_id": source_id, "table": object_name,
+                                           "query": (query or "")[:500]})
+                except Exception:
+                    pass
                 failed_tables.append({"table": object_name, "error": "Veri okuma başarısız"})
                 # v3.43.0 (P0-B): timeout/hata sonrası hedef bağlantının transaction state'ini
                 # temizle — autocommit=False dialect'lerde (MySQL/Oracle/MSSQL) sonraki tabloların

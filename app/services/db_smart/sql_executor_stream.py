@@ -151,6 +151,18 @@ def _make_stream_callable(source: Dict[str, Any], dialect: str, password: str):
 
             # PG server-side cursor (named cursor) — psycopg2 spesifik
             if dialect == "postgresql":
+                # v3.52.0 KÖK FIX: psycopg2 named (server-side) cursor MUTLAKA bir transaction
+                # içinde açılmalı. _get_db_connector PG'de conn.autocommit=True döndürüyor
+                # (ds_learning_service.py:81) → transaction YOK → "can't use a named cursor outside
+                # of transactions" hatası (canlı PG'de görüldü; local Oracle'da yok çünkü Oracle
+                # autocommit'siz + standart cursor). conn stream-local (her çağrıda taze) + salt-okuma
+                # SELECT + finally close → autocommit'i kapatmak güvenli (implicit transaction başlar,
+                # kapanışta rollback). Named cursor desteklemeyen sürücüde TypeError → standart fallback.
+                try:
+                    if getattr(conn, "autocommit", False):
+                        conn.autocommit = False
+                except Exception:
+                    pass
                 try:
                     import uuid as _uuid
                     cur_name = f"vyra_dbsmart_{_uuid.uuid4().hex[:12]}"
@@ -186,7 +198,23 @@ def _make_stream_callable(source: Dict[str, Any], dialect: str, password: str):
                 total += len(norm)
             yield {"row_count": total}
         except Exception as e:
-            logger.warning("[db_smart.stream] execute failed: %s", e)
+            # v3.52.0: stream hatasını MERKEZİ log_exception'a bağla → Hata İzleme'de TAM traceback +
+            # parametreler (source_id/dialect/sql) görünür. Eskiden yalnız logger.warning idi →
+            # traceback + parametre KAYBI (kullanıcı "hataları göremiyorum" → çözemiyoruz).
+            try:
+                from app.services.logging_service import log_exception
+                log_exception(
+                    e,
+                    module="db_smart.stream",
+                    context={
+                        "source_id": (source.get("id") if isinstance(source, dict) else None),
+                        "dialect": dialect,
+                        "sql": (sql or "")[:1000],
+                        "batch_size": batch_size,
+                    },
+                )
+            except Exception:
+                logger.warning("[db_smart.stream] execute failed (log_exception de patladı): %s", e)
             raise
         finally:
             # Server-side cursor'ı kapat (PG'de transaction sonunda kapanır

@@ -1370,8 +1370,24 @@ def collect_samples(
                 bg_conn = get_db_conn()
                 result = ds_learning_service.collect_samples(source, bg_conn, schema_filter=schema_filter)
                 ds_learning_service.complete_job(bg_conn, job_id, result)
-            except Exception:
-                logger.error("[BG] Veri toplama arka plan hatası: source_id=%s", source_id)
+            except Exception as _bg_err:
+                # v3.52.0: eskiden yalnız logger.error (traceback YOK) → collect_samples eski
+                # sample'ları silip ORTADA fail edince "örnek veri yok" görünüp SEBEBİ görünmüyordu
+                # ("başlattı ama bitmedi"). Şimdi: (1) MERKEZİ log_exception → Hata İzleme'de
+                # param+traceback; (2) job'u FAILED işaretle → asılı 'running' kalmasın, UI sebebi görsün.
+                try:
+                    from app.services.logging_service import log_exception
+                    log_exception(_bg_err, module="ds.collect_samples_bg",
+                                  context={"source_id": source_id, "schema_filter": schema_filter,
+                                           "job_id": job_id})
+                except Exception:
+                    logger.error("[BG] Veri toplama arka plan hatası: source_id=%s", source_id)
+                try:
+                    if bg_conn is not None:
+                        ds_learning_service.complete_job(
+                            bg_conn, job_id, {"success": False, "error": str(_bg_err)[:500]})
+                except Exception:
+                    pass
             finally:
                 if bg_conn:
                     try:

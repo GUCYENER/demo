@@ -22,6 +22,28 @@ from app.services.db_smart.table_scope import resolve_scope
 from app.services.safe_sql_executor import check_table_whitelist
 
 
+def _log_scope_deny(source_id, user_ctx, permission, all_tables, scope_names, allowed, sql, reason) -> None:
+    """v3.52.0: tablo-yetki RED'ini diagnostic olarak loglar (WARNING — Hata İzleme'de görünür).
+
+    "Yetki var ama red" şikayetlerinde scope NEDEN boş/eşleşmiyor canlıda görünür: admin durumu,
+    permission, scope'taki tablolar, üretilen SQL. Sızıntı yok (zaten yetkili kullanıcının kendi
+    bağlamı). Asla exception fırlatmaz (best-effort).
+    """
+    try:
+        from app.services.logging_service import log_system_event
+        uc = user_ctx or {}
+        log_system_event(
+            "WARNING",
+            f"[scope-deny] source={source_id} user={uc.get('id')} "
+            f"admin={bool(uc.get('is_admin')) or uc.get('role') == 'admin'} perm={permission} "
+            f"all_tables={all_tables} reason={reason} | scope_tables={list(scope_names)[:25]} "
+            f"| allowed={list(allowed)[:25]} | sql={(sql or '')[:400]}",
+            module="db_smart.table_guard",
+        )
+    except Exception:
+        pass
+
+
 def _denial_message(allowed_names: List[str]) -> str:
     """Tutarlı, sızıntısız red mesajı (Faz A/_scope_restricted_message ile aynı dil)."""
     allow_txt = ", ".join(allowed_names) if allowed_names else "(yetkili tablonuz bulunmuyor)"
@@ -65,10 +87,17 @@ def enforce_sql_scope(
 
     if not allowed:
         # restricted ama çalıştırılabilir tablo YOK → DENY (boş=allow-all'a DÜŞME)
+        # v3.52.0: false-deny tanısı için diagnostic log (WARNING — Hata İzleme'de level=WARNING/ALL ile
+        # görünür). "Yetki var ama red" şikayetinde scope NEDEN boş (admin can_execute grant'ı yok mu,
+        # table_permissions kaydedilmemiş mi) canlıda görünür.
+        _log_scope_deny(source_id, user_ctx, permission, scope.all_tables, names, [], sql,
+                        "BOŞ-SCOPE (yetkili/çalıştırılabilir tablo yok)")
         return False, None, _denial_message(names)
 
     ok_wl, _err = check_table_whitelist(sql or "", allowed, dialect)
     if not ok_wl:
+        _log_scope_deny(source_id, user_ctx, permission, scope.all_tables, names, allowed, sql,
+                        _err or "whitelist mismatch")
         return False, None, _denial_message(names)
 
     return True, allowed, None
