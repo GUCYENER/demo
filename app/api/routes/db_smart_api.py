@@ -2572,18 +2572,23 @@ def post_suggest_column_order(
     """
     _require_user_id(current_user)
 
-    company_id = current_user.get("company_id")
-    if not company_id:
-        logger.warning(
-            "[db_smart] suggest_order: current_user.company_id boş (user_id=%s)",
-            current_user.get("id"),
-        )
-        raise HTTPException(status_code=403, detail="Şirket bağlamı tanımlı değil.")
-
-    # Tenant scope — mirrors query_state_api._resolve_source_info pattern.
+    # v3.67.0: admin company_id NULL (tasarımca, schema.py:764) → suggest-order ham company_id
+    # kontrolüyle 403 "Şirket bağlamı tanımlı değil" veriyordu. v3.43.x'te diğer db-smart
+    # endpoint'lerinde (create_session/generate-report) düzeltilen admin-company gap'i BU endpoint'te
+    # ATLANMIŞTI ("LLM ile öner" → 403). resolve_effective_company_id: admin+NULL → KAYNAĞIN firması
+    # (tenant izolasyonu korunur); non-admin+NULL → None (fail-closed). Çözülen company hem 403-guard
+    # hem cross-tenant check'te kullanılır.
     with get_db_context() as conn:
         cur = conn.cursor()
         apply_vyra_user_context(cur, current_user)
+        from app.services.db_smart.rls_context import resolve_effective_company_id
+        company_id = resolve_effective_company_id(cur, current_user, req.source_id)
+        if not company_id:
+            logger.warning(
+                "[db_smart] suggest_order: efektif company çözülemedi (user_id=%s)",
+                current_user.get("id"),
+            )
+            raise HTTPException(status_code=403, detail="Şirket bağlamı tanımlı değil.")
         try:
             cur.execute(
                 """
