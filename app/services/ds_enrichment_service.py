@@ -244,11 +244,12 @@ def enrich_tables_batch(vyra_conn, source_id: int, company_id: int,
 
 # v3.60.0: eski sabit 30 kapağı → 30+ kolonlu tablolarda 31+ kolon LLM'e HİÇ gitmiyordu
 # (İŞ ADI/AÇIKLAMA boş "—", semantic 'other'). Modern LLM 100 kolonu tek prompt'ta rahat işler.
-MAX_ENRICH_COLUMNS = 100
-# v3.66.0: 100'ü AŞAN kolonlar (ör. 313 kolonlu tablo) artık CHUNK'lı enrich edilir (kalan kolonlar
-# parça parça LLM'e gönderilir, merge). _COL_CHUNK_SIZE = chunk başına kolon; _MAX_TOTAL = patholojik
-# tabloya üst sınır (üstü etiketsiz kalır + WARNING).
-_COL_CHUNK_SIZE = 80
+# v3.70.0: 100→60. Geniş tabloda (313 kolon) 100-kolonluk ana çağrı LLM'i 60sn timeout'unu aşıp
+# retry-loop'a giriyordu → bazı kolonlar "—" + tablo başına ~5dk ("Devam Ediyor"). Daha KÜÇÜK çağrı
+# = LLM timeout'a takılmadan TEK seferde biter → daha az "—" + daha HIZLI (boşa retry yok).
+MAX_ENRICH_COLUMNS = 60
+# v3.66.0: cap'i AŞAN kolonlar CHUNK'lı enrich edilir. v3.70.0: 80→50 (her chunk timeout'a takılmadan bitsin).
+_COL_CHUNK_SIZE = 50
 _MAX_TOTAL_ENRICH_COLUMNS = 500
 
 
