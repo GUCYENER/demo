@@ -1471,29 +1471,11 @@
 /* v3.54.0: şema arama kutusu (.ds-scope-search reuse) + "Seçilenleri Göster" + boş-durum */
 .ds-schema-search {
     margin-bottom: 6px;
-    position: relative;  /* v3.70.0: absolute ikonların offset-parent'ı GARANTİ (clear sola kayıyordu) */
 }
-/* v3.70.0: şema-arama ikon konumu kesin sabitle — magnifier sol-içi, temizle(X) sağ-içi. */
-.ds-schema-search > i.fa-search {
-    position: absolute;
-    left: 10px;
-    top: 50%;
-    transform: translateY(-50%);
-    color: var(--text-3, #94a3b8);
-    font-size: 12px;
-    pointer-events: none;
-}
-.ds-schema-search .ds-scope-search-input {
-    padding-left: 30px;
-    padding-right: 34px;
-}
-.ds-schema-search .ds-search-clear {
-    position: absolute;
-    right: 8px;
-    left: auto;  /* miras alınan left'i sıfırla → sağda kalır */
-    top: 50%;
-    transform: translateY(-50%);
-}
+/* v3.71.0: temizle(X) ikonu miras alınan bir `left` yüzünden sola kayıyordu → sağa sabitle.
+   position:relative / magnifier / input padding ZATEN .ds-scope-search base kurallarından geliyor
+   (element iki sınıfı da taşır) — tekrar etme; yalnız left'i nötrle. */
+.ds-schema-search .ds-search-clear { left: auto; }
 .ds-schema-show-selected {
     display: flex;
     align-items: center;

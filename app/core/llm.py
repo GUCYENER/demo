@@ -347,12 +347,16 @@ KURALLAR:
 # LLM API Call
 # ============================================
 
-def call_llm_api(messages: list, temperature: Optional[float] = None) -> str:
+def call_llm_api(messages: list, temperature: Optional[float] = None,
+                 timeout_override: Optional[int] = None) -> str:
     """Aktif LLM API'sine istek atar.
 
     Args:
         messages: LLM mesaj listesi
         temperature: Opsiyonel temperature override. None ise config'deki varsayılan kullanılır.
+        timeout_override: Opsiyonel per-çağrı timeout (saniye). None ise config'deki timeout_seconds
+            kullanılır. v3.71.0: ağır çağrılar (geniş tablo enrichment, 100 kolon) için config'in
+            kısa timeout'unu (60sn) aşıp retry-loop'a girmeden tek seferde bitsin diye.
 
     Raises:
         LLMConnectionError: VPN/network hatası durumunda
@@ -381,7 +385,7 @@ def call_llm_api(messages: list, temperature: Optional[float] = None) -> str:
 
     # FIX11 L3 (METIS+NIKE): 5xx/429/timeout için exponential backoff retry
     # (full multi-provider chain + cost guard → REFACTOR_BACKLOG R-fy LLM resilience)
-    timeout_seconds = config.get('timeout_seconds', 60)
+    timeout_seconds = int(timeout_override) if timeout_override else config.get('timeout_seconds', 60)
     max_retries = int(config.get('max_retries', 3))
     base_backoff = float(config.get('retry_backoff_seconds', 0.5))
 

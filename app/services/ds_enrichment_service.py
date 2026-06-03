@@ -244,13 +244,16 @@ def enrich_tables_batch(vyra_conn, source_id: int, company_id: int,
 
 # v3.60.0: eski sabit 30 kapağı → 30+ kolonlu tablolarda 31+ kolon LLM'e HİÇ gitmiyordu
 # (İŞ ADI/AÇIKLAMA boş "—", semantic 'other'). Modern LLM 100 kolonu tek prompt'ta rahat işler.
-# v3.70.0: 100→60. Geniş tabloda (313 kolon) 100-kolonluk ana çağrı LLM'i 60sn timeout'unu aşıp
-# retry-loop'a giriyordu → bazı kolonlar "—" + tablo başına ~5dk ("Devam Ediyor"). Daha KÜÇÜK çağrı
-# = LLM timeout'a takılmadan TEK seferde biter → daha az "—" + daha HIZLI (boşa retry yok).
-MAX_ENRICH_COLUMNS = 60
-# v3.66.0: cap'i AŞAN kolonlar CHUNK'lı enrich edilir. v3.70.0: 80→50 (her chunk timeout'a takılmadan bitsin).
-_COL_CHUNK_SIZE = 50
+# Modern LLM 100 kolonu tek prompt'ta rahat işler. v3.71.0: 100'de KORUNDU (v3.70.0 geçici 60'a
+# düşürmüştü ama bu 61-100 kolonlu tabloları geriletiyordu — o kolonlar örnek-bağlamsız chunk'a
+# düşüyordu). Asıl sorun (LLM timeout) artık ENRICH_LLM_TIMEOUT ile çözülüyor (aşağıda).
+MAX_ENRICH_COLUMNS = 100
+# v3.66.0: cap'i AŞAN kolonlar CHUNK'lı enrich edilir (kalan kolonlar parça parça LLM'e, merge).
+_COL_CHUNK_SIZE = 80
 _MAX_TOTAL_ENRICH_COLUMNS = 500
+# v3.71.0: enrichment LLM çağrılarına özel UZUN timeout (config'in kısa 60sn'si geniş tablo
+# prompt'unda timeout→retry-loop→"—" yaratıyordu). 100/80 kolonluk prompt tek seferde bitsin.
+ENRICH_LLM_TIMEOUT = 150
 
 
 def _llm_enrich_columns_only(table_name: str, cols_chunk: list) -> dict:
@@ -282,7 +285,7 @@ def _llm_enrich_columns_only(table_name: str, cols_chunk: list) -> dict:
         {"role": "user", "content": prompt},
     ]
     try:
-        resp = call_llm_api(messages)
+        resp = call_llm_api(messages, timeout_override=ENRICH_LLM_TIMEOUT)
         if not resp:
             return {}
         parsed = _parse_llm_analysis(resp)
@@ -296,8 +299,9 @@ def _llm_enrich_columns_only(table_name: str, cols_chunk: list) -> dict:
 def _enrich_overflow_columns(table_name: str, columns: list, parsed: dict,
                              start: int = MAX_ENRICH_COLUMNS) -> None:
     """v3.66.0: start'tan sonraki kolonları CHUNK'lı enrich edip parsed['columns']'a ekler (in-place).
-    Main yol: start=MAX_ENRICH_COLUMNS (ilk 100 ana çağrıda → 101+ chunk). Fallback yol: start=0
-    (mini-prompt columns boş döner → TÜM kolonlar chunk'lanır). 313 kolonlu tabloda hepsi etiketlenir."""
+    Main yol: start=MAX_ENRICH_COLUMNS (ilk MAX_ENRICH_COLUMNS kolon ana çağrıda → kalanı chunk).
+    Fallback yol: start=0 (mini-prompt columns boş döner → TÜM kolonlar chunk'lanır). Çok kolonlu
+    tabloda (ör. 313) hepsi etiketlenir."""
     if not parsed or len(columns) <= start:
         return
     total_cap = min(len(columns), _MAX_TOTAL_ENRICH_COLUMNS)
@@ -425,7 +429,7 @@ KURALLAR:
     ]
 
     try:
-        response = call_llm_api(messages)
+        response = call_llm_api(messages, timeout_override=ENRICH_LLM_TIMEOUT)
         if response:
             parsed = _parse_llm_analysis(response)
             if parsed:
@@ -468,7 +472,7 @@ Sadece JSON döndür."""
     messages[1]["content"] = mini_prompt
     
     try:
-        response2 = call_llm_api(messages)
+        response2 = call_llm_api(messages, timeout_override=ENRICH_LLM_TIMEOUT)
         if response2:
             parsed2 = _parse_llm_analysis(response2)
             if parsed2:
