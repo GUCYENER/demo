@@ -1367,6 +1367,22 @@ def _apply_sample_timeout(db_conn, target_cur, db_dialect: str, timeout_ms: int)
         logger.debug("[DSLearning] sample timeout ayarlanamadı (%s): %s", db_dialect, _to_err)
 
 
+def _rows_to_sample_data(rows, col_names: list) -> list:
+    """v3.69.0: cursor satırlarını ds_db_samples JSON formatına çevirir (dict/tuple cursor uyumlu).
+    primary ve LIMIT-fallback örnekleme aynı serileştirmeyi kullanır."""
+    out = []
+    for r in (rows or []):
+        if isinstance(r, dict):
+            out.append({k: _serialize_value(v) for k, v in r.items()})
+        else:
+            row_dict = {}
+            for i, val in enumerate(r):
+                cn = col_names[i] if i < len(col_names) else f"col_{i}"
+                row_dict[cn] = _serialize_value(val)
+            out.append(row_dict)
+    return out
+
+
 def collect_samples(source: dict, vyra_conn, max_rows: int = 10, schema_filter: list = None,
                     randomize: bool = True, sample_timeout_ms: int = 15000,
                     table_filter: list = None) -> dict:
@@ -1418,8 +1434,19 @@ def collect_samples(source: dict, vyra_conn, max_rows: int = 10, schema_filter: 
         # v3.43.0 (P0-B): Örnek sorguları için tablo başına timeout (büyük tabloda hang önler)
         _apply_sample_timeout(db_conn, target_cur, db_dialect, sample_timeout_ms)
 
-        # Eski sample'ları temizle
-        vyra_cur.execute("DELETE FROM ds_db_samples WHERE source_id = %s", (source_id,))
+        # Eski sample'ları temizle. v3.69.0 KÖK fix: schema/table FİLTRESİ varsa (relearn/deep-sample)
+        # YALNIZ o objelerin örneği silinir — eskiden koşulsuz WHERE source_id idi → table_filter ile
+        # çağrılınca TÜM tabloların örneğini siliyordu (diğer tablolar örneksiz kalıyordu, veri kaybı).
+        if schema_filter or table_filter:
+            _del_ids = [(o["id"] if isinstance(o, dict) else o[0]) for o in db_objects]
+            if _del_ids:
+                _del_ph = ','.join(['%s'] * len(_del_ids))
+                vyra_cur.execute(
+                    f"DELETE FROM ds_db_samples WHERE source_id = %s AND object_id IN ({_del_ph})",
+                    [source_id] + _del_ids,
+                )
+        else:
+            vyra_cur.execute("DELETE FROM ds_db_samples WHERE source_id = %s", (source_id,))
 
         for idx, obj_row in enumerate(db_objects):
             if (idx + 1) % 50 == 0 or idx == 0:
@@ -1496,26 +1523,50 @@ def collect_samples(source: dict, vyra_conn, max_rows: int = 10, schema_filter: 
                 total_sampled += 1
 
             except Exception as table_err:
-                # v3.52.0: gerçek hata eskiden yutuluyordu (logger.error traceback'siz + generic
-                # "Veri okuma başarısız") → kullanıcı HANGİ tablo NEDEN örneklenmedi göremiyordu.
-                # MERKEZİ log_exception → Hata İzleme'de tablo adı + traceback + sorgu görünür.
-                logger.error("[DSLearning] Tablo veri alma hatası (%s): %s", object_name, str(table_err))
-                try:
-                    from app.services.logging_service import log_exception
-                    log_exception(table_err, module="ds.collect_samples",
-                                  context={"source_id": source_id, "table": object_name,
-                                           "query": (query or "")[:500]})
-                except Exception:
-                    pass
-                failed_tables.append({"table": object_name, "error": "Veri okuma başarısız"})
-                # v3.43.0 (P0-B): timeout/hata sonrası hedef bağlantının transaction state'ini
-                # temizle — autocommit=False dialect'lerde (MySQL/Oracle/MSSQL) sonraki tabloların
-                # "transaction aborted/commands out of sync" ile zincirleme fail olmasını önler.
-                # PG autocommit=True olduğundan no-op (zararsız).
+                # v3.69.0 KATMAN-1: primary (random/TABLESAMPLE) başarısız (çoğunlukla timeout) →
+                # transaction temizle, sonra düz LIMIT n (non-random, fiziksel ilk-N — anında, ASLA
+                # timeout) ile FALLBACK dene. Böylece neredeyse her tablo otomatik örnek alır.
+                # Primary timeout artık ERROR değil WARNING (auto-recover → flood azalır); yalnız
+                # FALLBACK da patlarsa (gerçekten patolojik tablo) ERROR/Hata İzleme + işaretle.
+                logger.warning("[DSLearning] örnek primary başarısız (%s): %s — LIMIT fallback",
+                               object_name, str(table_err)[:150])
                 try:
                     db_conn.rollback()
                 except Exception:
                     pass
+                _fb_ok = False
+                fb_query = None
+                try:
+                    fb_query = _build_sample_query(db_dialect, safe_schema, safe_name, safe_cols,
+                                                   max_rows, randomize=False, row_count=0)
+                    if fb_query:
+                        target_cur.execute(fb_query)
+                        fb_cols = [d[0] for d in target_cur.description] if target_cur.description else []
+                        fb_data = _rows_to_sample_data(target_cur.fetchall(), fb_cols)
+                        vyra_cur.execute(
+                            "INSERT INTO ds_db_samples (object_id, source_id, sample_query, sample_data, row_count) "
+                            "VALUES (%s, %s, %s, %s, %s)",
+                            (obj_id, source_id, fb_query, json.dumps(fb_data, default=str), len(fb_data)),
+                        )
+                        total_sampled += 1
+                        _fb_ok = True
+                        logger.info("[DSLearning] %s: LIMIT fallback ile örneklendi (%d satır)",
+                                    object_name, len(fb_data))
+                except Exception as fb_err:
+                    try:
+                        db_conn.rollback()
+                    except Exception:
+                        pass
+                    # Fallback BİLE patladı = gerçekten patolojik (lock/bloat/erişim) → Hata İzleme.
+                    try:
+                        from app.services.logging_service import log_exception
+                        log_exception(fb_err, module="ds.collect_samples",
+                                      context={"source_id": source_id, "table": object_name,
+                                               "phase": "limit_fallback", "query": (fb_query or "")[:500]})
+                    except Exception:
+                        pass
+                if not _fb_ok:
+                    failed_tables.append({"table": object_name, "error": "Veri okuma başarısız (LIMIT fallback dahil)"})
                 continue
 
         vyra_conn.commit()

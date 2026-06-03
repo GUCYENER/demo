@@ -911,7 +911,8 @@ def get_all_tables_status(vyra_conn, source_id: int) -> list:
                 te.admin_label_tr,
                 te.admin_notes,
                 te.last_enriched_at,
-                te.version
+                te.version,
+                EXISTS(SELECT 1 FROM ds_db_samples s WHERE s.object_id = o.id) AS has_sample
             FROM ds_db_objects o
             LEFT JOIN ds_table_enrichments te
               ON o.source_id = te.source_id
@@ -942,7 +943,8 @@ def get_all_tables_status(vyra_conn, source_id: int) -> list:
                 te.admin_label_tr,
                 te.admin_notes,
                 te.last_enriched_at,
-                te.version
+                te.version,
+                EXISTS(SELECT 1 FROM ds_db_samples s WHERE s.object_id = o.id) AS has_sample
             FROM ds_db_objects o
             LEFT JOIN ds_table_enrichments te
               ON o.source_id = te.source_id
@@ -962,6 +964,7 @@ def get_all_tables_status(vyra_conn, source_id: int) -> list:
         if d.get("last_enriched_at"):
             d["last_enriched_at"] = d["last_enriched_at"].isoformat()
         d["is_approved"] = bool(d.get("admin_approved"))
+        d["has_sample"] = bool(d.get("has_sample"))  # v3.69.0 Katman-2: örnek var mı (UI rozeti)
         results.append(d)
     return results
 

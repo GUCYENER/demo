@@ -644,6 +644,9 @@ const DSEnrichmentModule = (() => {
                                 <button class="ds-enrich-btn relearn" onclick="DSEnrichmentModule.relearnTable(${item.id})" data-tt="Sıfırdan yeniden öğren (eski bilgiyi sil + kaynaktan keşfet)" style="background:rgba(139,92,246,0.15);color:#a78bfa;border:1px solid rgba(139,92,246,0.3);">
                                     <i class="fa-solid fa-arrows-rotate"></i>
                                 </button>
+                                <button class="ds-enrich-btn deepsample" onclick="DSEnrichmentModule.deepSample(${item.id})" data-tt="${item.has_sample === false ? 'Örnek YOK — derin örnekle (60sn, uzun bekle)' : 'Derin örnekle (uzun timeout + rastgele)'}" style="background:${item.has_sample === false ? 'rgba(245,158,11,0.18)' : 'rgba(255,255,255,0.06)'};color:${item.has_sample === false ? '#f59e0b' : '#9ca3af'};border:1px solid ${item.has_sample === false ? 'rgba(245,158,11,0.35)' : 'var(--border-color)'};">
+                                    <i class="fa-solid fa-flask-vial"></i>
+                                </button>
                                 ` : ''}
                             </div>
                         </td>
@@ -885,6 +888,42 @@ const DSEnrichmentModule = (() => {
                     }
                 } catch (err) {
                     _showToast(err.message || 'Yeniden öğrenme başlatılamadı', 'error');
+                }
+            }
+        });
+    }
+
+    // v3.69.0 Katman-3: tek tabloyu uzun timeout (60sn) + random ile derin örnekle (manuel kaçış kapısı).
+    async function deepSample(objectId) {
+        const item = _pendingData.find(p => p.id === objectId);
+        if (!item) { _showToast('Tablo kaydı bulunamadı', 'error'); return; }
+        const schema = item.schema_name || '';
+        const table = item.table_name || item.object_name || '';
+        const label = (schema ? schema + '.' : '') + table;
+        VyraModal.confirm({
+            title: 'Derin Örnekle',
+            message: `"${label}" tablosu UZUN timeout (60sn) + rastgele örnekleme ile yeniden örneklenecek. Büyük/yavaş tablolar için biraz bekleyebilir. Devam edilsin mi?`,
+            confirmText: 'Derin Örnekle',
+            cancelText: 'İptal',
+            onConfirm: async () => {
+                try {
+                    const data = await _authFetch(
+                        `/api/data-sources/${_currentSourceId}/deep-sample`,
+                        {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ schema_name: schema, table_name: table }),
+                        }
+                    );
+                    if (data.success) {
+                        _showToast(data.message || 'Derin örnekleme başlatıldı', 'success');
+                        // 8sn sonra yenile (örnek tamamlanmış olabilir → rozet güncellenir)
+                        setTimeout(() => { if (typeof refreshData === 'function') refreshData(); }, 8000);
+                    } else {
+                        _showToast(data.message || 'Başlatılamadı', 'error');
+                    }
+                } catch (err) {
+                    _showToast(err.message || 'Derin örnekleme başlatılamadı', 'error');
                 }
             }
         });
@@ -1605,6 +1644,7 @@ const DSEnrichmentModule = (() => {
         closePanel,
         quickApprove,
         relearnTable,
+        deepSample,
         toggleEdit,
         saveEdit,
         showColumns,

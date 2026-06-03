@@ -1869,6 +1869,63 @@ def relearn_table_endpoint(
         return {"success": False, "message": "Yeniden öğrenme başlatılırken hata oluştu."}
 
 
+@router.post("/{source_id}/deep-sample")
+def deep_sample_endpoint(
+    source_id: int,
+    body: RelearnTableRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """v3.69.0 Katman-3: tek tabloyu UZUN timeout (60sn) + random ile yeniden örnekle. Otomatik
+    örnekleme (kısa timeout + LIMIT fallback) bile başarısız olan patolojik tablolar için manuel
+    kaçış kapısı — admin tetikler, bekler. YALNIZ hedef tablonun örneği yenilenir (diğerleri korunur)."""
+    if not (current_user.get("is_admin") or str(current_user.get("role", "")).lower() == "admin"):
+        return {"success": False, "message": "Bu işlem için yönetici yetkisi gerekir."}
+    tbl = (body.table_name or "").strip()
+    if not tbl:
+        return {"success": False, "message": "Tablo adı zorunlu."}
+    try:
+        from app.services import ds_learning_service
+        with get_db_context() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM data_sources WHERE id = %s", (source_id,))
+            source = cur.fetchone()
+            if not source:
+                return {"success": False, "message": "Kaynak bulunamadı"}
+            source = dict(source) if hasattr(source, 'keys') else dict(zip([c[0] for c in cur.description], source))
+
+            running_check = ds_learning_service.check_running_job(conn, source_id)
+            if running_check["has_running"]:
+                rj = running_check["job"]
+                return {"success": False, "message": f"Devam eden bir işlem var ({rj['job_type']})."}
+
+        def _bg_deep_sample():
+            bg_conn = None
+            try:
+                from app.core.db import get_db_conn
+                bg_conn = get_db_conn()
+                # Uzun timeout (60sn) + random → patolojik tablodan örnek almak için son şans.
+                ds_learning_service.collect_samples(
+                    source, bg_conn,
+                    schema_filter=[body.schema_name] if body.schema_name else None,
+                    table_filter=[tbl], randomize=True, sample_timeout_ms=60000,
+                )
+            except Exception as e:
+                logger.error("[DataSources] BG deep-sample hatası: %s", str(e))
+            finally:
+                if bg_conn:
+                    try:
+                        bg_conn.close()
+                    except Exception:
+                        pass
+
+        import threading
+        threading.Thread(target=_bg_deep_sample, daemon=True).start()
+        return {"success": True, "message": f"'{tbl}' için derin örnekleme başlatıldı (60sn timeout, bekleyin)."}
+    except Exception as e:
+        logger.error("[DataSources] deep-sample hatası: %s", type(e).__name__)
+        return {"success": False, "message": "Derin örnekleme başlatılırken hata oluştu."}
+
+
 class EnrichmentApproveRequest(BaseModel):
     admin_label_tr: Optional[str] = None
     admin_notes: Optional[str] = None
