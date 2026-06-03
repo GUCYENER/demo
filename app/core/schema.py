@@ -934,6 +934,9 @@ CREATE TABLE IF NOT EXISTS ds_db_objects (
 );
 CREATE INDEX IF NOT EXISTS idx_ds_db_objects_source ON ds_db_objects(source_id);
 CREATE INDEX IF NOT EXISTS idx_ds_db_objects_type ON ds_db_objects(object_type);
+-- v3.72.0: FK-graf node lookup perf — fk_graph LOWER(object_name)=ANY ile tablo→id çözüyordu
+-- (2144 tabloda functional index olmadan seq-scan). source_id + LOWER(object_name) functional index.
+CREATE INDEX IF NOT EXISTS idx_ds_db_objects_src_lname ON ds_db_objects(source_id, LOWER(object_name));
 
 -- FK İlişkileri
 CREATE TABLE IF NOT EXISTS ds_db_relationships (
@@ -949,6 +952,10 @@ CREATE TABLE IF NOT EXISTS ds_db_relationships (
     discovered_at TIMESTAMP DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_ds_db_rels_source ON ds_db_relationships(source_id);
+-- v3.72.0: FK-graf /related endpoint perf (büyük kaynakta 4.4s). fk_graph depth-1 fallback sorgusu
+-- LOWER(from_table)/LOWER(to_table)=ANY filtreliyordu → functional index olmadan seq-scan.
+CREATE INDEX IF NOT EXISTS idx_ds_db_rels_src_lfrom ON ds_db_relationships(source_id, LOWER(from_table));
+CREATE INDEX IF NOT EXISTS idx_ds_db_rels_src_lto ON ds_db_relationships(source_id, LOWER(to_table));
 -- v3.14.0: FK refresh UPSERT desteği için unique constraint (COALESCE ile NULL güvenli)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ds_db_rels_unique
     ON ds_db_relationships(source_id, COALESCE(from_schema,''), from_table, from_column, COALESCE(to_schema,''), to_table, to_column);
