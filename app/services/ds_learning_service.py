@@ -1270,7 +1270,10 @@ def detect_objects(source: dict, vyra_conn) -> dict:
 
 # Tablo bu eşiğin üstündeyse full-scan ORDER BY random() yerine dialect-native
 # verimli örnekleme (TABLESAMPLE/SAMPLE) kullanılır (v3.43.0 P0-B).
-_SAMPLE_LARGE_TABLE_THRESHOLD = 50000
+# v3.68.0: 50000→5000. ORDER BY random() TÜM tabloyu tarayıp SIRALAR; 5000-50000 satırlı GENİŞ (çok
+# kolonlu) tablolarda bu 15sn statement_timeout'a takılıyordu (canlıda QueryCanceled floodu). 5000
+# üstü artık TABLESAMPLE/SAMPLE (sayfa-bazlı, sort yok → timeout yok); ≤5000 random (küçük, hızlı).
+_SAMPLE_LARGE_TABLE_THRESHOLD = 5000
 
 
 def _build_sample_query(db_dialect: str, safe_schema: str, safe_name: str,
