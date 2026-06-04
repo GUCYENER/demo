@@ -97,3 +97,13 @@ bilgi.txt
 
 # Oracle test container data (binary DB files)
 oracledb/
+.gstack/
+
+# gstack QA tooling — yerel (root-level Playwright + referans)
+node_modules/
+/package.json
+/package-lock.json
+gstack_komut_referansi.pdf
+
+# Manuel teşhis SQL scratch (paste-output-to-me; repo'ya girmez)
+fk_kesif_log_teshis.sql
