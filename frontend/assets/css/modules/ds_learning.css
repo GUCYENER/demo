@@ -1472,10 +1472,8 @@
 .ds-schema-search {
     margin-bottom: 6px;
 }
-/* v3.71.0: temizle(X) ikonu miras alınan bir `left` yüzünden sola kayıyordu → sağa sabitle.
-   position:relative / magnifier / input padding ZATEN .ds-scope-search base kurallarından geliyor
-   (element iki sınıfı da taşır) — tekrar etme; yalnız left'i nötrle. */
-.ds-schema-search .ds-search-clear { left: auto; }
+/* v3.73.0: temizle(X) sağ-hizası artık base `.ds-search-clear { left:auto }` ile TÜM reuse
+   context'lerinde garanti (authorization scope-search dahil) — context-özel override gerekmez. */
 .ds-schema-show-selected {
     display: flex;
     align-items: center;

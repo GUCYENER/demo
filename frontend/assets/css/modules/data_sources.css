@@ -789,6 +789,10 @@
     position: absolute;
     top: 50%;
     right: 8px;
+    /* v3.73.0: left'i BASE'te nötrle → temizle(X) TÜM reuse context'lerinde (authorization
+       scope-search, perm-search, şema arama) sağa sabit; miras/cascade left sola kaydıramaz.
+       Magnifier ayrı selektörde (.ds-scope-search > i) — etkilenmez. */
+    left: auto;
     transform: translateY(-50%);
     width: 22px;
     height: 22px;

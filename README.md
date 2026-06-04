@@ -3985,7 +3985,7 @@ netstat -an | findstr "5005"
 
 **Geliştirici:** Yasın Fazlıoğlu  
 **E-posta:** yasin.fazlioglu@consultant.turkcell.com.tr  
-**Versiyon:** 3.42.1 (deep_think DB-Only çift yanıt + Akıllı Keşif WHERE 2× duplicate fix [v3.42.0 üstüne frontend patch] — bkz. aşağıda)
+**Versiyon:** 3.73.0 (FK çıkarımı her-DB sağlamlaştırma — kolon-kökü prefix-soyma [Hungarian N/V + modül öneki] + esnek PK çözümü [sabit "id" kaldırıldı]; UI arama-temizle(X) sağ-hiza. Detaylı sürüm geçmişi: `app/core/config.py` `APP_VERSION` + `git log` + `.agents/plans/`. NOT: README v3.43–v3.72 arası ayrı geçmiş tutulmadı — `config.py` otoriter sürüm kaynağıdır.)
 
 **Geçmiş versiyon notları:**
 

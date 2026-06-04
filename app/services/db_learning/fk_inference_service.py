@@ -53,6 +53,9 @@ SCORE_SAMPLE_MAX = 0.20  # multiplied by coverage_ratio
 DEFAULT_MIN_CONFIDENCE = 0.60   # below this we skip persisting
 DEFAULT_SAMPLE_ROWS = 200
 DEFAULT_PK_COL_NAMES = ("id", "pk", "uuid")
+# v3.73.0: kolon-kökü prefix-soyma eşleşmesinde (NCUSTOMER→customer) bir hedef-token'ın
+# kabul edilmesi için min uzunluk — kısa parça false-positive'lerini keser (node↛ode).
+MIN_SUFFIX_TOKEN_LEN = 4
 
 
 # ─────────────────────────────────────────────────────────────
@@ -405,19 +408,21 @@ def _iter_fk_candidates(
     referans-benzeri / hedef tablo bulunamadı / hedef PK yok) tablo+şema+kolon+sebep ile
     kaydedilir → çağıran bunları Hata İzleme'ye tablo-aranabilir şekilde yazar (kök neden).
     """
-    # Build name → list[_TableInfo] index for fast plural/singular lookup.
+    # Build name → list[_TableInfo] indexes for matching.
     by_norm_name: Dict[str, List[_TableInfo]] = {}
-    # v3.56.0 KÖK fix: PREFIX-TOLERANT eşleştirme. Kurumsal şemalar tabloları modül prefix'iyle
-    # adlandırır (T_WF_INSTANCE, T_ORG_USER). Eski kod root'u TAM ada eşliyordu → "instance" ≠
-    # "t_wf_instance" → candidate üretmiyordu (FK İLİŞKİLERİ ~0). Son "_"-token indeksi: norm_name'in
-    # son token'ı → tablo ("t_wf_instance"→"instance", "t_org_user"→"user"). Exact match ÖNCE,
-    # son-token fallback SONRA (false-positive confidence + admin_verified ile sınırlı).
-    by_last_token: Dict[str, List[_TableInfo]] = {}
+    # v3.56.0 PREFIX-TOLERANT + v3.73.0 unified entity-token. Kurumsal şemalar tabloları modül
+    # prefix'iyle adlandırır (T_WF_INSTANCE, T_ORG_USER, MNP_NETWORK). entity-token = norm_name'in
+    # son "_"-token'ı; TEK-token tabloda kendisi. Hem T_ORG_USER→"user" hem tek-token CUSTOMER→
+    # "customer" indekslenir (eski by_last_token tek-token tabloyu atlıyordu → NCUSTOMER_ID gibi
+    # Hungarian-önekli kolonlar prefix-soyma tier'ında hedef bulamıyordu). Exact match ÖNCE,
+    # entity-token + prefix-soyma SONRA (düşük confidence + admin_verified ile sınırlı).
+    by_entity_token: Dict[str, List[_TableInfo]] = {}
     for t in tables.values():
         by_norm_name.setdefault(t.norm_name, []).append(t)
         _toks = [x for x in str(t.norm_name).split("_") if x]
-        if len(_toks) > 1:
-            by_last_token.setdefault(_toks[-1], []).append(t)
+        _ent = _toks[-1] if _toks else str(t.norm_name)
+        if _ent:
+            by_entity_token.setdefault(_ent, []).append(t)
 
     for t in tables.values():
         for col in t.columns:
@@ -452,22 +457,44 @@ def _iter_fk_candidates(
             match_kind = "full"
             for cand, kind in name_cands:
                 cand_norm = dialect.normalize_ident(cand)
-                # Exact ad eşleşmesi öncelikli; yoksa prefix-tolerant son-token eşleşmesi.
-                hits = by_norm_name.get(cand_norm) or by_last_token.get(cand_norm)
+                # Tier 1: exact tam-ad. Tier 2: entity-token exact (prefix-tolerant, T_ORG_USER→user).
+                hits = by_norm_name.get(cand_norm) or by_entity_token.get(cand_norm)
+                tier_kind = kind
+                if not hits:
+                    # Tier 3 (v3.73.0): kolon kökü tip/modül önekli → öneki DETERMİNİSTİK soy.
+                    # A) baştan 1-2 karakter (Hungarian N/V/C tip-öneki: NCUSTOMER→customer).
+                    # B) baştan "_"-token at (modül öneki: vb_number_mnp_network→mnp_network→network).
+                    # Tam-tarama YOK → O(küçük), 2000+ tablolu kaynakta perf-güvenli.
+                    stripped: List[str] = []
+                    for _k in (1, 2):
+                        _v = cand_norm[_k:]
+                        if len(_v) >= MIN_SUFFIX_TOKEN_LEN:
+                            stripped.append(_v)
+                    _ctoks = [x for x in cand_norm.split("_") if x]
+                    for _i in range(1, len(_ctoks)):
+                        _v = "_".join(_ctoks[_i:])
+                        if len(_v) >= MIN_SUFFIX_TOKEN_LEN:
+                            stripped.append(_v)
+                    for _v in stripped:
+                        _h = by_norm_name.get(_v) or by_entity_token.get(_v)
+                        if _h:
+                            hits = _h
+                            tier_kind = "prefix"  # daha spekülatif → düşük confidence tier
+                            break
                 if not hits:
                     continue
                 # Prefer same schema if multiple.
                 same_schema = [h for h in hits if dialect.normalize_ident(h.schema) == dialect.normalize_ident(t.schema)]
-                # v3.56.0 code-review: birden çok aday (özellikle son-token çakışması) →
+                # v3.56.0 code-review: birden çok aday (son-token/önek çakışması) →
                 # norm_name'e göre DETERMİNİSTİK seç (dict-iterasyon sırasına bağlı kalma →
                 # re-keşif idempotent, aynı inferred FK üretilir).
                 cand_tbl = sorted(same_schema or hits, key=lambda h: h.norm_name)[0]
-                # Self-FK head eşleşmesi gürültüsünü ele: head 'user' + tablo kendisi T_ORG_USER ise
-                # (kolon kendi tablosunun head'i) gerçek FK değil; full root self-FK'ya izin verir (parent_id).
-                if kind == "head" and dialect.normalize_ident(cand_tbl.name) == dialect.normalize_ident(t.name):
+                # Self-FK head/prefix eşleşme gürültüsünü ele: head 'user'/prefix-soyma + tablo kendisi
+                # ise gerçek FK değil; full/token-exact root self-FK'ya izin verir (org chart parent_id).
+                if tier_kind in ("head", "prefix") and dialect.normalize_ident(cand_tbl.name) == dialect.normalize_ident(t.name):
                     continue
                 target_tbl = cand_tbl
-                match_kind = kind
+                match_kind = tier_kind
                 break
             if target_tbl is None:
                 # Tanılama: root/head çıktı ama hedef tablo bulunamadı (prefix/adlandırma uyumsuzluğu).
@@ -480,22 +507,45 @@ def _iter_fk_candidates(
                     })
                 continue
             # Self-FK is allowed (org chart parent_id → org.id).
-            # Find target PK column.
-            if not target_tbl.pk_columns:
-                # No PK declared in metadata; fall back to convention 'id'.
-                target_pk_name = "id"
-            else:
-                target_pk_name = target_tbl.pk_columns[0]
-            target_col = _column_dict(target_tbl, dialect.normalize_ident(target_pk_name), dialect)
+            # v3.73.0 ESNEK PK çözümü — sabit "id" varsayımı kaldırıldı. Sıra:
+            #   1. declared PK (is_pk metadata) — en güvenilir
+            #   2. FK kolonunun KENDİ adı — child.PartyId → parent.PartyId deseni çok yaygın
+            #      (Oracle/kurumsal şemada PK 'id' değil, child FK ile aynı ad)
+            #   3. entity-token tabanlı: <entity>_id / <entity>id / <entity>
+            #   4. root tabanlı: <root>_id / <root>id
+            #   5. konvansiyonel: id / pk / uuid
+            # İlk VAR OLAN (target.columns'ta) kolon seçilir. Tip-uyumu downstream _type_compatible'da.
+            _ttoks = [x for x in str(target_tbl.norm_name).split("_") if x]
+            ent_tok = _ttoks[-1] if _ttoks else str(target_tbl.norm_name)
+            pk_name_cands: List[str] = [pc for pc in target_tbl.pk_columns if pc]
+            pk_name_cands.append(col_name)
+            if ent_tok:
+                pk_name_cands += [f"{ent_tok}_id", f"{ent_tok}id", ent_tok]
+            if root:
+                pk_name_cands += [f"{root}_id", f"{root}id"]
+            pk_name_cands += ["id", "pk", "uuid"]
+            target_col = None
+            tried_pks: List[str] = []
+            _seen_pk: Set[str] = set()
+            for pkc in pk_name_cands:
+                pkn = dialect.normalize_ident(pkc)
+                if not pkn or pkn in _seen_pk:
+                    continue
+                _seen_pk.add(pkn)
+                tried_pks.append(pkc)
+                _tc = _column_dict(target_tbl, pkn, dialect)
+                if _tc is not None:
+                    target_col = _tc
+                    break
             if target_col is None:
-                # Tanılama: hedef tablo bulundu ama PK kolonu metadata'da yok (columns_json/is_pk eksik).
+                # Tanılama: hedef tablo bulundu ama hiçbir PK adayı kolon olarak yok.
                 if diag is not None:
                     diag.append({
                         "schema": t.schema, "table": t.name, "column": col_name,
                         "root": root, "reason": "target_pk_not_found",
                         "target": f"{target_tbl.schema}.{target_tbl.name}",
-                        "target_pk_tried": target_pk_name,
-                        "hint": "hedef tablonun PK kolonu metadata'da yok → eşleştirilemedi",
+                        "target_pk_tried": tried_pks,
+                        "hint": "hedef tablonun PK kolonu metadata'da yok (declared/FK-col-adı/konvansiyon hiçbiri eşleşmedi)",
                     })
                 continue
             yield t, col, root, match_kind, target_tbl, target_col

@@ -353,3 +353,118 @@ def test_infer_unknown_dialect_raises():
     cur = MagicMock()
     with pytest.raises(ValueError):
         svc.infer_fks_for_source(cur, source_id=1, dialect="cassandra")
+
+
+# ─────────────────────────────────────────────────────────────
+# v3.73.0 GOLDEN-SET — gerçek-dünya şema vakaları (kullanıcı bulgusu, bulgular6.docx)
+# Hungarian tip-öneki (N/V), T_ORG_ site-öneki, FK-col-adı==PK-adı, esnek PK, false-positive guard.
+# ─────────────────────────────────────────────────────────────
+def test_infer_camel_fk_col_equals_pk_t_org():
+    """image4: elysion.T_ORG_USER.PartyId → T_ORG_PARTY.PartyId.
+
+    camelCase FK + T_ORG_ site-öneki + FK-kolon-adı == hedef PK-adı. Çekirdek bunu
+    entity-token (party → t_org_party) + declared-PK ile çözmeli.
+    """
+    cur = MagicMock()
+    party_cols = [{"name": "PartyId", "type": "integer", "is_pk": True},
+                  {"name": "Name", "type": "varchar", "is_pk": False}]
+    user_cols = [{"name": "Id", "type": "integer", "is_pk": True},
+                 {"name": "PartyId", "type": "integer", "is_pk": False}]
+    objects = [
+        ("elysion", "T_ORG_PARTY", "table", json.dumps(party_cols)),
+        ("elysion", "T_ORG_USER", "table", json.dumps(user_cols)),
+    ]
+    _seed_objects(cur, objects)
+    res = svc.infer_fks_for_source(cur, source_id=3, dialect="postgresql")
+    assert res["candidates"] >= 1, f"PartyId→T_ORG_PARTY çözülmeli: {res}"
+    assert res["persisted"] >= 1
+    assert any(s["to"].endswith("T_ORG_PARTY.PartyId") for s in res["sample"]), res["sample"]
+
+
+def test_infer_hungarian_prefix_strip_pg():
+    """CUR.RR_93.NCUSTOMER_ID → CUSTOMER.CustomerId (Hungarian N tip-öneki soyma) — PG."""
+    cur = MagicMock()
+    cust_cols = [{"name": "CustomerId", "type": "integer", "is_pk": True},
+                 {"name": "Name", "type": "varchar", "is_pk": False}]
+    rr_cols = [{"name": "Id", "type": "integer", "is_pk": True},
+               {"name": "NCUSTOMER_ID", "type": "integer", "is_pk": False}]
+    objects = [
+        ("cur", "CUSTOMER", "table", json.dumps(cust_cols)),
+        ("cur", "RR_93", "table", json.dumps(rr_cols)),
+    ]
+    _seed_objects(cur, objects)
+    res = svc.infer_fks_for_source(cur, source_id=3, dialect="postgresql")
+    assert res["candidates"] >= 1, f"NCUSTOMER_ID→CUSTOMER prefix-strip çözülmeli: {res}"
+    assert res["persisted"] >= 1
+    assert any(s["to"].endswith("CUSTOMER.CustomerId") for s in res["sample"]), res["sample"]
+
+
+def test_infer_hungarian_prefix_strip_oracle():
+    """Aynı Hungarian-prefix vakası Oracle dialect (UPPER case-fold, NUMBER tip)."""
+    cur = MagicMock()
+    cust_cols = [{"name": "CUSTOMER_ID", "type": "NUMBER", "is_pk": True},
+                 {"name": "NAME", "type": "VARCHAR2", "is_pk": False}]
+    rr_cols = [{"name": "ID", "type": "NUMBER", "is_pk": True},
+               {"name": "NCUSTOMER_ID", "type": "NUMBER", "is_pk": False}]
+    objects = [
+        ("CUR", "CUSTOMER", "table", json.dumps(cust_cols)),
+        ("CUR", "RR_93", "table", json.dumps(rr_cols)),
+    ]
+    _seed_objects(cur, objects)
+    res = svc.infer_fks_for_source(cur, source_id=3, dialect="oracle")
+    assert res["candidates"] >= 1, f"Oracle NCUSTOMER_ID→CUSTOMER çözülmeli: {res}"
+    assert res["persisted"] >= 1
+
+
+def test_infer_flexible_pk_when_no_declared_pk():
+    """E2: hedef tabloda is_pk YOK (Oracle PK-capture yetki hatası simülasyonu) →
+    FK-kolon-adı fallback ile PK çözülür (eski kod 'id'ye düşüp target_pk_not_found verirdi)."""
+    cur = MagicMock()
+    # T_ORG_PARTY'de hiçbir kolon is_pk DEĞİL → pk_columns boş
+    party_cols = [{"name": "PartyId", "type": "integer", "is_pk": False},
+                  {"name": "Name", "type": "varchar", "is_pk": False}]
+    user_cols = [{"name": "Id", "type": "integer", "is_pk": True},
+                 {"name": "PartyId", "type": "integer", "is_pk": False}]
+    objects = [
+        ("elysion", "T_ORG_PARTY", "table", json.dumps(party_cols)),
+        ("elysion", "T_ORG_USER", "table", json.dumps(user_cols)),
+    ]
+    _seed_objects(cur, objects)
+    res = svc.infer_fks_for_source(cur, source_id=3, dialect="postgresql")
+    assert res["candidates"] >= 1, f"declared-PK yokken FK-col-adı ile çözülmeli: {res}"
+    assert res["persisted"] >= 1
+    assert res["unresolved_count"] == 0, f"target_pk_not_found OLMAMALI: {res['unresolved']}"
+
+
+def test_infer_no_false_positive_short_token():
+    """Prefix-strip kısa-token false-positive üretmemeli: node_id ↛ 'ode' (len<4 guard)."""
+    cur = MagicMock()
+    ode_cols = [{"name": "Id", "type": "integer", "is_pk": True}]
+    thing_cols = [{"name": "Id", "type": "integer", "is_pk": True},
+                  {"name": "node_id", "type": "integer", "is_pk": False}]
+    objects = [
+        ("public", "ode", "table", json.dumps(ode_cols)),
+        ("public", "thing", "table", json.dumps(thing_cols)),
+    ]
+    _seed_objects(cur, objects)
+    res = svc.infer_fks_for_source(cur, source_id=1, dialect="postgresql")
+    assert res["candidates"] == 0, f"node_id→ode spurious eşleşme OLMAMALI: {res}"
+    assert res["persisted"] == 0
+
+
+@pytest.mark.parametrize("dialect", ["mssql", "mysql"])
+def test_infer_prefix_strip_cross_dialect(dialect):
+    """Hungarian V-öneki soyma MSSQL + MySQL dialect'lerinde de çalışır (çekirdek agnostik)."""
+    cur = MagicMock()
+    cust_cols = [{"name": "CustomerId", "type": "int", "is_pk": True},
+                 {"name": "Name", "type": "varchar", "is_pk": False}]
+    ord_cols = [{"name": "Id", "type": "int", "is_pk": True},
+                {"name": "VCUSTOMER_ID", "type": "int", "is_pk": False}]
+    objects = [
+        ("dbo", "CUSTOMER", "table", json.dumps(cust_cols)),
+        ("dbo", "ORDERS", "table", json.dumps(ord_cols)),
+    ]
+    _seed_objects(cur, objects)
+    res = svc.infer_fks_for_source(cur, source_id=3, dialect=dialect)
+    assert res["candidates"] >= 1, f"{dialect}: VCUSTOMER_ID→CUSTOMER çözülmeli: {res}"
+    assert res["persisted"] >= 1
