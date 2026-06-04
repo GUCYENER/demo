@@ -244,7 +244,11 @@ async function build() {
     // değişince otomatik değişir; aynı kalırsa home.html'e dokunulmaz (gereksiz diff yok).
     try {
         const jsBytes = fs.readFileSync(path.join(distDir, 'bundle.min.js'));
-        const hash = createHash('sha256').update(jsBytes).digest('hex').slice(0, 10);
+        // v3.74.0 KÖK fix: hash JS+CSS. Eskiden yalnız JS hash'leniyordu → CSS-only değişiklik
+        // (ör. v3.73.0 arama-ikon fix) cache-bust ETMİYOR, tarayıcı eski bundle.min.css'i servis
+        // ediyordu (Ctrl+F5 şart). CSS'i de hash'e kat → CSS-only değişiklik de ?v=' i bump eder.
+        const cssBytes = fs.readFileSync(path.join(distDir, 'bundle.min.css'));
+        const hash = createHash('sha256').update(jsBytes).update(cssBytes).digest('hex').slice(0, 10);
         const htmlPath = path.join(__dirname, 'home.html');
         if (fs.existsSync(htmlPath)) {
             const before = fs.readFileSync(htmlPath, 'utf-8');
