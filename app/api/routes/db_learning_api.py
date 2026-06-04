@@ -21,8 +21,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.api.routes.auth import get_current_user, get_current_admin
-from app.core.db import apply_company_scope, get_db_context, get_db_conn
+from app.api.routes.auth import get_current_admin, get_current_user
+from app.core.db import apply_company_scope, get_db_conn, get_db_context
 
 logger = logging.getLogger(__name__)
 
@@ -678,7 +678,8 @@ def infer_fks_endpoint(
                 }
                 try:
                     from app.services.ds_learning_service import (
-                        _decrypt_password, _get_db_connector,
+                        _decrypt_password,
+                        _get_db_connector,
                     )
                     pwd = _decrypt_password(source_full.get("db_password_encrypted", ""))
                     target_conn, _ = _get_db_connector(source_full, pwd)
@@ -1604,8 +1605,8 @@ def list_new_tables_endpoint(
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     """Remote DB'de olup ds_db_objects'ta olmayan tabloları listele (preview)."""
-    from app.services.pipeline.wiring import _load_source_dict
     from app.services.db_learning.incremental_schema_integrator import detect_new_tables
+    from app.services.pipeline.wiring import _load_source_dict
 
     company_id = current_user.get("company_id")
     with get_db_context() as conn:
@@ -1660,13 +1661,15 @@ def integrate_new_tables_endpoint(
     bu endpoint senkron çalışır (tipik akışta < 30 sn). Eş zamanlı çalıştırma
     blok edilir.
     """
-    from app.services.pipeline.wiring import _load_source_dict
     from app.services.db_learning.incremental_schema_integrator import (
         integrate_new_tables,
     )
     from app.services.ds_learning_service import (
-        check_running_job, create_or_get_running_job, complete_job,
+        check_running_job,
+        complete_job,
+        create_or_get_running_job,
     )
+    from app.services.pipeline.wiring import _load_source_dict
 
     user_id = current_user.get("id")
     company_id = current_user.get("company_id")

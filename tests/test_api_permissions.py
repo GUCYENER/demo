@@ -10,10 +10,11 @@ Test Kapsamı:
 - Rol izinleri (DB'den)
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-import asyncio
-from unittest.mock import patch, MagicMock
 from fastapi import HTTPException
+
 from tests.conftest import run_async
 
 

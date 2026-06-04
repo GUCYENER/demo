@@ -14,8 +14,8 @@ Version: 2.57.0
 
 from __future__ import annotations
 
-import re
 import logging
+import re
 from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)

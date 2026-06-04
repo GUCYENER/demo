@@ -6,7 +6,6 @@ import pytest
 
 from app.services.db_smart import query_assembler as qa
 
-
 # ─────────────────────────────────────────────────────────────
 # validate
 # ─────────────────────────────────────────────────────────────

@@ -166,6 +166,7 @@ def _build_test_app():
 
 def test_metrics_endpoint_denies_when_allowlist_empty(monkeypatch):
     from fastapi.testclient import TestClient
+
     from app.core import config as cfg
 
     monkeypatch.setattr(cfg.settings, "METRICS_IP_ALLOWLIST", "", raising=False)
@@ -178,6 +179,7 @@ def test_metrics_endpoint_denies_when_allowlist_empty(monkeypatch):
 
 def test_metrics_endpoint_allows_listed_ip(monkeypatch):
     from fastapi.testclient import TestClient
+
     from app.core import config as cfg
 
     # TestClient default client.host is "testclient" — allow it explicitly
@@ -200,8 +202,9 @@ def test_metrics_endpoint_allows_listed_ip(monkeypatch):
 
 def test_metrics_endpoint_503_when_prometheus_missing(monkeypatch):
     from fastapi.testclient import TestClient
-    from app.core import config as cfg
+
     from app.api.routes import _metrics as metrics_route
+    from app.core import config as cfg
 
     # Allowlist is irrelevant — 503 is returned before the auth check.
     monkeypatch.setattr(cfg.settings, "METRICS_IP_ALLOWLIST", "testclient", raising=False)
@@ -217,6 +220,7 @@ def test_metrics_endpoint_503_when_prometheus_missing(monkeypatch):
 
 def test_metrics_endpoint_honours_x_forwarded_for(monkeypatch):
     from fastapi.testclient import TestClient
+
     from app.core import config as cfg
 
     monkeypatch.setattr(cfg.settings, "METRICS_IP_ALLOWLIST", "10.0.0.5", raising=False)
@@ -238,6 +242,7 @@ def test_metrics_endpoint_honours_x_forwarded_for(monkeypatch):
 
 def test_metrics_endpoint_explicit_open(monkeypatch):
     from fastapi.testclient import TestClient
+
     from app.core import config as cfg
 
     monkeypatch.setattr(cfg.settings, "METRICS_IP_ALLOWLIST", "0.0.0.0/0", raising=False)

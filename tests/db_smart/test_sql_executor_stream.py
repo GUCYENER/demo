@@ -3,12 +3,11 @@ from __future__ import annotations
 
 import sys
 from types import ModuleType
-from typing import Any, Dict, Iterator, List
+from typing import Any, List
 
 import pytest
 
 from app.services.db_smart import sql_executor_stream as ses
-
 
 # ─────────────────────────────────────────────────────────────
 # Fake DB connector — _get_db_connector monkeypatch'i

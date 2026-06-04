@@ -20,40 +20,39 @@ Modül Yapısı:
 """
 
 # === DIALOG CRUD ===
-from app.services.dialog.crud import (
-    create_dialog,
-    get_active_dialog,
-    get_or_create_active_dialog,
-    close_dialog,
-    close_inactive_dialogs,
-    list_user_dialogs,
-    get_dialog_history,
-)
-
-# === MESSAGE CRUD ===
-from app.services.dialog.messages import (
-    add_message,
-    update_message_metadata,
-    get_dialog_messages,
-    add_message_feedback,
-)
-
-# === AI PROCESSING ===
-from app.services.dialog.processor import (
-    process_user_message,
-    process_quick_reply,
-)
-
 # === CORPIX & TICKET ===
 from app.services.dialog.corpix import (
     ask_corpix,
     generate_ticket_summary,
 )
+from app.services.dialog.crud import (
+    close_dialog,
+    close_inactive_dialogs,
+    create_dialog,
+    get_active_dialog,
+    get_dialog_history,
+    get_or_create_active_dialog,
+    list_user_dialogs,
+)
+
+# === MESSAGE CRUD ===
+from app.services.dialog.messages import (
+    add_message,
+    add_message_feedback,
+    get_dialog_messages,
+    update_message_metadata,
+)
+
+# === AI PROCESSING ===
+from app.services.dialog.processor import (
+    process_quick_reply,
+    process_user_message,
+)
 
 # === RESPONSE HELPERS (dahili kullanım için de export) ===
 from app.services.dialog.response_builder import (
-    parse_chunk_details,
     check_user_has_accessible_documents,
+    parse_chunk_details,
 )
 
 # Geriye dönük uyumluluk: Önceki _ prefix'li fonksiyon isimleri

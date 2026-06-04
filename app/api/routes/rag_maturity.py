@@ -4,14 +4,14 @@ VYRA L1 Support API - RAG Maturity Routes
 Dosya olgunluk skoru analiz endpoint'i.
 """
 
-from typing import List
-from fastapi import APIRouter, File, UploadFile, Depends, HTTPException
 import io
+from typing import List
+
+from fastapi import APIRouter, Depends, File, UploadFile
 
 from app.api.routes.auth import get_current_user
 from app.services.logging_service import log_error
 from app.services.maturity_analyzer import analyze_file
-
 
 router = APIRouter()
 

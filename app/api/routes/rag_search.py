@@ -6,17 +6,19 @@ Semantik arama ve istatistik endpoint'leri.
 
 from __future__ import annotations
 
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.routes.auth import get_current_user
 from app.api.schemas.rag_schemas import (
-    RAGSearchRequest, RAGSearchResult, RAGSearchResponse, RAGStatsResponse
+    RAGSearchRequest,
+    RAGSearchResponse,
+    RAGSearchResult,
+    RAGStatsResponse,
 )
 from app.services.logging_service import log_error
 from app.services.rag_service import get_rag_service
-
 
 router = APIRouter()
 

@@ -6,16 +6,16 @@ v2.30.1: ml_training_service.py'den ayrıştırıldı
 """
 
 from __future__ import annotations
+
 import subprocess
 import sys
 import threading
-from pathlib import Path
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from app.core.db import get_db_context
-from app.services.logging_service import log_system_event, log_error, log_warning
-
+from app.services.logging_service import log_error, log_system_event, log_warning
 
 # Proje kök dizini (D:\VYRA)
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent

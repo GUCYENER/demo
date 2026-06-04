@@ -27,7 +27,6 @@ from __future__ import annotations
 import re
 from typing import Optional, Protocol, Sequence, Tuple
 
-
 # Canonical type categories used by `_type_compatible` in core service.
 TYPE_CAT_INT = "int"
 TYPE_CAT_UUID = "uuid"

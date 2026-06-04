@@ -16,7 +16,6 @@ from fastapi import HTTPException
 
 from app.api.routes.ldap_settings import LdapSettingCreate, create_ldap_setting
 
-
 _ADMIN = {"id": 1, "username": "admin"}
 
 

@@ -11,29 +11,27 @@ from __future__ import annotations
 import time
 import traceback
 from datetime import datetime
-from typing import List, Optional, Dict, Any, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from app.services.rag_service import get_rag_service
-from app.services.ocr_service import get_ocr_service
-from app.services.logging_service import log_system_event, log_error, log_warning
-
+from app.services.dialog.ai_evaluation import evaluate_with_llm
+from app.services.dialog.crud import close_dialog
 from app.services.dialog.messages import (
     add_message,
-    update_message_metadata,
+    find_rag_results_in_history,
     get_last_assistant_with_quick_reply,
     get_message_by_id,
-    find_rag_results_in_history,
     get_original_query,
+    update_message_metadata,
 )
 from app.services.dialog.response_builder import (
     build_response,
+    create_error_response,
     format_confirmed_solution,
     format_multi_solution,
-    create_error_response,
 )
-from app.services.dialog.ai_evaluation import evaluate_with_llm
-from app.services.dialog.crud import close_dialog
-
+from app.services.logging_service import log_error, log_system_event, log_warning
+from app.services.ocr_service import get_ocr_service
+from app.services.rag_service import get_rag_service
 
 # =============================================================================
 # HEADING-BASED IMAGE INSERTION HELPER
@@ -303,9 +301,13 @@ def _process_widget_direct_llm(query: str, widget_config: dict) -> str:
     Widget için RAG'sız direkt LLM çağrısı (use_rag=False durumu).
     Prompt ve LLM override'larını uygular.
     """
-    from app.core.llm import (get_active_llm, get_llm_by_id,
-                               get_prompt_by_id, call_llm_api,
-                               call_llm_api_with_config)
+    from app.core.llm import (
+        call_llm_api,
+        call_llm_api_with_config,
+        get_active_llm,
+        get_llm_by_id,
+        get_prompt_by_id,
+    )
 
     llm_cfg_id = widget_config.get("llm_config_id")
     prompt_id  = widget_config.get("prompt_id")
@@ -328,9 +330,13 @@ def _process_widget_direct_llm_stream(query: str, widget_config: dict):
     """
     Widget için RAG'sız direkt LLM streaming çağrısı (use_rag=False + stream).
     """
-    from app.core.llm import (get_active_llm, get_llm_by_id,
-                               get_prompt_by_id, call_llm_api_stream,
-                               call_llm_api_stream_with_config)
+    from app.core.llm import (
+        call_llm_api_stream,
+        call_llm_api_stream_with_config,
+        get_active_llm,
+        get_llm_by_id,
+        get_prompt_by_id,
+    )
 
     llm_cfg_id = widget_config.get("llm_config_id")
     prompt_id  = widget_config.get("prompt_id")
@@ -785,6 +791,7 @@ def process_user_message_stream(
                     # WebSocket push — kullanıcı farklı ekrandaysa bildirim alacak
                     try:
                         import asyncio
+
                         # code-review fix: instance adı 'ws_manager' (websocket_manager.py:111);
                         # 'manager' diye import → ImportError → WebSocket push sessizce başarısızdı.
                         from app.core.websocket_manager import ws_manager

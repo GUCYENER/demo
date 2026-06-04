@@ -10,8 +10,9 @@ Test Kapsamı:
 - Rol listeleme
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 from fastapi import HTTPException
 
 

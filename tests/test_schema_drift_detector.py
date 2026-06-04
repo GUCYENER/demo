@@ -5,8 +5,6 @@ apply_drift orchestration + helper functions. Mocked cursor, no DB.
 import os
 import sys
 
-import pytest
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.services.db_learning.schema_drift_detector import (
@@ -19,7 +17,6 @@ from app.services.db_learning.schema_drift_detector import (
     _table_keys,
     apply_drift,
 )
-
 
 # ─────────────────────────────────────────────────────────────
 # Mock cursor

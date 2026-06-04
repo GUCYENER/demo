@@ -8,9 +8,9 @@ Refactored from dialog_service.py (v2.29.14)
 
 from __future__ import annotations
 
-from typing import List, Dict
+from typing import Dict, List
 
-from app.services.logging_service import log_system_event, log_error
+from app.services.logging_service import log_error, log_system_event
 
 
 def evaluate_with_llm(query: str, rag_results: List[Dict]) -> str:
@@ -20,7 +20,7 @@ def evaluate_with_llm(query: str, rag_results: List[Dict]) -> str:
     🔒 STRICT MODE: LLM sadece verilen RAG verisini kullanır,
     kendi bilgisini EKLEMEZ.
     """
-    from app.core.llm import call_llm_api, LLMConnectionError, LLMConfigError
+    from app.core.llm import LLMConfigError, LLMConnectionError, call_llm_api
     
     # RAG sonuçlarını formatla
     rag_formatted_parts = []
@@ -91,21 +91,21 @@ Yukarıdaki sonuçları değerlendir ve kullanıcının sorusuna SADECE bu bilgi
     except LLMConnectionError as e:
         log_error(f"AI Değerlendirme LLM bağlantı hatası: {e}", "dialog")
         return (
-            f"🌐 **LLM Bağlantı Hatası**\n\n"
-            f"AI değerlendirmesi şu anda yapılamıyor. VPN bağlantınızı kontrol edin.\n\n"
-            f"Seçenekleri manuel olarak inceleyebilirsiniz."
+            "🌐 **LLM Bağlantı Hatası**\n\n"
+            "AI değerlendirmesi şu anda yapılamıyor. VPN bağlantınızı kontrol edin.\n\n"
+            "Seçenekleri manuel olarak inceleyebilirsiniz."
         )
     except LLMConfigError as e:
         log_error(f"AI Değerlendirme LLM config hatası: {e}", "dialog")
         return (
-            f"⚠️ **LLM Yapılandırma Hatası**\n\n"
-            f"AI değerlendirmesi için aktif LLM bulunamadı.\n"
-            f"Parametreler menüsünden LLM ekleyin."
+            "⚠️ **LLM Yapılandırma Hatası**\n\n"
+            "AI değerlendirmesi için aktif LLM bulunamadı.\n"
+            "Parametreler menüsünden LLM ekleyin."
         )
     except Exception as e:
         log_error(f"AI Değerlendirme beklenmeyen hata: {e}", "dialog")
         return (
-            f"❌ **Değerlendirme Hatası**\n\n"
-            f"AI değerlendirmesi sırasında bir hata oluştu.\n"
-            f"Lütfen sonuçları manuel olarak inceleyin."
+            "❌ **Değerlendirme Hatası**\n\n"
+            "AI değerlendirmesi sırasında bir hata oluştu.\n"
+            "Lütfen sonuçları manuel olarak inceleyin."
         )

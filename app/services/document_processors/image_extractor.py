@@ -12,7 +12,7 @@ import io
 from dataclasses import dataclass
 from typing import List, Optional
 
-from app.services.logging_service import log_system_event, log_error
+from app.services.logging_service import log_error, log_system_event
 
 
 @dataclass
@@ -192,8 +192,9 @@ class ImageExtractor:
 
     def _extract_pdf_images(self, file_content: bytes) -> List[ExtractedImage]:
         """PyMuPDF (fitz) ile PDF'ten görsel çıkar — sayfa heading'leri ve Y pozisyonu kaydeder"""
-        import fitz
         import re
+
+        import fitz
 
         doc = fitz.open(stream=file_content, filetype="pdf")
         images: List[ExtractedImage] = []

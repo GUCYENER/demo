@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
 try:
-    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST  # type: ignore
+    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest  # type: ignore
     _HAS_PROM = True
 except Exception:  # pragma: no cover
     _HAS_PROM = False

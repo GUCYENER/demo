@@ -12,15 +12,15 @@ Composition:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import List, Optional, Dict, Any
 import json
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
 from app.core.db import get_db_conn
-from app.services.logging_service import log_system_event, log_error, log_warning
-from app.services.rag.embedding import EmbeddingManager
+from app.services.logging_service import log_error, log_system_event, log_warning
 from app.services.rag import scoring
+from app.services.rag.embedding import EmbeddingManager
 
 
 @dataclass
@@ -688,8 +688,8 @@ class RAGService:
         Returns:
             SearchResponse
         """
-        import time
         import hashlib
+        import time
         timings = {}
         start_total = time.time()
         
@@ -1189,7 +1189,9 @@ def get_rag_service(preload: bool = False) -> RAGService:
             
             # 3. 🚀 v2.32.0: Continuous learning başlat
             try:
-                from app.services.ml_training.continuous_learning import get_continuous_learning_service
+                from app.services.ml_training.continuous_learning import (
+                    get_continuous_learning_service,
+                )
                 cl_service = get_continuous_learning_service()
                 cl_service.start()
             except Exception as e:

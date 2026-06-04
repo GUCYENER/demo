@@ -6,8 +6,6 @@ import json
 import os
 import sys
 
-import pytest
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.services.db_learning.trace_writer import _build_row, fetch_trace, write_trace

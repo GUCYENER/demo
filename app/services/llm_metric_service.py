@@ -18,11 +18,8 @@ Tasarim notlari:
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
-import re
-import threading
 from typing import Any, Dict, List, Optional
 
 from app.core.llm import (

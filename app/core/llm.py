@@ -11,12 +11,13 @@ Akış:
 5. Verifier: LLM'den final yanıt alır
 """
 
-import requests
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any
-from app.core.db import get_db_conn
-from app.services.logging_service import log_error, log_warning, log_system_event
+from typing import Any, Dict, List, Optional
 
+import requests
+
+from app.core.db import get_db_conn
+from app.services.logging_service import log_error, log_system_event, log_warning
 
 # ============================================
 # LLM Exceptions
@@ -390,8 +391,9 @@ def call_llm_api(messages: list, temperature: Optional[float] = None,
     base_backoff = float(config.get('retry_backoff_seconds', 0.5))
 
     # SSL verification devre dışı (kurumsal proxy için)
-    import urllib3
     import time as _time
+
+    import urllib3
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     last_err: Optional[Exception] = None
@@ -508,7 +510,9 @@ def call_llm_api_with_config(messages: list, config: dict) -> str:
 
 def call_llm_api_stream_with_config(messages: list, config: dict):
     """Verilen LLM config dict ile streaming API çağrısı yapar (widget override)."""
-    import json, urllib3
+    import json
+
+    import urllib3
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     headers = {"Content-Type": "application/json"}
@@ -567,6 +571,7 @@ def call_llm_api_stream(messages: list):
         LLMConfigError: Konfigürasyon hatası
     """
     import json
+
     import urllib3
     
     config = get_active_llm()
@@ -690,7 +695,7 @@ def run_worker(user_query: str, plan: PlannerPlan, user_id: int = None) -> tuple
     source_info = SourceInfo(source_type="none")
     
     # ⚡ ADIM 1: Hızlı Keyword Check (~10ms)
-    log_system_event("INFO", f"Worker: Hızlı ön kontrol başlatıldı", "llm")
+    log_system_event("INFO", "Worker: Hızlı ön kontrol başlatıldı", "llm")
     routing_decision = should_use_rag(user_query)
     
     if not routing_decision.should_use_rag:
@@ -802,7 +807,7 @@ def run_worker(user_query: str, plan: PlannerPlan, user_id: int = None) -> tuple
     else:
         # RAG sonuç vermedi - Web araması ATLA, direkt LLM
         # (Web araması da yavaş olduğu için atlıyoruz)
-        log_system_event("INFO", f"Worker: RAG sonuç yok, direkt LLM", "llm")
+        log_system_event("INFO", "Worker: RAG sonuç yok, direkt LLM", "llm")
         results.append(WorkerResult(step_index=1, notes="Bilgi tabanında sonuç yok, AI bilgisi kullanılacak"))
     
     results.append(WorkerResult(step_index=2, notes="Bağlam analizi tamamlandı"))

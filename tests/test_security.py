@@ -8,11 +8,9 @@ Bu modül, uygulamadaki güvenlik açıklarını test eder:
 4. Token expire kontrolü
 """
 
-import sys
 import os
-import time
+import sys
 from datetime import datetime, timedelta
-from typing import Optional
 
 # Proje root'unu path'e ekle
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -273,7 +271,7 @@ def test_sql_injection():
                 f"Status: {response.status_code} (Beklenen: 401 veya 422)"
             )
         except Exception as e:
-            log_test(f"SQL Injection", False, str(e))
+            log_test("SQL Injection", False, str(e))
 
 
 # ==============================================================================

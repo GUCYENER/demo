@@ -6,7 +6,6 @@ import pytest
 
 from app.services.db_smart import ast_renderer as ar
 
-
 # ─────────────────────────────────────────────────────────────
 # Basic contract
 # ─────────────────────────────────────────────────────────────

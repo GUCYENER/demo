@@ -22,24 +22,23 @@ Kullanım:
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+import json
 import logging
 import os
-import json
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 # CatBoost lazy import (Faz 5 graceful pattern)
 try:
-    from catboost import CatBoostClassifier, Pool  # type: ignore
+    from catboost import CatBoostClassifier  # type: ignore
     _HAS_CATBOOST = True
 except Exception:
     _HAS_CATBOOST = False
     logger.info("[catboost_trainer] CatBoost yüklü değil — training devre dışı")
 
 from .feature_extractor import FEATURE_ORDER
-
 
 DEFAULT_HYPERPARAMS = {
     "iterations": 500,
@@ -254,7 +253,7 @@ def train_size_classifier(
     if not _HAS_CATBOOST:
         return {"error": "catboost_not_installed", "message": "pip install catboost gerekli."}
 
-    from .size_classifier import SIZE_FEATURE_ORDER, BUCKET_TO_LABEL
+    from .size_classifier import BUCKET_TO_LABEL, SIZE_FEATURE_ORDER
 
     where_clauses = ["actual_bucket IS NOT NULL"]
     params: List[Any] = []
@@ -377,7 +376,9 @@ def train_decision_predictor(
     if not _HAS_CATBOOST:
         return {"error": "catboost_not_installed", "message": "pip install catboost gerekli."}
     from .decision_extractors import (
-        COLUMN_FEATURE_ORDER, FILTER_FEATURE_ORDER, JOIN_FEATURE_ORDER,
+        COLUMN_FEATURE_ORDER,
+        FILTER_FEATURE_ORDER,
+        JOIN_FEATURE_ORDER,
     )
     type_to_order = {
         "column": (COLUMN_FEATURE_ORDER, "column_predictor"),

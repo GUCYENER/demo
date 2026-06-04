@@ -11,8 +11,8 @@ RLS: caller `get_db_context_scoped(source_id)` altında çalışmalı (Faz 1c s�
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
 import logging
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 

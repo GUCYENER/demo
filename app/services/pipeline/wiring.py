@@ -107,8 +107,8 @@ def make_execute_callable(
     company_id verilirse data_sources lookup tenant izolasyonu altında yapılır
     (cross-tenant source erişimini engeller).
     """
-    from app.services.safe_sql_executor import SafeSQLExecutor
     from app.core.db import get_db_context
+    from app.services.safe_sql_executor import SafeSQLExecutor
 
     # Source dict bir kez yüklenir — tenant izolasyonu altında.
     source_dict: Optional[Dict[str, Any]] = None
@@ -180,8 +180,8 @@ def make_explain_callable(
 
     Hata fırlatırsa validate node 'explain: ...' error'ı ekler.
     """
-    from app.services.safe_sql_executor import SafeSQLExecutor
     from app.core.db import get_db_context
+    from app.services.safe_sql_executor import SafeSQLExecutor
 
     source_dict: Optional[Dict[str, Any]] = None
     try:

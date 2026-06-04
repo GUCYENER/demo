@@ -3,10 +3,7 @@ from __future__ import annotations
 
 from typing import Any, List
 
-import pytest
-
 from app.services.db_smart import eligibility as el
-
 
 # ─────────────────────────────────────────────────────────────
 # Normalize helper

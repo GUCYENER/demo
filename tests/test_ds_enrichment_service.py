@@ -15,10 +15,10 @@ Kapsamı:
 v3.0.0
 """
 
-import pytest
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
 
 # =============================================================================
 # FIXTURES
@@ -768,6 +768,7 @@ def test_get_all_tables_status():
 def test_enrich_overflow_columns_chunks_all():
     """313 kolonlu tablo: ilk 100 ana çağrıda, 101+ chunk'lı → hepsi etiketlenir (— kalmaz)."""
     from unittest.mock import patch
+
     import app.services.ds_enrichment_service as svc
     cols = [{"name": f"c{i}", "data_type": "text"} for i in range(313)]
     parsed = {"columns": {f"c{i}": {"business_name_tr": "x"} for i in range(100)}}
@@ -783,6 +784,7 @@ def test_enrich_overflow_columns_chunks_all():
 def test_enrich_overflow_columns_noop_under_cap():
     """<=100 kolon → ek LLM çağrısı YOK (no-op)."""
     from unittest.mock import patch
+
     import app.services.ds_enrichment_service as svc
     parsed = {"columns": {"a": {}}}
     with patch.object(svc, "_llm_enrich_columns_only") as m:

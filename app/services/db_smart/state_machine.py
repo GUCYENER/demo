@@ -31,7 +31,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 try:
-    from langgraph.graph import StateGraph, START, END  # type: ignore
+    from langgraph.graph import END, START, StateGraph  # type: ignore
     _HAS_LANGGRAPH = True
 except Exception:
     _HAS_LANGGRAPH = False

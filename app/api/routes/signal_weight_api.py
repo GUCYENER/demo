@@ -36,13 +36,13 @@ Güvenlik:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.routes.auth import get_current_admin
-from app.core.db import get_db_context, apply_company_scope
+from app.core.db import apply_company_scope, get_db_context
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +83,9 @@ def get_current_weights(
 ) -> Dict[str, Any]:
     """Yürürlükteki ağırlıklar + en son öneriler."""
     from app.services.pipeline.nodes.multi_signal_rank import (
-        DEFAULT_WEIGHTS, load_company_weights, invalidate_company_weights_cache,
+        DEFAULT_WEIGHTS,
+        invalidate_company_weights_cache,
+        load_company_weights,
     )
     co_id = current_user.get("company_id")
     if co_id is None:

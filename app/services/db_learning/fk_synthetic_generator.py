@@ -29,14 +29,6 @@ from app.services.db_learning.dedupe_service import sql_hash
 from app.services.db_learning.learned_queries_service import (
     record_successful_query,
 )
-from app.services.db_learning.synthetic_templates import (
-    COMPLEXITY_BY_KIND,
-    Relationship,
-    RenderedQuery,
-    TEMPLATE_KINDS,
-    render,
-    render_junction_n2m,
-)
 from app.services.db_learning.synthetic_dialect import (
     CAT_NUMERIC,
     CAT_TEMPORAL,
@@ -44,6 +36,13 @@ from app.services.db_learning.synthetic_dialect import (
     classify_data_type,
 )
 from app.services.db_learning.synthetic_errors import classify_synthetic_error
+from app.services.db_learning.synthetic_templates import (
+    COMPLEXITY_BY_KIND,
+    Relationship,
+    RenderedQuery,
+    render,
+    render_junction_n2m,
+)
 
 # v3.29.2 G3: tek-Relationship temelli ("per-FK") render edilebilen kinds.
 # Chain-only kinds (CHAIN_JOIN_*, CTE_LATEST_N_PER_GROUP, LATERAL_TOP_K,
@@ -756,9 +755,9 @@ def _audit_run(
 
 def _build_executor(source_id: int, dialect: str, company_id: Optional[int]):
     """SafeSQLExecutor + source_dict çift döndür (wiring helper'a benzer)."""
-    from app.services.safe_sql_executor import SafeSQLExecutor
-    from app.services.pipeline.wiring import _load_source_dict
     from app.core.db import get_db_context
+    from app.services.pipeline.wiring import _load_source_dict
+    from app.services.safe_sql_executor import SafeSQLExecutor
     source_dict = None
     with get_db_context() as conn:
         cur = conn.cursor()

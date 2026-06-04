@@ -16,11 +16,11 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from app.services.db_learning import signal_weight_analyzer as swa
 from app.services.pipeline.nodes.multi_signal_rank import (
     _fk_centrality_score,
     build_centrality_index,
 )
-from app.services.db_learning import signal_weight_analyzer as swa
 
 
 # ─────────────────────────────────────────────────────────────

@@ -5,9 +5,9 @@ Data Sources Learning API endpoint'lerinin integration testleri.
 Endpoint'ler: learning-history, learning-results, generate-qa, schedule
 """
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
+import pytest
 
 # =============================================================================
 # FIXTURES
@@ -18,6 +18,7 @@ def ds_learning_client():
     """DS Learning API testi için özel client."""
     with patch('app.api.main.init_db'):
         from fastapi.testclient import TestClient
+
         from app.api.main import create_app
         app = create_app()
         client = TestClient(app)

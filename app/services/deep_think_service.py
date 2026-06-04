@@ -15,16 +15,15 @@ v3.1.0: Sorgu zamanı halüsinasyon doğrulaması eklendi
 
 from __future__ import annotations
 
-from typing import List, Dict, Any, Optional, Generator
 import re
+from typing import Any, Dict, Generator, List, Optional
 
 from app.core.config import settings
 from app.core.db import get_db_conn
-from app.core.llm import call_llm_api, LLMConnectionError, LLMConfigError
-from app.services.logging_service import log_system_event, log_error, log_warning
-from app.services.deep_think.types import IntentType, IntentResult, DeepThinkResult
-from app.services.deep_think import DeepThinkFormattingMixin, DeepThinkFallbackMixin
-
+from app.core.llm import LLMConfigError, LLMConnectionError, call_llm_api
+from app.services.deep_think import DeepThinkFallbackMixin, DeepThinkFormattingMixin
+from app.services.deep_think.types import DeepThinkResult, IntentResult, IntentType
+from app.services.logging_service import log_error, log_system_event, log_warning
 
 # ============================================
 # FIX2 P0-2 (ARES+METIS): Prompt injection guard
@@ -1181,8 +1180,8 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
         if self._is_short_meaningless_query(query):
             log_system_event("INFO", f"Deep Think: Kısa sorgu reddedildi: '{query}'", "deep_think")
             return self._empty_result(query)
-        import re as regex_mod
         import hashlib
+        import re as regex_mod
         start_time = time.time()
         
         # 🆕 v2.29.13: "Sonraki kategori[N]:" prefix kontrolü
@@ -1367,8 +1366,8 @@ Tekrarları kaldır ama hiçbir bilgiyi kaybetme.
                 "data": ...
             }
         """
-        import time
         import hashlib
+        import time
         start_time = time.time()
         
         # 🆕 v2.53.1: Kısa/anlamsız sorgu koruması (cache'ten ÖNCE)
@@ -2225,7 +2224,8 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             # v3.14.0: Entity Resolution — ML'den önce deterministik eşleştirme
             entity_matched_tables = []
             try:
-                from app.services.text_to_sql import resolve_entities, get_schema_context as _get_ctx
+                from app.services.text_to_sql import get_schema_context as _get_ctx
+                from app.services.text_to_sql import resolve_entities
                 # Hızlı entity resolution için enriched tabloları çek
                 for s in sources:
                     try:
@@ -2474,8 +2474,8 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 pass
 
             # ── 5. LLM Text-to-SQL üret (ML bağlamı + şema) ─────────────
-            from app.services.text_to_sql import generate_sql, generate_sql_with_retry
             from app.services.safe_sql_executor import SafeSQLExecutor, SQLResult
+            from app.services.text_to_sql import generate_sql, generate_sql_with_retry
 
             dialect = schema_ctx.get("dialect", "mssql")
 
@@ -2554,7 +2554,9 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                 if _is_followup and followup_anchor_tables:
                     try:
                         from app.services.db_smart.join_planner import (
-                            load_fk_edges, find_join_path, render_join_hint,
+                            find_join_path,
+                            load_fk_edges,
+                            render_join_hint,
                         )
                         _aset = {a.lower() for a in followup_anchor_tables}
                         _targets = [
@@ -2767,6 +2769,7 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             # try/finally ile sarılı: GeneratorExit / herhangi bir exception'da bile
             # registry'den temizlenir (memory leak engellenir — TYCHE bulgusu).
             import uuid as _uuid
+
             from app.services.safe_sql_executor import register_sql_job, unregister_sql_job
             job_id = _uuid.uuid4().hex
             try:
@@ -2925,8 +2928,9 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             # v3.14.0: Başarılı sorguyuGolden SQL'e kaydet (arka planda)
             if exec_result.success and not sql_result.get("from_cache") and not sql_result.get("from_golden"):
                 try:
-                    from app.services.text_to_sql import save_golden_sql
                     import threading
+
+                    from app.services.text_to_sql import save_golden_sql
                     threading.Thread(
                         target=save_golden_sql,
                         args=(source["id"], company_id, query, sql, None, dialect, user_id),
@@ -3001,8 +3005,8 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
             # ── 7a. Boş sonuç erken dönüşü (LLM'e gereksiz yere gitme) ──────────
             if not db_data:
                 empty_msg = (
-                    f"📭 Sorgunuz çalıştırıldı ancak **hiç kayıt bulunamadı**.\n\n"
-                    f"Arama kriterlerinizi değiştirerek tekrar deneyebilirsiniz."
+                    "📭 Sorgunuz çalıştırıldı ancak **hiç kayıt bulunamadı**.\n\n"
+                    "Arama kriterlerinizi değiştirerek tekrar deneyebilirsiniz."
                 )
                 yield {"type": "token", "data": empty_msg}
                 yield {"type": "done", "data": {
@@ -3164,10 +3168,10 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
 # FAQ/Query Cache (v3.10.0)
 # =====================================================
 
-from collections import OrderedDict
 import hashlib as _hashlib
 import re as _re_cache
 import threading as _threading
+from collections import OrderedDict
 
 _SQL_QUERY_CACHE_MAX = 128  # Max cache entry sayısı
 _SQL_QUERY_CACHE: OrderedDict = OrderedDict()
@@ -3621,9 +3625,10 @@ def _generate_report_templates(query: str, schema_ctx: dict) -> list:
 
     # ── LLM ile zenginleştir (opsiyonel, kural bazlı şablonlar yetersizse) ──
     try:
-        from app.core.llm import call_llm_api
         import json as _json
         import threading as _thr
+
+        from app.core.llm import call_llm_api
 
         table_summary = "; ".join(
             f"{t.get('schema','')}.{t['name']} [{t.get('business_name_tr') or t['name']}]"

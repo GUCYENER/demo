@@ -8,9 +8,9 @@ v2.53.0
 
 import logging
 import threading
-from typing import Dict, Any, List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
+
 from app.core.db import get_db_context
 
 logger = logging.getLogger(__name__)
@@ -157,7 +157,9 @@ def get_neighborhoods(district_id: int):
 
     # DB'de yok — API'den çek ve kaydet
     try:
-        import httpx, os
+        import os
+
+        import httpx
         ssl_verify = os.environ.get("VYRA_SSL_VERIFY", "false").lower() != "false"
         with httpx.Client(timeout=15.0, verify=ssl_verify) as client:
             res = client.get(f"{TURKEY_API}/districts/{district_id}")

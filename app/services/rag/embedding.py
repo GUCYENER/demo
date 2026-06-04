@@ -13,7 +13,7 @@ import threading
 from typing import List
 
 from app.core.config import settings
-from app.services.logging_service import log_system_event, log_error
+from app.services.logging_service import log_error, log_system_event
 
 
 class EmbeddingManager:
@@ -85,6 +85,7 @@ class EmbeddingManager:
         try:
             t0 = time.time()
             import onnxruntime as ort
+
             # 🚀 transformers yerine doğrudan tokenizers kullan (115s → <1s)
             from tokenizers import Tokenizer
             
@@ -245,8 +246,9 @@ class EmbeddingManager:
     
     def get_embedding(self, text: str) -> List[float]:
         """Metin için embedding vektörü üretir (cache destekli, ONNX/PyTorch)"""
-        from app.core.cache import cache_service
         import hashlib
+
+        from app.core.cache import cache_service
         
         # Cache key oluştur
         cache_key = f"emb:{hashlib.md5(text.encode('utf-8')).hexdigest()}"

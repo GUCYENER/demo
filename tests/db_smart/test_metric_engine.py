@@ -8,7 +8,6 @@ import pytest
 
 from app.services.db_smart import metric_engine as me
 
-
 # ─────────────────────────────────────────────────────────────
 # Cursor mock — eligibility test'iyle aynı pattern
 # ─────────────────────────────────────────────────────────────

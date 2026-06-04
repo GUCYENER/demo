@@ -17,8 +17,8 @@ Version: 5.0.0
 """
 
 import json
-import time
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 

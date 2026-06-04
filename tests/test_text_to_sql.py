@@ -6,12 +6,11 @@ LLM SQL üretimi, parse ve güvenlik kontrolü testleri.
 Version: 2.58.0
 """
 
-import pytest
 from app.services.text_to_sql import (
-    parse_sql_from_llm,
     _clean_sql,
     _extract_explanation,
     build_text_to_sql_prompt,
+    parse_sql_from_llm,
 )
 
 

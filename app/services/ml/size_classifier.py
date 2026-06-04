@@ -22,15 +22,14 @@ Training data source:
 """
 from __future__ import annotations
 
+import logging
 import math
 import re
 from typing import Any, Dict, List, Optional, Tuple
-import logging
 
 logger = logging.getLogger(__name__)
 
 try:
-    from catboost import CatBoostClassifier  # type: ignore
     _HAS_CATBOOST = True
 except Exception:
     _HAS_CATBOOST = False

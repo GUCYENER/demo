@@ -22,7 +22,6 @@ import pytest
 
 from app.services.db_smart import sql_executor_stream as ses
 
-
 # ─────────────────────────────────────────────────────────────
 # Cursor stubs — engine başına farklı attribute surface
 # ─────────────────────────────────────────────────────────────

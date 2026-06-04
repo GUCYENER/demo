@@ -11,10 +11,11 @@ Test Kapsamı:
 - get_current_user dependency (token → user dict)
 """
 
-import sys
 import os
+import sys
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 from fastapi import HTTPException
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -41,8 +42,9 @@ class TestDialogModels:
     
     def test_message_request_min_length(self):
         """MessageRequest - boş content kabul edilmemeli."""
-        from app.api.routes.dialog import MessageRequest
         from pydantic import ValidationError
+
+        from app.api.routes.dialog import MessageRequest
         with pytest.raises(ValidationError):
             MessageRequest(content="")
     
@@ -96,8 +98,9 @@ class TestDialogAuthDependency:
     @patch('app.api.routes.auth.get_db_context')
     def test_get_current_user_valid_token(self, mock_ctx):
         """Geçerli token ile kullanıcı bilgisi dönmeli."""
-        from app.api.routes.auth import get_current_user, create_access_token
         from fastapi.security import HTTPAuthorizationCredentials
+
+        from app.api.routes.auth import create_access_token, get_current_user
         
         # Valid token oluştur
         user = {"id": 1, "role": "user"}

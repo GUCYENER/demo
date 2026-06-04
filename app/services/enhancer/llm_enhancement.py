@@ -13,12 +13,12 @@ Author: VYRA AI Team
 Version: 1.0.0 (v3.3.3)
 """
 
-import re
 import json
-from typing import Dict, Any, List
+import re
+from typing import Any, Dict, List
 
-from app.services.logging_service import log_system_event, log_warning
 from app.services.content_integrity_validator import get_integrity_validator
+from app.services.logging_service import log_system_event, log_warning
 
 
 class LLMEnhancer:

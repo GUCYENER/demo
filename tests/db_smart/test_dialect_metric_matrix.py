@@ -27,7 +27,6 @@ import pytest
 
 from app.services.db_smart import dialect_dictionary as dd
 
-
 # ─────────────────────────────────────────────────────────────
 # Seed yükleyici (alembic migration'ı saf modül olarak import)
 # ─────────────────────────────────────────────────────────────

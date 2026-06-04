@@ -47,7 +47,6 @@ import json
 import time
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
-
 DEFAULT_BATCH_SIZE = 200
 DEFAULT_MAX_ROWS = 100_000  # güvenlik tavanı
 

@@ -2,13 +2,9 @@
 (v3.30.0 FAZ 1 G1.3)."""
 from __future__ import annotations
 
-from typing import Any, Dict, List
-from unittest.mock import MagicMock
-
-import pytest
+from typing import List
 
 from app.services.db_smart import fk_graph as fkg
-
 
 # ─────────────────────────────────────────────────────────────
 # Cursor helpers

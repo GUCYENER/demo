@@ -7,12 +7,12 @@ Author: VYRA AI Team
 Version: 1.0.0
 """
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
+from app.api.routes.auth import get_current_user
 from app.core.db import get_db_conn
 from app.services.logging_service import log_error
-from app.api.routes.auth import get_current_user
 
 router = APIRouter()
 

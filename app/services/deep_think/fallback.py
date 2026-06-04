@@ -6,11 +6,11 @@ v2.30.1: deep_think_service.py'den ayrıştırıldı
 """
 
 from __future__ import annotations
-from typing import List, Dict, Any, Optional
-from collections import OrderedDict
-import re
 
-from app.services.deep_think.types import IntentType, IntentResult
+from collections import OrderedDict
+from typing import Dict, List
+
+from app.services.deep_think.types import IntentResult
 
 
 class DeepThinkFallbackMixin:
@@ -29,7 +29,6 @@ class DeepThinkFallbackMixin:
         if not results:
             return "❌ Bilgi tabanında bu konuyla ilgili sonuç bulunamadı."
         
-        import re
         from collections import OrderedDict
         
         # 1️⃣ Sonuçları parse et (ortak helper)
@@ -103,7 +102,7 @@ class DeepThinkFallbackMixin:
             # 🆕 v2.29.13: Tıklanabilir göster butonu - data-shown-count ile
             cat_list = ", ".join(other_categories[:5])
             lines.append(f"\n💡 **Diğer kategorilerde de {other_category_count} sonuç var:** {cat_list}")
-            lines.append(f"<button class='show-other-categories-btn' data-shown-count='1' onclick='DialogChatModule.showOtherCategories(this)'>📋 Göster</button>")
+            lines.append("<button class='show-other-categories-btn' data-shown-count='1' onclick='DialogChatModule.showOtherCategories(this)'>📋 Göster</button>")
         
         # 7️⃣ Kaynak bilgisi - sheet adı ve açıklama dahil (tek satırda)
         source_info = {}  # {dosya: set(sheet_names)}
@@ -146,7 +145,6 @@ class DeepThinkFallbackMixin:
         if not results:
             return "❌ Bilgi tabanında sonuç bulunamadı."
         
-        from collections import OrderedDict
         
         # Sonuçları parse et (ortak helper) ve kategorize et
         parsed_items = self._parse_rag_results(results)

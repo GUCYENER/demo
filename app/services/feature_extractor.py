@@ -12,12 +12,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
 import numpy as np
 
 from app.core.db import get_db_conn
 from app.services.logging_service import log_error, log_warning
-
 
 # ============================================
 # Feature Tanımları

@@ -26,11 +26,10 @@ logger = logging.getLogger(__name__)
 
 try:
     from prometheus_client import (  # type: ignore
-        Counter,
-        Histogram,
-        Gauge,
         REGISTRY,
         CollectorRegistry,
+        Counter,
+        Histogram,
     )
     _HAS_PROM = True
 except Exception:  # pragma: no cover - depends on local install

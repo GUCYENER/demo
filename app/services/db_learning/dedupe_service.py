@@ -18,11 +18,10 @@ DictCursor üzerinden); pgvector cosine için DB-side karşılaştırma kullanı
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from dataclasses import dataclass
 from typing import Iterable, List, Optional
-
-import logging
 
 logger = logging.getLogger(__name__)
 

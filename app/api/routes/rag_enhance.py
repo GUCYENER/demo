@@ -7,21 +7,23 @@ Author: VYRA AI Team
 Version: 1.3.0 (v3.4.5)
 """
 
-import os
-import time
 import asyncio
 import hashlib
+import os
 import tempfile
-from typing import Dict, Any
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query
+import time
+from typing import Any, Dict
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
+
 from app.api.routes.auth import get_current_user
-
 from app.services.document_enhancer import (
-    DocumentEnhancer, get_enhanced_file_path, cleanup_enhanced_file
+    DocumentEnhancer,
+    cleanup_enhanced_file,
+    get_enhanced_file_path,
 )
-from app.services.logging_service import log_system_event, log_error
-
+from app.services.logging_service import log_error, log_system_event
 
 router = APIRouter()
 
@@ -190,8 +192,9 @@ async def enhance_document(
         
         # v3.3.0 [C2]: Enhancement geçmişini DB'ye kaydet
         try:
-            from app.core.db import get_db_conn
             import json as _json
+
+            from app.core.db import get_db_conn
             file_hash = hashlib.md5(file_content[:1024*1024]).hexdigest()
             sections_summary = []
             for s in result.sections:
@@ -538,9 +541,11 @@ async def upload_enhanced_to_rag(
             import io as _bio
             bg_conn = None
             try:
-                from app.services.rag_service import get_rag_service as _get_rag_svc
-                from app.services.rag.topic_extraction import extract_and_save_topics as _extract_topics
                 from app.core.db import get_db_conn as _get_db
+                from app.services.rag.topic_extraction import (
+                    extract_and_save_topics as _extract_topics,
+                )
+                from app.services.rag_service import get_rag_service as _get_rag_svc
                 
                 bg_conn = _get_db()
                 bg_cur = bg_conn.cursor()
@@ -626,8 +631,8 @@ async def upload_enhanced_to_rag(
                 _saved_image_ids = []  # OCR aşaması için
                 if _orig_content:
                     try:
-                        from app.services.document_processors.image_extractor import ImageExtractor
                         from app.api.routes.rag_upload import _update_chunk_image_refs
+                        from app.services.document_processors.image_extractor import ImageExtractor
                         
                         bg_cur.execute("SAVEPOINT sp_images")
                         

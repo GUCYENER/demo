@@ -1,13 +1,10 @@
 """recommendation.py — chart/insight rule engine (v3.30.0 FAZ 2 P9 G2.3)."""
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 
-import pytest
-
 from app.services.db_smart import recommendation as rec
-
 
 # ─────────────────────────────────────────────────────────────
 # Profile

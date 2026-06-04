@@ -28,7 +28,6 @@ from app.services.db_learning.dedupe_service import (
     build_schema_signature,
 )
 from app.services.db_learning.learned_queries_service import (
-    _detect_embedding_column_type,
     _embed_question,
     _vector_literal,
     normalize_question,

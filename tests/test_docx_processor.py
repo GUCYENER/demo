@@ -10,8 +10,9 @@ Author: VYRA AI Team
 Version: 1.0.0 (2026-02-15)
 """
 
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import MagicMock, PropertyMock
 
 
 class TestDOCXProcessorInit:

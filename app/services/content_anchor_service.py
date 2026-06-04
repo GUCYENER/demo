@@ -14,11 +14,10 @@ Version: 1.0.0 (v3.3.3)
 """
 
 import re
-from typing import Dict, List, Tuple
 from dataclasses import dataclass, field
+from typing import Dict, List, Tuple
 
 from app.services.logging_service import log_system_event
-
 
 # ============================================
 # Anchor Result

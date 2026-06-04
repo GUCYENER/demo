@@ -7,10 +7,10 @@ Modüler ve lazy-load tasarım.
 
 from __future__ import annotations
 
-from typing import List, Optional
 import io
+from typing import List, Optional
 
-from app.services.logging_service import log_system_event, log_error
+from app.services.logging_service import log_error, log_system_event
 
 
 class OCRService:
@@ -127,8 +127,8 @@ class OCRService:
             Tüm sayfalardan çıkarılan metin
         """
         try:
-            from pdf2image import convert_from_bytes
             import numpy as np
+            from pdf2image import convert_from_bytes
             
             log_system_event("INFO", "PDF OCR işlemi başlatılıyor...", "ocr")
             

@@ -14,8 +14,8 @@ Kullanım:
 
 from app.services.rag.service import (
     RAGService,
-    SearchResult,
     SearchResponse,
+    SearchResult,
     get_rag_service,
     preload_rag_service,
 )

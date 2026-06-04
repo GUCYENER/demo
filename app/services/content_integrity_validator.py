@@ -15,13 +15,12 @@ Author: VYRA AI Team
 Version: 1.1.0 (v3.3.3)
 """
 
-import re
 import difflib
-from typing import Dict, Any, List, Tuple
+import re
 from dataclasses import dataclass, field
+from typing import Any, Dict, List, Tuple
 
 from app.services.logging_service import log_system_event
-
 
 # ============================================
 # Validation Result

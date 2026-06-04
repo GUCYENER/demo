@@ -15,8 +15,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.core.db import get_db_context
 from app.api.routes.auth import get_current_admin
+from app.core.db import get_db_context
 
 logger = logging.getLogger(__name__)
 

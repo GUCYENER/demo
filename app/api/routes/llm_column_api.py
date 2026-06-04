@@ -20,8 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, validator
 
 from app.api.routes.auth import get_current_user
-from app.services import llm_column_service
-from app.services import llm_column_filter_service
+from app.services import llm_column_filter_service, llm_column_service
 
 logger = logging.getLogger(__name__)
 

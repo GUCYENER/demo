@@ -25,14 +25,13 @@ Version: 2.0.0 (v3.3.3) — Modular refactoring
 """
 
 import os
-import time
 import tempfile
+import time
 import uuid
-from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 
-from app.services.logging_service import log_system_event, log_error, log_warning
-
+from app.services.logging_service import log_error, log_system_event, log_warning
 
 # ============================================
 # Enhancement Data Classes
@@ -89,9 +88,9 @@ class DocumentEnhancer:
     """
 
     def __init__(self):
-        from app.services.enhancer.section_extractors import SectionExtractor
         from app.services.enhancer.catboost_prioritizer import CatBoostPrioritizer
         from app.services.enhancer.llm_enhancement import LLMEnhancer
+        from app.services.enhancer.section_extractors import SectionExtractor
 
         self._section_extractor = SectionExtractor()
         self._catboost_prioritizer = CatBoostPrioritizer()
@@ -257,9 +256,7 @@ class DocumentEnhancer:
                 log_system_event("WARNING", f"XLSX oluşturma başarısız, DOCX fallback: {e}", "enhancer")
 
         # DOCX veya diğer formatlar
-        from app.services.enhancer.output_docx import (
-            apply_to_original_docx, create_fresh_docx
-        )
+        from app.services.enhancer.output_docx import apply_to_original_docx, create_fresh_docx
 
         if original_content and file_type.upper() in ("DOCX", ".DOCX"):
             doc = apply_to_original_docx(original_content, sections)

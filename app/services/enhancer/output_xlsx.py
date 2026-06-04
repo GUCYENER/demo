@@ -9,12 +9,11 @@ Version: 1.0.0 (v3.3.3)
 
 import io
 import tempfile
-from typing import List
+from typing import TYPE_CHECKING, List
 
-from app.services.logging_service import log_system_event
 from app.services.enhancer.image_helpers import get_section_text
+from app.services.logging_service import log_system_event
 
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from app.services.document_enhancer import EnhancedSection
 
@@ -38,7 +37,7 @@ def apply_to_original_xlsx(
         Geçici XLSX dosya yolu
     """
     from openpyxl import load_workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.styles import Alignment, Font, PatternFill
 
     wb = load_workbook(io.BytesIO(original_content))
 

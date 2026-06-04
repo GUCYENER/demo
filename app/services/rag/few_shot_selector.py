@@ -29,9 +29,9 @@ Kullanım (sql_generate node'da):
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence
 import logging
 import math
+from typing import Any, Dict, List, Optional, Sequence
 
 logger = logging.getLogger(__name__)
 

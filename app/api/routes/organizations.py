@@ -4,14 +4,13 @@ VYRA L1 Support API - Organization Management Routes
 Organizasyon grubu yönetimi API endpoint'leri (Admin Only).
 """
 
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.api.routes.auth import get_current_admin
 from app.core.db import get_db_context
-
 
 router = APIRouter(tags=["organizations"])
 

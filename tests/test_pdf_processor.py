@@ -14,9 +14,9 @@ Author: VYRA AI Team
 Version: 1.0.0 (2026-02-15)
 """
 
-import pytest
 from unittest.mock import patch
 
+import pytest
 
 # ──────────────────────────────────────────────────────────────
 # Test: PDFProcessor import ve oluşturma

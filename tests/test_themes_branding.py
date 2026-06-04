@@ -17,11 +17,12 @@ Test Kapsamı:
 v2.59.0
 """
 
-import sys
-import os
 import json
+import os
+import sys
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 from fastapi import HTTPException
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -94,8 +95,9 @@ class TestCompanyBrandingModels:
 
     def test_company_create_app_name_max_length(self):
         """app_name 200 karakter sınırını aşmamalı."""
-        from app.api.routes.companies import CompanyCreate
         from pydantic import ValidationError
+
+        from app.api.routes.companies import CompanyCreate
         with pytest.raises(ValidationError):
             CompanyCreate(
                 name="Test Firma",
@@ -381,7 +383,7 @@ class TestCreateCompanyBranding:
     @patch('app.api.routes.companies.get_db_context')
     def test_create_with_app_name_and_theme(self, mock_db_ctx):
         """app_name ve theme_id ile firma oluşturulabilmeli."""
-        from app.api.routes.companies import create_company, CompanyCreate
+        from app.api.routes.companies import CompanyCreate, create_company
 
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
@@ -421,7 +423,7 @@ class TestCreateCompanyBranding:
     @patch('app.api.routes.companies.get_db_context')
     def test_create_without_app_name_defaults(self, mock_db_ctx):
         """app_name boş bırakıldığında INSERT'te 'NGSSAI' kullanılmalı."""
-        from app.api.routes.companies import create_company, CompanyCreate
+        from app.api.routes.companies import CompanyCreate, create_company
 
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
@@ -470,7 +472,7 @@ class TestUpdateCompanyBranding:
     @patch('app.api.routes.companies.get_db_context')
     def test_update_app_name(self, mock_db_ctx):
         """Sadece app_name güncellenebilmeli."""
-        from app.api.routes.companies import update_company, CompanyUpdate
+        from app.api.routes.companies import CompanyUpdate, update_company
 
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
@@ -500,7 +502,7 @@ class TestUpdateCompanyBranding:
     @patch('app.api.routes.companies.get_db_context')
     def test_update_theme_id(self, mock_db_ctx):
         """theme_id güncellenebilmeli."""
-        from app.api.routes.companies import update_company, CompanyUpdate
+        from app.api.routes.companies import CompanyUpdate, update_company
 
         mock_conn = MagicMock()
         mock_cursor = MagicMock()

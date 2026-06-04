@@ -8,7 +8,7 @@ Refactored from dialog_service.py (v2.29.14)
 
 from __future__ import annotations
 
-from app.services.logging_service import log_system_event, log_error
+from app.services.logging_service import log_error, log_system_event
 
 
 def ask_corpix(query: str, user_id: int) -> str:
@@ -25,7 +25,12 @@ def ask_corpix(query: str, user_id: int) -> str:
     Returns:
         LLM yanıtı (formatlanmış)
     """
-    from app.core.llm import call_llm_api, LLMConnectionError, LLMConfigError, get_prompt_by_category
+    from app.core.llm import (
+        LLMConfigError,
+        LLMConnectionError,
+        call_llm_api,
+        get_prompt_by_category,
+    )
     
     # v2.26.0: DB'den corpix_l1 kategorisindeki aktif prompt'u al
     system_prompt = get_prompt_by_category("corpix_l1")
@@ -58,22 +63,22 @@ def ask_corpix(query: str, user_id: int) -> str:
     except LLMConnectionError as e:
         log_error(f"Corpix LLM bağlantı hatası: {e}", "dialog")
         return (
-            f"🌐 **Bağlantı Hatası**\n\n"
-            f"Şu anda Corpix'e ulaşılamıyor. VPN bağlantınızı kontrol edin.\n\n"
-            f"Alternatif olarak doğrudan IT destek hattını arayabilirsiniz."
+            "🌐 **Bağlantı Hatası**\n\n"
+            "Şu anda Corpix'e ulaşılamıyor. VPN bağlantınızı kontrol edin.\n\n"
+            "Alternatif olarak doğrudan IT destek hattını arayabilirsiniz."
         )
     except LLMConfigError as e:
         log_error(f"Corpix LLM config hatası: {e}", "dialog")
         return (
-            f"⚠️ **Yapılandırma Hatası**\n\n"
-            f"Corpix servisi şu anda kullanılamıyor.\n"
-            f"Lütfen sistem yöneticinize başvurun."
+            "⚠️ **Yapılandırma Hatası**\n\n"
+            "Corpix servisi şu anda kullanılamıyor.\n"
+            "Lütfen sistem yöneticinize başvurun."
         )
     except Exception as e:
         log_error(f"Corpix beklenmeyen hata: {e}", "dialog")
         return (
-            f"❌ **Hata**\n\n"
-            f"Bir sorun oluştu. Lütfen tekrar deneyin."
+            "❌ **Hata**\n\n"
+            "Bir sorun oluştu. Lütfen tekrar deneyin."
         )
 
 
@@ -91,7 +96,7 @@ def generate_ticket_summary(dialog_id: int, user_id: int) -> str:
     Returns:
         IT jargonlu özet metin
     """
-    from app.core.llm import call_llm_api, LLMConnectionError, LLMConfigError
+    from app.core.llm import LLMConfigError, LLMConnectionError, call_llm_api
     from app.services.dialog.messages import get_dialog_messages
     
     # Dialog mesajlarını al

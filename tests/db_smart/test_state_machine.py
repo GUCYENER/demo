@@ -4,8 +4,8 @@ from __future__ import annotations
 import pytest
 
 from app.services.db_smart.state_machine import (
-    WIZARD_NODES,
     WIZARD_NODE_LABELS_TR,
+    WIZARD_NODES,
     build_wizard_graph,
     run_wizard_step,
 )

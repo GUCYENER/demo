@@ -7,9 +7,9 @@ Author: VYRA AI Team
 Version: 2.0.0 (2026-02-07) - Modular structure mock paths
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
-from typing import Dict, Any
 
 
 class TestCreateDialog:
@@ -367,8 +367,9 @@ class TestAddMessageFeedback:
     @patch('app.services.dialog.messages.get_db_context')
     def test_feedback_metadata_as_string(self, mock_db_context):
         """String metadata doğru parse edilir."""
-        from app.services.dialog_service import add_message_feedback
         import json
+
+        from app.services.dialog_service import add_message_feedback
         
         mock_conn = MagicMock()
         mock_cursor = MagicMock()

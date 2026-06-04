@@ -10,9 +10,11 @@ sorduğunda, embedding similarity ile ~100ms'de döndürür.
 🆕 v2.51.0: Tier 1 — Deep Think Cache ile CatBoost Bypass arasında.
 """
 
+from typing import Any, Dict, List, Optional
+
 import numpy as np
-from typing import Optional, Dict, Any, List
-from app.services.logging_service import log_system_event, log_error, log_warning
+
+from app.services.logging_service import log_error, log_system_event, log_warning
 
 
 class LearnedQAService:

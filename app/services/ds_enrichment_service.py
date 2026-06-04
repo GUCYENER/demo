@@ -8,8 +8,8 @@ Skor eşiğinin altındaki tablolar Admin onay kuyruğuna düşer.
 Version: 3.0.0
 """
 
-import json
 import hashlib
+import json
 import logging
 import re
 import time
@@ -196,6 +196,7 @@ def enrich_tables_batch(vyra_conn, source_id: int, company_id: int,
     else:
         # Sınırlı eşzamanlılık — her worker kendi connection'ını alır/iade eder
         from concurrent.futures import ThreadPoolExecutor, as_completed
+
         from app.core.db import get_db_conn
 
         def _worker(tbl):

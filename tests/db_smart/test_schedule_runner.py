@@ -1,7 +1,7 @@
 """DB Smart — schedule_runner unit tests (v3.30.0 FAZ 3 P17 / G3.3 Schedule)."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict
 from unittest.mock import MagicMock, patch
 

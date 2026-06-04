@@ -4,7 +4,6 @@ DB-driven weight override + TTL cache + invalidation davranışı.
 """
 import os
 import sys
-import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,6 +15,7 @@ from app.services.pipeline.nodes.multi_signal_rank import (
     invalidate_company_weights_cache,
     load_company_weights,
 )
+
 # NOTE: parent package `nodes.__init__` re-exports a function named
 # `multi_signal_rank`, which shadows the submodule under attribute lookup.
 # Use sys.modules to grab the real module for monkeypatching.

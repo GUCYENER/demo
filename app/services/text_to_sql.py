@@ -19,10 +19,10 @@ Version: 3.9.0
 
 from __future__ import annotations
 
-import re
-import logging
 import json
-from typing import Dict, Any, Optional, List
+import logging
+import re
+from typing import Any, Dict, List, Optional
 
 from app.services.logging_service import log_system_event, log_warning
 
@@ -388,7 +388,7 @@ def generate_sql(
         }
     """
     from app.core.llm import call_llm_api
-    from app.services.safe_sql_executor import validate_sql, check_table_whitelist
+    from app.services.safe_sql_executor import check_table_whitelist, validate_sql
 
     # v4.0: schema_hint ile tablo önceliklendirmesi
     if schema_hint:
@@ -631,7 +631,7 @@ def generate_sql_with_retry(
 
     # Self-healing retry döngüsü
     from app.core.llm import call_llm_api
-    from app.services.safe_sql_executor import validate_sql, check_table_whitelist
+    from app.services.safe_sql_executor import check_table_whitelist, validate_sql
 
     current_error = execution_error
     current_sql = failed_sql

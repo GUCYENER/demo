@@ -12,19 +12,17 @@ Akış:
 """
 
 import hashlib
-import secrets
 import logging
-from datetime import datetime, timedelta
-from typing import Optional, List
+import secrets
+from datetime import timedelta
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import jwt
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.security import HTTPBearer
 from pydantic import BaseModel, Field
 
-from app.core.config import settings
+from app.api.routes.auth import create_token, get_current_user
 from app.core.db import get_db_context
-from app.api.routes.auth import get_current_user, create_token
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["widget"])

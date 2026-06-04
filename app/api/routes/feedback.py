@@ -10,14 +10,13 @@ Version: 1.0.0 (v2.13.0)
 from __future__ import annotations
 
 from typing import List, Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.api.routes.auth import get_current_user
 from app.services.feedback_service import get_feedback_service
 from app.services.user_affinity_service import get_user_affinity_service
-from app.services.logging_service import log_system_event
-
 
 router = APIRouter()
 

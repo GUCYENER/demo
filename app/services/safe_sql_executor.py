@@ -16,17 +16,15 @@ Version: 2.57.0
 
 from __future__ import annotations
 
+import logging
 import re
 import time
-import logging
-from typing import List, Dict, Any, Optional, Tuple  # noqa: F401
 from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple  # noqa: F401
 
 from app.core.config import settings
-from app.services.logging_service import log_system_event, log_error, log_warning
-from app.services.sql_dialect import (
-    SQLDialect, apply_row_limit, adapt_functions
-)
+from app.services.logging_service import log_error, log_system_event, log_warning
+from app.services.sql_dialect import SQLDialect, adapt_functions, apply_row_limit
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +147,7 @@ def validate_sql(sql: str) -> Tuple[bool, Optional[str]]:
     # 3. SQL injection kalıpları
     for pattern in INJECTION_PATTERNS:
         if re.search(pattern, sql_upper, re.IGNORECASE | re.DOTALL):
-            return False, f"Olası SQL injection tespit edildi"
+            return False, "Olası SQL injection tespit edildi"
 
     # 4. Çoklu statement kontrolü (;)
     # Noktalı virgül ile ayrılmış birden fazla statement yasak
@@ -744,7 +742,7 @@ class SafeSQLExecutor:
         - Oracle: ALTER SESSION SET statement_timeout (destekleniyorsa)
         - Genel: threading.Timer ile fallback timeout
         """
-        from app.services.ds_learning_service import _get_db_connector, _decrypt_password
+        from app.services.ds_learning_service import _decrypt_password, _get_db_connector
 
         password = _decrypt_password(source.get("db_password_encrypted", ""))
         conn = None
@@ -876,7 +874,7 @@ class SafeSQLExecutor:
           - Query injection riski: ``query`` zaten validate_sql/SafeSQL
             akışından geçmiş ``state["sql"]`` olmalıdır.
         """
-        from app.services.ds_learning_service import _get_db_connector, _decrypt_password
+        from app.services.ds_learning_service import _decrypt_password, _get_db_connector
 
         d = (dialect or "").lower()
         result: Dict[str, Any] = {
@@ -1147,7 +1145,7 @@ def _serialize_value(val) -> Any:
         return None
     if isinstance(val, (int, float, bool, str)):
         return val
-    from datetime import datetime, date
+    from datetime import date, datetime
     if isinstance(val, datetime):
         return val.isoformat()
     if isinstance(val, date):

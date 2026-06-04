@@ -11,16 +11,15 @@ Version: 1.0.0 (v2.13.0)
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
 import numpy as np
 
-from app.core.config import settings, BASE_DIR
+from app.core.config import BASE_DIR
 from app.core.db import get_db_conn
-from app.services.logging_service import log_system_event, log_error, log_warning
-from app.services.feature_extractor import get_feature_extractor, FEATURE_NAMES
-
+from app.services.feature_extractor import FEATURE_NAMES, get_feature_extractor
+from app.services.logging_service import log_error, log_system_event, log_warning
 
 # Model dosyaları için dizin
 MODELS_DIR = BASE_DIR / "models"

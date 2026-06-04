@@ -21,9 +21,9 @@ Dışında değilse, sql_generate normal yola devam eder.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
 import logging
 import re
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 

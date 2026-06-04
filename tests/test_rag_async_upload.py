@@ -9,10 +9,10 @@ Kapsam:
 - upload_files endpoint: 202 Accepted response, status='processing'
 """
 
-import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
 import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # ═══════════════════════════════════════════════
 # 1. FileUploadResponse Schema Testleri
@@ -35,7 +35,7 @@ class TestFileUploadResponseSchema:
 
     def test_file_upload_response_schema(self):
         """FileUploadResponse schema embeddings_created alanı olmalı."""
-        from app.api.schemas.rag_schemas import FileUploadResponse, FileUploadInfo
+        from app.api.schemas.rag_schemas import FileUploadInfo, FileUploadResponse
         response = FileUploadResponse(
             message="Test mesajı",
             uploaded_count=1,
@@ -147,6 +147,7 @@ class TestSchedulingQualityCalculation:
     def test_calculate_recent_quality_uses_subquery(self):
         """SQL sorgusu subquery ile ORDER BY + LIMIT kullanmalı (GROUP BY hatası olmadan)."""
         import inspect
+
         from app.services.ml_training.scheduling import MLSchedulingMixin
 
         scheduler = MLSchedulingMixin.__new__(MLSchedulingMixin)
@@ -164,6 +165,7 @@ class TestSchedulingQualityCalculation:
     def test_calculate_recent_quality_no_direct_aggregate_order(self):
         """Aggregate + ORDER BY aynı seviyede kullanılmamalı (PostgreSQL hatası)."""
         import inspect
+
         from app.services.ml_training.scheduling import MLSchedulingMixin
 
         scheduler = MLSchedulingMixin.__new__(MLSchedulingMixin)

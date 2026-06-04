@@ -42,7 +42,8 @@ def cache_lookup_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         from app.services.db_learning.learned_queries_service import (
-            lookup_cached_sql, LOOKUP_COSINE_THRESHOLD,
+            LOOKUP_COSINE_THRESHOLD,
+            lookup_cached_sql,
         )
         threshold = float(state.get("_cache_threshold") or LOOKUP_COSINE_THRESHOLD)
         cached = lookup_cached_sql(

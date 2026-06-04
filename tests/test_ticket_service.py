@@ -9,11 +9,12 @@ Test Kapsamı:
 - update_ticket_llm_evaluation (LLM değerlendirme)
 """
 
-import sys
 import os
-import pytest
-from unittest.mock import patch, MagicMock
+import sys
 from datetime import datetime
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

@@ -155,7 +155,8 @@ def instrument_node(name: str, fn: Callable[[Dict[str, Any]], Dict[str, Any]]):
             )
             # v3.26.0 Faz 5 — Langfuse span
             try:
-                from .langfuse_adapter import is_enabled as _lf_on, log_span as _lf_span
+                from .langfuse_adapter import is_enabled as _lf_on
+                from .langfuse_adapter import log_span as _lf_span
                 if _lf_on():
                     _lf_span(
                         state.get("_pipeline_run_id") or "",
@@ -172,7 +173,8 @@ def instrument_node(name: str, fn: Callable[[Dict[str, Any]], Dict[str, Any]]):
                 duration_ms=elapsed_ms, metadata={"exception": str(e)[:300]},
             )
             try:
-                from .langfuse_adapter import is_enabled as _lf_on, log_span as _lf_span
+                from .langfuse_adapter import is_enabled as _lf_on
+                from .langfuse_adapter import log_span as _lf_span
                 if _lf_on():
                     _lf_span(
                         state.get("_pipeline_run_id") or "",
@@ -236,7 +238,7 @@ def pipeline_end(state: Dict[str, Any], duration_ms: int) -> None:
     )
     # v3.26.0 Faz 5 — Langfuse trace kapanışı
     try:
-        from .langfuse_adapter import is_enabled, end_trace
+        from .langfuse_adapter import end_trace, is_enabled
         if is_enabled():
             run_id = state.get("_pipeline_run_id")
             if run_id:

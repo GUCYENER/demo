@@ -10,9 +10,8 @@ Test Kapsamı:
 - Max 4 görsel limiti
 """
 
-import pytest
-from unittest.mock import patch, MagicMock
 
+import pytest
 
 # =============================================================================
 # FIXTURES

@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 
-
 MIGRATION_PATH = Path(__file__).resolve().parents[2] / "migrations" / "versions" / "033_v3300_metric_library_seed.py"
 
 

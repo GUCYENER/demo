@@ -18,12 +18,9 @@ buradan tarıyor). Davranışsal kapsam birebir korunmuştur:
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
-
-import pytest
+from typing import Any, List, Optional, Tuple
 
 from app.services.db_smart import feature_store as fs
-
 
 # ─────────────────────────────────────────────────────────────
 # Fake cursor — psycopg2 contract minimum

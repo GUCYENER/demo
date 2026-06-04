@@ -7,11 +7,10 @@ Veri kaynağı keşif ve öğrenme pipeline servisi.
 Version: 2.56.0
 """
 
+import json
 import logging
 import re
 import time
-import json
-
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -103,6 +102,7 @@ def _get_db_connector(source: dict, password: str):
 
     elif db_type == "oracle":
         import oracledb
+
         from app.api.routes.data_sources_api import _init_oracle_thick_mode
         _init_oracle_thick_mode()
         # v3.41.1: BAĞLANTI timeout'u — PG/MySQL/MSSQL'de connect_timeout/login_timeout=15
@@ -2168,11 +2168,11 @@ def search_db_knowledge(query: str, company_id: int = None, min_score: float = 0
         List[dict]: [{content, score, source_name, content_type, metadata}]
     """
     try:
-        from app.services.rag.embedding import EmbeddingManager
-        from app.services.rag import scoring
         # v3.20.0 Faz 1c: ds_learning_results RLS koruma altında. source_id verilmezse
         # cross-source taranır (admin/RAG path) → bypass; verilmişse o kaynağa scope.
         from app.core.db import get_db_context_scoped
+        from app.services.rag import scoring
+        from app.services.rag.embedding import EmbeddingManager
 
         emb_mgr = EmbeddingManager()
         query_embedding = emb_mgr.get_embedding(query)

@@ -30,7 +30,6 @@ import pytest
 
 from app.services.text_to_sql_store import few_shot_store as fss
 
-
 USER_CTX: Dict[str, Any] = {"id": 7, "company_id": 42}
 SRC_ID = 11
 

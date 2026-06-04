@@ -5,11 +5,11 @@ ds_learning_service modülünün unit testleri.
 Fonksiyonlar: get_learning_results, get_learning_history, generate_synthetic_qa
 """
 
-import pytest
 import json
-from unittest.mock import MagicMock
 from datetime import datetime
+from unittest.mock import MagicMock
 
+import pytest
 
 # =============================================================================
 # FIXTURES

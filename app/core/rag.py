@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import List, Optional
-from app.services.logging_service import log_system_event, log_error
+
+from app.services.logging_service import log_error, log_system_event
 
 
 @dataclass

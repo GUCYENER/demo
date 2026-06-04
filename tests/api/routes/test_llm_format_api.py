@@ -16,12 +16,11 @@ from __future__ import annotations
 
 import json
 from typing import Any, Dict
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 
 # ──────────────────────────────────────────────────────────────────
 # Test app + fixtures
@@ -423,7 +422,7 @@ class TestServiceInternals:
         assert out[0]["title"] == "ok"
 
     def test_sanitize_caps_at_max(self):
-        from app.services.llm_format_service import _sanitize_cards, MAX_CARDS
+        from app.services.llm_format_service import MAX_CARDS, _sanitize_cards
         raw = [
             {"title": f"c{i}", "chart_type": "line"} for i in range(MAX_CARDS + 5)
         ]

@@ -7,7 +7,6 @@ permission_audit_log tablosuna yazar.
 Compliance ve forensic analiz için tasarlanmıştır.
 """
 
-import json
 import logging
 from typing import Any, Dict, Optional
 

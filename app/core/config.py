@@ -7,8 +7,8 @@ Merkezi konfigürasyon yönetimi. PostgreSQL bağlantısı ve uygulama ayarları
 from pathlib import Path
 from typing import List
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Proje kök dizini (vyra_l1_fastapi klasörü)
 BASE_DIR = Path(__file__).resolve().parents[2]

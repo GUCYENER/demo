@@ -30,7 +30,6 @@ from app.services.ml.synthetic_db_query_pairs import (
     reset_budget_state,
 )
 
-
 # ============================================================
 # Pure-function tests
 # ============================================================

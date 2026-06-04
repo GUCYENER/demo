@@ -11,8 +11,8 @@ Feature listesi (FEATURE_ORDER): model deterministic input için sabit sıralı.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence, Tuple
 import logging
+from typing import Any, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 

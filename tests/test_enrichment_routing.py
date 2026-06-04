@@ -11,8 +11,7 @@ Coverage:
 - Halüsinasyon doğrulaması (3 katman)
 """
 
-from unittest.mock import patch, MagicMock
-
+from unittest.mock import MagicMock, patch
 
 # =============================================================================
 # TEST: match_template_query() — Enrichment Alias Eşleştirme
@@ -292,6 +291,7 @@ class TestDetectDbIntent:
     def test_db_intent_detected(self):
         """DB kalıbı algılanır."""
         from app.services.hybrid_router import detect_db_intent
+
         from app.services.deep_think.types import IntentType
         result = detect_db_intent("müşteri sayısı kaç")
         assert result == IntentType.DATABASE_QUERY
@@ -305,6 +305,7 @@ class TestDetectDbIntent:
     def test_hybrid_intent_detected(self):
         """Hybrid kalıbı algılanır."""
         from app.services.hybrid_router import detect_db_intent
+
         from app.services.deep_think.types import IntentType
         result = detect_db_intent("fatura nedir ve toplam kaç tane var")
         assert result == IntentType.HYBRID

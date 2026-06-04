@@ -24,9 +24,9 @@ Hint üretimi:
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
 import logging
 import re
+from typing import Any, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +168,8 @@ def self_heal_node(state: Dict[str, Any]) -> Dict[str, Any]:
         try:
             from app.services.db_learning.error_pattern_learner import (
                 classify_error as _classify_db,
+            )
+            from app.services.db_learning.error_pattern_learner import (
                 record_failure,
                 suggest_fix,
             )

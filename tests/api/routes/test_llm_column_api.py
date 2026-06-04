@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, Dict
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
@@ -21,7 +21,6 @@ from fastapi.testclient import TestClient
 
 from app.api.routes import llm_column_api
 from app.services import llm_column_service
-
 
 # ─────────────────────────────────────────────────────────────
 # Test app fixture (main.py dokunulmuyor)

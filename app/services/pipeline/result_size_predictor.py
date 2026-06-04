@@ -38,7 +38,7 @@ Public API:
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Optional, Callable
+from typing import Any, Callable, Dict, Optional
 
 # Bucket eşikleri
 SMALL_MAX = 50
@@ -341,7 +341,8 @@ def predict_size_node(state: Dict[str, Any]) -> Dict[str, Any]:
     try:
         from app.services.ml.catboost_inference import get_active_size_model
         from app.services.ml.size_classifier import (
-            extract_size_features, predict_with_model,
+            extract_size_features,
+            predict_with_model,
         )
         model = get_active_size_model(cursor, company_id=state.get("company_id"))
         if model is not None:

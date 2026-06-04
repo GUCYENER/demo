@@ -7,10 +7,12 @@ RAG'de sonuç bulunamazsa fallback olarak kullanılır.
 
 from __future__ import annotations
 
-import requests
 from dataclasses import dataclass
-from typing import List, Optional
-from app.services.logging_service import log_system_event, log_error, log_warning
+from typing import List
+
+import requests
+
+from app.services.logging_service import log_error, log_system_event, log_warning
 
 
 @dataclass

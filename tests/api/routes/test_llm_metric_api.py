@@ -21,7 +21,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-
 # -------------------------------------------------------------
 # Fixtures
 # -------------------------------------------------------------
@@ -206,7 +205,6 @@ class TestMetricSuggestCache:
         patch_auth_db,
     ):
         # Fake in-memory cache backend (RedisCache yerine)
-        from app.services import llm_metric_service
 
         class FakeCache:
             def __init__(self):
@@ -432,8 +430,8 @@ class TestServiceUnit:
         assert result["cache_hit"] is False
 
     def test_invalid_json_response_raises(self):
-        from app.services.llm_metric_service import suggest_metrics
         from app.core.llm import LLMResponseError
+        from app.services.llm_metric_service import suggest_metrics
 
         with patch(
             "app.services.llm_metric_service.call_llm_api",
@@ -589,8 +587,8 @@ class TestServiceUnit:
 
     def test_unexpected_llm_error_wrapped(self):
         """Beklenmeyen exception LLMConnectionError'a wrap edilir."""
-        from app.services.llm_metric_service import suggest_metrics
         from app.core.llm import LLMConnectionError
+        from app.services.llm_metric_service import suggest_metrics
 
         with patch(
             "app.services.llm_metric_service.call_llm_api",

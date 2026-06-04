@@ -22,7 +22,6 @@ Usage:
     python tests/e2e/test_smart_discovery_browser.py
 """
 
-import io
 import json
 import sys
 import time
@@ -37,8 +36,7 @@ except Exception:
     pass
 
 import requests
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
-
+from playwright.sync_api import sync_playwright
 
 BASE = "http://localhost:8000"
 SHOT_DIR = Path(__file__).parent / "screenshots"

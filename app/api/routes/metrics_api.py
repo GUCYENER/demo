@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.api.routes.auth import get_current_user
-from app.core.db import get_db_context, apply_company_scope
+from app.core.db import apply_company_scope, get_db_context
 from app.services import metric_registry as mr
 
 router = APIRouter()

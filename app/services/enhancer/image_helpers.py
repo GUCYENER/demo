@@ -8,7 +8,7 @@ Author: VYRA AI Team
 Version: 1.0.0 (v3.3.3)
 """
 
-from typing import Dict, List, TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, List
 
 if TYPE_CHECKING:
     from app.services.document_enhancer import EnhancedSection

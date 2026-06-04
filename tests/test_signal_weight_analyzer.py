@@ -11,13 +11,11 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.services.db_learning.signal_weight_analyzer import (
-    SIGNAL_NAMES,
     _confidence,
     _pearson,
     _renormalize,
     analyze_signal_weights,
 )
-
 
 # ---------- Helpers / Sample fabrika ----------
 

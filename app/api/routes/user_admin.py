@@ -6,17 +6,18 @@ Admin kullanıcı yönetimi endpoint'leri.
 
 from __future__ import annotations
 
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.core.db import get_db_conn
 from app.api.routes.auth import get_current_admin
 from app.api.schemas.user_schemas import (
-    ApproveUserRequest, RejectUserRequest, UpdateUserOrgsRequest,
-    RolesResponse
+    ApproveUserRequest,
+    RejectUserRequest,
+    RolesResponse,
+    UpdateUserOrgsRequest,
 )
-
+from app.core.db import get_db_conn
 
 router = APIRouter()
 

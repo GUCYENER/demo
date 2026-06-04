@@ -13,9 +13,9 @@ multi_signal_rank ve retrieve node'ları bu state alanlarını okur.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
 import json
 import logging
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 

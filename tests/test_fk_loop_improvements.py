@@ -20,23 +20,20 @@ Strateji:
 from __future__ import annotations
 
 import os
-import re
 import sys
-from dataclasses import asdict, dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.services.db_learning import fk_synthetic_generator as fkgen
-from app.services.db_learning import synthetic_templates as tmpl
 from app.services.db_learning.synthetic_templates import (
     Relationship,
     render_aggregate_count,
     render_lookup_join,
 )
-
 
 # ============================================================
 # Mock helpers

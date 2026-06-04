@@ -18,7 +18,7 @@ State akışı (Faz 3+):
 """
 from __future__ import annotations
 
-from typing import Any, TypedDict, NotRequired
+from typing import Any, NotRequired, TypedDict
 
 
 class TableCandidate(TypedDict):

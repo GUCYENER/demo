@@ -10,7 +10,6 @@ import pytest
 
 from app.services.db_smart import session_manager as sm
 
-
 # ─────────────────────────────────────────────────────────────
 # Cursor mock — Eligibility/Metric test'iyle aynı pattern.
 # ─────────────────────────────────────────────────────────────

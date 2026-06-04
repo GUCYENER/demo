@@ -46,19 +46,19 @@ from pydantic import BaseModel, Field
 
 from app.api.routes.auth import get_current_user
 from app.core.db import get_db_context
-from app.services.db_smart.rls_context import apply_vyra_user_context, resolve_effective_company_id
 from app.services.db_smart import (
+    custom_metric_parser,  # v3.30.0 FAZ 2 P11 G2.2
+    eligibility,  # v3.30.0 FAZ 1 G1.2
+    fk_graph,  # v3.30.0 FAZ 1 G1.3
+    insight_detector,  # v3.30.0 FAZ 2 P28
+    metric_engine,  # v3.30.0 FAZ 1 P3 G1.4
+    recommendation,  # v3.30.0 FAZ 2 P9 G2.3
+    saved_reports,  # v3.30.0 FAZ 3 P13 G3.3
     session_manager,
     state_machine,
-    eligibility,     # v3.30.0 FAZ 1 G1.2
-    fk_graph,        # v3.30.0 FAZ 1 G1.3
-    metric_engine,   # v3.30.0 FAZ 1 P3 G1.4
-    recommendation,        # v3.30.0 FAZ 2 P9 G2.3
-    insight_detector,      # v3.30.0 FAZ 2 P28
-    custom_metric_parser,  # v3.30.0 FAZ 2 P11 G2.2
-    saved_reports,         # v3.30.0 FAZ 3 P13 G3.3
     template_marketplace,  # v3.30.0 FAZ 3 P18 G3.3
 )
+from app.services.db_smart.rls_context import apply_vyra_user_context, resolve_effective_company_id
 from app.services.db_smart.table_scope import resolve_scope  # v3.38.0 tablo kapsamı
 
 logger = logging.getLogger(__name__)
@@ -965,7 +965,8 @@ def _load_source(
     # connector helpers in ds_learning_service and data_sources_api now
     # consume the same single source of truth.
     from app.services.db_smart.dialect_constants import (
-        SUPPORTED_DIALECTS, normalize_dialect,
+        SUPPORTED_DIALECTS,
+        normalize_dialect,
     )
     raw_dt = (rec.get("db_type") or "").strip().lower()
     dialect = normalize_dialect(raw_dt)

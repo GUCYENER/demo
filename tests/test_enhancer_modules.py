@@ -16,9 +16,8 @@ pytest tests/test_enhancer_modules.py -v
 
 import io
 import os
-import pytest
-from unittest.mock import patch, MagicMock
 
+import pytest
 
 # ═══════════════════════════════════════════
 # SectionExtractor Tests
@@ -88,8 +87,9 @@ class TestSectionExtractor:
 
     def test_extract_docx_sections(self):
         """DOCX dosyasından heading bazlı bölüm çıkarma."""
-        from app.services.enhancer.section_extractors import SectionExtractor
         from docx import Document
+
+        from app.services.enhancer.section_extractors import SectionExtractor
 
         extractor = SectionExtractor()
 
@@ -110,8 +110,9 @@ class TestSectionExtractor:
 
     def test_extract_docx_no_headings(self):
         """Heading'siz DOCX → tek 'Genel' bölüm."""
-        from app.services.enhancer.section_extractors import SectionExtractor
         from docx import Document
+
+        from app.services.enhancer.section_extractors import SectionExtractor
 
         extractor = SectionExtractor()
 
@@ -365,8 +366,9 @@ class TestOutputXlsx:
     def test_xlsx_creates_enhanced_sheet(self):
         """Orijinal XLSX'e enhanced sheet eklenmeli."""
         pytest.importorskip("openpyxl", reason="openpyxl yüklü değil")
-        from app.services.enhancer.output_xlsx import apply_to_original_xlsx
         from openpyxl import Workbook, load_workbook
+
+        from app.services.enhancer.output_xlsx import apply_to_original_xlsx
 
         # Test XLSX oluştur
         wb = Workbook()
@@ -396,8 +398,9 @@ class TestOutputXlsx:
     def test_xlsx_no_change_skipped(self):
         """no_change section'lar → enhanced sheet oluşturulmamalı."""
         pytest.importorskip("openpyxl", reason="openpyxl yüklü değil")
-        from app.services.enhancer.output_xlsx import apply_to_original_xlsx
         from openpyxl import Workbook, load_workbook
+
+        from app.services.enhancer.output_xlsx import apply_to_original_xlsx
 
         wb = Workbook()
         ws = wb.active
@@ -429,11 +432,13 @@ class TestDocumentEnhancerFacade:
 
     def test_backward_compatible_imports(self):
         """Mevcut import path'leri hâlâ çalışmalı."""
-        from app.services.document_enhancer import DocumentEnhancer
-        from app.services.document_enhancer import EnhancedSection
-        from app.services.document_enhancer import EnhancementResult
-        from app.services.document_enhancer import get_enhanced_file_path
-        from app.services.document_enhancer import cleanup_enhanced_file
+        from app.services.document_enhancer import (
+            DocumentEnhancer,
+            EnhancedSection,
+            EnhancementResult,
+            cleanup_enhanced_file,
+            get_enhanced_file_path,
+        )
 
         assert DocumentEnhancer is not None
         assert EnhancedSection is not None
@@ -452,7 +457,11 @@ class TestDocumentEnhancerFacade:
 
     def test_to_dict_serialization(self):
         """to_dict JSON serializable dict döndürmeli."""
-        from app.services.document_enhancer import DocumentEnhancer, EnhancementResult, EnhancedSection
+        from app.services.document_enhancer import (
+            DocumentEnhancer,
+            EnhancedSection,
+            EnhancementResult,
+        )
 
         enhancer = DocumentEnhancer()
         result = EnhancementResult(
@@ -518,7 +527,7 @@ class TestImageHelpersModule:
         from app.services.enhancer.image_helpers import (
             get_section_text,
             map_images_to_sections,
-            organize_images_at_positions
+            organize_images_at_positions,
         )
         assert callable(get_section_text)
         assert callable(map_images_to_sections)

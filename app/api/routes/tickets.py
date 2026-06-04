@@ -1,22 +1,22 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional, List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from app.api.routes.auth import get_current_admin, get_current_user
+from app.api.routes.auth import get_current_user
+from app.core.async_task_manager import TaskStatus, task_manager
+from app.core.rag import search_knowledge_base
+from app.core.websocket_manager import ws_manager
 from app.models.schemas import ChatRequest, TicketDetail, TicketHistoryResponse
+from app.services.logging_service import log_system_event
 from app.services.ticket_service import (
     create_ticket_from_chat,
     get_ticket_detail,
     list_ticket_history_for_user,
 )
-from app.core.async_task_manager import task_manager, TaskStatus
-from app.core.websocket_manager import ws_manager
-from app.core.rag import search_knowledge_base
-from app.services.logging_service import log_system_event
 
 router = APIRouter(tags=["tickets"])
 
@@ -329,8 +329,8 @@ def _process_ticket_async(user_id: int, query: str, task_id: str):
     🆕 v2.23.0: Sadece RAG araması yapar, LLM çağırmaz.
     Arka planda ticket oluşturma işlemi.
     """
-    import uuid
     import traceback
+    import uuid
     from datetime import datetime
     
     try:
@@ -368,7 +368,6 @@ def _on_ticket_complete(task_id: str, result: dict | None, error: str | None):
     Ticket işlemi tamamlandığında WebSocket ile bildirim gönder.
     Bu callback ThreadPoolExecutor içinden çağrılır.
     """
-    import threading
     
     task = task_manager.get_task_status(task_id)
     if not task:

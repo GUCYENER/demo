@@ -8,16 +8,16 @@ v2.56.0
 import logging
 import threading
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Literal
+from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Depends, Query, Body, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.api.routes.auth import get_current_user
 from app.core.db import get_db_context
+from app.services.data_source_access import user_accessible_tables
 from app.services.db_smart.dialect_constants import is_canary_value
 from app.services.permission_audit import log_permission_change
-from app.services.data_source_access import user_accessible_tables
 
 logger = logging.getLogger(__name__)
 
@@ -188,8 +188,9 @@ def _encrypt_password(plain: str) -> str:
         pass
     # Fallback: Fernet key environment'tan
     try:
-        from cryptography.fernet import Fernet
         import os
+
+        from cryptography.fernet import Fernet
         key = os.environ.get("VYRA_ENCRYPT_KEY")
         if key:
             f = Fernet(key.encode() if isinstance(key, str) else key)
@@ -813,8 +814,9 @@ def _test_database_connection(source: dict, password: str) -> dict:
     """Veritabanı bağlantı testi (PostgreSQL / MSSQL / MySQL / Oracle)."""
     # v3.37.4 (code review #7): dialect-aware port default — hardcoded 5432
     # PG dışı dialect testlerinde sessiz yanlış porta bağlanma riskiydi.
-    from app.services.db_smart.dialect_constants import default_port
     import time
+
+    from app.services.db_smart.dialect_constants import default_port
     db_type = source.get("db_type", "")
     host = source.get("host", "")
     port = source.get("port")
@@ -920,8 +922,8 @@ def _test_ftp_connection(source: dict, password: str) -> dict:
 
 def _test_file_server_connection(source: dict) -> dict:
     """File Server erişilebilirlik testi."""
-    import time
     import os
+    import time
     path = source.get("file_server_path", "")
     start = time.time()
 
@@ -1943,8 +1945,7 @@ def approve_enrichment(
     v3.9.0: Onay sonrası otomatik schema_record + embedding oluşturma.
     """
     try:
-        from app.services import ds_enrichment_service
-        from app.services import ds_learning_service
+        from app.services import ds_enrichment_service, ds_learning_service
         label = body.admin_label_tr if body else None
         notes = body.admin_notes if body else None
         # v3.20.0 Faz 1c: schema_record üretimi ds_db_objects + ds_learning_results
@@ -2050,8 +2051,8 @@ def approve_enrichment_bulk(
     source_company_id: Optional[int] = None
 
     try:
-        from app.services import ds_learning_service
         from app.core.db import get_db_context_scoped
+        from app.services import ds_learning_service
 
         # ARES: Company-level ACL guard — caller'in tenant'i source.company_id ile esit mi?
         # Source-only RLS scope cross-tenant'i tek basina engellemez; bulk POST = N satir blast.
@@ -2264,7 +2265,8 @@ def _generate_schema_records_background(source_id: int,
       (`journalctl -u vyra-backend --since "30 minutes ago"`).
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    from app.core.db import get_db_context_scoped, apply_company_scope, get_db_context
+
+    from app.core.db import apply_company_scope, get_db_context, get_db_context_scoped
 
     def _worker(eid: int) -> Optional[Dict[str, Any]]:
         try:

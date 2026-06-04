@@ -32,11 +32,11 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Iterator, List, Optional
 
+from app.services.pipeline.streaming_execute import DEFAULT_BATCH_SIZE, stream_execute
 from app.services.safe_sql_executor import (
-    validate_sql,
     check_table_whitelist,
+    validate_sql,
 )
-from app.services.pipeline.streaming_execute import stream_execute, DEFAULT_BATCH_SIZE
 
 logger = logging.getLogger(__name__)
 

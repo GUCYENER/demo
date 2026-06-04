@@ -10,9 +10,11 @@ Test Kapsamı:
 - Organizasyon güncelleme
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 from fastapi import HTTPException
+
 from tests.conftest import run_async
 
 
@@ -86,7 +88,7 @@ class TestCreateOrganization:
         mock_cursor.fetchone.return_value = {"id": 1}  # duplicate found
 
         with patch('app.api.routes.organizations.get_db_context', return_value=_mock_db_context(mock_conn)):
-            from app.api.routes.organizations import create_organization, OrganizationCreate
+            from app.api.routes.organizations import OrganizationCreate, create_organization
             payload = OrganizationCreate(org_code="ORG-IT", org_name="IT Birimi")
 
             with pytest.raises(HTTPException) as exc:

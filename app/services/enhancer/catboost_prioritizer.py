@@ -7,7 +7,7 @@ Author: VYRA AI Team
 Version: 1.0.0 (v3.3.3)
 """
 
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 
 from app.services.logging_service import log_system_event, log_warning
 

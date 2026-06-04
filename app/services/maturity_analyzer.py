@@ -11,7 +11,7 @@ Best practices kurallarına göre kategorik skorlama yapar.
 import logging
 import re
 from collections import Counter
-from typing import Dict, Any, List, BinaryIO
+from typing import Any, BinaryIO, Dict, List
 
 logger = logging.getLogger("vyra")
 

@@ -8,7 +8,8 @@ Keyword tabanlı hızlı ön kontrol (~10ms) yapar.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Set, Optional
+from typing import List, Optional
+
 from app.core.db import get_db_conn
 from app.services.logging_service import log_system_event
 
@@ -147,7 +148,7 @@ def should_use_rag(query: str) -> RoutingDecision:
     if matched_keywords or matched_files:
         return RoutingDecision(
             should_use_rag=True,
-            reason=f"Eşleşen anahtar kelimeler bulundu",
+            reason="Eşleşen anahtar kelimeler bulundu",
             matched_keywords=matched_keywords,
             matched_files=matched_files
         )

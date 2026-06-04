@@ -102,7 +102,7 @@ _DIALECT = {
 def _validate_ident(ident: str, *, allow_star: bool = False) -> str:
     """Identifier whitelist guard. allow_star=True ise '*' veya 'tbl.*' geçer."""
     if not isinstance(ident, str) or not ident.strip():
-        raise ValueError(f"Invalid identifier (empty)")
+        raise ValueError("Invalid identifier (empty)")
     s = ident.strip()
     if allow_star:
         if s == "*":

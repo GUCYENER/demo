@@ -6,9 +6,9 @@ from __future__ import annotations
 import pytest
 
 from app.services.pipeline.nodes.query_state_builder import (
+    _clamp_limit,
     _is_safe_identifier,
     _normalize_op,
-    _clamp_limit,
     build_sql_from_state,
 )
 

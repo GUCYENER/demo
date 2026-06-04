@@ -30,7 +30,6 @@ Design rules (mirror llm_column_order.suggest_order):
 """
 from __future__ import annotations
 
-import json
 import logging
 import re
 from typing import Any, Dict, List, Optional
@@ -596,7 +595,7 @@ def generate_report(
     # yetki yine route'ta (enforce_sql_scope) korunur.
     if primary_name and join_names and not fk_lines:
         try:
-            from app.services.db_smart.join_planner import load_fk_edges, find_join_path
+            from app.services.db_smart.join_planner import find_join_path, load_fk_edges
             # code-review fix: in_scope = SEÇİLEN tablolar. lambda:True idi → join_planner
             # seçilmemiş KÖPRÜ tablo üzerinden join üretip prompt'a koyabiliyordu (bridge-leak).
             # Yalnız tüm yol seçili tablolardaysa (ok) join ver; köprü seçilmemişse HİÇ ekleme

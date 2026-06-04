@@ -9,8 +9,8 @@ Bu modül, frontend UI/UX testlerini içerir:
 Manuel test için kullanılabilir veya Selenium ile otomatize edilebilir.
 """
 
-import sys
 import os
+import sys
 from datetime import datetime
 
 # Proje root'unu path'e ekle

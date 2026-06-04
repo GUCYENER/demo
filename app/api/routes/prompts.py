@@ -7,13 +7,14 @@ Prompt şablonu yönetimi endpoint'leri.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
 
 from app.api.routes.auth import get_current_admin
 from app.core.db import get_db_conn
-from app.services.logging_service import log_system_event, log_error
+from app.services.logging_service import log_error, log_system_event
 
 router = APIRouter()
 

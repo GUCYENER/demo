@@ -7,7 +7,6 @@ Varsayılan LLM config, prompt template ve organizasyon verileri.
 
 from __future__ import annotations
 
-
 # ===========================================================
 #  Default Configuration Data
 # ===========================================================
@@ -117,7 +116,7 @@ def insert_default_data(cur) -> None:
             """, (admin_user_id, admin_org['id'], admin_user_id))
         
         print("[VYRA] Default admin user created (username: admin — password should be changed via .env or DB)")
-        print(f"[VYRA] Admin user assigned to ORG-ADMIN")
+        print("[VYRA] Admin user assigned to ORG-ADMIN")
     
     # Default LLM Config
     cur.execute("SELECT COUNT(*) as count FROM llm_config")

@@ -9,12 +9,10 @@ Refactored from dialog_service.py (v2.29.14)
 from __future__ import annotations
 
 import re
-from typing import List, Dict, Any, Tuple, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote as url_quote
 
 from app.core.db import get_db_context
-
-
 
 # =============================================================================
 # RESPONSE BUILDING
@@ -344,6 +342,7 @@ def parse_chunk_details(chunk_text: str) -> Dict[str, str]:
 def create_error_response(dialog_id: int, error_msg: str) -> Dict[str, Any]:
     """Hata yanıtı oluştur."""
     from datetime import datetime
+
     from app.services.dialog.messages import add_message
     
     content = f"⚠️ {error_msg}"

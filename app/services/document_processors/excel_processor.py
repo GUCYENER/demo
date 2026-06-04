@@ -8,7 +8,7 @@ Enhanced with consistent metadata format (2024 Best Practices)
 
 import logging
 from pathlib import Path
-from typing import BinaryIO, List, Dict, Any, Tuple
+from typing import Any, BinaryIO, Dict, List, Tuple
 
 from .base import BaseDocumentProcessor
 

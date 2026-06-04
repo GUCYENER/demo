@@ -15,11 +15,11 @@ v2.32.0: Initial implementation
 
 from __future__ import annotations
 
-import time
 import threading
-from typing import Dict, Any, Optional
+import time
+from typing import Any, Dict, Optional
 
-from app.services.logging_service import log_system_event, log_error, log_warning
+from app.services.logging_service import log_error, log_system_event, log_warning
 
 
 class ContinuousLearningService:
@@ -158,8 +158,9 @@ class ContinuousLearningService:
             Kalan bekleme süresi (saniye). 0 ise hemen eğitim başlamalı.
         """
         try:
-            from app.core.db import get_db_context
             from datetime import datetime
+
+            from app.core.db import get_db_context
             
             with get_db_context() as conn:
                 with conn.cursor() as cur:
@@ -237,6 +238,7 @@ class ContinuousLearningService:
             
             try:
                 from datetime import datetime
+
                 from app.services.ml_training.synthetic_data import SyntheticDataGenerator
                 
                 start_time = datetime.now()
@@ -348,8 +350,9 @@ class ContinuousLearningService:
     def _create_cl_job(self, start_time) -> Optional[int]:
         """Continuous learning job kaydı oluştur."""
         try:
-            from app.core.db import get_db_context
             from datetime import datetime
+
+            from app.core.db import get_db_context
             _ = datetime  # suppress pyflakes: used below
             
             with get_db_context() as conn:
@@ -378,8 +381,9 @@ class ContinuousLearningService:
             return
         
         try:
-            from app.core.db import get_db_context
             from datetime import datetime
+
+            from app.core.db import get_db_context
             
             if not end_time:
                 end_time = datetime.now()
@@ -501,8 +505,8 @@ class ContinuousLearningService:
                 model.fit(train_pool)
                 
                 # Modeli diske kaydet
-                import os
                 import json
+                import os
                 from datetime import datetime as _dt
                 
                 model_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "ml_models")

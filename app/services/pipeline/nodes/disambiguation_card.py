@@ -100,7 +100,10 @@ def _join_paths_to_peers(
         return []
     try:
         from app.services.db_learning.fk_graph_resolver import (
-            build_graph as _build_graph, find_paths,
+            build_graph as _build_graph,
+        )
+        from app.services.db_learning.fk_graph_resolver import (
+            find_paths,
         )
     except Exception:
         return []

@@ -7,8 +7,8 @@ RAG dosya yükleme integration testleri.
 Sadece `pytest -m integration` ile çalıştırılmalıdır.
 """
 
-import os
 import io
+
 import pytest
 from fastapi.testclient import TestClient
 

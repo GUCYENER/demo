@@ -16,9 +16,9 @@ Author: VYRA AI Team
 Version: 1.0.0 (v3.3.3)
 """
 
-from app.services.enhancer.section_extractors import SectionExtractor
 from app.services.enhancer.catboost_prioritizer import CatBoostPrioritizer
 from app.services.enhancer.llm_enhancement import LLMEnhancer
+from app.services.enhancer.section_extractors import SectionExtractor
 
 __all__ = [
     "SectionExtractor",

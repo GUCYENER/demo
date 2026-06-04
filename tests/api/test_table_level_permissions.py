@@ -15,7 +15,6 @@ import pytest
 from app.services import data_source_access as dsa
 from app.services.data_source_access import AccessScope, user_accessible_tables
 
-
 # ───────────────────────── AccessScope.allows (saf) ─────────────────────────
 
 def test_scope_all_tables_allows_everything():

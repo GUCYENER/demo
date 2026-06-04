@@ -13,7 +13,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.services.db_learning import result_cache as rc
 from app.services.safe_sql_executor import SQLResult
 
-
 # ─────────────────────────────────────────────────────────────
 # In-memory mock cache
 # ─────────────────────────────────────────────────────────────

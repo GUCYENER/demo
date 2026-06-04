@@ -4,14 +4,14 @@ VYRA L1 Support API - System Management Routes
 Sistem yönetimi endpoint'leri (reset, maintenance vb.)
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
 from typing import List, Optional
 
-from app.core.db import get_db_conn
-from app.services.logging_service import log_system_event, log_error
-from app.api.routes.auth import get_current_user
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 
+from app.api.routes.auth import get_current_user
+from app.core.db import get_db_conn
+from app.services.logging_service import log_error, log_system_event
 
 router = APIRouter()
 
@@ -671,8 +671,8 @@ async def clear_ml_cache(current_user: dict = Depends(get_current_user)):
     
     try:
         from app.services.catboost_service import get_catboost_service
-        from app.services.user_affinity_service import get_user_affinity_service
         from app.services.feature_extractor import get_feature_extractor
+        from app.services.user_affinity_service import get_user_affinity_service
         
         get_catboost_service().clear_cache()
         get_user_affinity_service().clear_cache()

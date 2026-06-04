@@ -18,13 +18,12 @@ v2.44.0: LLM destekli soru üretimi, zengin metadata, hard negatives,
 
 from __future__ import annotations
 
-import re
 import random
-from typing import List, Dict, Any, Optional
+import re
+from typing import Any, Dict, List, Optional
 
 from app.core.db import get_db_context
-from app.services.logging_service import log_system_event, log_error, log_warning
-
+from app.services.logging_service import log_error, log_system_event, log_warning
 
 # ============================================
 # Soru Şablonları (Intent Bazlı — LLM fallback)

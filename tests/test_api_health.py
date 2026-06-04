@@ -4,8 +4,9 @@ VYRA L1 Support API - Health Check Tests
 Health check endpoint'i ve bileşen kontrol testleri.
 """
 
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 
 @pytest.fixture
@@ -13,6 +14,7 @@ def health_client():
     """Health test için özel client - DB init atlanır."""
     with patch('app.api.main.init_db'):
         from fastapi.testclient import TestClient
+
         from app.api.main import create_app
         app = create_app()
         client = TestClient(app)

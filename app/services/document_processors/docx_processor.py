@@ -10,7 +10,7 @@ Semantik chunking ile geliştirilmiş DOCX işleme.
 import logging
 import re
 from pathlib import Path
-from typing import BinaryIO, List, Dict, Any
+from typing import Any, BinaryIO, Dict, List
 
 from .base import BaseDocumentProcessor
 

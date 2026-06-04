@@ -5,8 +5,8 @@ RAG modülleri için Pydantic şemaları.
 """
 
 from typing import List, Optional
-from pydantic import BaseModel
 
+from pydantic import BaseModel
 
 # ---------------------------------------------------------
 #  File Upload Schemas

@@ -11,11 +11,10 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 from app.core.db import get_db_conn
-from app.services.logging_service import log_system_event, log_error, log_warning
-
+from app.services.logging_service import log_error, log_system_event, log_warning
 
 # Topic çıkarma için stop words (Türkçe + Genel)
 STOP_WORDS = {

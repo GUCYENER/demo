@@ -12,7 +12,7 @@ Hybrid search skorlama fonksiyonları:
 from __future__ import annotations
 
 import re
-from typing import List, Dict
+from typing import Dict, List
 
 
 def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:

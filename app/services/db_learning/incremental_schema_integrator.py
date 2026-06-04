@@ -76,7 +76,8 @@ def _fetch_remote_tables(source: Dict[str, Any]) -> List[Dict[str, Any]]:
     Returns: [{"schema": str, "name": str, "type": "table"|"view"}, ...]
     """
     from app.services.ds_learning_service import (
-        _get_db_connector, _decrypt_password,
+        _decrypt_password,
+        _get_db_connector,
     )
     password = _decrypt_password(source.get("db_password_encrypted", ""))
     db_conn = None
@@ -149,7 +150,7 @@ def _fetch_remote_tables(source: Dict[str, Any]) -> List[Dict[str, Any]]:
                     "name": (tbl or "").strip(),
                     "type": "view" if (typ and "VIEW" in str(typ).upper()) else "table",
                 })
-    except Exception as exc:
+    except Exception:
         logger.exception("[incremental] remote fetch failed source_id=%s", source.get("id"))
         raise
     finally:
@@ -167,7 +168,8 @@ def _fetch_remote_columns_for_tables(
 ) -> Dict[Tuple[str, str], List[Dict[str, Any]]]:
     """Yeni tablolar için kolon listesi + PK işareti çek (PG/MSSQL/Oracle)."""
     from app.services.ds_learning_service import (
-        _get_db_connector, _decrypt_password,
+        _decrypt_password,
+        _get_db_connector,
     )
     if not new_tables:
         return {}

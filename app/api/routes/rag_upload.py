@@ -13,24 +13,23 @@ v2.43.0: run_in_executor — CPU-bound işlemler thread pool'da çalışır, eve
 from __future__ import annotations
 
 import asyncio
-import gc
 import functools
+import gc
 import hashlib
-from typing import List, Optional, Dict, Any, Tuple
 import io
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
-from app.core.config import settings
-from app.core.db import get_db_conn
 from app.api.routes.auth import get_current_user
 from app.api.schemas.rag_schemas import FileUploadInfo, FileUploadResponse
-from app.services.logging_service import log_system_event, log_error
-from app.services.rag_service import get_rag_service
+from app.core.config import settings
+from app.core.db import get_db_conn
 from app.services.document_processors import SUPPORTED_EXTENSIONS, get_processor_for_extension
+from app.services.logging_service import log_error, log_system_event
 from app.services.rag.topic_extraction import extract_and_save_topics
-
+from app.services.rag_service import get_rag_service
 
 router = APIRouter()
 
@@ -578,8 +577,9 @@ def _update_chunk_image_refs(cursor, file_id: int, images, image_ids: list):
     
     Ek: OCR metni eşleşen chunk'ların metadata'sına injection edilir (Sorun 10)
     """
-    from app.services.logging_service import log_system_event as _log
     import re
+
+    from app.services.logging_service import log_system_event as _log
     
     if not image_ids:
         return

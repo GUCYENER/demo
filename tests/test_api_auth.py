@@ -12,10 +12,11 @@ Test Kapsamı:
 - register fonksiyonu (get_db_context mock ile)
 """
 
-import sys
 import os
+import sys
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 from fastapi import HTTPException
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -131,7 +132,7 @@ class TestLoginFunction:
     @patch('app.api.routes.auth.get_db_context')
     def test_login_success(self, mock_ctx):
         """Başarılı login token dönmeli."""
-        from app.api.routes.auth import login, hash_password, UserLogin
+        from app.api.routes.auth import UserLogin, hash_password, login
         
         hashed_pw = hash_password("correctpass")
         mock_conn = MagicMock()
@@ -160,7 +161,7 @@ class TestLoginFunction:
     @patch('app.api.routes.auth.get_db_context')
     def test_login_user_not_found(self, mock_ctx):
         """Kullanıcı bulunamazsa 401 fırlatmalı."""
-        from app.api.routes.auth import login, UserLogin
+        from app.api.routes.auth import UserLogin, login
         
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
@@ -179,7 +180,7 @@ class TestLoginFunction:
     @patch('app.api.routes.auth.get_db_context')
     def test_login_wrong_password(self, mock_ctx):
         """Yanlış şifre 401 fırlatmalı."""
-        from app.api.routes.auth import login, hash_password, UserLogin
+        from app.api.routes.auth import UserLogin, hash_password, login
         
         hashed_pw = hash_password("correctpass")
         mock_conn = MagicMock()
@@ -202,7 +203,7 @@ class TestLoginFunction:
     @patch('app.api.routes.auth.get_db_context')
     def test_login_not_approved(self, mock_ctx):
         """Onaylanmamış kullanıcı 403 fırlatmalı."""
-        from app.api.routes.auth import login, hash_password, UserLogin
+        from app.api.routes.auth import UserLogin, hash_password, login
         
         hashed_pw = hash_password("correctpass")
         mock_conn = MagicMock()
@@ -233,7 +234,7 @@ class TestRegisterFunction:
     @patch('app.api.routes.auth.get_db_context')
     def test_register_duplicate_username(self, mock_ctx):
         """Var olan username 400 fırlatmalı."""
-        from app.api.routes.auth import register_user, UserCreate
+        from app.api.routes.auth import UserCreate, register_user
         
         mock_conn = MagicMock()
         mock_cursor = MagicMock()

@@ -15,8 +15,8 @@ Faz 5'te AST query builder eklendiğinde bu node alternatif yola dallandırılı
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
 import logging
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,8 @@ def _build_context(state: Dict[str, Any]) -> str:
     if cur is not None and source_id is not None and selected:
         try:
             from app.services.db_learning.sample_data_loader import (
-                format_for_prompt, load_samples_for_tables,
+                format_for_prompt,
+                load_samples_for_tables,
             )
             tbl_specs = [
                 {"schema_name": c.get("schema_name"), "table_name": c.get("table_name")}
@@ -288,7 +289,7 @@ def sql_generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     # Faz 5d — AST shortcut
     try:
-        from .ast_query_builder import is_ast_eligible, ast_query_builder_node
+        from .ast_query_builder import ast_query_builder_node, is_ast_eligible
         if is_ast_eligible(state):
             delta = ast_query_builder_node(state)
             if delta.get("sql"):
@@ -315,7 +316,8 @@ def sql_generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
     if available:
         try:
             from app.services.metric_registry import (
-                resolve_metrics_in_question, format_metrics_for_prompt,
+                format_metrics_for_prompt,
+                resolve_metrics_in_question,
             )
             matched_metrics = resolve_metrics_in_question(question, available)
             if matched_metrics:

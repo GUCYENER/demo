@@ -8,7 +8,6 @@ import pytest
 
 from app.services.db_smart import custom_metric_parser as cmp
 
-
 # ─────────────────────────────────────────────────────────────
 # extract_intent_heuristic
 # ─────────────────────────────────────────────────────────────

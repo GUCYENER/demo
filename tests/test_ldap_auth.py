@@ -10,10 +10,11 @@ Test Kapsamı:
 - LDAP Settings: CRUD API testleri
 """
 
-import sys
 import os
+import sys
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock, PropertyMock
 from fastapi import HTTPException
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -30,6 +31,7 @@ class TestEncryption:
     def test_encrypt_decrypt_roundtrip(self, mock_conn):
         """Şifreleme → çözme döngüsü orijinal metni döndürmeli."""
         from cryptography.fernet import Fernet
+
         from app.core.encryption import EncryptionManager
 
         key = Fernet.generate_key().decode()
@@ -45,6 +47,7 @@ class TestEncryption:
     def test_different_encrypted_values(self, mock_conn):
         """Aynı metin farklı encrypt çıktıları üretmeli (nonce/IV farklı)."""
         from cryptography.fernet import Fernet
+
         from app.core.encryption import EncryptionManager
 
         key = Fernet.generate_key().decode()
@@ -58,6 +61,7 @@ class TestEncryption:
     def test_empty_plaintext_raises(self, mock_conn):
         """Boş metin ValueError fırlatmalı."""
         from cryptography.fernet import Fernet
+
         from app.core.encryption import EncryptionManager
 
         key = Fernet.generate_key().decode()
@@ -81,7 +85,7 @@ class TestLdapLogin:
     @patch('app.services.logging_service.log_system_event')
     def test_ldap_login_success(self, mock_log, mock_ldap_auth, mock_orgs, mock_sync, mock_find):
         """Başarılı LDAP login token dönmeli."""
-        from app.api.routes.auth import _handle_ldap_login, UserLogin
+        from app.api.routes.auth import UserLogin, _handle_ldap_login
 
         mock_ldap_auth.return_value = {
             'username': 'yil2345',
@@ -112,7 +116,7 @@ class TestLdapLogin:
     @patch('app.services.logging_service.log_system_event')
     def test_ldap_org_rejected(self, mock_log, mock_ldap_auth, mock_orgs):
         """İzinsiz org 403 fırlatmalı."""
-        from app.api.routes.auth import _handle_ldap_login, UserLogin
+        from app.api.routes.auth import UserLogin, _handle_ldap_login
 
         mock_ldap_auth.return_value = {
             'username': 'user1', 'organization': 'FINANCE',
@@ -131,7 +135,7 @@ class TestLdapLogin:
     @patch('app.services.logging_service.log_system_event')
     def test_ldap_auth_failed(self, mock_log, mock_ldap_auth):
         """LDAP doğrulaması başarısız olursa 403 fırlatmalı."""
-        from app.api.routes.auth import _handle_ldap_login, UserLogin
+        from app.api.routes.auth import UserLogin, _handle_ldap_login
 
         payload = UserLogin(username='bad', password='pass', domain='TURKCELL')
         with pytest.raises(HTTPException) as exc_info:
@@ -149,7 +153,7 @@ class TestLocalLogin:
     @patch('app.api.routes.auth.get_db_context')
     def test_local_non_admin_rejected(self, mock_ctx):
         """Admin olmayan lokal kullanıcı 403 fırlatmalı."""
-        from app.api.routes.auth import _handle_local_login, hash_password, UserLogin
+        from app.api.routes.auth import UserLogin, _handle_local_login, hash_password
 
         hashed_pw = hash_password("pass123")
         mock_conn = MagicMock()
@@ -171,7 +175,7 @@ class TestLocalLogin:
     @patch('app.api.routes.auth.get_db_context')
     def test_local_admin_success(self, mock_ctx):
         """Admin lokal login başarılı token dönmeli."""
-        from app.api.routes.auth import _handle_local_login, hash_password, UserLogin
+        from app.api.routes.auth import UserLogin, _handle_local_login, hash_password
 
         hashed_pw = hash_password("admin1234")
         mock_conn = MagicMock()

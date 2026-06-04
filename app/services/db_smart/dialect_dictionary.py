@@ -29,8 +29,7 @@ NOT: Yeni dialect eklendiğinde:
 from __future__ import annotations
 
 from types import MappingProxyType
-from typing import Any, Dict, List, Mapping, Optional
-
+from typing import Dict, Mapping, Optional
 
 # ─────────────────────────────────────────────────────────────
 # Canonical feature names (kullanıcıya açık çağrı arayüzü)

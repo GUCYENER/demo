@@ -18,7 +18,7 @@ Version: 2.58.0
 from __future__ import annotations
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 from app.services.logging_service import log_warning
 

@@ -12,9 +12,9 @@ Test Kapsamı:
 
 import os
 import sys
-import json
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock, PropertyMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -97,7 +97,7 @@ class TestCallLlmApiStream:
         """LLM config yoksa LLMConfigError fırlatmalı."""
         mock_get_llm.return_value = None
 
-        from app.core.llm import call_llm_api_stream, LLMConfigError
+        from app.core.llm import LLMConfigError, call_llm_api_stream
 
         with pytest.raises(LLMConfigError):
             list(call_llm_api_stream([{"role": "user", "content": "test"}]))
@@ -111,7 +111,7 @@ class TestCallLlmApiStream:
         mock_get_llm.return_value = mock_llm_config
         mock_post.side_effect = requests.exceptions.Timeout("Connection timed out")
 
-        from app.core.llm import call_llm_api_stream, LLMConnectionError
+        from app.core.llm import LLMConnectionError, call_llm_api_stream
 
         with pytest.raises(LLMConnectionError):
             list(call_llm_api_stream([{"role": "user", "content": "test"}]))

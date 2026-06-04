@@ -6,8 +6,7 @@ HYBRID intent'te DB + RAG sonuçlarının birleştirilmesi testleri.
 Version: 2.58.0
 """
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 
 def _make_hybrid_result(db_results=None, sql="SELECT 1", source_db="TestDB"):

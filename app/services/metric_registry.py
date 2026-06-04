@@ -19,7 +19,6 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 
-
 _METRIC_COLS = [
     "id", "company_id", "source_id", "name", "display_name", "description",
     "sql_expression", "base_tables", "dimensions", "filters", "unit",

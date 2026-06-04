@@ -9,12 +9,12 @@ Test Kapsamı:
 - Maturity threshold
 """
 
-import pytest
-import asyncio
-from unittest.mock import patch, MagicMock
-from fastapi import HTTPException
-from tests.conftest import run_async
+from unittest.mock import MagicMock, patch
 
+import pytest
+from fastapi import HTTPException
+
+from tests.conftest import run_async
 
 # =============================================================================
 # TEST: Get System Info

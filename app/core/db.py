@@ -11,16 +11,16 @@ Modüler Yapı:
 
 from __future__ import annotations
 
-import psycopg2
-from psycopg2 import pool
-from psycopg2.extras import RealDictCursor
 from contextlib import contextmanager
 from typing import Generator, Optional
 
-from app.core.config import settings
-from app.core.schema import SCHEMA_SQL
-from app.core.default_data import insert_default_data
+import psycopg2
+from psycopg2 import pool
+from psycopg2.extras import RealDictCursor
 
+from app.core.config import settings
+from app.core.default_data import insert_default_data
+from app.core.schema import SCHEMA_SQL
 
 # ===========================================================
 #  Connection Pool (Singleton)
@@ -483,15 +483,15 @@ def _run_alembic_migration() -> bool:
     Returns:
         bool: Başarılıysa True, hata oluşursa False (fallback'e bırakır)
     """
-    import threading
     import os
+    import threading
 
     result = {"success": False, "error": None}
 
     def _run():
         try:
-            from alembic.config import Config
             from alembic import command
+            from alembic.config import Config
 
             project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             ini_path = os.path.join(project_root, "alembic.ini")

@@ -6,18 +6,17 @@ Embedding yeniden oluşturma endpoint'i ve helper fonksiyonları.
 
 from __future__ import annotations
 
-from typing import Dict, Any
 import io
+from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.core.db import get_db_conn
 from app.api.routes.auth import get_current_admin
 from app.api.schemas.rag_schemas import RebuildResponse
-from app.services.logging_service import log_system_event, log_error
-from app.services.rag_service import get_rag_service
+from app.core.db import get_db_conn
 from app.services.document_processors import get_processor_for_extension
-
+from app.services.logging_service import log_error, log_system_event
+from app.services.rag_service import get_rag_service
 
 router = APIRouter()
 

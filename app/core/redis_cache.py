@@ -12,8 +12,9 @@ Fallback:
 
 import pickle
 import time
-from typing import Any, Optional, Dict
-from app.services.logging_service import log_system_event, log_error
+from typing import Any, Dict, Optional
+
+from app.services.logging_service import log_error, log_system_event
 
 # Redis bağlantı kurulamazsa in-memory fallback
 _redis_available = False

@@ -18,10 +18,10 @@ Hibrit yaklaşım:
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
 import logging
 import os
 import threading
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +32,7 @@ try:
 except Exception:
     _HAS_CATBOOST = False
 
-from .feature_extractor import extract_batch, FEATURE_ORDER
-
+from .feature_extractor import extract_batch
 
 # (file_path, mtime) -> model nesnesi
 _MODEL_CACHE: Dict[Tuple[str, float], Any] = {}

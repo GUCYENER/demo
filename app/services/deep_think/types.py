@@ -8,8 +8,8 @@ v2.30.1: circular import sorununu çözmek için ayrıştırıldı.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Dict
 from enum import Enum
+from typing import Dict, List
 
 
 class IntentType(Enum):

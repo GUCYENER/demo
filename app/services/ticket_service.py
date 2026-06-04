@@ -9,10 +9,9 @@ v2.23.0: RAG sonuçları kaydediliyor, AI değerlendirmesi isteğe bağlı.
 from __future__ import annotations
 
 import json
-from typing import List, Optional, Tuple, Dict, Any
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.db import get_db_conn
-from app.services.logging_service import log_error
 from app.core.llm import (
     PlannerPlan,
     VerifierResult,
@@ -25,6 +24,7 @@ from app.models.schemas import (
     TicketHistoryResponse,
     TicketStep,
 )
+from app.services.logging_service import log_error
 
 
 def create_ticket_rag_only(
@@ -123,7 +123,7 @@ def add_ai_evaluation_to_ticket(
     Returns:
         (success, final_solution, cym_text)
     """
-    from app.core.llm import get_active_prompt, call_llm_api, _generate_cym_summary, SourceInfo
+    from app.core.llm import SourceInfo, _generate_cym_summary, call_llm_api, get_active_prompt
     
     conn = get_db_conn()
     try:
@@ -228,7 +228,7 @@ def add_user_selection_to_ticket(
     Returns:
         (success, cym_text)
     """
-    from app.core.llm import _generate_cym_summary, SourceInfo
+    from app.core.llm import SourceInfo, _generate_cym_summary
     
     conn = get_db_conn()
     try:
@@ -350,7 +350,7 @@ def create_ticket_direct(
     RAG sonucundan seçilen chunk doğrudan çözüm olarak kaydedilir.
     Bu yaklaşım çok daha hızlıdır (~3sn vs ~7sn).
     """
-    from app.core.llm import _generate_cym_summary, SourceInfo
+    from app.core.llm import SourceInfo, _generate_cym_summary
     
     # Basit başlık oluştur
     title = query[:100] + ('...' if len(query) > 100 else '')

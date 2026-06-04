@@ -14,25 +14,23 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from app.services.logging_service import log_warning
-
 from app.api.routes.auth import get_current_user
 from app.core.websocket_manager import ws_manager
 from app.services.dialog_service import (
-    create_dialog,
-    get_or_create_active_dialog,
-    close_dialog,
-    list_user_dialogs,
-    get_dialog_history,  # v2.21.0
     add_message,
-    get_dialog_messages,
     add_message_feedback,
-    process_user_message,
-    process_quick_reply,
     ask_corpix,  # v2.24.5
+    close_dialog,
+    create_dialog,
     generate_ticket_summary,  # v2.24.5
+    get_dialog_history,  # v2.21.0
+    get_dialog_messages,
+    get_or_create_active_dialog,
+    list_user_dialogs,
+    process_quick_reply,
+    process_user_message,
 )
-from app.services.logging_service import log_system_event
+from app.services.logging_service import log_system_event, log_warning
 
 router = APIRouter(prefix="/dialogs", tags=["dialogs"])
 
@@ -49,6 +47,7 @@ router = APIRouter(prefix="/dialogs", tags=["dialogs"])
 # execute (>5s) sırasında Nginx/proxy/AV idle timeout'larından korunur.
 # Env override: VYRA_SSE_HB_MIN, VYRA_SSE_HB_MAX, VYRA_SSE_HB_FACTOR.
 import os as _os_sse
+
 
 def _sse_float_env(name: str, default: float) -> float:
     try:
@@ -378,7 +377,9 @@ async def send_message_stream(
     - error: Hata durumu
     """
     import json
+
     from starlette.responses import StreamingResponse
+
     from app.services.dialog.processor import process_user_message_stream
 
     # v3.20.0 (Faz 1): DB modunda source_id zorunlu + permission kontrolü
@@ -433,8 +434,8 @@ async def send_message_stream(
         sıfırlar. Uzun execute (>5s) hâlâ MAX (default 5s) periyotla
         heartbeat alır — proxy timeout korumalı.
         """
-        import threading
         import queue as _queue
+        import threading
 
         SENTINEL = object()
         q: "_queue.Queue" = _queue.Queue()
@@ -597,8 +598,9 @@ def enhance_message(
         
         # Orijinal mesajı güncelle (metadata'ya enhanced + image_ids ekle)
         try:
-            from app.core.db import get_db_context
             import json
+
+            from app.core.db import get_db_context
             
             with get_db_context() as conn:
                 with conn.cursor() as cur:
@@ -632,8 +634,9 @@ def enhance_message(
         
         # Cache'i de güncelle
         try:
-            from app.core.cache import cache_service
             import hashlib
+
+            from app.core.cache import cache_service
             user_id = user['id']
             cache_key = f"dt:{hashlib.md5(f'{request.query.lower().strip()}:{user_id}'.encode()).hexdigest()}"
             cache_service.deep_think.delete(cache_key)

@@ -264,7 +264,9 @@ def parse_to_sql(
     if _validate_sql is None:
         from app.services.safe_sql_executor import validate_sql as _validate_sql  # type: ignore
     if _check_whitelist is None:
-        from app.services.safe_sql_executor import check_table_whitelist as _check_whitelist  # type: ignore
+        from app.services.safe_sql_executor import (
+            check_table_whitelist as _check_whitelist,  # type: ignore
+        )
 
     intent = extract_intent_heuristic(nl_query)
 

@@ -6,8 +6,7 @@ SQL audit log kayıt, sorgulama ve istatistik testleri.
 Version: 2.58.0
 """
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 
 class TestLogSQLExecution:

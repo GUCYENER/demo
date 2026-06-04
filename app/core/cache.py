@@ -26,13 +26,12 @@ Kullanım:
 
 import hashlib
 import time
-import json
-from typing import Any, Optional, Dict, Callable
+from dataclasses import dataclass
 from functools import wraps
-from dataclasses import dataclass, field
 from threading import Lock
-from app.services.logging_service import log_system_event
+from typing import Any, Callable, Dict, Optional
 
+from app.services.logging_service import log_system_event
 
 # ============================================
 # Cache Entry

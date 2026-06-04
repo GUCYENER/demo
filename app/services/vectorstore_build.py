@@ -5,14 +5,14 @@ Yüklenen dosyalardan vektör veritabanını oluşturur
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
-from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
-from app.services.logging_service import log_error, log_system_event, log_warning
-from app.services.document_processors import get_processor, SUPPORTED_EXTENSIONS
+from app.services.document_processors import SUPPORTED_EXTENSIONS, get_processor
 from app.services.document_processors.base import ProcessedDocument
+from app.services.logging_service import log_error, log_system_event, log_warning
 from app.services.rag_service import get_rag_service
 
 

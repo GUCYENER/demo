@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import time
 import threading
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -12,11 +12,44 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import auth, chat, health, rag as rag_routes, tickets, llm_config, prompts, users, system, websocket as ws_routes, organizations, feedback, dialog, permissions, assets, ldap_settings, domain_org_api, widget as widget_routes, companies, address, data_sources_api, sql_audit_api, themes, db_export, feature_permissions, agentic_query_api, metrics_api, db_learning_api, query_state_api, query_builder_api, signal_weight_api, db_smart_api
 from app.api.routes import _metrics as prom_metrics_route  # v3.30.0 FAZ 5 P36
+from app.api.routes import (
+    address,
+    agentic_query_api,
+    assets,
+    auth,
+    chat,
+    companies,
+    data_sources_api,
+    db_export,
+    db_learning_api,
+    db_smart_api,
+    dialog,
+    domain_org_api,
+    feature_permissions,
+    feedback,
+    health,
+    ldap_settings,
+    llm_config,
+    metrics_api,
+    organizations,
+    permissions,
+    prompts,
+    query_builder_api,
+    query_state_api,
+    signal_weight_api,
+    sql_audit_api,
+    system,
+    themes,
+    tickets,
+    users,
+)
+from app.api.routes import rag as rag_routes
+from app.api.routes import websocket as ws_routes
+from app.api.routes import widget as widget_routes
 from app.core.config import settings
 from app.core.db import init_db
-from app.core.rate_limiter import limiter, get_rate_limit_handler, get_rate_limit_exception
+from app.core.rate_limiter import get_rate_limit_exception, get_rate_limit_handler, limiter
 
 
 def _recover_stuck_files():
@@ -76,7 +109,7 @@ def _run_schedule_checker():
     """Periyodik olarak scheduled training koşullarını kontrol eder"""
     import time
 
-    from app.services.logging_service import log_system_event, log_error
+    from app.services.logging_service import log_error, log_system_event
 
     log_system_event("INFO", "[Scheduler] ML Training schedule checker baslatildi", "scheduler")
 
@@ -364,8 +397,9 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
         """Merkezi HTTP request/response loglama"""
-        from app.services.logging_service import log_system_event, log_request
         import uuid
+
+        from app.services.logging_service import log_request, log_system_event
 
         # v3.38.3: her isteğe request_id — 500 yanıtı ↔ errors.jsonl kaydı eşleşir.
         # (en dıştaki middleware olduğu için call_next'ten ÖNCE set edilir; route
@@ -431,9 +465,10 @@ def create_app() -> FastAPI:
     app.include_router(db_smart_api.router)  # v3.30.0 - Akıllı Veri Keşfi (DB Smart Wizard)
 
     # v3.37.0: LLM Smart Discovery Routers (METIS — METRIC + COLUMN + FORMAT)
-    from app.api.routes.llm_metric_api import router as llm_metric_router
     from app.api.routes.llm_column_api import router as llm_column_router
     from app.api.routes.llm_format_api import router as llm_format_router
+    from app.api.routes.llm_metric_api import router as llm_metric_router
+
     # v3.37.4 / Bulgular3 Bulgu 8: save-modal title+description suggestion
     from app.api.routes.llm_report_meta_api import router as llm_report_meta_router
     app.include_router(llm_metric_router)
@@ -473,6 +508,7 @@ def create_app() -> FastAPI:
         return _EmbedHTML(content=_EMBED_HTML_TEMPLATE, status_code=200)
 
     from pathlib import Path
+
     from fastapi.responses import FileResponse
 
     frontend_dir = Path(__file__).resolve().parents[2] / "frontend"

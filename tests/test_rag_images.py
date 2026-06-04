@@ -12,9 +12,9 @@ Test Kapsamı:
 - Hata durumları (404, 500)
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
 
+import pytest
 
 # =============================================================================
 # FIXTURES
@@ -81,8 +81,9 @@ class TestGetFileImages:
     @patch('app.api.routes.rag_images.get_db_conn')
     def test_returns_image_list(self, mock_get_db, mock_file_images_rows):
         """Dosyaya ait görsellerin metadata listesini döndürmeli."""
-        from app.api.routes.rag_images import get_file_images
         import asyncio
+
+        from app.api.routes.rag_images import get_file_images
         
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
@@ -103,8 +104,9 @@ class TestGetFileImages:
     @patch('app.api.routes.rag_images.get_db_conn')
     def test_empty_file(self, mock_get_db):
         """Görsel olmayan dosya için boş liste dönmeli."""
-        from app.api.routes.rag_images import get_file_images
         import asyncio
+
+        from app.api.routes.rag_images import get_file_images
         
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
@@ -121,9 +123,11 @@ class TestGetFileImages:
     @patch('app.api.routes.rag_images.get_db_conn')
     def test_db_error_returns_500(self, mock_get_db):
         """DB hatası 500 dönmeli."""
-        from app.api.routes.rag_images import get_file_images
-        from fastapi import HTTPException
         import asyncio
+
+        from fastapi import HTTPException
+
+        from app.api.routes.rag_images import get_file_images
         
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
@@ -140,8 +144,9 @@ class TestGetFileImages:
     @patch('app.api.routes.rag_images.get_db_conn')
     def test_url_field_format(self, mock_get_db, mock_file_images_rows):
         """url alanı /api/rag/images/{id} formatında olmalı."""
-        from app.api.routes.rag_images import get_file_images
         import asyncio
+
+        from app.api.routes.rag_images import get_file_images
         
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
@@ -165,8 +170,9 @@ class TestGetDocumentImage:
     @patch('app.api.routes.rag_images.get_db_conn')
     def test_returns_binary_image(self, mock_get_db, mock_db_row_with_image):
         """Görsel binary olarak dönmeli."""
-        from app.api.routes.rag_images import get_document_image
         import asyncio
+
+        from app.api.routes.rag_images import get_document_image
         
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
@@ -182,8 +188,9 @@ class TestGetDocumentImage:
     @patch('app.api.routes.rag_images.get_db_conn')
     def test_has_ocr_header_true(self, mock_get_db, mock_db_row_with_image):
         """OCR metni varken X-Has-OCR: true olmalı."""
-        from app.api.routes.rag_images import get_document_image
         import asyncio
+
+        from app.api.routes.rag_images import get_document_image
         
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
@@ -198,8 +205,9 @@ class TestGetDocumentImage:
     @patch('app.api.routes.rag_images.get_db_conn')
     def test_has_ocr_header_false(self, mock_get_db, mock_db_row_without_ocr):
         """OCR metni yokken X-Has-OCR: false olmalı."""
-        from app.api.routes.rag_images import get_document_image
         import asyncio
+
+        from app.api.routes.rag_images import get_document_image
         
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
@@ -214,9 +222,11 @@ class TestGetDocumentImage:
     @patch('app.api.routes.rag_images.get_db_conn')
     def test_not_found_returns_404(self, mock_get_db):
         """Bulunamayan görsel 404 dönmeli."""
-        from app.api.routes.rag_images import get_document_image
-        from fastapi import HTTPException
         import asyncio
+
+        from fastapi import HTTPException
+
+        from app.api.routes.rag_images import get_document_image
         
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
@@ -233,8 +243,9 @@ class TestGetDocumentImage:
     @patch('app.api.routes.rag_images.get_db_conn')
     def test_memoryview_conversion(self, mock_get_db):
         """memoryview otomatik bytes'a çevrilmeli."""
-        from app.api.routes.rag_images import get_document_image
         import asyncio
+
+        from app.api.routes.rag_images import get_document_image
         
         row = {
             "image_data": memoryview(b"\x89PNG" + b"\x00" * 100),
@@ -256,8 +267,9 @@ class TestGetDocumentImage:
     @patch('app.api.routes.rag_images.get_db_conn')
     def test_cache_control_header(self, mock_get_db, mock_db_row_with_image):
         """Cache-Control header'ı olmalı."""
-        from app.api.routes.rag_images import get_document_image
         import asyncio
+
+        from app.api.routes.rag_images import get_document_image
         
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
@@ -281,8 +293,9 @@ class TestGetImageOcrText:
     @patch('app.api.routes.rag_images.get_db_conn')
     def test_returns_ocr_text(self, mock_get_db, mock_ocr_row):
         """OCR metnini JSON olarak döndürmeli."""
-        from app.api.routes.rag_images import get_image_ocr_text
         import asyncio
+
+        from app.api.routes.rag_images import get_image_ocr_text
         
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
@@ -302,8 +315,9 @@ class TestGetImageOcrText:
     @patch('app.api.routes.rag_images.get_db_conn')
     def test_empty_ocr_text(self, mock_get_db):
         """OCR metin yoksa has_text: false olmalı."""
-        from app.api.routes.rag_images import get_image_ocr_text
         import asyncio
+
+        from app.api.routes.rag_images import get_image_ocr_text
         
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
@@ -323,8 +337,9 @@ class TestGetImageOcrText:
     @patch('app.api.routes.rag_images.get_db_conn')
     def test_null_ocr_text(self, mock_get_db):
         """ocr_text NULL ise has_text: false olmalı, crash olmamalı."""
-        from app.api.routes.rag_images import get_image_ocr_text
         import asyncio
+
+        from app.api.routes.rag_images import get_image_ocr_text
         
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
@@ -344,9 +359,11 @@ class TestGetImageOcrText:
     @patch('app.api.routes.rag_images.get_db_conn')
     def test_not_found_returns_404(self, mock_get_db):
         """Bulunamayan görsel 404 dönmeli."""
-        from app.api.routes.rag_images import get_image_ocr_text
-        from fastapi import HTTPException
         import asyncio
+
+        from fastapi import HTTPException
+
+        from app.api.routes.rag_images import get_image_ocr_text
         
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
@@ -362,8 +379,9 @@ class TestGetImageOcrText:
     @patch('app.api.routes.rag_images.get_db_conn')
     def test_strips_whitespace(self, mock_get_db):
         """OCR metin başında/sonundaki whitespace temizlenmeli."""
-        from app.api.routes.rag_images import get_image_ocr_text
         import asyncio
+
+        from app.api.routes.rag_images import get_image_ocr_text
         
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
@@ -428,8 +446,9 @@ class TestConnectionCleanup:
     @patch('app.api.routes.rag_images.get_db_conn')
     def test_conn_closed_on_success(self, mock_get_db, mock_ocr_row):
         """Başarılı istekte connection kapatılmalı."""
-        from app.api.routes.rag_images import get_image_ocr_text
         import asyncio
+
+        from app.api.routes.rag_images import get_image_ocr_text
         
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
@@ -444,9 +463,11 @@ class TestConnectionCleanup:
     @patch('app.api.routes.rag_images.get_db_conn')
     def test_conn_closed_on_error(self, mock_get_db):
         """Hata durumunda da connection kapatılmalı (finally)."""
-        from app.api.routes.rag_images import get_image_ocr_text
-        from fastapi import HTTPException
         import asyncio
+
+        from fastapi import HTTPException
+
+        from app.api.routes.rag_images import get_image_ocr_text
         
         mock_conn = MagicMock()
         mock_cursor = MagicMock()

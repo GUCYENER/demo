@@ -41,38 +41,42 @@ Kullanım (LangGraph yokken):
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
 import logging
+from typing import Any, Dict
 
-from .state import QueryState  # noqa: F401  (re-export için)
 from .nodes import (
-    load_prefs_node,
+    ambiguity_gate_node,
     cache_lookup_node,
-    should_skip_after_cache_hit,
+    clarification_node,
+    execute_node,
     intent_extract_node,
+    load_prefs_node,
+    multi_signal_rank_node,
     query_expand_node,
     retrieve_node,
-    multi_signal_rank_node,
-    ambiguity_gate_node,
     route_after_ambiguity,
-    clarification_node,
+    route_after_self_heal,
+    route_after_validate,
+    self_heal_node,
+    should_skip_after_cache_hit,
     sql_generate_node,
     validate_node,
-    route_after_validate,
-    execute_node,
-    self_heal_node,
-    route_after_self_heal,
 )
 from .observability import (
-    ensure_run_id, instrument_node, pipeline_start, pipeline_end, emit_event,
+    emit_event,
+    ensure_run_id,
+    instrument_node,
+    pipeline_end,
+    pipeline_start,
 )
 from .result_size_predictor import predict_size_node
+from .state import QueryState  # noqa: F401  (re-export için)
 
 logger = logging.getLogger(__name__)
 
 # LangGraph opsiyonel import
 try:
-    from langgraph.graph import StateGraph, START, END  # type: ignore
+    from langgraph.graph import END, START, StateGraph  # type: ignore
     _HAS_LANGGRAPH = True
 except Exception:
     _HAS_LANGGRAPH = False
@@ -460,8 +464,10 @@ def _persist_size_observation_if_possible(state: Dict[str, Any]) -> None:
     try:
         import hashlib
         import json as _json
+
         from app.services.ml.size_classifier import (
-            extract_size_features, rows_to_bucket,
+            extract_size_features,
+            rows_to_bucket,
         )
         dialect = state.get("db_dialect", "postgresql")
         feats = extract_size_features(
@@ -521,7 +527,8 @@ def _persist_decisions_if_possible(state: Dict[str, Any]) -> None:
         return
     try:
         from app.services.ml.decision_extractors import (
-            collect_decision_rows, persist_decisions,
+            collect_decision_rows,
+            persist_decisions,
         )
         rows = collect_decision_rows(state)
         if rows:

@@ -13,10 +13,11 @@ Test Kapsamı:
 - _get_format_instruction (intent→format)
 """
 
-import sys
 import os
+import sys
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -459,8 +460,9 @@ class TestPrepareContextHeading:
     
     def test_string_metadata_parsed(self, deep_think_service):
         """JSON string olarak gelen metadata parse edilmeli."""
-        from app.services.deep_think_service import IntentResult, IntentType
         import json
+
+        from app.services.deep_think_service import IntentResult, IntentType
         intent = IntentResult(
             intent_type=IntentType.GENERAL,
             confidence=0.5,

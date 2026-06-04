@@ -7,8 +7,9 @@ Author: VYRA AI Team
 Version: 1.0.0 (2026-02-06)
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 
 class TestRAGServiceInit:

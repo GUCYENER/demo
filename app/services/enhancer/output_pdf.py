@@ -12,14 +12,15 @@ import io
 import os
 import re
 import tempfile
-from typing import List
+from typing import TYPE_CHECKING, List
 
-from app.services.logging_service import log_system_event, log_warning
 from app.services.enhancer.image_helpers import (
-    get_section_text, map_images_to_sections, organize_images_at_positions
+    get_section_text,
+    map_images_to_sections,
+    organize_images_at_positions,
 )
+from app.services.logging_service import log_system_event, log_warning
 
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from app.services.document_enhancer import EnhancedSection
 

@@ -13,10 +13,10 @@ Kapsamı:
 v3.0.0
 """
 
-import pytest
 import json
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
+import pytest
 
 # =============================================================================
 # FIXTURES

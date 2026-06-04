@@ -11,7 +11,6 @@ LLM'e gitmeden ucuz bir prefiltre — pipeline'ı dallandırır:
 from __future__ import annotations
 
 from typing import Any, Dict
-import re
 
 _AGG_WORDS = (
     "topla", "toplam", "sum", "say", "kac", "kaç", "count", "ortalama", "avg",

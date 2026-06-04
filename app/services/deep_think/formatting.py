@@ -6,10 +6,11 @@ v2.30.1: deep_think_service.py'den ayrıştırıldı
 """
 
 from __future__ import annotations
-from typing import List, Dict, Any, Optional
-import re
 
-from app.services.deep_think.types import IntentType, IntentResult
+import re
+from typing import Dict, List
+
+from app.services.deep_think.types import IntentResult, IntentType
 
 
 class DeepThinkFormattingMixin:
@@ -22,7 +23,6 @@ class DeepThinkFormattingMixin:
         LLM bazen system/user prompt içeriğini yanıta kopyalayabiliyor.
         Bu metod bilinen kalıpları regex ile tespit edip temizler.
         """
-        import re
         
         cleaned = response
         
@@ -164,7 +164,6 @@ _Kaynak: [Dosya adı]_"""
         - Duplicate KAYNAKLAR başlığını temizler
         - v2.29.14: Daha sağlam komut tespiti
         """
-        import re
         
         if intent.intent_type != IntentType.LIST_REQUEST:
             return response  # Sadece liste isteklerinde işle
@@ -251,7 +250,6 @@ _Kaynak: [Dosya adı]_"""
         
         Gerçek chunk formatı: **Kategori:** Komut (aynı satırda)
         """
-        import re
         parsed_items = []
         
         for r in results:

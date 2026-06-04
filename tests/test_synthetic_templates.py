@@ -10,7 +10,6 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.services.db_learning.synthetic_templates import (
-    TEMPLATE_KINDS,
     Relationship,
     render,
     render_all,

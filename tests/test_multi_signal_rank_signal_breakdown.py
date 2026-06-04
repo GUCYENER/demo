@@ -6,7 +6,7 @@ metadata ile çağrıldığını doğrular (cursor mock).
 """
 import os
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 

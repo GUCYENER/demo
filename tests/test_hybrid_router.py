@@ -7,10 +7,8 @@ ve Template SQL eşleştirme unit testleri.
 Test Sayısı: ~15 test
 """
 
-import pytest
-import re
-from unittest.mock import MagicMock, patch
 
+import pytest
 
 # =============================================================================
 # FIXTURES
@@ -73,6 +71,7 @@ class TestDBIntentDetection:
     def test_detect_row_count_query(self):
         """'kaç kayıt var' → DATABASE_QUERY olmalı."""
         from app.services.hybrid_router import detect_db_intent
+
         from app.services.deep_think.types import IntentType
 
         result = detect_db_intent("users tablosunda kaç kayıt var?")
@@ -81,6 +80,7 @@ class TestDBIntentDetection:
     def test_detect_total_amount_query(self):
         """'toplam tutar' → DATABASE_QUERY olmalı."""
         from app.services.hybrid_router import detect_db_intent
+
         from app.services.deep_think.types import IntentType
 
         result = detect_db_intent("bu aydaki toplam tutar nedir?")
@@ -89,6 +89,7 @@ class TestDBIntentDetection:
     def test_detect_latest_record_query(self):
         """'son fatura' → DATABASE_QUERY olmalı."""
         from app.services.hybrid_router import detect_db_intent
+
         from app.services.deep_think.types import IntentType
 
         result = detect_db_intent("son fatura bilgisi nedir?")
@@ -97,6 +98,7 @@ class TestDBIntentDetection:
     def test_detect_balance_query(self):
         """'bakiye' → DATABASE_QUERY olmalı."""
         from app.services.hybrid_router import detect_db_intent
+
         from app.services.deep_think.types import IntentType
 
         result = detect_db_intent("hesap bakiyem ne kadar?")
@@ -105,6 +107,7 @@ class TestDBIntentDetection:
     def test_detect_average_query(self):
         """'ortalama' → DATABASE_QUERY olmalı."""
         from app.services.hybrid_router import detect_db_intent
+
         from app.services.deep_think.types import IntentType
 
         result = detect_db_intent("ortalama sipariş tutarı nedir?")
@@ -127,6 +130,7 @@ class TestDBIntentDetection:
     def test_customer_count_query(self):
         """'müşteri sayısı' → DATABASE_QUERY olmalı."""
         from app.services.hybrid_router import detect_db_intent
+
         from app.services.deep_think.types import IntentType
 
         result = detect_db_intent("müşteri sayısı kaç?")
@@ -142,8 +146,8 @@ class TestAnalyzeIntentDBIntegration:
 
     def test_db_query_detected_by_analyze_intent(self):
         """analyze_intent() DB sorgusunu tanımalı."""
-        from app.services.deep_think_service import DeepThinkService
         from app.services.deep_think.types import IntentType
+        from app.services.deep_think_service import DeepThinkService
 
         service = DeepThinkService()
         result = service.analyze_intent("users tablosunda kaç kayıt var?")
@@ -152,8 +156,8 @@ class TestAnalyzeIntentDBIntegration:
 
     def test_existing_intents_not_broken(self):
         """Mevcut intent tipleri bozulmamalı (regresyon)."""
-        from app.services.deep_think_service import DeepThinkService
         from app.services.deep_think.types import IntentType
+        from app.services.deep_think_service import DeepThinkService
 
         service = DeepThinkService()
 

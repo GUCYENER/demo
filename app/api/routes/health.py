@@ -6,6 +6,7 @@ v2.30.1: Basit health → comprehensive health check
 """
 
 import time
+
 from fastapi import APIRouter, Response
 
 from app.core.config import settings

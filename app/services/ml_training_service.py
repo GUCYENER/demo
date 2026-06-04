@@ -12,12 +12,11 @@ from __future__ import annotations
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
 from app.core.db import get_db_context
-from app.services.logging_service import log_system_event, log_error, log_warning
+from app.services.logging_service import log_error, log_system_event, log_warning
 from app.services.ml_training import MLJobRunnerMixin, MLSchedulingMixin
-
 
 # Proje kök dizini
 PROJECT_ROOT = Path(__file__).parent.parent.parent

@@ -6,17 +6,16 @@ catboost_service.py ve feature_extractor.py için unit testler.
 Author: VYRA AI Team
 """
 
-import pytest
-import numpy as np
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
+import numpy as np
+import pytest
 
 # Test edilecek modüller import
 from app.services.feature_extractor import (
-    FeatureExtractor, 
-    get_feature_extractor,
     FEATURE_NAMES,
-    TOPIC_KEYWORDS
+    TOPIC_KEYWORDS,
+    FeatureExtractor,
 )
 
 

@@ -14,14 +14,14 @@ Test Kapsamı:
 """
 
 import io
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
-from dataclasses import asdict
 
 from app.services.document_processors.image_extractor import (
-    ExtractedImage, ImageExtractor, _ocr_reader
+    ExtractedImage,
+    ImageExtractor,
 )
-
 
 # =============================================================================
 # FIXTURES

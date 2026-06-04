@@ -10,20 +10,18 @@ import pytest
 from pydantic import ValidationError
 
 from app.api.routes.query_builder_api import (
-    _IDENT_RE,
     _ALLOWED_OPS,
-    _safe_ident,
-    _quote_ident,
-    _qualified,
-    _build_multi_table_sql,
-    TableRef,
-    JoinEdge,
-    SelectColumn,
     FilterClause,
+    JoinEdge,
     OrderByClause,
     PreviewRequest,
+    SelectColumn,
+    TableRef,
+    _build_multi_table_sql,
+    _qualified,
+    _quote_ident,
+    _safe_ident,
 )
-
 
 # ───────────────────────── _safe_ident / _IDENT_RE ─────────────────────────
 

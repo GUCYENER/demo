@@ -11,12 +11,11 @@ Version: 1.0.0 (v2.13.0)
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
 
 from app.core.db import get_db_conn
-from app.services.logging_service import log_system_event, log_error
-
+from app.services.logging_service import log_error, log_system_event
 
 # Feedback tipleri
 FEEDBACK_TYPES = {

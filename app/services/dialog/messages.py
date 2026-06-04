@@ -10,11 +10,10 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
 from app.core.db import get_db_context
 from app.services.logging_service import log_warning
-
 
 # =============================================================================
 # MESSAGE CRUD

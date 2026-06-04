@@ -15,9 +15,8 @@ Kullanım (gelecekteki API endpoint):
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Iterator
 import json
-
+from typing import Any, Dict, Iterator
 
 REASON_MESSAGES = {
     "top1_top2_tight": "Birden fazla tablo eşit derecede uygun görünüyor. Hangisi olduğunu netleştirelim:",

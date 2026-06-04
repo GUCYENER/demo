@@ -6,10 +6,11 @@ v2.30.1: ml_training_service.py'den ayrıştırıldı
 """
 
 from __future__ import annotations
-from typing import Optional, List, Dict, Any
+
+from typing import Any, Dict, List, Optional
 
 from app.core.db import get_db_context
-from app.services.logging_service import log_system_event, log_error, log_warning
+from app.services.logging_service import log_error, log_system_event, log_warning
 
 
 class MLSchedulingMixin:

@@ -19,11 +19,11 @@ Integration testler: pytest tests/test_document_enhancer.py -m integration
 v2.0.0: Modüler refactoring — testler alt modüllere doğrudan erişir
 """
 
-import os
 import io
+import os
+from unittest.mock import patch
 
 import pytest
-from unittest.mock import patch
 
 # ─── UNIT TESTS ─── (DB/API gerekmez)
 
@@ -129,8 +129,9 @@ class TestGenerateEnhancedOutput:
 
     def test_docx_output_for_docx_input(self):
         """DOCX girdisi → DOCX çıktı (orijinal format korunmalı)."""
-        from app.services.document_enhancer import DocumentEnhancer
         from docx import Document
+
+        from app.services.document_enhancer import DocumentEnhancer
 
         # Gerçek bir DOCX binary oluştur
         doc = Document()
@@ -309,9 +310,10 @@ pytestmark_integration = pytest.mark.integration
 
 @pytest.fixture
 def app_client():
+    from fastapi.testclient import TestClient
+
     from app.api.main import app
     from app.core.config import settings
-    from fastapi.testclient import TestClient
     return TestClient(app), settings
 
 
@@ -381,8 +383,9 @@ class TestImageEmbedding:
         )
 
     def _make_test_image(self, heading="Test Başlık", chunk_index=0, width=200, height=150):
-        from app.services.document_processors.image_extractor import ExtractedImage
         from PIL import Image
+
+        from app.services.document_processors.image_extractor import ExtractedImage
 
         img = Image.new("RGB", (width, height), color=(255, 0, 0))
         buf = io.BytesIO()
@@ -555,8 +558,9 @@ class TestImagePositioning:
 
     def _make_test_image(self, heading="Test Başlık", chunk_index=0,
                          paragraph_index=-1, width=200, height=150):
-        from app.services.document_processors.image_extractor import ExtractedImage
         from PIL import Image
+
+        from app.services.document_processors.image_extractor import ExtractedImage
 
         img = Image.new("RGB", (width, height), color=(0, 128, 255))
         buf = io.BytesIO()
@@ -605,9 +609,10 @@ class TestImagePositioning:
 
     def test_update_paragraph_text_preserves_images(self):
         """_update_paragraph_text inline görsel içeren run'ları korumalı."""
-        from app.services.enhancer.output_docx import _update_paragraph_text
         from docx import Document
         from docx.shared import Inches
+
+        from app.services.enhancer.output_docx import _update_paragraph_text
 
         doc = Document()
 
@@ -641,8 +646,9 @@ class TestImagePositioning:
 
     def test_docx_sections_have_para_range(self):
         """SectionExtractor._extract_docx_sections paragraf aralığı döndürmeli."""
-        from app.services.enhancer.section_extractors import SectionExtractor
         from docx import Document
+
+        from app.services.enhancer.section_extractors import SectionExtractor
 
         extractor = SectionExtractor()
 

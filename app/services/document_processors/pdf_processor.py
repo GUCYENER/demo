@@ -9,11 +9,11 @@ v2.43.0: Font-level heading detection — font size, bold, italic bilgileriyle
          başlık tespiti. Heading hiyerarşi (breadcrumb) koruması.
 """
 
+import io
 import logging
 import re
 from pathlib import Path
-from typing import List, BinaryIO, Dict, Any, Optional
-import io
+from typing import Any, BinaryIO, Dict, List, Optional
 
 from .base import BaseDocumentProcessor, DocumentChunk
 
@@ -495,8 +495,8 @@ class PDFProcessor(BaseDocumentProcessor):
     def _try_ocr(self, pdf_bytes: bytes, file_name: str) -> str:
         """OCR ile metin çıkarmayı dener"""
         try:
-            from app.services.ocr_service import get_ocr_service
             from app.services.logging_service import log_system_event
+            from app.services.ocr_service import get_ocr_service
             
             log_system_event("INFO", f"OCR fallback aktif: {file_name}", "pdf_processor")
             

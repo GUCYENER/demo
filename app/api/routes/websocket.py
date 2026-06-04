@@ -7,13 +7,14 @@ WebSocket bağlantı endpoint'leri.
 from __future__ import annotations
 
 import json
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from jose import jwt, JWTError
 
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from jose import JWTError, jwt
+
+from app.core.async_task_manager import TaskStatus, task_manager
 from app.core.config import settings
 from app.core.websocket_manager import ws_manager
-from app.core.async_task_manager import task_manager, TaskStatus
-from app.services.logging_service import log_system_event, log_error
+from app.services.logging_service import log_error
 
 router = APIRouter(tags=["websocket"])
 

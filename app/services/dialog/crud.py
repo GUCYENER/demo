@@ -9,11 +9,10 @@ Refactored from dialog_service.py (v2.29.14)
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
 from app.core.db import get_db_context
 from app.services.logging_service import log_system_event
-
 
 # =============================================================================
 # DIALOG CRUD

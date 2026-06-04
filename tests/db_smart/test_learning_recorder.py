@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 import pytest
 
 from app.services.db_smart import learning_recorder as lr
-
 
 # ─────────────────────────────────────────────────────────────
 # Fake cursor — psycopg2 contract

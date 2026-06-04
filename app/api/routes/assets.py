@@ -7,13 +7,12 @@ Bu görseller veritabanında BLOB olarak saklanır ve reset'te korunur.
 
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from fastapi.responses import Response, FileResponse
-from typing import Optional
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse, Response
 
-from app.core.db import get_db_conn
-from app.services.logging_service import log_system_event, log_error
 from app.api.routes.auth import get_current_user
+from app.core.db import get_db_conn
+from app.services.logging_service import log_error, log_system_event
 
 # Statik dosya fallback dizini
 _STATIC_FALLBACK_DIR = os.path.join(

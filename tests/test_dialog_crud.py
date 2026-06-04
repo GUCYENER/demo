@@ -11,10 +11,8 @@ Test Kapsamı:
 - Dialog listeleme
 """
 
-import pytest
-from unittest.mock import patch, MagicMock
 from datetime import datetime
-
+from unittest.mock import MagicMock, patch
 
 # =============================================================================
 # TEST: Create Dialog

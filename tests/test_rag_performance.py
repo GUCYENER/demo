@@ -14,11 +14,10 @@ Author: VYRA AI Team
 Version: 1.0.0 (2026-02-09)
 """
 
-import pytest
-import numpy as np
 import time
-from unittest.mock import patch, MagicMock, PropertyMock
 
+import numpy as np
+import pytest
 
 # ============================================
 # 1. Batch Cosine Similarity Tests
@@ -84,7 +83,7 @@ class TestBatchCosineSimilarity:
     
     def test_batch_performance_vs_single(self):
         """Batch hesaplama tekil hesaplamadan hızlıdır"""
-        from app.services.rag.scoring import cosine_similarity_batch, cosine_similarity
+        from app.services.rag.scoring import cosine_similarity, cosine_similarity_batch
         
         # 200 doküman vektörü (gerçek senaryo)
         np.random.seed(42)
@@ -438,11 +437,11 @@ class TestMLTrainingPackage:
     def test_package_exports(self):
         """Tüm yeni modüller export edilir"""
         from app.services.ml_training import (
-            MLSchedulingMixin,
-            MLJobRunnerMixin,
-            SyntheticDataGenerator,
             ContinuousLearningService,
-            get_continuous_learning_service
+            MLJobRunnerMixin,
+            MLSchedulingMixin,
+            SyntheticDataGenerator,
+            get_continuous_learning_service,
         )
         
         assert MLSchedulingMixin is not None

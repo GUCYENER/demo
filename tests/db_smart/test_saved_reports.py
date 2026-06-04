@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import datetime as _dt
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 import pytest
 
 from app.services.db_smart import saved_reports as sr
-
 
 # ─────────────────────────────────────────────────────────────
 # Cursor mocks

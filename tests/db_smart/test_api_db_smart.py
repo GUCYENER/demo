@@ -16,9 +16,8 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.routes.auth import get_current_user
 from app.api.routes import db_smart_api
-
+from app.api.routes.auth import get_current_user
 
 # ─────────────────────────────────────────────────────────────
 # Fixtures
@@ -912,7 +911,6 @@ def test_execute_stream_requires_source_id_or_session(client_authed):
 
 def test_execute_stream_source_not_found(client_authed, mock_db, monkeypatch):
     # ARES: permission check geçer ama data_sources kaydı yok → 404
-    from app.api.routes import db_smart_api as _api
     monkeypatch.setattr(
         "app.services.data_source_access.user_can_access_source",
         lambda uid, sid, **kw: True,

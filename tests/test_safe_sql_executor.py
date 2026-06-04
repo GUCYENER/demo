@@ -6,22 +6,18 @@ SQL güvenlik doğrulama, dialect adaptasyonu ve hassas alan maskeleme testleri.
 Test Sayısı: ~15 test
 """
 
-import pytest
 from app.services.safe_sql_executor import (
-    validate_sql,
     check_table_whitelist,
     mask_sensitive_columns,
-    SQLSecurityError,
+    validate_sql,
 )
 from app.services.sql_dialect import (
     SQLDialect,
-    apply_row_limit,
     adapt_functions,
-    quote_identifier,
-    quote_table,
+    apply_row_limit,
     build_template_sql,
+    quote_identifier,
 )
-
 
 # =============================================================================
 # TEST: SQL Validation (Güvenlik)

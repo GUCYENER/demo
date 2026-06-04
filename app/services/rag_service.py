@@ -10,8 +10,8 @@ Tüm fonksiyonalite app/services/rag/ paketine taşınmıştır.
 # Re-export everything from the new modular package
 from app.services.rag.service import (  # noqa: F401
     RAGService,
-    SearchResult,
     SearchResponse,
+    SearchResult,
     get_rag_service,
     preload_rag_service,
 )

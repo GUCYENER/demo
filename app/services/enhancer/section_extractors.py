@@ -12,7 +12,7 @@ Version: 1.0.0 (v3.3.3)
 
 import io
 import re
-from typing import Dict, Any, List, BinaryIO
+from typing import Any, BinaryIO, Dict, List
 
 from app.services.logging_service import log_error
 

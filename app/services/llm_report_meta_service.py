@@ -8,10 +8,8 @@ Cache:    Redis L1, TTL 15 dk (wizard_state hash).
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
-import threading
 from typing import Any, Dict, List, Optional
 
 from app.core.llm import (

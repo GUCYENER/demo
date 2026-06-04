@@ -15,20 +15,29 @@ Node'lar:
 - validate: statik + EXPLAIN pre-flight (Faz 3e)
 - execute: callable injekte → row payload (Faz 3e)
 """
-from .intent_extract import intent_extract_node, detect_intent  # noqa: F401
-from .load_prefs import load_prefs_node  # noqa: F401
-from .cache_lookup import cache_lookup_node, should_skip_after_cache_hit  # noqa: F401
+from .ambiguity_gate import (  # noqa: F401
+    ambiguity_gate_node,
+    detect_ambiguity,
+    route_after_ambiguity,
+)
 from .ast_query_builder import (  # noqa: F401
-    ast_query_builder_node, build_lookup_sql, is_ast_eligible,
+    ast_query_builder_node,
+    build_lookup_sql,
+    is_ast_eligible,
 )
-from .retrieve import retrieve_node, query_expand_node  # noqa: F401
-from .multi_signal_rank import multi_signal_rank_node, multi_signal_rank  # noqa: F401
-from .ambiguity_gate import ambiguity_gate_node, route_after_ambiguity, detect_ambiguity  # noqa: F401
+from .cache_lookup import cache_lookup_node, should_skip_after_cache_hit  # noqa: F401
 from .clarification import clarification_node  # noqa: F401
-from .sql_generate import sql_generate_node  # noqa: F401
-from .validate import validate_node, route_after_validate  # noqa: F401
 from .execute import execute_node  # noqa: F401
+from .intent_extract import detect_intent, intent_extract_node  # noqa: F401
+from .load_prefs import load_prefs_node  # noqa: F401
+from .multi_signal_rank import multi_signal_rank, multi_signal_rank_node  # noqa: F401
+from .retrieve import query_expand_node, retrieve_node  # noqa: F401
 from .self_heal import (  # noqa: F401
-    self_heal_node, route_after_self_heal,
-    classify_error, build_retry_hint, decide_retry_action,
+    build_retry_hint,
+    classify_error,
+    decide_retry_action,
+    route_after_self_heal,
+    self_heal_node,
 )
+from .sql_generate import sql_generate_node  # noqa: F401
+from .validate import route_after_validate, validate_node  # noqa: F401

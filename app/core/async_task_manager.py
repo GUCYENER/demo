@@ -6,7 +6,6 @@ Arka planda çalışan görevleri yönetir ve durumlarını takip eder.
 
 from __future__ import annotations
 
-import asyncio
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -15,7 +14,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Dict, Optional
 
-from app.services.logging_service import log_system_event, log_error
+from app.services.logging_service import log_error, log_system_event
 
 
 class TaskStatus(str, Enum):

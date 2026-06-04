@@ -430,7 +430,7 @@ def rescan_stale_sources(min_age_minutes: int = 60, max_sources: int = 5) -> int
     Returns:
         İşlenen source sayısı (best-effort; hatalar log'lanır, döngü kırılmaz).
     """
-    from app.core.db import get_db_context, apply_company_scope
+    from app.core.db import apply_company_scope, get_db_context
 
     processed = 0
     try:

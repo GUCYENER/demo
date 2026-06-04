@@ -32,7 +32,7 @@ llm_column_service paterni (Redis 15dk TTL) buraya da uygulanir.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 logger = logging.getLogger(__name__)
 

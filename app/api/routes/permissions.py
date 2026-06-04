@@ -3,12 +3,14 @@ Rol Yetkilendirme API Routes
 RBAC (Role Based Access Control) sistemi için API endpoints
 """
 
-from fastapi import APIRouter, HTTPException, Depends, Request
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
-from app.core.db import get_db_context
+
 from app.api.routes.auth import get_current_user
-from app.services.logging_service import log_system_event, log_error
+from app.core.db import get_db_context
+from app.services.logging_service import log_error, log_system_event
 
 router = APIRouter(prefix="/api/permissions", tags=["permissions"])
 

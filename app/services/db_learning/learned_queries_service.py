@@ -26,7 +26,6 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from app.services.db_learning.dedupe_service import (
-    COSINE_DUP_THRESHOLD,
     DuplicateMatch,
     build_schema_signature,
     bump_hit_count,

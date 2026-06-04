@@ -1,12 +1,11 @@
 """analyze_shape + score_recommendations + 12-pattern rule engine (v3.30.0 FAZ 2 P27)."""
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 import pytest
 
 from app.services.db_smart import recommendation as rec
-
 
 # ─────────────────────────────────────────────────────────────
 # Distribution shape detection

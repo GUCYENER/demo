@@ -5,7 +5,6 @@ import pytest
 
 from app.services.db_smart import dialect_dictionary as dd
 
-
 # ─────────────────────────────────────────────────────────────
 # supported_dialects + normalization
 # ─────────────────────────────────────────────────────────────

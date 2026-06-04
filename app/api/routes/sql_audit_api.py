@@ -10,8 +10,9 @@ Endpoint'ler:
 Version: 2.58.0
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.routes.auth import get_current_user
 from app.services.sql_audit_log import get_sql_audit_logs, get_sql_audit_stats

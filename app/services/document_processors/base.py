@@ -5,8 +5,8 @@ Abstract base class for all document processors
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import List, Optional, BinaryIO
 from pathlib import Path
+from typing import BinaryIO, List, Optional
 
 
 @dataclass
@@ -82,8 +82,8 @@ class BaseDocumentProcessor(ABC):
         if not text:
             return text
         
-        import unicodedata
         import re
+        import unicodedata
         
         # Önce Unicode normalizasyonu yap
         text = unicodedata.normalize('NFKC', text)

@@ -2,14 +2,9 @@
 import os
 import sys
 
-import pytest
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.services.db_learning import synonym_learner as sl
 from app.services.db_learning.synonym_learner import (
-    SIM_HIGH,
-    SIM_LOW,
     _llm_verdict,
     is_borderline,
     list_pending,

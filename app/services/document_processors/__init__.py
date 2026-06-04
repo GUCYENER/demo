@@ -2,12 +2,12 @@
 # Modüler dosya işleme sistemi
 
 from .base import BaseDocumentProcessor
-from .pdf_processor import PDFProcessor
+from .csv_processor import CSVProcessor
 from .docx_processor import DOCXProcessor
 from .excel_processor import ExcelProcessor
+from .pdf_processor import PDFProcessor
 from .pptx_processor import PPTXProcessor
 from .txt_processor import TXTProcessor
-from .csv_processor import CSVProcessor
 
 # Processor Registry - Dosya uzantısına göre işleyici seçimi
 PROCESSOR_REGISTRY = {

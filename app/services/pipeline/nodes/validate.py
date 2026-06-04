@@ -13,8 +13,8 @@ Self-heal routing: route_after_validate → 'sql_generate' (retry) | 'execute'.
 """
 from __future__ import annotations
 
-from typing import Any, Dict
 import logging
+from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 

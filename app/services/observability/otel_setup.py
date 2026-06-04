@@ -20,13 +20,13 @@ logger = logging.getLogger(__name__)
 # All OTel imports are guarded — missing deps must NOT break app startup.
 try:
     from opentelemetry import trace  # type: ignore
-    from opentelemetry.sdk.trace import TracerProvider  # type: ignore
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor  # type: ignore
-    from opentelemetry.sdk.resources import Resource, SERVICE_NAME  # type: ignore
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # type: ignore
         OTLPSpanExporter,
     )
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # type: ignore
+    from opentelemetry.sdk.resources import SERVICE_NAME, Resource  # type: ignore
+    from opentelemetry.sdk.trace import TracerProvider  # type: ignore
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor  # type: ignore
     _HAS_OTEL = True
 except Exception:  # pragma: no cover - depends on local install
     _HAS_OTEL = False
