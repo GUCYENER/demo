@@ -63,6 +63,7 @@ Aşağıdaki komutlar **büyük/küçük harf duyarsızdır** (başla=BAŞLA=Ba�
 | 💬 **claude-code-guide** | Claude Code / SDK / API soruları | Kullanıcı CLI/SDK feature'ı sorarsa |
 | 📐 **statusline-setup** | Statusline yapılandırması | Kullanıcı statusline sorarsa |
 | 🔬 **code-reviewer** (skill: `/code-review`) | İkinci-göz diff inceleme (low/medium/high/max/ultra effort); `--comment` ile PR'a yazar, `--fix` ile working tree'ye uygular | (a) `git diff main...HEAD` ≥150 satır VEYA ≥5 dosya, (b) ARES güvenlik şüphesi var ama kendisi kararsız, (c) kullanıcı "ultrareview" diyor (bu durumda `/code-review ultra` skill'i — ZEUS tetiklemez, kullanıcı tetikler). ZEUS tetiklenebilir varyantlar: `/code-review medium` ve `/code-review high` BITIR öncesi KAP 1'den sonra; sonuç REFACTOR_BACKLOG'a veya inline fix'e dönüşür |
+| 🌐 **gstack** (skill: `/gstack` + alt-komutlar) | Hızlı headless-browser QA & site dogfooding ailesi (69 alt-skill). VYRA için en sık kullanılanlar: `browse` (sayfa aç/etkileşim/screenshot), `qa`/`qa-only` (uçtan-uca akış testi + kanıt screenshot), `design-review` (görsel tutarsızlık/spacing/AI-slop tespiti + fix), `canary` (post-deploy izleme), `scrape`/`investigate`/`health`. Tarayıcı-tarafı icra gerektiren tek köprü — TYCHE'nin fonksiyonel/görsel testini gerçek tarayıcıda koşturur | (a) frontend (`:8000`/`:5500`) değişikliği canlıda gözle doğrulanacaksa, (b) BITIR öncesi kritik akış smoke'u (login → analiz → sonuç) için TYCHE screenshot kanıtı isterse, (c) deploy sonrası `canary` izleme, (d) kullanıcı "tarayıcıda test et / screenshot al / dogfood" derse. Basit tek-screenshot işini ZEUS kendi koşar (bkz. memory: orkestrasyona boğma) |
 
 #### Paralel Dispatch Kuralları (özet — detay Bölüm 5e)
 
@@ -115,12 +116,7 @@ Aşağıdaki komutlar **büyük/küçük harf duyarsızdır** (başla=BAŞLA=Ba�
 
 5. **Plan Tarama + Housekeeping (HERA):**
    - `.agents/plans/` klasöründe `status: in_progress` olan plan varsa yüklenir, `last_commit` ile git'in mevcut HEAD'i karşılaştırılır. Sapma varsa kullanıcıya bildirilir (plan stale)
-   - 🆕 **Auto-archive sweep:** Frontmatter'ında `status: completed` VEYA `status: done` olan TÜM plan dosyaları için:
-     1. Plan dosyasının `version_target` field'ından sürüm slug'ı çıkar (örn. `v3.33.0` → `v3.33`)
-     2. `.agents/plans/archive/<vX.YY>/` klasörü yoksa oluştur
-     3. `git mv .agents/plans/<file>.md .agents/plans/archive/<vX.YY>/<file>.md` ile taşı (git history korunur)
-     4. Master plan / audit dosyaları (frontmatter yok veya `version_target: n/a`) **taşınmaz** — yerinde kalır
-     5. Taşıma raporu: BAŞLA hazır raporunda "📊 Açık Plan" satırına bitişik bir özet: `(housekeeping: N dosya v3.YY arşivine taşındı)`
+   - **Auto-archive sweep (önceki oturum BİTİR'siz kapandıysa güvenlik ağı):** `status: completed|done` planları arşivle — **algoritma tek yerde: KAP 12** (Bölüm 8, BİTİR). Taşıma olduysa BAŞLA raporunda `(housekeeping: N dosya arşivlendi)` notu.
    - 🆕 **Naming guard re-check:** `.agents/plans/*.md` (archive hariç) altındaki TÜM aktif planlar canonical naming convention'a uyuyor mu? (`^\d{4}-\d{2}-\d{2}_\d{4}_[a-z0-9_]+_v\d+\.md$`)
      - Uymayan eski dosya (`vX.Y.Z_<slug>.md` veya freeform) → retro-rename yasak (§5d), ama bayrak: BAŞLA raporunda "⚠️ legacy plan naming: <N> dosya" notu
 
@@ -846,28 +842,20 @@ Index            : Sık sorgulanan FK/filter kolonlarına index
 - Python syntax hatası yok
 - Import'lar temiz (kullanılmayan import yok)
 - Backend başarıyla ayağa kalkıyor
-- **Lint & format gate (ZORUNLU — v3.38.0+ adoption sonrası):**
-  - Python lint: `ruff check app/ core/ tests/` → exit 0 (autofix sonrası kalan ihlal = blocker)
-  - Python format: `ruff format --check app/ core/ tests/` → exit 0 (diff'siz)
-  - JS değişikliği varsa: değişen modül başına `node -c <file>` syntax check + `node frontend/build.mjs` exit 0
-  - **Bootstrap (henüz kurulu değil — v3.38.0 PR'i):** `pip install ruff` + `requirements-dev.txt` oluştur + `pyproject.toml` `[tool.ruff]` minimal config (line-length=100; exclude=`python/`, `Lib/`, `node_modules/`, `frontend/dist/`, `Gecici_Dosyalar_Sil/`); HERMES bootstrap commit'i ayrı PR
-  - **Atlama koşulu:** Bootstrap tamamlanmadan KAP 1 lint maddesi `NOT-APPLICABLE (ruff bootstrap pending)` notuyla geçilir; 2 oturum üstüste atlamak süreç ihlali — HERMES adoption PR'ini açmakla yükümlü
+- **Lint & format gate (`ruff 0.15.15` KURULU, `pyproject.toml` `[tool.ruff]` var):**
+  - Python lint: `ruff check app core tests` → hedef exit 0
+  - Python format: `ruff format --check app core tests` → diff'siz
+  - JS değişikliği varsa: değişen modül başına `node -c <file>` + `node frontend/build.mjs` exit 0
+  - **Mevcut durum (dürüst):** İlk ölçüm **741 ihlal** (619 autofix: çoğu import-sıralama + unused-import). Tam adoption = `ruff check --fix` + `ruff format` **ayrı commit** (büyük diff, ~122 manuel ihlal kalır). O commit'e kadar gate **yeni/değişen dosyalarda advisory**, tüm-repo blocker DEĞİL.
 
 **🔒 KAP 2 — Güvenlik (ARES)**
 - Bölüm 6 kontrol listesi temiz
 - Yeni endpoint varsa auth kontrolü var mı?
-- **Dependency vulnerability scan / SCA (ZORUNLU — v3.38.0+ adoption sonrası):**
-  - Python: `pip-audit -r requirements.txt --strict --vulnerability-service osv` → exit 0
-  - Frontend: `cd frontend && npm audit --omit=dev --audit-level=high` → exit 0 (mevcut deps: `chart.js`, `esbuild`)
-  - **Severity triage tablosu:**
-    | Severity | Aksiyon | Commit |
-    |---|---|---|
-    | CRITICAL / HIGH | Package upgrade veya pinned-with-rationale yorum; rationale CHANGELOG'a girer | **BLOCKED** — BITIR durur |
-    | MEDIUM | `REFACTOR_BACKLOG.md`'ye `priority: P2 risk: medium target: v<next-minor>` madde | ALLOW + audit log |
-    | LOW / INFO | Audit log only; backlog opsiyonel | ALLOW |
-  - **Bootstrap (henüz kurulu değil — v3.38.0 PR'i):** `pip install pip-audit` + `requirements-dev.txt`'ye ekle; ARES bootstrap commit'i ayrı PR
-  - **Atlama koşulu:** Offline ortam veya OSV DB erişim hatası → `OFFLINE — fail-open + log`; üst üste 2 oturum atlanırsa süreç ihlali
-  - **CHANGELOG bağlantısı:** CRITICAL/HIGH bulgular kapatıldığında commit message body'sinde CVE-ID + paket-versiyon delta yer alır (HERA convention'a uygun)
+- **Dependency vulnerability scan / SCA (`pip-audit 2.10.0` KURULU):**
+  - Python: `pip-audit -r requirements.txt` (OSV) — network gerektirir.
+  - Frontend: `cd frontend && npm audit --omit=dev --audit-level=high`
+  - **Triage (basit):** CRITICAL/HIGH → upgrade ya da pinned-with-rationale (gerekçe CHANGELOG'a); MEDIUM → REFACTOR_BACKLOG `priority: P2`; LOW → audit log.
+  - **Offline:** OSV erişilemezse `OFFLINE — fail-open + log` (bu ortamda tarama 90s timeout verdi → clause gerçek). Commit'i bloklamaz.
 - **Privacy / KVKK / PII recurring gate (ZORUNLU — her BITIR):**
   - **PII pattern taraması (ARES + APOLLO):** Diff'te yeni eklenen log/print/exception mesajları PII içeriyor mu? Pattern: TC kimlik (11 hane), telefon, email, IBAN, kredi kartı, plaka. Otomatik regex spot-check: `git diff --cached -U0 | grep -nE '\b[0-9]{11}\b|\b[A-Z]{2}[0-9]{2}[A-Z0-9]{1,30}\b'` → bulgular ARES manuel review
   - **Log scrubbing kontrolü:** `app/core/logging_service.py` veya benzeri scrubber'a yeni alan eklenmesi gerekiyor mu? (örn. yeni endpoint'te user input log'lanıyorsa)
@@ -884,11 +872,11 @@ Index            : Sık sorgulanan FK/filter kolonlarına index
   - `pytest tests/test_schema_drift_detector.py -q` → exit 0 (orphan test artık KAP'a bağlı; mevcut detector kullanılır)
   - Drift: `schema.py` deklare ettiği kolon/tablo gerçek DB'de var mı? Migration up sonrası drift sıfır olmalı
   - 4 dialect uyumluluk: yeni migration `psycopg2` (PG), `cx_Oracle` (Oracle), `pyodbc` (MSSQL), `pymysql` (MySQL) için sentaks-uyumlu mu? (POSEIDON cross-check)
-- **Migration rollback testi (ZORUNLU — yeni migration için):**
-  - `alembic downgrade -1 && alembic upgrade head` smoke testi geçmeli (idempotent up/down)
-  - Veri kaybı riski varsa (`DROP COLUMN`, `ALTER COLUMN TYPE`): `down()` data preservation stratejisi yorum olarak yazılır VEYA "irreversible" notu açıkça belirtilir
-  - Test komutu: `python -m alembic downgrade -1 && python -m alembic upgrade head` (exit 0)
-  - **İstisna:** Yalnızca seed data / `op.execute()` insert içeren migration → rollback testi opsiyonel (HEPHAESTUS kararı)
+- **Migration idempotent re-apply testi (ZORUNLU — yeni migration için):**
+  - **Proje gerçeği:** `alembic upgrade` KULLANILMAZ (stale stamp + startup gap; bkz. memory `reference_canli_migration_apply.md`). Migration'lar `apply_migrations_*.py` doğrudan-SQL idempotent script ile uygulanır.
+  - **Smoke:** apply script'i **iki kez** çalıştır → ikinci çalıştırma no-op olmalı (`IF NOT EXISTS` / `IF EXISTS` guard'ları var mı?). İkinci run hata/çift-uygulama yaparsa idempotent değil → BLOCKED.
+  - Veri kaybı riski varsa (`DROP COLUMN`, `ALTER COLUMN TYPE`): geri-alma stratejisi script yorumunda yazılır VEYA "irreversible" notu açıkça belirtilir.
+  - **İstisna:** Yalnızca seed data / insert içeren migration → idempotent guard yeterli, ek smoke opsiyonel (HEPHAESTUS kararı).
 
 **🌐 KAP 4 — Frontend (ATHENA)**
 - JS/CSS değişikliği varsa → **`node frontend/build.mjs` ile bundle ZORUNLU rebuild** (atlanırsa tarayıcı eski bundle yükler, değişiklikler etkisiz kalır)
@@ -901,20 +889,6 @@ Index            : Sık sorgulanan FK/filter kolonlarına index
 - Nginx config değişikliği varsa → `deploy/nginx/vyra.conf` (şablon) güncellendi mi?
 - Placeholder (`__PROJECT_ROOT__`) korunuyor mu?
 - Dialect uyumluluk: PostgreSQL + Oracle + MSSQL + MySQL hepsi çalışıyor mu?
-- **API contract drift / OpenAPI breaking-change gate (ZORUNLU — endpoint değişikliğinde):**
-  - FastAPI `app.openapi()` çıktısı snapshot olarak tutulur: `docs/openapi_snapshot.json` (HERMES + POSEIDON sorumlu)
-  - Endpoint diff varsa → snapshot regenerate + `oasdiff` ile karşılaştır:
-    ```bash
-    python -c "import json,uvicorn; from app.main import app; print(json.dumps(app.openapi()))" > /tmp/openapi_new.json
-    oasdiff breaking docs/openapi_snapshot.json /tmp/openapi_new.json --fail-on ERR
-    ```
-  - **Breaking-change katmanları:**
-    | Sınıf | Örnek | Aksiyon |
-    |---|---|---|
-    | Breaking (ERR) | Required field kaldırıldı, response shape değişti, status code semantiği değişti | Commit BLOCKED veya `/v2` namespace + eski endpoint deprecation period (≥1 minor) |
-    | Non-breaking (WARN) | Yeni opsiyonel field, yeni endpoint, yeni response code | ALLOW + CHANGELOG'a "API additive" satırı |
-  - **Bootstrap (v3.39.0 PR):** `oasdiff` (Go binary veya Docker image) yüklenmemiş; snapshot dosyası henüz yok. İlk snapshot bootstrap commit'inde alınır. Bootstrap tamamlanana kadar madde `NOT-APPLICABLE`
-  - **İstisna:** Internal-only endpoint (`/internal/*` veya `Depends(internal_only)`) → breaking ok, sadece CHANGELOG audit log
 
 **🧬 KAP 5b — RAG Pipeline (PROMETHEUS)**
 - Chunking/embedding değişikliği varsa → reindex gerekiyor mu?
@@ -933,46 +907,15 @@ Index            : Sık sorgulanan FK/filter kolonlarına index
 **🏃 KAP 6 — Performans (NIKE)**
 - N+1 sorgu riski? Toplu sorgu kullanıldı mı?
 - Redis cache gerekiyor mu?
-- **Observability — SLO/SLI/Error Budget gate (ZORUNLU — kullanıcı-etkili endpoint/akış değişikliğinde):**
-  - **Trace coverage:** Yeni endpoint/service'in kritik yolu OTEL `@trace_span` veya `tracer.start_as_current_span` ile sarılı mı? (p36_telemetry-otel-prom adoption baz alınır)
-  - **Metric coverage (RED pattern):** Rate (request/sec) + Errors (4xx/5xx count) + Duration (latency p50/p95/p99) Prometheus counter/histogram olarak emit ediliyor mu?
-  - **SLO tablosu (`docs/SLO.md` — bootstrap pending):**
-    | Servis | SLI | SLO hedef | Error budget |
-    |---|---|---|---|
-    | text-to-sql | p95 latency | <3s | 5% / 30d window |
-    | deep-think | success rate | >99% | 1% / 30d window |
-    | RAG search | p95 latency | <800ms | 5% / 30d window |
-    | API gateway (Nginx) | availability | >99.5% | 0.5% / 30d |
-  - **Alert kuralı:** SLO ihlal trendi varsa (error budget burn-rate > 2x baseline) → release notuna flag; sustained 24h ihlal → kullanıcıya BITIR raporunda KIRMIZI uyarı
-  - **Bootstrap (v3.39.0):** `docs/SLO.md` henüz yok; ilk taslakta yukarıdaki 4 servis baseline alınır. NIKE bootstrap PR'ini açar
-  - **Atlama koşulu:** Pure backend refactor (kullanıcıya görünür akış değişmemiş) → SLO maddesi `N/A — no user-visible flow change` notuyla geçilir
 
 **📊 KAP 7 — Test (TYCHE)**
 - Değişiklik elle test edildi mi?
 - Edge case'ler düşünüldü mü?
-- **Coverage threshold (ZORUNLU — v3.38.0+ adoption sonrası, `pytest-cov` zaten kurulu):**
-  - Baseline ölçümü: `pytest --cov=app --cov=core --cov-report=term-missing --cov-fail-under=75 tests/`
-  - **Threshold rampası:**
-    | Versiyon | Global threshold | Patch coverage (değişen satırlar) |
-    |---|---|---|
-    | v3.38.0 (baseline) | %75 | %85 |
-    | v3.40.0 | %79 | %87 |
-    | v3.42.0 | %83 | %88 |
-    | v3.45.0+ | %85 (steady) | %90 |
-  - **Patch coverage = TYCHE diff-cover heuristic:** Değişen satırların (`git diff main...HEAD -- '*.py'`) en az %85'i en az 1 test tarafından çalıştırılmalı; `diff-cover` paketi ile veya elle `coverage report -m` + diff cross-check
-  - **Threshold altı davranışı:**
-    | Durum | Aksiyon |
-    |---|---|
-    | Global threshold altı | Commit BLOCKED; eksik test PR'i açılır VEYA threshold geçici %2 düşürülür + REFACTOR_BACKLOG'a `priority: P1 target: <next-minor>` ödeme planı |
-    | Patch coverage altı, global OK | UYARI 🟡; kullanıcı onayıyla commit + follow-up test task |
-  - **İstisna (TYCHE kararı):** Sırf docs/CHANGELOG/migration `.py` (yeni `op.execute`) diff'i → coverage check skip; ML model file/`*.cbm` artefakt değişikliği → skip
-  - **Rapor formatı:**
-    ```
-    📊 Coverage Raporu:
-       Global  : 78.4% (threshold 75%) ✅
-       Patch   : 91.2% (threshold 85%) ✅
-       Eksik   : app/services/foo.py:42-58 (yeni try/except path)
-    ```
+- **Coverage ölçümü (advisory — `pytest-cov 7.0.0` kurulu):**
+  - **Durum (dürüst):** Gerçek baseline henüz ölçülmedi (114 test dosyasının bir kısmı canlı PG/Redis/Oracle ister → tam suite servisler ayaktayken ölçülmeli). Uydurma versiyon-rampası kaldırıldı.
+  - **İlk adım:** Servisler ayaktayken bir kez ölç: `pytest --cov=app --cov=core --cov-report=term-missing tests/`. Çıkan gerçek sayı baseline olur; ZORUNLU eşik o zaman konur (sahte sayı yazma).
+  - **Patch odağı:** Değişen `.py` satırları için en az bir test eklendi mi? (elle `coverage report -m` + diff cross-check; eşik dayatması baseline'dan sonra)
+  - **İstisna:** Sırf docs/CHANGELOG/migration `.py` / `*.cbm` artefakt diff'i → coverage check skip.
 
 **📄 KAP 8 — Versiyon, Build & Dokümantasyon (HERA)**
 
@@ -994,16 +937,12 @@ c) **Commit Mesajı:**
    - Conventional format: `feat(modul): açıklama` veya `fix(modul): açıklama`
    - Versiyon tag'ı: `vX.Y.Z: kısa özet`
 
-**⚙️ KAP 8b — CI/CD smoke (NIKE — v3.39.0+ adoption sonrası)**
+**⚙️ KAP 8b — CI/CD (NIKE — PLANLANIYOR, henüz aktif değil)**
 
-- **GitHub Actions workflow zorunluluğu (`.github/workflows/ci.yml` — henüz YOK):**
-  - Trigger: `push` (her branch) + `pull_request` (main hedefli)
-  - Job matrix: `lint` (ruff check/format) · `audit` (pip-audit) · `test` (pytest --cov) · `build` (node frontend/build.mjs)
-  - Local mirror: BITIR öncesi `make ci` veya eşdeğer aggregate komut çalıştırıldı mı? Tüm 4 job exit 0
-- **Branch protection (manuel GitHub UI ayarı — repo admin):** `main` branch'inde "Require status checks: lint, audit, test, build" işaretli olmalı; merge öncesi CI yeşil zorunlu
-- **Deployment pipeline:** Şu an manuel `start.ps1` — v3.40.0+ hedefinde Docker compose build → registry push → deploy automation (POSEIDON sorumlu, ayrı sprint)
-- **Bootstrap (v3.39.0 PR — NIKE açar):** İlk `.github/workflows/ci.yml` yazılır + branch protection talimatı CHANGELOG'a eklenir
-- **Atlama koşulu:** Workflow dosyası mevcut değilse `NOT-APPLICABLE (CI bootstrap pending v3.39.0)`; 3 oturum üstüste atlanırsa süreç ihlali
+- **Durum (dürüst):** `.github/workflows/ci.yml` henüz YOK. Bu bir "süreç ihlali" değil — planlanan sonraki adım. Sahte "pending gate" tehdidi kaldırıldı.
+- **Fizibilite (ölçüldü):** `requirements.txt` Linux-dostu (`oracledb` saf-python thin; pywin32/pyodbc/cx_Oracle yok) → ubuntu runner dependency kurabilir. Karar noktası: `lint`+`build` job'ları deterministik (yeşil olur); `test` job'u 114 testin canlı servis ihtiyacı yüzünden **PG+Redis service-container** stratejisi ister (Oracle-bağımlı testler skip/mark).
+- **İlk hedef CI (önerilen):** `lint` (ruff check) + `build` (node frontend/build.mjs) ile başla → yeşil baz. `test` job'u ruff-adoption (619 autofix) commit'i sonrası eklenir.
+- **Branch protection:** CI yeşile döndükten sonra `main`'de "Require status checks" manuel işaretlenir (repo admin, GitHub UI).
 
 **🧹 KAP 9 — Temizlik**
 - `Gecici_Dosyalar_Sil/` temiz mi?
@@ -1017,26 +956,10 @@ c) **Commit Mesajı:**
 - Background ajan output dosyaları (`.tasks/`) artık gereksizse temizle
 - Orphan tracking: brief var ama git'te hiç commit yok → süreç ihlali, kullanıcıyı uyar
 
-**🗂️ KAP 10b — Auto-Memory Hijyeni (YENİ)**
+**🗂️ KAP 10b — Auto-Memory Hijyeni**
 
-Claude Code'un dosya-tabanlı memory sistemi (`C:\Users\<user>\.claude\projects\d--demo-vyra\memory\`):
-
-1. **MEMORY.md satır sayısı:** 200 satıra yakınsa (>180) → yeniden organize et:
-   - Ölü/stale entry'leri tespit et (referans dosya silinmiş, eski commit hash'li proje memory, vb.)
-   - Aynı temayı paylaşan iki memory'yi birleştir
-   - Satır limiti aşılırsa eski oturum context'leri kesilir → kritik kuralları kaybetme riski
-2. **Stale memory testi:** Her memory dosyasının `description` alanı hâlâ güncel mi?
-   - Memory dosyasında bahsedilen file path / function adı kodbase'de hâlâ var mı?
-   - Yoksa: memory'yi güncelle veya sil
-3. **Yeni eklenen memory rapor edilir:** Bitiş raporunda `🗂️ Memory : [+N yeni / temiz]` satırı
-
-```
-🗂️ Auto-Memory Sağlık Raporu:
-   MEMORY.md satır: [N / 200] [🟢 <150 · 🟡 150-180 · 🔴 >180]
-   Stale entry    : [0 / N — silindi/güncellendi]
-   Bu oturum +    : [N yeni memory]
-   Sonuç          : [SAĞLIKLI 🟢 / UYARI 🟡 / KRİTİK 🔴]
-```
+- Bu oturumda memory eklendiyse bitiş raporunda `🗂️ Memory: +N yeni` satırı.
+- MEMORY.md belirgin şişerse (kabaca >180 satır) → o zaman stale/duplicate temizliği + path-geçerliliği kontrolü yap. Şu anki boyutta (≈16 giriş) tam ritüel gereksiz; sadece göz at.
 
 **📋 KAP 11 — Refactor Backlog Gate (YENİ)**
 
@@ -1192,14 +1115,12 @@ Uzun oturumlarda erken bağlam (plan, dosya içerikleri, kararlar) sıkıştır�
 | Auto-memory hijyeni | MEMORY.md >180 satırsa stale entry temizlenir, çelişen memory kullanıcıya sunulur (KAP 10b) |
 | Refactor backlog | Bu oturumda `priority: high` madde eklendiyse bitiş raporunda mutlaka görünür, sessiz arşivleme yasak (KAP 11) |
 | Test | Değişiklik sonrası mutlaka test — log oku, DB kontrol et |
-| Lint gate | KAP 1 (v3.38.0+): `ruff check + ruff format --check` exit 0 zorunlu; bootstrap (`pip install ruff` + `pyproject.toml [tool.ruff]`) ayrı HERMES PR'i — 2 oturum atlamak ihlal |
-| Dependency SCA | KAP 2 (v3.38.0+): `pip-audit --strict` + `npm audit --audit-level=high`; CRITICAL/HIGH = commit blocker, MEDIUM = REFACTOR_BACKLOG madde, offline = fail-open |
-| Coverage threshold | KAP 7 (v3.38.0+): `pytest --cov-fail-under=75` baseline; patch coverage %85+ (TYCHE diff-cover); rampaya göre v3.45.0'da %85 steady |
+| Lint gate | KAP 1: `ruff 0.15.15` KURULU + `pyproject.toml`; ilk ölçüm 741 ihlal (619 autofix). Tam adoption (`ruff check --fix`+`ruff format`) ayrı büyük-diff commit; o güne kadar değişen-dosya advisory |
+| Dependency SCA | KAP 2: `pip-audit 2.10.0` KURULU + `npm audit --audit-level=high`; CRITICAL/HIGH = upgrade/pinned, MEDIUM = REFACTOR_BACKLOG, offline = fail-open |
+| Coverage | KAP 7: `pytest-cov 7.0.0` kurulu; gerçek baseline servisler ayaktayken ölçülecek → şimdilik advisory (uydurma rampa kaldırıldı) |
 | Privacy/KVKK | KAP 2: PII pattern regex + log scrubber + retention politikası; PII sızıntı riski commit blocker (ARES+APOLLO) |
-| Schema drift + rollback | KAP 3: `test_schema_drift_detector.py` exit 0 + `alembic downgrade -1 && upgrade head` smoke; irreversible migration açıkça etiketlenir |
-| API contract | KAP 5 (v3.39.0+): `docs/openapi_snapshot.json` + `oasdiff breaking --fail-on ERR`; breaking change `/v2` namespace + ≥1 minor deprecation |
-| Observability SLO | KAP 6 (v3.39.0+): RED metrics (Rate/Errors/Duration) + `docs/SLO.md` 4 servis baseline; error budget burn-rate 2x → release flag |
-| CI/CD smoke | KAP 8b (v3.39.0+): `.github/workflows/ci.yml` (lint/audit/test/build); main branch protection manuel ayarlanır |
+| Schema drift + migration | KAP 3: `test_schema_drift_detector.py` exit 0 (21 test, gerçek) + migration idempotent re-apply smoke (apply script 2× = no-op; alembic DEĞİL); irreversible açıkça etiketlenir |
+| CI/CD | KAP 8b: PLANLANIYOR (henüz aktif değil, "ihlal" değil). requirements.txt Linux-dostu → ilk hedef lint+build job'ları; test job'u PG+Redis service-container ister |
 | A11y derinlik | 5c.2 (v3.39.0+): `pa11y --standard WCAG2AA` error=0 + WCAG 2.2 AA manuel checklist + kritik akışlar için NVDA/VoiceOver smoke |
 | Code review skill | Bölüm 2b: `/code-review medium\|high` BITIR öncesi KAP 1 sonrası tetikle; sonuç REFACTOR_BACKLOG veya `--fix` inline; `ultra` kullanıcı-only |
 | Anlaşmazlık | Konsey anlaşamazsa → her iki görüş kullanıcıya sunulur |

@@ -1,0 +1,6 @@
+# VYRA — geliştirme / CI araçları (runtime değil)
+# Kurulum: ./python/Scripts/python.exe -m pip install -r requirements-dev.txt
+# Not: pytest>=9.0.0 ve pytest-cov>=7.0.0 zaten requirements.txt'te (runtime test tooling).
+
+ruff==0.15.15        # KAP 1 lint & format gate
+pip-audit==2.10.0    # KAP 2 dependency vulnerability scan (SCA)

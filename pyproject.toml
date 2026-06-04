@@ -1,0 +1,22 @@
+# VYRA — ruff lint/format yapılandırması (vyrazeus.md KAP 1 lint gate)
+# Bootstrap: v3.72.x — `pip install ruff` ile kuruldu.
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+exclude = [
+    "python",            # embedded CPython runtime
+    "Lib",
+    "node_modules",
+    "frontend/dist",
+    "Gecici_Dosyalar_Sil",
+    ".agents",
+    "alembic",
+]
+
+[tool.ruff.lint]
+# Başlangıç kümesi: pyflakes (F) + pycodestyle error (E) + isort (I).
+# Adoption sonrası genişletilebilir (B, UP, SIM ...).
+select = ["E", "F", "I"]
+ignore = [
+    "E501",  # line-too-long — format ayrı ele alır, ilk adoption'da gürültü yapmasın
+]
