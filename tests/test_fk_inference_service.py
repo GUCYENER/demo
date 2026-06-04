@@ -452,6 +452,31 @@ def test_infer_no_false_positive_short_token():
     assert res["persisted"] == 0
 
 
+def test_infer_evidence_records_pk_provenance():
+    """v3.74.0 cascade: hedef PK unique-index'ten geldiyse evidence_json bunu kaydeder
+    (UI rozeti için). pk_source yoksa 'declared' varsayılır."""
+    cur = MagicMock()
+    # T_ORG_PARTY PK'sı unique-index'ten yakalanmış (discovery pk_source işaretledi)
+    party_cols = [{"name": "PartyId", "type": "integer", "is_pk": True, "pk_source": "unique_index"},
+                  {"name": "Name", "type": "varchar", "is_pk": False}]
+    user_cols = [{"name": "Id", "type": "integer", "is_pk": True},
+                 {"name": "PartyId", "type": "integer", "is_pk": False}]
+    objects = [
+        ("elysion", "T_ORG_PARTY", "table", json.dumps(party_cols)),
+        ("elysion", "T_ORG_USER", "table", json.dumps(user_cols)),
+    ]
+    _seed_objects(cur, objects)
+    res = svc.infer_fks_for_source(cur, source_id=3, dialect="postgresql")
+    assert res["persisted"] >= 1
+    # evidence_json INSERT 9. parametrede (jsonb) — to_pk_source='unique_index' olmalı
+    inserts = [c for c in cur.execute.call_args_list
+               if "INSERT INTO ds_db_relationships" in c.args[0]]
+    assert inserts, "FK persist edilmeli"
+    import json as _json
+    ev = _json.loads(inserts[0].args[1][9])  # evidence_json param sırası
+    assert ev.get("to_pk_source") == "unique_index", ev
+
+
 @pytest.mark.parametrize("dialect", ["mssql", "mysql"])
 def test_infer_prefix_strip_cross_dialect(dialect):
     """Hungarian V-öneki soyma MSSQL + MySQL dialect'lerinde de çalışır (çekirdek agnostik)."""

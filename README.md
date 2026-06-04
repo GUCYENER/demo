@@ -3985,7 +3985,7 @@ netstat -an | findstr "5005"
 
 **Geliştirici:** Yasın Fazlıoğlu  
 **E-posta:** yasin.fazlioglu@consultant.turkcell.com.tr  
-**Versiyon:** 3.73.0 (FK çıkarımı her-DB sağlamlaştırma — kolon-kökü prefix-soyma [Hungarian N/V + modül öneki] + esnek PK çözümü [sabit "id" kaldırıldı]; UI arama-temizle(X) sağ-hiza. Detaylı sürüm geçmişi: `app/core/config.py` `APP_VERSION` + `git log` + `.agents/plans/`. NOT: README v3.43–v3.72 arası ayrı geçmiş tutulmadı — `config.py` otoriter sürüm kaynağıdır.)
+**Versiyon:** 3.74.0 (Identity Cascade — keşifte declared PK yoksa UNIQUE INDEX'ten PK yakala [4 dialect: PG/Oracle/MSSQL/MySQL, try/except izole]. KÖK: MSSQL→PG migre DB'de PK/FK constraint düşmüş ama `PK_<tablo>` unique-index duruyor → keşif yalnız PRIMARY KEY sorguluyordu → is_pk boş → FK inference target_pk_not_found. Cascade: declared > unique-index > isim-sezgisi + provenance. ÖNCEKİ v3.73.0: FK kolon-kökü prefix-soyma + esnek PK + UI arama-X hiza. Detaylı geçmiş: `app/core/config.py` `APP_VERSION` + `git log` + `.agents/plans/`.)
 
 **Geçmiş versiyon notları:**
 

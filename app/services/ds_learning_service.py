@@ -342,6 +342,42 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                     all_pks[key] = set()
                 all_pks[key].add(pk_row[2] if isinstance(pk_row, tuple) else pk_row["column_name"])
 
+            # ── v3.74.0 KÖK FIX: UNIQUE INDEX → identity/PK proxy ──
+            # MSSQL→PG migre edilmiş DB'lerde declared PRIMARY KEY constraint DÜŞMÜŞ olabilir,
+            # ama PK bilgisi `PK_<tablo>` adlı UNIQUE INDEX olarak durur. Üstteki PRIMARY KEY
+            # sorgusu bunları kaçırıyordu → is_pk boş → FK inference hedef PK bulamıyordu
+            # (target_pk_not_found). Tek-kolonlu unique index'i identity kabul et. Tercih sırası:
+            # gerçek-PK index > 'PK%'-adlı > '*id'-biten kolon > alfabetik. SADECE declared PK
+            # OLMAYAN tablolara uygulanır (declared PK otoriter). Non-blocking (try/except).
+            all_uidx = {}  # (schema, table) → identity column (best single-col unique index)
+            try:
+                cur.execute("""
+                    SELECT n.nspname AS schema_name, c.relname AS table_name, a.attname AS column_name
+                    FROM pg_index i
+                    JOIN pg_class c       ON i.indrelid = c.oid
+                    JOIN pg_class ic      ON i.indexrelid = ic.oid
+                    JOIN pg_namespace n   ON c.relnamespace = n.oid
+                    JOIN pg_attribute a   ON a.attrelid = c.oid AND a.attnum = ANY(i.indkey)
+                    WHERE i.indisunique
+                      AND array_length(i.indkey, 1) = 1
+                      AND c.relkind IN ('r','p')
+                      AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
+                    ORDER BY n.nspname, c.relname,
+                             i.indisprimary DESC,
+                             (ic.relname ILIKE 'PK%') DESC,
+                             (a.attname ILIKE '%%id') DESC,
+                             ic.relname
+                """)
+                for r in cur.fetchall():
+                    uk = (r[0] if isinstance(r, tuple) else r["schema_name"],
+                          r[1] if isinstance(r, tuple) else r["table_name"])
+                    ucol = r[2] if isinstance(r, tuple) else r["column_name"]
+                    if uk not in all_uidx:  # ORDER BY → ilk satır en iyi aday
+                        all_uidx[uk] = ucol
+                logger.info("[DSLearning] PG unique-index identity (PK proxy): %d tablo", len(all_uidx))
+            except Exception as uidx_err:
+                logger.warning("[DSLearning] PG unique-index identity sorgusu hata: %s", str(uidx_err)[:200])
+
             # ── Toplu satır tahmini (pg_stat_user_tables) ──
             row_estimates = {}
             cur.execute("""
@@ -406,10 +442,16 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                 key = (schema_name, table_name)
                 columns = list(all_columns.get(key, []))
 
-                # PK işaretle
+                # PK işaretle — declared PK yoksa unique-index identity'ye düş (v3.74.0)
                 pk_cols = all_pks.get(key, set())
+                _pk_from_uidx = False
+                if not pk_cols and key in all_uidx:
+                    pk_cols = {all_uidx[key]}
+                    _pk_from_uidx = True
                 for c in columns:
                     c["is_pk"] = c["name"] in pk_cols
+                    if c["is_pk"] and _pk_from_uidx:
+                        c["pk_source"] = "unique_index"   # provenance → UI rozeti
                     # Faz 2f: native kolon yorumu
                     cmt = col_comments.get((schema_name, table_name, c["name"]))
                     if cmt:
@@ -594,6 +636,39 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                     all_pks[key] = set()
                 all_pks[key].add(pc)
 
+            # ── v3.74.0 KÖK FIX: MSSQL UNIQUE INDEX → identity/PK proxy ──
+            # Declared PK yoksa tek-kolonlu unique index (tercih: PK > 'PK%'-adlı > '%id'). Non-blocking.
+            all_uidx = {}  # (schema, table) → identity column
+            try:
+                cur.execute("""
+                    SELECT sch, tbl, col FROM (
+                        SELECT SCHEMA_NAME(t.schema_id) AS sch, t.name AS tbl, c.name AS col,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY t.object_id
+                                   ORDER BY i.is_primary_key DESC,
+                                            CASE WHEN i.name LIKE 'PK%' THEN 0 ELSE 1 END,
+                                            CASE WHEN c.name LIKE '%id' THEN 0 ELSE 1 END,
+                                            i.name
+                               ) AS rn
+                        FROM sys.indexes i
+                        JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+                        JOIN sys.columns c ON c.object_id = i.object_id AND c.column_id = ic.column_id
+                        JOIN sys.tables t ON t.object_id = i.object_id
+                        WHERE i.is_unique = 1
+                          AND (SELECT COUNT(*) FROM sys.index_columns ic2
+                               WHERE ic2.object_id = i.object_id AND ic2.index_id = i.index_id) = 1
+                    ) q WHERE rn = 1
+                """)
+                for r in cur.fetchall():
+                    uk = (r["sch"] if isinstance(r, dict) else r[0],
+                          r["tbl"] if isinstance(r, dict) else r[1])
+                    ucol = r["col"] if isinstance(r, dict) else r[2]
+                    if uk not in all_uidx:
+                        all_uidx[uk] = ucol
+                logger.info("[DSLearning] MSSQL unique-index identity (PK proxy): %d tablo", len(all_uidx))
+            except Exception as uidx_err:
+                logger.warning("[DSLearning] MSSQL unique-index identity sorgusu hata: %s", str(uidx_err)[:200])
+
             # ── Faz 2f: Native comment okuma (MSSQL sys.extended_properties / MS_Description) ──
             mssql_col_comments = {}
             mssql_tbl_comments = {}
@@ -654,10 +729,16 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                 key = (schema_name, table_name)
                 columns = list(all_columns.get(key, []))
 
-                # PK işaretle
+                # PK işaretle — declared PK yoksa unique-index identity'ye düş (v3.74.0)
                 pk_cols = all_pks.get(key, set())
+                _pk_from_uidx = False
+                if not pk_cols and key in all_uidx:
+                    pk_cols = {all_uidx[key]}
+                    _pk_from_uidx = True
                 for c in columns:
                     c["is_pk"] = c["name"] in pk_cols
+                    if c["is_pk"] and _pk_from_uidx:
+                        c["pk_source"] = "unique_index"   # provenance → UI rozeti
                     # Faz 2f: native kolon yorumu
                     cmt = mssql_col_comments.get((schema_name, table_name, c["name"]))
                     if cmt:
@@ -754,6 +835,7 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                     ORDER BY ORDINAL_POSITION
                 """, (db_name, table_name))
                 columns = []
+                _uni_cols = []  # v3.74.0: declared PK (PRI) yoksa UNI fallback için
                 for col in cur.fetchall():
                     cn = col.get("COLUMN_NAME", "") if isinstance(col, dict) else col[0]
                     dt = col.get("DATA_TYPE", "") if isinstance(col, dict) else col[1]
@@ -767,9 +849,18 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                         "default_val": str(default) if default else None,
                         "is_pk": key == "PRI"
                     }
+                    if key == "UNI":
+                        _uni_cols.append(cn)
                     if col_comment:
                         entry["comment"] = col_comment
                     columns.append(entry)
+                # v3.74.0 KÖK FIX: declared PK (PRI) yoksa ilk UNI kolonu identity kabul et
+                if not any(c.get("is_pk") for c in columns) and _uni_cols:
+                    for c in columns:
+                        if c["name"] == _uni_cols[0]:
+                            c["is_pk"] = True
+                            c["pk_source"] = "unique_index"   # provenance → UI rozeti
+                            break
 
                 obj_entry = {
                     "schema_name": db_name,
@@ -931,6 +1022,39 @@ def detect_objects(source: dict, vyra_conn) -> dict:
             except Exception as pk_err:
                 logger.error("[DSLearning] Oracle toplu PK sorgusu hatası: %s", str(pk_err)[:300])
 
+            # ── v3.74.0 KÖK FIX: Oracle UNIQUE INDEX → identity/PK proxy ──
+            # Declared PK constraint yoksa tek-kolonlu unique index'i identity kabul et
+            # (tercih: 'PK%'-adlı > '%ID'-biten > alfabetik). Non-blocking (try/except).
+            all_uidx = {}  # (owner, table_name) → identity column
+            try:
+                cur.execute(f"""
+                    SELECT owner, table_name, column_name FROM (
+                        SELECT owner, table_name, column_name, index_name,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY owner, table_name
+                                   ORDER BY CASE WHEN index_name LIKE 'PK%' THEN 0 ELSE 1 END,
+                                            CASE WHEN column_name LIKE '%ID' THEN 0 ELSE 1 END,
+                                            index_name
+                               ) AS rn
+                        FROM (
+                            SELECT i.owner, i.table_name, i.index_name, ic.column_name,
+                                   COUNT(*) OVER (PARTITION BY i.owner, i.index_name) AS col_cnt
+                            FROM all_indexes i
+                            JOIN all_ind_columns ic
+                              ON ic.index_name = i.index_name AND ic.index_owner = i.owner
+                            WHERE i.uniqueness = 'UNIQUE'
+                              AND i.owner NOT IN ({exclude_placeholders})
+                        ) WHERE col_cnt = 1
+                    ) WHERE rn = 1
+                """)
+                for row in cur.fetchall():
+                    uk = (row[0], row[1])
+                    if uk not in all_uidx:
+                        all_uidx[uk] = row[2]
+                logger.info("[DSLearning] Oracle unique-index identity (PK proxy): %d tablo", len(all_uidx))
+            except Exception as uidx_err:
+                logger.warning("[DSLearning] Oracle unique-index identity sorgusu hata: %s", str(uidx_err)[:200])
+
             # ── Faz 2f: Native comment (Oracle all_col_comments / all_tab_comments) ──
             oracle_col_comments = {}  # (owner, table, column) → comment
             oracle_tbl_comments = {}  # (owner, table) → comment
@@ -973,10 +1097,16 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                 key = (obj_owner, obj_name)
                 columns = all_columns.get(key, [])
 
-                # PK işaretle
+                # PK işaretle — declared PK yoksa unique-index identity'ye düş (v3.74.0)
                 pk_cols = all_pks.get(key, set())
+                _pk_from_uidx = False
+                if not pk_cols and key in all_uidx:
+                    pk_cols = {all_uidx[key]}
+                    _pk_from_uidx = True
                 for c in columns:
                     c["is_pk"] = c["name"] in pk_cols
+                    if c["is_pk"] and _pk_from_uidx:
+                        c["pk_source"] = "unique_index"   # provenance → UI rozeti
                     # Faz 2f: native kolon yorumu
                     cmt = oracle_col_comments.get((obj_owner, obj_name, c["name"]))
                     if cmt:

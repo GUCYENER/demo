@@ -127,5 +127,38 @@ authorization (Yetkilendirme) modalindeki `.ds-scope-search` kutusunda sola kaym
 - [x] G5 E6 — base `.ds-search-clear{left:auto}` evrensel sağ-hiza + scoped temizlik + bundle rebuild
 - [ ] G6 — post-impl review ✅ (ruff 0, ARES temiz, 72 test) → commit (kullanıcı onayı bekliyor)
 
-**Sonuç:** Kod tarafı tamam, test yeşil. Canlı sunucu stale (v3.65.0+ deploy bekliyor) → fix
-canlıda görünür olması için deploy gerektirir (ayrı süreç). Commit + push kullanıcı onayında.
+**Sonuç (v3.73.0):** Kod tarafı tamam, test yeşil. Commit 043bcc0 + push. Canlıya deploy edildi.
+
+---
+
+## v3.74.0 — Identity Cascade (deploy-sonrası KÖK NEDEN + uzman mimarisi)
+
+**Deploy sonrası kullanıcı testi:** Hâlâ FK üretilemedi. Canlı log (`log.txt`) yeni kodu (E1/E2)
+doğruladı ama her tabloda `target_pk_not_found` → hedef tablo bulunuyor (CreateUserId→T_ORG_USER ✅)
+ama PK kolonu metadata'da yok. Self-PK'lar (ADGroupQueryId) da FK sanılıyor. **Tek kök: is_pk boş.**
+
+**Kullanıcı DB-sorgu önerisi (doğru içgüdü) + canlı sonuç (tahmin değil, kanıt):**
+- `pg_constraint`: PK constraint **70**, FK constraint **0**, UNIQUE INDEX **208**
+- 3 tablonun declared PK'sı YOK ama `PK_T_ORG_USER → PartyId`, `PK_T_ORG_PARTY → PartyId`,
+  `PK_T_ORG_PARTYPARTYRELATION → PartyPartyRelationId` **unique-index olarak duruyor**.
+- KÖK: DB **MSSQL→PG migre** (index adları PK_*/NonClustered/UNQ_*). Constraint'ler düşmüş,
+  PK bilgisi unique-index'te. Keşif yalnız `constraint_type='PRIMARY KEY'` sorguluyordu → 208 index ıskalanıyor.
+
+**İdeal mimari (konsey onaylı): Şema Zekâsı Cascade.**
+- **A) PK/Identity:** L1 declared PK → L2 unique index (tek-kolon, PK_*/`*id` tercihli) → L3 isim-sezgisi (E2'de).
+- **B) FK/İlişki:** L1 declared FK → L2 isim-çıkarımı (E1/E2) → L3 veri-profili (`_validate_sample`).
+- **Çapraz:** her kayıt provenance taşır (`declared|unique_index|inferred_name`); `admin_verified=FALSE` öneriler.
+
+**Uygulanan (G7):**
+- `ds_learning_service.py`: 4 dialect L2 unique-index → is_pk fallback (PG `pg_index`, Oracle `all_indexes`,
+  MSSQL `sys.indexes`, MySQL `COLUMN_KEY=UNI`), her biri **try/except izole** (regresyon yok), `pk_source` tag.
+- `fk_inference_service.py`: evidence_json'a `to_pk_source` provenance (UI rozeti için).
+- Test: +1 provenance test (73 FK-suite yeşil). PG sorgusu kullanıcı Q4'ü ile birebir doğrulandı.
+
+**Sonraki faz (UI rozetleri — kullanıcı onaylı sıra):** `fk_inference_observability.js` provenance rozeti
+(🔒declared/🟢unique-index/🟡çıkarım) + confidence renk + join picker "çıkarım" işareti.
+
+## İlerleme Kaydı (v3.74.0)
+- [x] G7 — 4-dialect unique-index → is_pk cascade + provenance evidence + test
+- [ ] G8 — UI provenance rozetleri (sonraki faz)
+- [ ] Deploy: `ds_learning_service.py` + `config.py` → backend restart → **kaynağı YENİDEN KEŞFET** → FK çıkarımı

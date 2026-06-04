@@ -663,6 +663,9 @@ def infer_fks_for_source(
             "from_type": from_type,
             "to_type": to_type,
             "type_match": type_ok,
+            # v3.74.0 provenance: hedef kimlik nereden? declared PK mi, unique-index proxy mi
+            # (UI rozeti: 🟢 unique-index / 🔒 declared). col_to ds_db_objects'tan gelir.
+            "to_pk_source": col_to.get("pk_source") or "declared",
         }
         if sample_info is not None:
             evidence["sample"] = sample_info
