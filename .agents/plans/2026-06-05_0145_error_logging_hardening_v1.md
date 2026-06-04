@@ -72,10 +72,29 @@ Audit edilecek desenler:
 - Frontend JS hata yakalama (ayrı — bu plan backend Python)
 - Alerting/SLO (gözlemlenebilirlik ayrı iş)
 
+## G1 Audit Bulguları (2026-06-05 — gerçek envanter)
+
+- **bare `except:` = 0** (kodda yok; "2" sanılan aslında geçmiş-fix yorumuydu). **Ruff E722 ZATEN
+  enforce** ("E" select'inde) → gelecekteki bare except kalıcı engelli. ✅ Sistemik guard mevcut.
+- **`except: pass` = 251** (ruff S110). Dağılım: **~141 meşru cleanup** (`cur.close`/`conn.rollback`/
+  `set_config` best-effort — error-log'lamak GÜRÜLTÜ, stabiliteyi bozar) + **~110 incelenecek**.
+- **Asıl hata yolları ZATEN logluyor** (`logger.exception` / `log_exception` — ör. db_learning_api:300
+  `logger.exception("...generate.bg hata")`). BUG2 timeout'u da loglanmıştı; sorun yutma değil sınıflandırmaydı.
+- **Sonuç (dürüst):** App korkulandan iyi durumda. "Yutulan hata" sistemik bir KRİZ değil; nokta-atışı
+  triyaj işi. En kötü desen (bare except) zaten engelli.
+
+**Bu oturumda yapılan (down-payment):**
+- ✅ db_learning_api:283 RLS `set_config` sessiz yutma → `logger.warning` (ARES: silent RLS-context riski).
+- ✅ safe_sql_executor timeout sınıflandırma (BUG2, v3.74.1) — "beklenmeyen hata" → net mesaj + log.
+
+**Revize yaklaşım (kalan):** Mass-logging DEĞİL (gürültü). Hedef: (a) ~110 non-cleanup S110'u batched
+triyaj (gerçekten gizli-hata olan var mı), (b) S110/S112 ruff ratchet (yeni non-cleanup yutma engellensin),
+(c) meşru cleanup'lara `# noqa: S110 — intentional: <sebep>`. Disjoint-dosya paralel alt-ajan uygun.
+
 ## İlerleme Kaydı
-- [ ] G1 audit envanteri
-- [ ] G2 helper teyidi
-- [ ] G3 riskli except → log_exception
-- [ ] G4 meşru yutma etiketleme
-- [ ] G5 ruff BLE001 guard
-- [ ] G6 doğrulama
+- [x] G1 audit envanteri (bare except=0/guarded; 251 S110 = 141 cleanup/110 triyaj; ana yollar logluyor)
+- [x] G2 helper teyidi (log_exception mevcut + çalışıyor)
+- [~] G3 riskli except → log (RLS set_config + timeout sınıflandırma yapıldı; kalan ~110 batched)
+- [ ] G4 meşru yutma `# noqa: S110` etiketleme (141)
+- [ ] G5 ruff S110/S112 ratchet guard
+- [ ] G6 doğrulama (örnek hata enjekte → errors.jsonl tip+traceback)

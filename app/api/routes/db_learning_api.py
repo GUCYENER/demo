@@ -280,8 +280,13 @@ def trigger_synthetic_generation(
                             "SELECT set_config('app.current_source_id', %s, true)",
                             (str(int(source_id)),),
                         )
-                    except Exception:
-                        pass
+                    except Exception as _rls_e:
+                        # v3.74.1 (ARES): RLS-context set_config sessiz yutulmasın — başarısızsa
+                        # ds_db_relationships RLS scope'u kurulmaz, log'da görünmeli (silent bypass riski).
+                        logger.warning(
+                            "[db_learning.generate.bg] RLS set_config başarısız source_id=%s: %s",
+                            source_id, str(_rls_e)[:200],
+                        )
                     from app.services.db_learning.fk_synthetic_generator import (
                         generate_for_source,
                     )
