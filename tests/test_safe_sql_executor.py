@@ -33,6 +33,10 @@ class TestDbTimeoutClassification:
     def test_oracle_ora_01013(self):
         assert _is_db_timeout_error(Exception("ORA-01013: user requested cancel of current operation")) is True
 
+    def test_oracle_call_timeout_dpy4024(self):
+        # oracledb conn.call_timeout aşımı → DPY-4024 (ORA-01013 DEĞİL) — code-review bulgusu
+        assert _is_db_timeout_error(Exception("DPY-4024: call timeout of 45000 ms exceeded")) is True
+
     def test_mysql_max_execution_time(self):
         assert _is_db_timeout_error(Exception("Query execution was interrupted, max_execution_time exceeded")) is True
 
@@ -40,6 +44,17 @@ class TestDbTimeoutClassification:
         # gerçek SQL hatası timeout DEĞİL → generic yola gitmeli
         assert _is_db_timeout_error(Exception('column "foo" does not exist')) is False
         assert _is_db_timeout_error(ValueError("syntax error at or near")) is False
+
+    def test_false_positive_lock_timeout_is_not_timeout(self):
+        # code-review: PG lock_timeout / recovery / user-request 'canceling statement due to ...'
+        # verir ama bunlar statement_timeout DEĞİL → "çok ağır sorgu" demek yanıltıcı → False olmalı
+        assert _is_db_timeout_error(Exception("canceling statement due to lock timeout")) is False
+        assert _is_db_timeout_error(Exception("canceling statement due to user request")) is False
+        assert _is_db_timeout_error(Exception("canceling statement due to conflict with recovery")) is False
+
+    def test_false_positive_kill_query_is_not_timeout(self):
+        # MySQL KILL QUERY → "Query execution was interrupted" (max_execution_time YOK) → False olmalı
+        assert _is_db_timeout_error(Exception("Query execution was interrupted")) is False
 from app.services.sql_dialect import (
     SQLDialect,
     adapt_functions,

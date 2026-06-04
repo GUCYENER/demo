@@ -53,12 +53,14 @@ def _is_db_timeout_error(exc) -> bool:
     if type(exc).__name__ in ("QueryCanceled", "QueryCanceledError"):
         return True
     m = str(exc).lower()
+    # NOT: "canceling statement" TEK BAŞINA kullanılmaz — PG'de lock_timeout / recovery-conflict /
+    # user-request iptalleri de "canceling statement due to ..." verir (timeout DEĞİL). Spesifik eşleş.
     return (
-        "statement timeout" in m
-        or "canceling statement" in m
-        or "ora-01013" in m
-        or "max_execution_time" in m
-        or "query execution was interrupted" in m
+        "statement timeout" in m                          # PG ("canceling statement due to statement timeout")
+        or "ora-01013" in m                               # Oracle user-cancel (timeout)
+        or "call timeout" in m or "dpy-4024" in m or "dpi-1067" in m  # oracledb conn.call_timeout aşımı
+        or "max_execution_time" in m                      # MySQL (kod)
+        or "maximum statement execution time" in m        # MySQL max_execution_time mesajı (KILL'i KAPSAMAZ)
     )
 
 
@@ -618,6 +620,7 @@ class SafeSQLExecutor:
                 log_warning(f"SQL timeout (DB-native {self.timeout}s): {adapted_sql[:100]}", "hybrid_router")
                 return SQLResult(
                     success=False,
+                    timeout=True,  # deep_think: gereksiz self-heal retry yapma + dedicated ⏱ mesaj
                     error=(f"Sorgu zaman aşımına uğradı ({self.timeout}s limit) — sorgu çok ağır "
                            f"(ör. indekssiz JOIN). Daha dar filtre veya LIMIT deneyin."),
                     sql_executed=adapted_sql[:200],

@@ -57,8 +57,10 @@ _INFRA_PATTERNS = (
 _TIMEOUT_PATTERNS = (
     "statement timeout", "canceling statement due to statement timeout",  # PG
     "ora-01013",                                     # Oracle user cancel (timeout)
+    "call timeout", "dpy-4024",                      # Oracle oracledb conn.call_timeout aşımı
     "execution timeout expired", "query timeout", "timeout expired",  # MSSQL
     "query execution was interrupted", "max_execution_time",          # MySQL
+    "zaman aşımına uğradı",                          # v3.74.1: safe_sql_executor Türkçe timeout mesajı
 )
 
 # Yetki / privilege
