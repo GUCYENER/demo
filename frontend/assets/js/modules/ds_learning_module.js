@@ -1789,8 +1789,29 @@ window.DSLearningModule = (function () {
                 html = _renderDbLoopProgress(job, /*done*/ false);
             } else if (status === 'done') {
                 const s = job.summary || {};
-                // G2.2 — FK ilişkisi yoksa empty state
-                if ((s.total_fks ?? 0) === 0) {
+                // v3.74.1 BUG1: empty-state CANLI FK sayısına göre (stale sentetik job summary'den değil).
+                // FK çıkarımı sonradan koşmuşsa job.total_fks=0 stale kalır ama ds_db_relationships'te FK VAR.
+                const liveFk = (res.live_fk_count != null) ? Number(res.live_fk_count) : (s.total_fks ?? 0);
+                if (liveFk === 0) {
+                    html = `
+                        <div class="ds-dbloop-empty-state" role="status">
+                            <i class="fa-solid fa-link-slash" aria-hidden="true"></i>
+                            <h3>FK ilişkisi bulunamadı</h3>
+                            <p>Bu veri kaynağında henüz FK tanımlı değil. "Veri Kaynakları" sayfasından kaynağı yeniden keşfedin veya FK çıkarımı (auto-inference) çalıştırın.</p>
+                        </div>
+                    `;
+                } else if ((s.total_fks ?? 0) === 0) {
+                    // FK VAR ama bu sentetik job FK çıkarımından ÖNCE koşmuş (stale) → üretime yönlendir
+                    html = `<div class="ds-dbloop-pill ds-dbloop-idle" role="status"><i class="fa-solid fa-circle-info" aria-hidden="true"></i> ${liveFk} FK ilişkisi mevcut — "Sentetik SQL Üret (FK Loop)" ile örnek sorgu üretin.</div>`;
+                } else {
+                    html = _renderDbLoopProgress(job, /*done*/ true);
+                }
+            } else if (status === 'error') {
+                html = `<div class="ds-dbloop-pill ds-dbloop-error" role="alert"><i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i> Hata: ${_escapeHtml(job.error || 'bilinmeyen')}</div>`;
+            } else {
+                // idle: hiç sentetik koşmamış. v3.74.1: CANLI FK varsa yönlendir, yoksa empty-state.
+                const liveFk = (res.live_fk_count != null) ? Number(res.live_fk_count) : 0;
+                if (liveFk === 0) {
                     html = `
                         <div class="ds-dbloop-empty-state" role="status">
                             <i class="fa-solid fa-link-slash" aria-hidden="true"></i>
@@ -1799,12 +1820,8 @@ window.DSLearningModule = (function () {
                         </div>
                     `;
                 } else {
-                    html = _renderDbLoopProgress(job, /*done*/ true);
+                    html = `<div class="ds-dbloop-pill ds-dbloop-idle" role="status"><i class="fa-solid fa-circle-info" aria-hidden="true"></i> Henüz çalıştırılmadı — ${liveFk} FK ilişkisi mevcut, "Sentetik SQL Üret (FK Loop)" ile başlayın.</div>`;
                 }
-            } else if (status === 'error') {
-                html = `<div class="ds-dbloop-pill ds-dbloop-error" role="alert"><i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i> Hata: ${_escapeHtml(job.error || 'bilinmeyen')}</div>`;
-            } else {
-                html = `<div class="ds-dbloop-pill ds-dbloop-idle">Henüz çalıştırılmadı</div>`;
             }
             box.innerHTML = html;
 

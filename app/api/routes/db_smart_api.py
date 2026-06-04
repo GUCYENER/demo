@@ -2960,9 +2960,13 @@ def post_generate_report(
             fallback=fallback,
         )
     try:
+        from app.core.config import settings as _settings
         from app.services.safe_sql_executor import SafeSQLExecutor
 
-        executor = SafeSQLExecutor(timeout=5, max_rows=int(req.limit))
+        # v3.74.1: eski hardcoded 5s çok-tablolu rapor JOIN'inde timeout veriyordu (kullanıcı bulgusu:
+        # SQL gerçek DB'de çalışıyor ama VYRA "beklenmeyen hata"). Konfigüre edilebilir, makul default.
+        _report_timeout = int(getattr(_settings, 'DBSMART_REPORT_QUERY_TIMEOUT_S', 45))
+        executor = SafeSQLExecutor(timeout=_report_timeout, max_rows=int(req.limit))
         sql_result = executor.execute(
             generated_sql,
             source,

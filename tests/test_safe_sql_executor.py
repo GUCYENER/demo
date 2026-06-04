@@ -7,10 +7,39 @@ Test Sayısı: ~15 test
 """
 
 from app.services.safe_sql_executor import (
+    _is_db_timeout_error,
     check_table_whitelist,
     mask_sensitive_columns,
     validate_sql,
 )
+
+
+class _FakeQueryCanceled(Exception):
+    """psycopg2.errors.QueryCanceled adını taklit eden test exception'ı."""
+    pass
+_FakeQueryCanceled.__name__ = "QueryCanceled"
+
+
+class TestDbTimeoutClassification:
+    """v3.74.1 BUG2: DB-native statement_timeout net sınıflandırma (generic 'beklenmeyen hata' değil)."""
+
+    def test_psycopg2_query_canceled_by_name(self):
+        assert _is_db_timeout_error(_FakeQueryCanceled("boom")) is True
+
+    def test_pg_statement_timeout_message(self):
+        e = Exception("canceling statement due to statement timeout")
+        assert _is_db_timeout_error(e) is True
+
+    def test_oracle_ora_01013(self):
+        assert _is_db_timeout_error(Exception("ORA-01013: user requested cancel of current operation")) is True
+
+    def test_mysql_max_execution_time(self):
+        assert _is_db_timeout_error(Exception("Query execution was interrupted, max_execution_time exceeded")) is True
+
+    def test_non_timeout_error_is_false(self):
+        # gerçek SQL hatası timeout DEĞİL → generic yola gitmeli
+        assert _is_db_timeout_error(Exception('column "foo" does not exist')) is False
+        assert _is_db_timeout_error(ValueError("syntax error at or near")) is False
 from app.services.sql_dialect import (
     SQLDialect,
     adapt_functions,

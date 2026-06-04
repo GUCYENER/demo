@@ -43,6 +43,25 @@ class SQLTimeoutError(Exception):
     pass
 
 
+def _is_db_timeout_error(exc) -> bool:
+    """DB-native statement_timeout / sorgu-iptal hatası mı? (dialect-agnostik).
+
+    v3.74.1: PG statement_timeout → psycopg2 QueryCanceled, Oracle ORA-01013, MySQL
+    MAX_EXECUTION_TIME → hepsi THREAD-timeout (SQLTimeoutError) yerine generic except'e
+    düşüyordu → kullanıcı "beklenmeyen hata" görüyordu. Bunları net zaman-aşımı say.
+    """
+    if type(exc).__name__ in ("QueryCanceled", "QueryCanceledError"):
+        return True
+    m = str(exc).lower()
+    return (
+        "statement timeout" in m
+        or "canceling statement" in m
+        or "ora-01013" in m
+        or "max_execution_time" in m
+        or "query execution was interrupted" in m
+    )
+
+
 @dataclass
 class SQLResult:
     """Güvenli SQL yürütme sonucu."""
@@ -593,6 +612,17 @@ class SafeSQLExecutor:
             except Exception:
                 _detail = str(e)[:1000]
             log_error(f"SQL yürütme hatası: {e}", "hybrid_router", error_detail=_detail)
+            # v3.74.1: DB-native statement_timeout (QueryCanceled/ORA-01013/MAX_EXECUTION_TIME)
+            # generic "beklenmeyen hata"ya düşmesin → net zaman-aşımı mesajı (bkz. _is_db_timeout_error).
+            if _is_db_timeout_error(e):
+                log_warning(f"SQL timeout (DB-native {self.timeout}s): {adapted_sql[:100]}", "hybrid_router")
+                return SQLResult(
+                    success=False,
+                    error=(f"Sorgu zaman aşımına uğradı ({self.timeout}s limit) — sorgu çok ağır "
+                           f"(ör. indekssiz JOIN). Daha dar filtre veya LIMIT deneyin."),
+                    sql_executed=adapted_sql[:200],
+                    elapsed_ms=elapsed,
+                )
             # code-review fix: orijinal hata generic mesaja sarılıp ATILIYORDU → downstream
             # _is_infra_db_error ORA-12170/DPY-4011'i göremeyip BOŞUNA self-heal'liyordu (77s).
             # Bağlantı/altyapı KODUNU (ORA-/DPY-/TNS-) ekle (host/port sızdırmadan — Fortify) →

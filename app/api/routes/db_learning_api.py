@@ -351,9 +351,23 @@ def get_synthetic_status(
                 (source_id, _FK_JOB_TYPE),
             )
             row = cur.fetchone()
+            # v3.74.1 BUG1 fix: empty-state STALE sentetik job summary'den değil CANLI
+            # ds_db_relationships'ten karar versin. (FK çıkarımı yapıldı ama "Sentetik Üret"
+            # koşulmadıysa job total_fks=0 stale kalıyor → yanlış "FK ilişkisi bulunamadı".)
+            cur.execute(
+                "SELECT COUNT(*) AS cnt FROM ds_db_relationships "
+                "WHERE source_id = %s AND rejected_at IS NULL",
+                (source_id,),
+            )
+            _cnt = cur.fetchone()
+            live_fk_count = (_cnt.get("cnt") if hasattr(_cnt, "get") else _cnt[0]) if _cnt else 0
         finally:
             cur.close()
-    return {"success": True, "source_id": source_id, "job": _map_fk_job_row(row)}
+    return {
+        "success": True, "source_id": source_id,
+        "job": _map_fk_job_row(row),
+        "live_fk_count": int(live_fk_count or 0),
+    }
 
 
 # v3.28.9 Paket C: Hata detayları endpoint'i — ds_synthetic_query_runs'taki
