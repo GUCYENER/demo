@@ -161,8 +161,6 @@ async def export_word(
     try:
         from docx import Document
         from docx.enum.table import WD_TABLE_ALIGNMENT
-        from docx.enum.text import WD_ALIGN_PARAGRAPH
-        from docx.oxml.ns import qn
         from docx.shared import Inches, Pt, RGBColor
     except ImportError:
         raise HTTPException(status_code=500, detail="python-docx kütüphanesi yüklü değil.")

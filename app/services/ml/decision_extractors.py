@@ -143,8 +143,6 @@ def _parse_joins(sql: str) -> List[Tuple[Tuple[str, str], Tuple[str, str]]]:
             if not seen or seen[-1][0] != alias.lower():
                 seen.append(key)
         if len(seen) >= 2:
-            a = (seen[0][0],)  # alias
-            b = (seen[1][0],)
             # alias'lar tablo adlarına eşit varsay (kaba). schema'yı bilmediğimiz
             # için boş bırakırız — meta'da tutulur.
             out.append((("", seen[0][0]), ("", seen[1][0])))

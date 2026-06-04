@@ -505,7 +505,7 @@ class TestCardinalityAwareSelection:
             lambda *a, **kw: {"status": "inserted", "id": 1}
         )
 
-        summary = fkgen.generate_for_source(
+        fkgen.generate_for_source(
             cur, source_id=1, dialect="postgresql",
         )
         # AGGREGATE_COUNT execute edilmemeli
@@ -530,7 +530,7 @@ class TestCardinalityAwareSelection:
             lambda *a, **kw: {"status": "inserted", "id": 1}
         )
 
-        summary = fkgen.generate_for_source(
+        fkgen.generate_for_source(
             cur, source_id=1, dialect="postgresql",
         )
         # Hem LOOKUP_JOIN hem AGGREGATE_COUNT execute edilmeli

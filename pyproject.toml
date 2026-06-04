@@ -18,5 +18,13 @@ exclude = [
 # Adoption sonrası genişletilebilir (B, UP, SIM ...).
 select = ["E", "F", "I"]
 ignore = [
-    "E501",  # line-too-long — format ayrı ele alır, ilk adoption'da gürültü yapmasın
+    "E501",  # line-too-long — format ayrı ele alır
+    "E402",  # module-import-not-at-top — kasıtlı (sys.path setup / conditional import)
+    "E701",  # multiple-statements (colon) — stil; ruff format ele alır
+    "E702",  # multiple-statements (semicolon) — stil
+    "E712",  # == True/False — ilk adoption'da stil; sonra sıkılaştır (F-series öncelik)
+    "E741",  # ambiguous-variable-name (l/I/O) — yaygın, rename churn/shadow riski
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # paket re-export (public API) — kasıtlı "unused" import

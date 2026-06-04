@@ -643,7 +643,6 @@ def render_cte_latest_n_per_group(
     d = "postgresql"
     tables = _chain_tables(chain)
     fact = chain[0]
-    fact_q = _qualify(fact.from_schema, fact.from_table, d)
     join_block = _build_join_clauses_pg(chain)
     a_start, a_end = _terminal_aliases(chain)
     sql = (

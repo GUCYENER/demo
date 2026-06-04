@@ -571,7 +571,7 @@ def check_share_audience(
         if not row:
             return None
 
-        report_id, owner_user_id, report_company_id = row[0], row[1], row[2]
+        report_id, _owner_user_id, report_company_id = row[0], row[1], row[2]
         audience = row[3] or "public"
         allowed_ids = row[4]
 

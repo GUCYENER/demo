@@ -158,7 +158,7 @@ class TestFetchTrace:
 
     def test_by_run_id_with_company_scope(self):
         cur = _MockCursor(fetch={"id": 1, "run_id": "abc", "company_id": 7})
-        out = fetch_trace(cur, run_id="abc", company_id=7)
+        fetch_trace(cur, run_id="abc", company_id=7)
         sql, params = cur.executed[0]
         assert "WHERE run_id = %s" in sql
         assert "AND company_id = %s" in sql

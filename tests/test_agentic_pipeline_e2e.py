@@ -257,7 +257,8 @@ class TestWiring:
 
     def test_inject_callables_skips_existing(self):
         from app.services.pipeline.wiring import inject_callables
-        existing = lambda p, m=None: ""
+        def existing(p, m=None):
+            return ""
         state = {"source_id": 1, "_llm_callable": existing}
         inject_callables(state, llm=True, execute=False, explain=False)
         assert state["_llm_callable"] is existing  # üzerine yazmadı

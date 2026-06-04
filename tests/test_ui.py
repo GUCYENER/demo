@@ -269,7 +269,7 @@ if __name__ == "__main__":
             print(f"   ✅ Backend aktif - Versiyon: {data.get('version', 'N/A')}")
         else:
             print(f"   ⚠️ Backend yanıt verdi ama status: {response.status_code}")
-    except:
+    except Exception:
         print("   ❌ Backend'e bağlanılamadı!")
     
     try:
@@ -278,7 +278,7 @@ if __name__ == "__main__":
             print("   ✅ Frontend aktif")
         else:
             print(f"   ⚠️ Frontend yanıt verdi ama status: {response.status_code}")
-    except:
+    except Exception:
         print("   ❌ Frontend'e bağlanılamadı!")
     
     # Otomatik testler

@@ -658,7 +658,7 @@ def infer_fks_endpoint(
         target_cur = None
         try:
             apply_company_scope(cur, company_id=company_id)
-            src = _ensure_source_visible(cur, source_id)
+            _ensure_source_visible(cur, source_id)
             dialect_name = _resolve_dialect(cur, source_id, payload.dialect)
 
             if payload.sample_validate:

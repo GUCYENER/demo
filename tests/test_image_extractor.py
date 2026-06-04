@@ -256,7 +256,7 @@ class TestOCR:
         
         with patch.dict('sys.modules', {'easyocr': None}):
             with patch('builtins.__import__', side_effect=ImportError("No module")):
-                reader = extractor._get_ocr_reader()
+                extractor._get_ocr_reader()
                 # ImportError yakalanacak ama builtins import'u karmaşık, alternatif yaklaşım
         
         mod._ocr_reader = None
@@ -297,7 +297,7 @@ class TestOCR:
         mock_reader.readtext.return_value = ["test"]
         
         with patch.object(extractor, '_get_ocr_reader', return_value=mock_reader):
-            result = extractor._run_ocr_single(rgba_data, "png")
+            extractor._run_ocr_single(rgba_data, "png")
             # Hata fırlatmaması yeterli, RGB'ye çevrildiğini kanıtlar
             mock_reader.readtext.assert_called_once()
 

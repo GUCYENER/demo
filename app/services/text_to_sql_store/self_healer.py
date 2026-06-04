@@ -214,7 +214,9 @@ def _record_repair_example(
     if not user_ctx or not question:
         return
     try:
-        from app.services.text_to_sql_store.few_shot_store import record_example
+        from app.services.text_to_sql_store.few_shot_store import (
+            record_example,  # noqa: F401  (availability probe; kayıt caller'a ertelendi)
+        )
         # Would need a cursor — skip in this context (caller responsible)
         logger.info("[self_healer] repaired SQL recorded for few-shot (deferred)")
     except ImportError:

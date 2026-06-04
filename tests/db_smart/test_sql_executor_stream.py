@@ -120,7 +120,7 @@ def test_postgresql_uses_named_cursor(monkeypatch):
     conn = _FakeConn(cur, supports_named=True)
     _install_fake_connector(monkeypatch, conn)
 
-    events = list(ses.stream_safe_sql(
+    list(ses.stream_safe_sql(
         "SELECT id, name FROM users",
         {"id": 1, "db_type": "postgresql"},
         "postgresql",
