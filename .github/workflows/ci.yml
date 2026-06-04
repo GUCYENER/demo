@@ -1,0 +1,41 @@
+name: CI
+
+# VYRA CI — vyrazeus.md KAP 1 (lint) + KAP 8b (build) gate'lerini enforce eder.
+# İlk hedef: lint + build (deterministik, yeşil baz — ikisi de yerelde doğrulandı).
+# Planlı sonraki adım: 'test' job — 114 test PG+Redis service-container ister
+# (Oracle-bağımlı testler skip/mark). Bkz. vyrazeus.md KAP 8b.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dev tools
+        run: pip install -r requirements-dev.txt
+      - name: ruff check
+        run: ruff check app tests
+
+  build:
+    name: Frontend build (esbuild)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+      - name: Build bundle
+        working-directory: frontend
+        run: npm run build

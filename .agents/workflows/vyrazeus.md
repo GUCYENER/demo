@@ -842,11 +842,10 @@ Index            : Sık sorgulanan FK/filter kolonlarına index
 - Python syntax hatası yok
 - Import'lar temiz (kullanılmayan import yok)
 - Backend başarıyla ayağa kalkıyor
-- **Lint & format gate (`ruff 0.15.15` KURULU, `pyproject.toml` `[tool.ruff]` var):**
-  - Python lint: `ruff check app core tests` → hedef exit 0
-  - Python format: `ruff format --check app core tests` → diff'siz
+- **Lint gate (`ruff 0.15.15` KURULU + `pyproject.toml`, GREEN baseline):**
+  - Python lint: `ruff check app tests` → **All checks passed (0)** ✅ — artık tüm-repo enforced blocker (yeni ihlal commit'i durdurur)
   - JS değişikliği varsa: değişen modül başına `node -c <file>` + `node frontend/build.mjs` exit 0
-  - **Mevcut durum (dürüst):** İlk ölçüm **741 ihlal** (619 autofix: çoğu import-sıralama + unused-import). Tam adoption = `ruff check --fix` + `ruff format` **ayrı commit** (büyük diff, ~122 manuel ihlal kalır). O commit'e kadar gate **yeni/değişen dosyalarda advisory**, tüm-repo blocker DEĞİL.
+  - **Politika:** F-series (unused import/var, undefined name) enforced; stilistik E402/E712/E741/E701/E702 ignore (ilk adoption — sonra sıkılaştır); `__init__.py` F401 per-file-ignore (re-export). `ruff format` henüz çalıştırılmadı — opsiyonel sonraki adım (büyük diff).
 
 **🔒 KAP 2 — Güvenlik (ARES)**
 - Bölüm 6 kontrol listesi temiz
@@ -1115,7 +1114,7 @@ Uzun oturumlarda erken bağlam (plan, dosya içerikleri, kararlar) sıkıştır�
 | Auto-memory hijyeni | MEMORY.md >180 satırsa stale entry temizlenir, çelişen memory kullanıcıya sunulur (KAP 10b) |
 | Refactor backlog | Bu oturumda `priority: high` madde eklendiyse bitiş raporunda mutlaka görünür, sessiz arşivleme yasak (KAP 11) |
 | Test | Değişiklik sonrası mutlaka test — log oku, DB kontrol et |
-| Lint gate | KAP 1: `ruff 0.15.15` KURULU + `pyproject.toml`; ilk ölçüm 741 ihlal (619 autofix). Tam adoption (`ruff check --fix`+`ruff format`) ayrı büyük-diff commit; o güne kadar değişen-dosya advisory |
+| Lint gate | KAP 1: `ruff 0.15.15` + `pyproject.toml` → `ruff check app tests` **GREEN (0)**. F-series enforced; E402/E712/E741/E701/E702 ignore (stilistik); `__init__` F401 per-file-ignore. `ruff format` opsiyonel sonraki adım |
 | Dependency SCA | KAP 2: `pip-audit 2.10.0` KURULU + `npm audit --audit-level=high`; CRITICAL/HIGH = upgrade/pinned, MEDIUM = REFACTOR_BACKLOG, offline = fail-open |
 | Coverage | KAP 7: `pytest-cov 7.0.0` kurulu; gerçek baseline servisler ayaktayken ölçülecek → şimdilik advisory (uydurma rampa kaldırıldı) |
 | Privacy/KVKK | KAP 2: PII pattern regex + log scrubber + retention politikası; PII sızıntı riski commit blocker (ARES+APOLLO) |
