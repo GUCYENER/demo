@@ -90,7 +90,7 @@ check_port() {
 
 FAIL=0
 check_port "PostgreSQL" 5005 15 || FAIL=$((FAIL+1))
-check_port "Redis"       6379 5  || FAIL=$((FAIL+1))
+check_port "Redis"       6380 5  || FAIL=$((FAIL+1))
 check_port "Backend"     8002 30 || FAIL=$((FAIL+1))
 check_port "Nginx"       8000 10 || FAIL=$((FAIL+1))
 # Oracle opsiyonel — Docker yoksa veya kapalıysa fail sayma

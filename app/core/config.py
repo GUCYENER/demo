@@ -145,7 +145,7 @@ class Settings(BaseSettings):
     FUZZY_CACHE_SIZE: int = 500  # Max cached fuzzy match sayısı
     LLM_BYPASS_THRESHOLD: float = 0.70  # RAG skoru bu değerin üzerindeyse LLM atlanır
     PGVECTOR_INDEX: bool = True  # pgvector index kullanımı etkin mi
-    REDIS_URL: str = "redis://localhost:6380/1"  # 🔧 v2.60.2: Port 6380 (6379 çakışma önleme)
+    REDIS_URL: str = "redis://:VyraR3d1s_Sec2026@localhost:6380/1"  # 🔧 v2.60.2: Port 6380 (6379 çakışma önleme). v3.73.0: requirepass (redis.windows.conf:503) ile eşleşen şifre EKLENDİ — şifresizdi → "Authentication required" → cache hep memory-fallback'e düşüyordu. Prod'da .env ile override edilir.
     
     # 🆕 v2.57.0: Hybrid Router & Safe SQL Executor
     SQL_EXEC_TIMEOUT: int = 5       # SQL sorgu timeout (saniye)
