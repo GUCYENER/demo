@@ -663,9 +663,14 @@ def infer_fks_for_source(
             "from_type": from_type,
             "to_type": to_type,
             "type_match": type_ok,
-            # v3.74.0 provenance: hedef kimlik nereden? declared PK mi, unique-index proxy mi
-            # (UI rozeti: 🟢 unique-index / 🔒 declared). col_to ds_db_objects'tan gelir.
-            "to_pk_source": col_to.get("pk_source") or "declared",
+            # v3.74.0 provenance: hedef kimlik nereden? unique-index proxy / declared PK / isim-konvansiyonu.
+            # (UI rozeti: 🟢 unique_index / 🔒 declared / 🟡 inferred). col_to ds_db_objects'tan gelir;
+            # pk_source unique-index ise o; değilse is_pk gerçekten varsa declared, yoksa konvansiyonla
+            # çözülmüş (inferred) → yanlış "declared" rozeti vermemek için ayır.
+            "to_pk_source": (
+                col_to.get("pk_source")
+                or ("declared" if (col_to.get("is_pk") or col_to.get("is_primary_key")) else "inferred")
+            ),
         }
         if sample_info is not None:
             evidence["sample"] = sample_info

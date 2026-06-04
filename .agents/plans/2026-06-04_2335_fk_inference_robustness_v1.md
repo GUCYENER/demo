@@ -158,7 +158,31 @@ ama PK kolonu metadata'da yok. Self-PK'lar (ADGroupQueryId) da FK sanılıyor. *
 **Sonraki faz (UI rozetleri — kullanıcı onaylı sıra):** `fk_inference_observability.js` provenance rozeti
 (🔒declared/🟢unique-index/🟡çıkarım) + confidence renk + join picker "çıkarım" işareti.
 
+## Code Review (high, 3 paralel finder + triyaj) — v3.74.0
+
+**Düzeltilen (net bug/correctness):**
+- 🔴 **MSSQL `%` kaçışı** — pymssql pyformat paramstyle; `LIKE 'PK%'` → `%i`/`%'` execute hatası →
+  MSSQL fallback HİÇ çalışmıyordu. Fix: `%%`. (driver doğrulandı: pymssql)
+- 🟢 **NOT NULL guard** (PG `attnotnull` / Oracle `nullable='N'` / MSSQL `is_nullable=0` / MySQL `NULLABLE<>'YES'`)
+  — nullable proxy-PK INNER JOIN'de satır düşürür (downstream join_planner riski). Artık NOT NULL şart.
+- 🟢 **Oracle `hidden_column='N'`** — function-based/DESC index'in SYS_NC$ virtual kolonu hariç (yanlış identity).
+- 🟢 **MSSQL `has_filter=0`** — filtered (WHERE'li) unique index hariç (kısmi uniqueness, PK değil).
+- 🟢 **MySQL: COLUMN_KEY='UNI' → STATISTICS bulk** — UNI tek-kolon garantisi vermez (composite ilk-kolon),
+  ordinal seçim Email/Code'u PK sanardı. Gerçek tek-kolon + Python-rank (PRIMARY/'PK%' > '*id') + NOT NULL.
+- 🟡 **`to_pk_source` provenance** — konvansiyonla çözülen hedef yanlış "declared" rozeti alıyordu →
+  `unique_index | declared | inferred` ayrımı (UI rozeti doğru).
+
+**Ertelenen (riskli/by-design — ayrı follow-up):**
+- ⚠️ **G9 — PK-hem-FK (table-per-type):** `T_ORG_USER.PartyId` artık is_pk (unique-index) → FK inference
+  onu source olarak atlıyor → `PartyId→T_ORG_PARTY` inheritance FK'sı çıkarılmıyor. Audit FK'lar
+  (CreateUserId/UpdateUserId → ana değer) ÇALIŞIR. Self-PK vs cross-table-PK ayrımı çekirdek inference'ı
+  değiştirir (self-FK gürültü riski) → ayrı, testli PR. **Bulkun %95'i etkilenmez.**
+- 📋 incremental_schema_integrator unique-index uygulamıyor (provenance tutarsızlığı) → REFACTOR_BACKLOG.
+- 📋 prefix-strip her candidate'a uygulanıyor (recall>precision by-design, admin onayı gate) → izlenir.
+
 ## İlerleme Kaydı (v3.74.0)
-- [x] G7 — 4-dialect unique-index → is_pk cascade + provenance evidence + test
+- [x] G7 — 4-dialect unique-index → is_pk cascade + provenance + test
+- [x] G7b — code-review (high) düzeltmeleri: MSSQL %%, NOT NULL, Oracle hidden_column, MySQL STATISTICS, provenance
 - [ ] G8 — UI provenance rozetleri (sonraki faz)
+- [ ] G9 — PK-hem-FK table-per-type (ertelendi, ayrı PR)
 - [ ] Deploy: `ds_learning_service.py` + `config.py` → backend restart → **kaynağı YENİDEN KEŞFET** → FK çıkarımı

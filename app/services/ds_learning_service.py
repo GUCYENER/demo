@@ -360,6 +360,7 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                     JOIN pg_attribute a   ON a.attrelid = c.oid AND a.attnum = ANY(i.indkey)
                     WHERE i.indisunique
                       AND array_length(i.indkey, 1) = 1
+                      AND a.attnotnull            -- NOT NULL: nullable proxy-PK join'de satır düşürür
                       AND c.relkind IN ('r','p')
                       AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
                     ORDER BY n.nspname, c.relname,
@@ -646,8 +647,8 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                                ROW_NUMBER() OVER (
                                    PARTITION BY t.object_id
                                    ORDER BY i.is_primary_key DESC,
-                                            CASE WHEN i.name LIKE 'PK%' THEN 0 ELSE 1 END,
-                                            CASE WHEN c.name LIKE '%id' THEN 0 ELSE 1 END,
+                                            CASE WHEN i.name LIKE 'PK%%' THEN 0 ELSE 1 END,
+                                            CASE WHEN c.name LIKE '%%id' THEN 0 ELSE 1 END,
                                             i.name
                                ) AS rn
                         FROM sys.indexes i
@@ -655,6 +656,8 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                         JOIN sys.columns c ON c.object_id = i.object_id AND c.column_id = ic.column_id
                         JOIN sys.tables t ON t.object_id = i.object_id
                         WHERE i.is_unique = 1
+                          AND i.has_filter = 0       -- filtered (WHERE'li) unique index hariç
+                          AND c.is_nullable = 0      -- NOT NULL guard
                           AND (SELECT COUNT(*) FROM sys.index_columns ic2
                                WHERE ic2.object_id = i.object_id AND ic2.index_id = i.index_id) = 1
                     ) q WHERE rn = 1
@@ -820,6 +823,37 @@ def detect_objects(source: dict, vyra_conn) -> dict:
             """, (db_name,))
             tables = cur.fetchall()
 
+            # ── v3.74.0 KÖK FIX: MySQL UNIQUE INDEX → identity/PK proxy ──
+            # COLUMN_KEY='UNI' tek-kolon garantisi vermez (composite ilk-kolonu da 'UNI' alır) +
+            # ordinal sıra yanlış kolon seçebilir. STATISTICS'ten GERÇEK tek-kolon unique index çek,
+            # Python'da rank et (PRIMARY/'PK%' > '*id' > alfabetik), NOT NULL şart. Non-blocking.
+            all_uidx = {}  # table_name → identity column
+            try:
+                cur.execute("""
+                    SELECT s.TABLE_NAME, s.INDEX_NAME, s.COLUMN_NAME
+                    FROM INFORMATION_SCHEMA.STATISTICS s
+                    JOIN (
+                        SELECT TABLE_NAME, INDEX_NAME
+                        FROM INFORMATION_SCHEMA.STATISTICS
+                        WHERE TABLE_SCHEMA = %s AND NON_UNIQUE = 0
+                        GROUP BY TABLE_NAME, INDEX_NAME HAVING COUNT(*) = 1
+                    ) single ON single.TABLE_NAME = s.TABLE_NAME AND single.INDEX_NAME = s.INDEX_NAME
+                    WHERE s.TABLE_SCHEMA = %s AND s.NON_UNIQUE = 0 AND s.NULLABLE <> 'YES'
+                """, (db_name, db_name))
+                _uidx_cand = {}  # table → [(rank_tuple, column)]
+                for r in cur.fetchall():
+                    tn = r["TABLE_NAME"] if isinstance(r, dict) else r[0]
+                    idx = (r["INDEX_NAME"] if isinstance(r, dict) else r[1]) or ""
+                    cl = r["COLUMN_NAME"] if isinstance(r, dict) else r[2]
+                    rank = (0 if idx == "PRIMARY" else 1 if idx.upper().startswith("PK") else 2,
+                            0 if str(cl).lower().endswith("id") else 1, idx)
+                    _uidx_cand.setdefault(tn, []).append((rank, cl))
+                for tn, cands in _uidx_cand.items():
+                    all_uidx[tn] = sorted(cands, key=lambda x: x[0])[0][1]
+                logger.info("[DSLearning] MySQL unique-index identity (PK proxy): %d tablo", len(all_uidx))
+            except Exception as uidx_err:
+                logger.warning("[DSLearning] MySQL unique-index identity sorgusu hata: %s", str(uidx_err)[:200])
+
             for row in tables:
                 table_name = row.get("TABLE_NAME", "") if isinstance(row, dict) else row[0]
                 table_type = row.get("TABLE_TYPE", "") if isinstance(row, dict) else row[1]
@@ -835,7 +869,6 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                     ORDER BY ORDINAL_POSITION
                 """, (db_name, table_name))
                 columns = []
-                _uni_cols = []  # v3.74.0: declared PK (PRI) yoksa UNI fallback için
                 for col in cur.fetchall():
                     cn = col.get("COLUMN_NAME", "") if isinstance(col, dict) else col[0]
                     dt = col.get("DATA_TYPE", "") if isinstance(col, dict) else col[1]
@@ -849,15 +882,14 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                         "default_val": str(default) if default else None,
                         "is_pk": key == "PRI"
                     }
-                    if key == "UNI":
-                        _uni_cols.append(cn)
                     if col_comment:
                         entry["comment"] = col_comment
                     columns.append(entry)
-                # v3.74.0 KÖK FIX: declared PK (PRI) yoksa ilk UNI kolonu identity kabul et
-                if not any(c.get("is_pk") for c in columns) and _uni_cols:
+                # v3.74.0: declared PK (PRI) yoksa unique-index identity'ye düş (STATISTICS bulk all_uidx)
+                if not any(c.get("is_pk") for c in columns) and all_uidx.get(table_name):
+                    _uid = all_uidx[table_name]
                     for c in columns:
-                        if c["name"] == _uni_cols[0]:
+                        if c["name"] == _uid:
                             c["is_pk"] = True
                             c["pk_source"] = "unique_index"   # provenance → UI rozeti
                             break
@@ -1037,13 +1069,18 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                                             index_name
                                ) AS rn
                         FROM (
-                            SELECT i.owner, i.table_name, i.index_name, ic.column_name,
-                                   COUNT(*) OVER (PARTITION BY i.owner, i.index_name) AS col_cnt
+                            SELECT ic.table_owner AS owner, ic.table_name, i.index_name, ic.column_name,
+                                   COUNT(*) OVER (PARTITION BY ic.table_owner, i.index_name) AS col_cnt
                             FROM all_indexes i
                             JOIN all_ind_columns ic
                               ON ic.index_name = i.index_name AND ic.index_owner = i.owner
+                            JOIN all_tab_cols atc
+                              ON atc.owner = ic.table_owner AND atc.table_name = ic.table_name
+                             AND atc.column_name = ic.column_name
                             WHERE i.uniqueness = 'UNIQUE'
-                              AND i.owner NOT IN ({exclude_placeholders})
+                              AND atc.nullable = 'N'          -- NOT NULL guard
+                              AND atc.hidden_column = 'N'     -- SYS_NC function-based index virtual kolonu hariç
+                              AND ic.table_owner NOT IN ({exclude_placeholders})
                         ) WHERE col_cnt = 1
                     ) WHERE rn = 1
                 """)
