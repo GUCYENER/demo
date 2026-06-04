@@ -791,3 +791,51 @@ def test_enrich_overflow_columns_noop_under_cap():
         svc._enrich_overflow_columns("T", [{"name": f"c{i}"} for i in range(50)], parsed)
     assert not m.called
     assert parsed["columns"] == {"a": {}}
+
+
+# ─────────────────────────────────────────────────────────────
+# v3.74.2: ana LLM çağrısının DÜŞÜRDÜĞÜ kolonları doldur (veri kaybı) — kullanıcı bulgusu
+# ─────────────────────────────────────────────────────────────
+def test_fill_missing_columns_recovers_dropped():
+    """72 kolonlu tabloda ana LLM çağrısı bazı kolonları DÖNDÜRMEMİŞ (parsed'da yok) → "—" olurdu.
+    _fill_missing_columns eksikleri chunk'lı doldurur (≤100 tabloda overflow no-op → ASIL kayıp buradaydı)."""
+    from unittest.mock import patch
+
+    import app.services.ds_enrichment_service as svc
+    cols = [{"name": f"c{i}", "data_type": "text"} for i in range(72)]
+    # LLM ana çağrıda yalnız ilk 66'yı döndürdü → c66..c71 DÜŞTÜ
+    parsed = {"columns": {f"c{i}": {"business_name_tr": "x"} for i in range(66)}}
+
+    def _fake_chunk(table, chunk):
+        return {c["name"]: {"business_name_tr": "FILL", "semantic_type": "other"} for c in chunk}
+
+    with patch.object(svc, "_llm_enrich_columns_only", side_effect=_fake_chunk):
+        svc._fill_missing_columns("T", cols, parsed)
+    assert len(parsed["columns"]) == 72, "düşen 6 kolon doldurulmalı"
+    assert parsed["columns"]["c70"]["business_name_tr"] == "FILL"
+
+
+def test_fill_missing_columns_noop_when_complete():
+    """Tüm kolonlar zaten etiketli → ek LLM çağrısı YOK (gereksiz token harcamaz)."""
+    from unittest.mock import patch
+
+    import app.services.ds_enrichment_service as svc
+    cols = [{"name": f"c{i}"} for i in range(10)]
+    parsed = {"columns": {f"c{i}": {} for i in range(10)}}
+    with patch.object(svc, "_llm_enrich_columns_only") as m:
+        svc._fill_missing_columns("T", cols, parsed)
+    assert not m.called
+
+
+def test_fill_missing_columns_case_insensitive_no_resend():
+    """code-review #1: LLM kolon adını farklı kasada döndürebilir (ADGroupId→adgroupid). Zaten
+    etiketli kolon case-mismatch yüzünden 'missing' sanılıp GEREKSİZ yeniden gönderilmemeli."""
+    from unittest.mock import patch
+
+    import app.services.ds_enrichment_service as svc
+    cols = [{"name": "ADGroupId"}, {"name": "CustomerID"}]
+    parsed = {"columns": {"adgroupid": {"business_name_tr": "x"},
+                          "customerid": {"business_name_tr": "y"}}}
+    with patch.object(svc, "_llm_enrich_columns_only") as m:
+        svc._fill_missing_columns("T", cols, parsed)
+    assert not m.called, "case-mismatch yüzünden gereksiz LLM çağrısı OLMAMALI"

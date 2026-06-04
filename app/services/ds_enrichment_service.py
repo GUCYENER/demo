@@ -333,6 +333,46 @@ def _enrich_overflow_columns(table_name: str, columns: list, parsed: dict,
             pass
 
 
+def _fill_missing_columns(table_name: str, columns: list, parsed: dict) -> None:
+    """v3.74.2 KÖK fix (veri kaybı): ana LLM çağrısı çok-kolonlu tabloda bazı kolonları
+    DÖNDÜRMEZ (büyük structured-JSON'da model anahtar atlar/keser) → o kolonlar "—" kalıyordu
+    (kullanıcı bulgusu: ilk keşifte eksik, 'Yeniden Öğren'de tam → non-determinism).
+
+    Ana çağrı + overflow SONRASI hâlâ `parsed['columns']`'da OLMAYAN kolonları CHUNK'lı doldur.
+    ≤100 kolonlu tabloyu da kapsar (overflow yalnız 100+ ile ilgilenir). Chunk yolu güvenilir
+    (her chunk küçük → LLM hepsini döndürür). Metadata tamlığı = doğru cevap kaynağı.
+    """
+    if not parsed:
+        return
+    cols_map = parsed.get("columns")
+    if not isinstance(cols_map, dict):
+        cols_map = {}
+        parsed["columns"] = cols_map
+    cap = min(len(columns), _MAX_TOTAL_ENRICH_COLUMNS)
+    candidates = [c for c in columns[:cap] if c.get("name")]
+    filled = 0
+    # v3.74.2 code-review: CASE-INSENSITIVE üyelik. LLM kolon adını farklı kasada döndürebilir
+    # (ADGroupId → adgroupid) — _enrich_columns zaten case-insensitive yazar; burada exact-match
+    # olsaydı etiketli kolon "missing" sanılıp GEREKSİZ yeniden gönderilirdi (token israfı + kirli key).
+    # 2-pass bounded retry: chunk çağrısı da kolon düşürebilir → still-missing'i bir kez daha dene.
+    for _pass in range(2):
+        present_ci = {str(k).strip().lower() for k in cols_map if isinstance(k, str)}
+        missing = [c for c in candidates if str(c["name"]).strip().lower() not in present_ci]
+        if not missing:
+            break
+        for i in range(0, len(missing), _COL_CHUNK_SIZE):
+            chunk = missing[i:i + _COL_CHUNK_SIZE]
+            chunk_cols = _llm_enrich_columns_only(table_name, chunk)
+            if chunk_cols:
+                cols_map.update(chunk_cols)
+                filled += len(chunk_cols)
+    if filled:
+        logger.info(
+            "[DSEnrich] %s: ana çağrıda DÜŞEN %d kolon chunk'lı dolduruldu (veri-kaybı önlendi)",
+            table_name, filled,
+        )
+
+
 def _call_llm_for_table_analysis(table_name: str, columns: list,
                                   sample_data: list = None,
                                   relationships: list = None) -> dict:
@@ -436,6 +476,8 @@ KURALLAR:
             if parsed:
                 # v3.66.0: cap'i aşan kolonları (101+) chunk'lı enrich et → "—" kalmasın.
                 _enrich_overflow_columns(table_name, columns, parsed)
+                # v3.74.2: ana çağrının DÜŞÜRDÜĞÜ kolonları (≤100 dahil) chunk'lı doldur → veri kaybı yok.
+                _fill_missing_columns(table_name, columns, parsed)
                 return parsed
     except Exception as e:
         logger.warning("[DSEnrich] İlk LLM denemesi başarısız, daraltılmış prompt ile tekrar deneniyor. Hata: %s", type(e).__name__)
@@ -480,6 +522,8 @@ Sadece JSON döndür."""
                 # v3.66.0 code-review: fallback mini-prompt columns={} döner → TÜM kolonları (start=0)
                 # chunk'lı enrich et (yoksa fallback'e düşen tablonun kolonları "—" kalırdı).
                 _enrich_overflow_columns(table_name, columns, parsed2, start=0)
+                # v3.74.2: emniyet — hâlâ düşen kolon kaldıysa doldur (no-op if none).
+                _fill_missing_columns(table_name, columns, parsed2)
             return parsed2
     except Exception as e:
         logger.error("[DSEnrich] LLM analiz hatası (2. Deneme): %s — %s",
