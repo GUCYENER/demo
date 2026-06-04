@@ -367,9 +367,10 @@ class TestSaveToDB:
     """save_to_db fonksiyonu testleri."""
 
     def test_empty_list_returns_empty(self, extractor, mock_cursor):
-        """Boş liste ile çağrılınca boş liste dönmeli."""
-        result = extractor.save_to_db([], file_id=1, cursor=mock_cursor)
-        assert result == []
+        """Boş liste ile çağrılınca boş (ids, images) tuple dönmeli."""
+        image_ids, saved = extractor.save_to_db([], file_id=1, cursor=mock_cursor)
+        assert image_ids == []
+        assert saved == []
         mock_cursor.execute.assert_not_called()
 
     def test_saves_with_ocr_text(self, extractor, mock_cursor):
@@ -384,13 +385,17 @@ class TestSaveToDB:
             )
         ]
         
-        result = extractor.save_to_db(images, file_id=5, cursor=mock_cursor)
+        image_ids, saved = extractor.save_to_db(images, file_id=5, cursor=mock_cursor)
         
-        assert len(result) == 1
-        # SQL sorgusundaki 11. parametre ocr_text olmalı
-        call_args = mock_cursor.execute.call_args
-        sql = call_args[0][0]
-        params = call_args[0][1]
+        assert len(image_ids) == 1
+        # SAVEPOINT/RELEASE arasındaki gerçek INSERT çağrısını bul (son çağrı RELEASE'tir)
+        insert_calls = [
+            c for c in mock_cursor.execute.call_args_list
+            if "INSERT INTO document_images" in c[0][0]
+        ]
+        assert len(insert_calls) == 1
+        sql = insert_calls[0][0][0]
+        params = insert_calls[0][0][1]
         
         assert "ocr_text" in sql
         assert params[-1] == "OCR sonucu burada"  # Son parametre ocr_text
@@ -408,8 +413,14 @@ class TestSaveToDB:
         
         result = extractor.save_to_db(images, file_id=1, cursor=mock_cursor)
         
-        assert result == [10, 11, 12]
-        assert mock_cursor.execute.call_count == 3
+        image_ids, saved = result
+        assert image_ids == [10, 11, 12]
+        # Görsel başına 1 INSERT (SAVEPOINT/RELEASE hariç → toplam execute 3'ten fazla)
+        insert_calls = [
+            c for c in mock_cursor.execute.call_args_list
+            if "INSERT INTO document_images" in c[0][0]
+        ]
+        assert len(insert_calls) == 3
 
     def test_partial_save_failure(self, extractor, mock_cursor):
         """Bir görsel kaydı başarısız olursa diğerleri etkilenmemeli."""
@@ -426,16 +437,21 @@ class TestSaveToDB:
         # Sadece başarılı olanlar listede olacak
         assert len(result) <= 3  # Hatayla birlikte en az bazıları kaydedilir
 
-    def test_sql_has_11_values(self, extractor, mock_cursor):
-        """INSERT SQL'inde 11 kolon ve 11 değer olmalı (ocr_text dahil)."""
+    def test_sql_has_13_values(self, extractor, mock_cursor):
+        """INSERT SQL'inde 13 kolon ve 13 değer olmalı (next_heading, page_number, ocr_text dahil)."""
         images = [ExtractedImage(image_data=b"x", image_format="png")]
         extractor.save_to_db(images, file_id=1, cursor=mock_cursor)
+        insert_calls = [
+            c for c in mock_cursor.execute.call_args_list
+            if "INSERT INTO document_images" in c[0][0]
+        ]
+        assert len(insert_calls) == 1
         
-        sql = mock_cursor.execute.call_args[0][0]
-        params = mock_cursor.execute.call_args[0][1]
+        sql = insert_calls[0][0][0]
+        params = insert_calls[0][0][1]
         
-        assert sql.count("%s") == 11
-        assert len(params) == 11
+        assert sql.count("%s") == 13
+        assert len(params) == 13
 
 
 # =============================================================================
