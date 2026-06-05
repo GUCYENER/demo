@@ -493,3 +493,82 @@ def test_infer_prefix_strip_cross_dialect(dialect):
     res = svc.infer_fks_for_source(cur, source_id=3, dialect=dialect)
     assert res["candidates"] >= 1, f"{dialect}: VCUSTOMER_ID→CUSTOMER çözülmeli: {res}"
     assert res["persisted"] >= 1
+
+
+# ─────────────────────────────────────────────────────────────
+# v3.76.0 (G4a) — sample-validation'lı FUZZY hedef eşleşme
+# PRODUCT_CATALOG: entity-token (son _-token) 'catalog' ama 'product' token'ı VAR. PRODUCT_ID
+# naming-tier'larında çözülmez (PRODUCT yok, entity-token 'product' yok); fuzzy 'any-token' bulur.
+# ─────────────────────────────────────────────────────────────
+_FUZZY_OBJECTS = [
+    ("public", "PRODUCT_CATALOG", "table", json.dumps(
+        [{"name": "id", "type": "integer", "is_pk": True},
+         {"name": "name", "type": "varchar", "is_pk": False}])),
+    ("public", "ORDERS", "table", json.dumps(
+        [{"name": "id", "type": "integer", "is_pk": True},
+         {"name": "product_id", "type": "integer", "is_pk": False}])),
+]
+
+
+def _fuzzy_tables():
+    ti_ord = svc._TableInfo("public", "ORDERS", "orders",
+                            [{"name": "id", "type": "integer", "is_pk": True},
+                             {"name": "product_id", "type": "integer", "is_pk": False}], ["id"])
+    ti_cat = svc._TableInfo("public", "PRODUCT_CATALOG", "product_catalog",
+                            [{"name": "id", "type": "integer", "is_pk": True}], ["id"])
+    return {("public", "orders"): ti_ord, ("public", "product_catalog"): ti_cat}
+
+
+def test_iter_fuzzy_off_no_yield():
+    """enable_fuzzy=False (default) → fuzzy aday yok, no_target_table (mevcut davranış korunur)."""
+    pg = svc.get_dialect("postgresql")
+    diag = []
+    cands = list(svc._iter_fk_candidates(_fuzzy_tables(), pg, diag=diag, enable_fuzzy=False))
+    assert not any(c[1]["name"] == "product_id" for c in cands)
+    assert any(u.get("column") == "product_id" and u["reason"] == "no_target_table" for u in diag)
+
+
+def test_iter_fuzzy_on_yields_token_shared():
+    """enable_fuzzy=True → product_id, 'product' token'ı paylaşan PRODUCT_CATALOG'a fuzzy aday."""
+    pg = svc.get_dialect("postgresql")
+    cands = list(svc._iter_fk_candidates(_fuzzy_tables(), pg, enable_fuzzy=True))
+    fz = [c for c in cands if c[1]["name"] == "product_id" and c[3] == "fuzzy"]
+    assert fz and fz[0][4].name == "PRODUCT_CATALOG" and fz[0][5]["name"] == "id"
+
+
+def test_infer_fuzzy_persists_with_sample_coverage():
+    """G4a uçtan-uca: enable_fuzzy=True + YÜKSEK sample coverage → persist (method naming+type+sample)."""
+    cur = MagicMock()
+    _seed_objects(cur, _FUZZY_OBJECTS)
+    tcur = MagicMock()
+    tcur.fetchone.return_value = (10, 10)  # distinct_from, covered → coverage 1.0
+    res = svc.infer_fks_for_source(cur, source_id=5, sample_validate=True, target_cur=tcur, enable_fuzzy=True)
+    assert res.get("fuzzy_resolved", 0) >= 1, res
+    assert res.get("fuzzy_attempted", 0) >= 1, res  # gözlemlenebilirlik: denendi
+    assert res["persisted"] >= 1
+    assert any(s["method"] == "naming+type+sample" for s in res.get("sample", [])), res
+
+
+def test_infer_fuzzy_dropped_on_low_coverage():
+    """Fuzzy aday DÜŞÜK coverage'ta (<FUZZY_MIN_COVERAGE) PERSIST EDİLMEZ ama denendi sayılır (sessiz değil)."""
+    cur = MagicMock()
+    _seed_objects(cur, _FUZZY_OBJECTS)
+    tcur = MagicMock()
+    tcur.fetchone.return_value = (10, 1)  # coverage 0.1 < 0.5
+    res = svc.infer_fks_for_source(cur, source_id=6, sample_validate=True, target_cur=tcur, enable_fuzzy=True)
+    assert res.get("fuzzy_resolved", 0) == 0, res
+    assert res.get("fuzzy_attempted", 0) >= 1, res  # code-review: düşen fuzzy SESSİZ kaybolmaz
+    assert res["persisted"] == 0
+
+
+def test_infer_fuzzy_opt_in_default_off():
+    """v3.76.0 code-review: fuzzy OPT-IN. sample_validate AÇIK ama enable_fuzzy verilmemiş → fuzzy KAPALI
+    (mevcut sample_validate kullanıcıları yeni spekülatif FK ile şaşırmaz)."""
+    cur = MagicMock()
+    _seed_objects(cur, _FUZZY_OBJECTS)
+    tcur = MagicMock()
+    tcur.fetchone.return_value = (10, 10)
+    res = svc.infer_fks_for_source(cur, source_id=7, sample_validate=True, target_cur=tcur)  # enable_fuzzy YOK
+    assert res.get("fuzzy_resolved", 0) == 0
+    assert res.get("fuzzy_attempted", 0) == 0
+    assert any(u.get("column") == "product_id" for u in res.get("unresolved", []))

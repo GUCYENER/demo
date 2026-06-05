@@ -67,6 +67,15 @@ NON_FK_COLUMN_NAMES = frozenset({"gcrecid", "recid"})
 # bulunamazsa hedef = kolonun KENDİ tablosu (org-chart/hiyerarşi: parent_id → own PK).
 _SELF_REF_ROOTS = frozenset({"parent"})
 
+# v3.76.0 (G4a): Sample-validation'lı FUZZY hedef eşleşme. İsim-tier'ları (exact/plural/
+# entity-token/prefix/head/self) BOŞ dönünce, root/head ile HERHANGİ bir token'ı paylaşan
+# tablolar aday yapılır ve YALNIZ sample coverage ile doğrulanırsa persist edilir → genel
+# (her müşteri/dialect), hardcoded-abbreviation YOK, false-positive YOK (sample gate).
+SCORE_NAMING_FUZZY = 0.30   # spekülatif → tek başına min_confidence altında; type+sample ile geçer
+FUZZY_MIN_COVERAGE = 0.50   # fuzzy persist için min sample kapsama (FK değerleri hedef PK'da var mı)
+MIN_FUZZY_TOKEN_LEN = 4     # kısa token (id/no) fuzzy gürültüsünü keser
+_MAX_FUZZY_TARGETS_PER_COL = 8  # kolon başına sample-validate edilecek aday tavanı (perf-güvenli)
+
 
 # ─────────────────────────────────────────────────────────────
 # Naming pattern parser
@@ -406,10 +415,85 @@ def _column_dict(t: _TableInfo, name_lower: str, dialect: FKInferenceDialect) ->
     return None
 
 
+def _resolve_target_pk(
+    target_tbl: _TableInfo,
+    from_col_name: str,
+    root: str,
+    match_kind: str,
+    dialect: FKInferenceDialect,
+) -> Tuple[Optional[Dict[str, Any]], List[str]]:
+    """v3.76.0: hedef tablonun PK kolonunu ESNEK çöz (naming + fuzzy ortak — kod tekrarı yok).
+    Sıra: declared PK > FK-col-adı (self hariç) > entity-token > root > id/pk/uuid. İlk VAR OLAN
+    kolon (target.columns'ta). Tip-uyumu downstream. Döner: (target_col_dict | None, denenen_pk_listesi).
+    """
+    _ttoks = [x for x in str(target_tbl.norm_name).split("_") if x]
+    ent_tok = _ttoks[-1] if _ttoks else str(target_tbl.norm_name)
+    pk_name_cands: List[str] = [pc for pc in target_tbl.pk_columns if pc]
+    # self-ref'te FK kolonunu (ParentId) hedef PK adayı YAPMA → kolonun kendine işaret ettiği
+    # geçersiz döngüyü önle (child→parent aynı-ad deseni yalnız FARKLI tabloda geçerli).
+    if match_kind != "self":
+        pk_name_cands.append(from_col_name)
+    if ent_tok:
+        pk_name_cands += [f"{ent_tok}_id", f"{ent_tok}id", ent_tok]
+    if root:
+        pk_name_cands += [f"{root}_id", f"{root}id"]
+    pk_name_cands += ["id", "pk", "uuid"]
+    tried_pks: List[str] = []
+    _seen_pk: Set[str] = set()
+    for pkc in pk_name_cands:
+        pkn = dialect.normalize_ident(pkc)
+        if not pkn or pkn in _seen_pk:
+            continue
+        _seen_pk.add(pkn)
+        tried_pks.append(pkc)
+        _tc = _column_dict(target_tbl, pkn, dialect)
+        if _tc is not None:
+            return _tc, tried_pks
+    return None, tried_pks
+
+
+def _fuzzy_target_tables(
+    t_from: _TableInfo,
+    root: str,
+    head: Optional[str],
+    by_any_token: Dict[str, List[_TableInfo]],
+    dialect: FKInferenceDialect,
+    cap: int = _MAX_FUZZY_TARGETS_PER_COL,
+) -> List[_TableInfo]:
+    """v3.76.0 (G4a): isim-tier'ları başarısız olunca root/head ile HERHANGİ bir token'ı paylaşan
+    aday hedef tablolar (entity-token yalnız SON token'a bakar; bu TÜM token'lara). Self hariç,
+    same-schema tercihli, deterministik sıralı, cap'li. Çağıran SAMPLE-VALIDATION ile süzer →
+    false-positive yok. O(1) token-index lookup (full-scan YOK) → 2000+ tabloda perf-güvenli.
+    """
+    out: List[_TableInfo] = []
+    seen: Set[Tuple[str, str]] = set()
+    self_norm = dialect.normalize_ident(t_from.name)
+    self_schema = dialect.normalize_ident(t_from.schema)
+    for r in [x for x in (root, head) if x and len(x) >= MIN_FUZZY_TOKEN_LEN]:
+        raw_keys = {r, r + "s"}
+        if r.endswith("s") and len(r) > MIN_FUZZY_TOKEN_LEN:
+            raw_keys.add(r[:-1])
+        for key in raw_keys:
+            for tbl in by_any_token.get(dialect.normalize_ident(key), []):
+                # v3.76.0 code-review: self yalnız ADA değil ŞEMA+AD ile karşılaştırılır —
+                # cross-schema aynı-ad GEÇERLİ hedef (SALES.ORDER → REF.ORDER) yanlışça elenmesin.
+                if (dialect.normalize_ident(tbl.name) == self_norm
+                        and dialect.normalize_ident(tbl.schema) == self_schema):
+                    continue  # gerçek self (aynı şema+ad) — fuzzy self-FK yapma
+                k = (dialect.normalize_ident(tbl.schema), tbl.norm_name)
+                if k in seen:
+                    continue
+                seen.add(k)
+                out.append(tbl)
+    same = [h for h in out if dialect.normalize_ident(h.schema) == self_schema]
+    return sorted(same or out, key=lambda h: h.norm_name)[:cap]
+
+
 def _iter_fk_candidates(
     tables: Dict[Tuple[str, str], _TableInfo],
     dialect: FKInferenceDialect,
     diag: Optional[List[Dict[str, Any]]] = None,
+    enable_fuzzy: bool = False,
 ) -> Iterable[Tuple[_TableInfo, Dict[str, Any], str, str, _TableInfo, Dict[str, Any]]]:
     """Yield (from_table, from_col, root, pattern_name, to_table, to_col).
 
@@ -430,12 +514,18 @@ def _iter_fk_candidates(
     # Hungarian-önekli kolonlar prefix-soyma tier'ında hedef bulamıyordu). Exact match ÖNCE,
     # entity-token + prefix-soyma SONRA (düşük confidence + admin_verified ile sınırlı).
     by_entity_token: Dict[str, List[_TableInfo]] = {}
+    # v3.76.0 (G4a): TÜM token'lar (yalnız son-token değil) — fuzzy fallback için. enable_fuzzy
+    # kapalıysa kurulmaz (mevcut davranış + perf korunur).
+    by_any_token: Dict[str, List[_TableInfo]] = {}
     for t in tables.values():
         by_norm_name.setdefault(t.norm_name, []).append(t)
         _toks = [x for x in str(t.norm_name).split("_") if x]
         _ent = _toks[-1] if _toks else str(t.norm_name)
         if _ent:
             by_entity_token.setdefault(_ent, []).append(t)
+        if enable_fuzzy:
+            for _tok in (_toks or [str(t.norm_name)]):
+                by_any_token.setdefault(_tok, []).append(t)
 
     for t in tables.values():
         for col in t.columns:
@@ -520,7 +610,15 @@ def _iter_fk_candidates(
                 target_tbl = t
                 match_kind = "self"
             if target_tbl is None:
-                # Tanılama: root/head çıktı ama hedef tablo bulunamadı (prefix/adlandırma uyumsuzluğu).
+                # v3.76.0 (G4a): isim-tier'ları + self başarısız → FUZZY adaylar (root/head ile
+                # token-paylaşan tablolar). Sample-validation ZORUNLU (infer_fks_for_source coverage
+                # ile süzer + kolon başına EN İYİ'yi seçer) → false-positive yok.
+                if enable_fuzzy:
+                    for fz_tbl in _fuzzy_target_tables(t, root, head, by_any_token, dialect):
+                        fz_col, _ = _resolve_target_pk(fz_tbl, col_name, root, "fuzzy", dialect)
+                        if fz_col is not None:
+                            yield t, col, root, "fuzzy", fz_tbl, fz_col
+                # Tanılama (her durumda — fuzzy de sample-validation'da elenebilir → kök-neden görünür).
                 if diag is not None:
                     diag.append({
                         "schema": t.schema, "table": t.name, "column": col_name,
@@ -529,40 +627,10 @@ def _iter_fk_candidates(
                         "hint": "root/head'den üretilen aday tablo adları hiçbir tabloya (tam/son-token) eşleşmedi",
                     })
                 continue
-            # Self-FK is allowed (org chart parent_id → org.id).
-            # v3.73.0 ESNEK PK çözümü — sabit "id" varsayımı kaldırıldı. Sıra:
-            #   1. declared PK (is_pk metadata) — en güvenilir
-            #   2. FK kolonunun KENDİ adı — child.PartyId → parent.PartyId deseni çok yaygın
-            #      (Oracle/kurumsal şemada PK 'id' değil, child FK ile aynı ad)
-            #   3. entity-token tabanlı: <entity>_id / <entity>id / <entity>
-            #   4. root tabanlı: <root>_id / <root>id
-            #   5. konvansiyonel: id / pk / uuid
-            # İlk VAR OLAN (target.columns'ta) kolon seçilir. Tip-uyumu downstream _type_compatible'da.
-            _ttoks = [x for x in str(target_tbl.norm_name).split("_") if x]
-            ent_tok = _ttoks[-1] if _ttoks else str(target_tbl.norm_name)
-            pk_name_cands: List[str] = [pc for pc in target_tbl.pk_columns if pc]
-            # v3.75.0: self-ref'te FK kolonunu (ParentId) hedef PK adayı YAPMA → kolonun kendine
-            # işaret ettiği geçersiz döngüyü önle (child→parent aynı-ad deseni yalnız FARKLI tabloda geçerli).
-            if match_kind != "self":
-                pk_name_cands.append(col_name)
-            if ent_tok:
-                pk_name_cands += [f"{ent_tok}_id", f"{ent_tok}id", ent_tok]
-            if root:
-                pk_name_cands += [f"{root}_id", f"{root}id"]
-            pk_name_cands += ["id", "pk", "uuid"]
-            target_col = None
-            tried_pks: List[str] = []
-            _seen_pk: Set[str] = set()
-            for pkc in pk_name_cands:
-                pkn = dialect.normalize_ident(pkc)
-                if not pkn or pkn in _seen_pk:
-                    continue
-                _seen_pk.add(pkn)
-                tried_pks.append(pkc)
-                _tc = _column_dict(target_tbl, pkn, dialect)
-                if _tc is not None:
-                    target_col = _tc
-                    break
+            # Self-FK is allowed (org chart parent_id → org.id). v3.76.0: ESNEK PK çözümü ortak
+            # helper'da (_resolve_target_pk — naming + fuzzy aynı mantığı paylaşır, kod tekrarı yok).
+            # Sıra: declared PK > FK-col-adı (self hariç) > entity-token > root > id/pk/uuid.
+            target_col, tried_pks = _resolve_target_pk(target_tbl, col_name, root, match_kind, dialect)
             if target_col is None:
                 # Tanılama: hedef tablo bulundu ama hiçbir PK adayı kolon olarak yok.
                 if diag is not None:
@@ -583,7 +651,14 @@ def _score(
     sample_info: Optional[Dict[str, Any]],
 ) -> Tuple[float, str]:
     # v3.60.0: head-noun eşleşmesi (rol-önekli) full root'tan daha spekülatif → daha düşük taban.
-    base = SCORE_NAMING if match_kind != "head" else SCORE_NAMING_HEAD
+    # v3.76.0: fuzzy (token-paylaşan) en spekülatif → en düşük taban; tek başına min_confidence
+    # altında, YALNIZ type+sample coverage ile geçer (false-positive sample gate'te elenir).
+    if match_kind == "fuzzy":
+        base = SCORE_NAMING_FUZZY
+    elif match_kind == "head":
+        base = SCORE_NAMING_HEAD
+    else:
+        base = SCORE_NAMING
     score = base
     # v3.65.0 KÖK fix: inference_method DB kolonu CHECK constraint'li (ck_dsdrel_inference_method:
     # 'naming'|'naming+type'|'naming+type+sample'|'manual'|'llm'). v3.60.0'da 'naming:full+type' yazınca
@@ -610,6 +685,7 @@ def infer_fks_for_source(
     min_confidence: float = DEFAULT_MIN_CONFIDENCE,
     dialect: str | None = None,
     target_cur=None,
+    enable_fuzzy: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """Infer FKs and UPSERT inferred rows.
 
@@ -625,12 +701,21 @@ def infer_fks_for_source(
             data lives). Required when sample_validate=True. Must be a
             short-lived cursor with statement_timeout already applied by
             the caller.
+        enable_fuzzy: v3.76.0 (G4a) — None (default) → otomatik (sample_validate AND target_cur).
+            Fuzzy = isim-tier'ları boş dönen FK kolonları için token-paylaşan aday tablolar;
+            YALNIZ sample coverage>=FUZZY_MIN_COVERAGE ile persist edilir (false-positive yok).
+            sample/target yoksa fuzzy adaylar üretilse de coverage gate'te elenir.
 
     Returns:
         dict with counts and a list of inferred rows (capped at 200 for
         observability).
     """
     d = get_dialect(dialect or "postgresql")
+    # v3.76.0 code-review: fuzzy OPT-IN (default OFF). Eski auto-coupling (sample_validate açıkken
+    # otomatik) mevcut sample_validate kullanıcılarını yeni spekülatif FK'larla şaşırtıyordu →
+    # çağıran AÇIKÇA enable_fuzzy=True vermeli (+ sample_validate; yoksa coverage gate'te elenir).
+    if enable_fuzzy is None:
+        enable_fuzzy = False
     tables = _load_schema(cur, source_id, d)
     if not tables:
         return {
@@ -648,9 +733,12 @@ def infer_fks_for_source(
 
     existing = _load_existing_relationships(cur, source_id, d)
     candidates: List[_Candidate] = []
+    # v3.76.0 (G4a): fuzzy adaylar FROM-kolonu başına havuzlanır → döngü sonrası EN İYİ tek hedef.
+    fuzzy_pool: Dict[Tuple[str, str, str], List[Tuple[_Candidate, float]]] = {}
+    fuzzy_attempted_cols: Set[Tuple[str, str, str]] = set()  # v3.76.0 code-review: gözlemlenebilirlik
     unresolved: List[Dict[str, Any]] = []  # v3.60.0: FK üretilemeyen yakın-ıska kolonlar (tanılama)
     skipped_existing = 0
-    for t_from, col_from, root, pattern, t_to, col_to in _iter_fk_candidates(tables, d, diag=unresolved):
+    for t_from, col_from, root, pattern, t_to, col_to in _iter_fk_candidates(tables, d, diag=unresolved, enable_fuzzy=enable_fuzzy):
         from_schema = t_from.schema
         from_table = t_from.name
         from_col = col_from.get("name") or ""
@@ -700,17 +788,32 @@ def infer_fks_for_source(
         }
         if sample_info is not None:
             evidence["sample"] = sample_info
-        candidates.append(_Candidate(
+        cand = _Candidate(
             from_schema=from_schema, from_table=from_table, from_column=from_col,
             from_type=from_type,
             to_schema=to_schema, to_table=to_table, to_column=to_col,
             to_type=to_type,
             naming_pattern=pattern, root=root,
             confidence=score, evidence=evidence, method=method,
-        ))
+        )
+        if pattern == "fuzzy":
+            # v3.76.0 (G4a): fuzzy YALNIZ sample coverage ile geçer. Aynı FROM kolonu için birden çok
+            # fuzzy hedef olabilir → havuzla; döngü sonrası EN İYİ coverage'lı TEK hedef (1 kolon=1 FK).
+            _fkey = (d.normalize_ident(from_schema), d.normalize_ident(from_table), d.normalize_ident(from_col))
+            fuzzy_attempted_cols.add(_fkey)  # code-review: denenen fuzzy kolonları say (sessiz düşme yok)
+            cov = float(sample_info.get("coverage_ratio", 0.0)) if sample_info else 0.0
+            if type_ok and sample_info is not None and cov >= FUZZY_MIN_COVERAGE:
+                fuzzy_pool.setdefault(_fkey, []).append((cand, cov))
+            continue
+        candidates.append(cand)
+
+    # v3.76.0 (G4a): fuzzy havuzu → FROM kolonu başına EN İYİ (coverage, sonra confidence) tek aday.
+    for _grp, _lst in fuzzy_pool.items():
+        candidates.append(max(_lst, key=lambda x: (x[1], x[0].confidence))[0])
 
     # Persist
     persisted = 0
+    fuzzy_persisted = 0  # v3.76.0 code-review: GERÇEK persist edilen fuzzy sayısı (havuz boyutu değil)
     skipped_low = 0
     sample_out: List[Dict[str, Any]] = []
     # v3.64.0: SAVEPOINT yalnız transaction'da geçerli (autocommit'te "can only be used in
@@ -748,6 +851,8 @@ def infer_fks_for_source(
             if _use_sp:
                 cur.execute("RELEASE SAVEPOINT fk_persist_sp")
             persisted += 1
+            if c.naming_pattern == "fuzzy":
+                fuzzy_persisted += 1
             if len(sample_out) < 200:
                 sample_out.append({
                     "from": f"{c.from_schema}.{c.from_table}.{c.from_column}",
@@ -781,12 +886,22 @@ def infer_fks_for_source(
                     c.from_schema, c.from_table, c.from_column, str(e)[:200],
                 )
 
+    # v3.76.0 code-review: fuzzy denendi ama (sample yok / düşük coverage / min_confidence) düşenler
+    # SESSİZ kaybolmasın → özet log (yutulan hata yok prensibi). Denenen vs persist edilen.
+    if enable_fuzzy and fuzzy_attempted_cols:
+        logger.info(
+            "[fk_inference] fuzzy: %d kolon denendi (sample probe), %d persist edildi (source=%s, %s)",
+            len(fuzzy_attempted_cols), fuzzy_persisted, source_id, d.name,
+        )
+
     return {
         "source_id": source_id,
         "dialect": d.name,
         "tables_scanned": len(tables),
         "candidates": len(candidates),
         "persisted": persisted,
+        "fuzzy_resolved": fuzzy_persisted,  # v3.76.0 code-review: GERÇEK persist edilen fuzzy (havuz değil)
+        "fuzzy_attempted": len(fuzzy_attempted_cols),  # sample probe açılan fuzzy kolon sayısı
         "skipped_existing": skipped_existing,
         "skipped_low_confidence": skipped_low,
         "unresolved_count": len(unresolved),

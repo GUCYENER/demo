@@ -641,3 +641,20 @@ ilişki açık + tek yerden değişir.
 audit kolonu (objversion/rowguid/sys_id) ile aynı 93-sahte-uyarı sorununu üretip kod-edit+deploy ister.
 `_SELF_REF_ROOTS={parent}` İngilizce/tek-token (üst/ana/manager kaçar). Çözüm: per-source DB-driven denylist +
 çok-dilli self-ref kökleri (config tablosu veya source meta). Not: v3.75.0'da bilinçli ertelendi (PR şişmesin).
+
+## RB-v3.76.0 — FUZZY FK sabitleri + min_confidence kuplaj (code-review altitude)
+
+Kapsam: v3.76.0 G4a fuzzy FK fallback (code-review). 2 altitude (bug DEĞİL — opt-in default-OFF, sample-gated):
+
+**1) (P2 — altitude) Fuzzy sabitleri hardcoded + gizli min_confidence kuplajı.** `SCORE_NAMING_FUZZY=0.30`,
+`FUZZY_MIN_COVERAGE=0.50`, `MIN_FUZZY_TOKEN_LEN=4`, `_MAX_FUZZY_TARGETS_PER_COL=8` (fk_inference_service.py)
+module-level magic. **Gizli kuplaj:** fuzzy max skor = 0.30+0.20(type)+0.20×cov; min_confidence=0.60'ı geçmek için
+cov≥0.50 gerekir = tam FUZZY_MIN_COVERAGE. Biri (SCORE_TYPE/SCORE_SAMPLE_MAX/min_confidence) ayarlanırsa iki gate
+SESSİZ desenkronize olur (ör. min_confidence 0.55 → cov≈0.25 fuzzy persist eder). Çözüm: tek `FuzzyPolicy` config
+(score/coverage/token-len/cap + min_confidence ilişkisi açık + tek yerden). RB-v3.75.0 madde-2 (per-source alias)
+ile birleşir: alias deterministik+açıklanabilir, fuzzy global istatistiksel tahmin — ikisi tek policy altında.
+
+**2) (P3 — altitude) Fuzzy global probe cap yok.** Kolon-başına `_MAX_FUZZY_TARGETS_PER_COL=8` var ama TOPLAM
+sample-probe sınırı yok → çok çözülemeyen kolonlu kaynakta (Oracle CSN ~dozens) 8×N probe. v3.76.0 Oracle
+call_timeout=3s ekledi (her probe sınırlı) ama global probe budget (ör. max 500/infer) düşünülebilir. Şimdilik
+opt-in + per-probe timeout yeterli; yüksek-hacim kaynakta gözden geçir.

@@ -124,6 +124,11 @@ class InferFKsRequest(BaseModel):
     )
     sample_rows: int = Field(default=200, ge=10, le=10000)
     min_confidence: float = Field(default=0.60, ge=0.0, le=1.0)
+    fuzzy: bool = Field(
+        default=False,
+        description="v3.76.0 (opt-in): isim-tier'ları boş dönen FK kolonları için token-paylaşan "
+                    "tablo + sample-validation fallback. sample_validate ZORUNLU; false-positive yok.",
+    )
     dialect: Optional[str] = Field(default=None, description="Override; default: data_source.db_type")
 
 
@@ -709,6 +714,13 @@ def infer_fks_endpoint(
                             target_cur.execute("SET LOCAL statement_timeout='3s'")
                         elif dialect_name == "mssql":
                             target_cur.execute("SET LOCK_TIMEOUT 3000")
+                        elif dialect_name == "oracle":
+                            # v3.76.0 code-review: Oracle'da session statement_timeout YOK → connection
+                            # call_timeout (ms) ile her sample-probe'u sınırla (fuzzy 8×N sorgu asmasın).
+                            try:
+                                target_conn.call_timeout = 3000
+                            except Exception:
+                                pass
                     except Exception:
                         pass
                 except Exception as e:
@@ -729,6 +741,9 @@ def infer_fks_endpoint(
                 min_confidence=payload.min_confidence,
                 dialect=dialect_name,
                 target_cur=target_cur,
+                # v3.76.0 code-review: fuzzy OPT-IN — yalnız payload.fuzzy AND sample_validate AND
+                # target_cur hepsi varsa (sample gate olmadan fuzzy zaten elenir; boşuna üretme).
+                enable_fuzzy=(payload.fuzzy and payload.sample_validate and target_cur is not None),
             )
             conn.commit()
             return {"success": True, **res}
