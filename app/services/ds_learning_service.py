@@ -1643,9 +1643,11 @@ def collect_samples(source: dict, vyra_conn, max_rows: int = 10, schema_filter: 
             if not safe_cols:
                 safe_cols = ["*"]
 
-            # Maksimum 50 kolon (çok geniş tablolarda performans)
-            if safe_cols[0] != "*" and len(safe_cols) > 50:
-                safe_cols = safe_cols[:50]
+            # v3.75.0 (kullanıcı direktifi "max 50 olmamalı"): örnekleme kolon cap 50→500.
+            # Geniş tablonun TÜM kolonlarına örnek-veri toplanır (enrichment kalitesi artar);
+            # 500 güvenlik tavanı pathological ultra-geniş tabloda SELECT-genişliğini sınırlar.
+            if safe_cols[0] != "*" and len(safe_cols) > 500:
+                safe_cols = safe_cols[:500]
 
             # Güvenli tablo adı — sadece alfanümerik, underscore, nokta, boşluk
             safe_name = _safe_identifier(object_name)

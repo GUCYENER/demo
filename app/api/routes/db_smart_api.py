@@ -1999,9 +1999,11 @@ def related_tables(
 
 # v3.36 F7 (POSEIDON+ARES): tek-tablo kolon enrich mantığı — hem single
 # (`list_columns`) hem multi (`list_columns_multi`) route'ları bu helper'ı
-# kullanır. RealDictCursor + tuple cursor uyumu korunur. Per-tablo 50 kolon cap
-# (R-4): büyük tabloların multi payload'u şişirmesini engeller.
-_MAX_COLUMNS_PER_TABLE = 50
+# kullanır. RealDictCursor + tuple cursor uyumu korunur.
+# v3.75.0 (kullanıcı direktifi "max 50 olmamalı"): per-tablo 50 kolon cap KALDIRILDI.
+# Geniş tablo (312+ kolon) filter/master-detail UI'sında TÜM kolonlar görünür/seçilebilir.
+# Bu helper UI'ye döner (LLM prompt'u DEĞİL) → token maliyeti yok; payload büyür ama
+# kullanıcı bilinçli olarak tüm kolonları ister.
 
 
 def _fetch_table_columns(
@@ -2013,7 +2015,7 @@ def _fetch_table_columns(
     """Returns {table_id, table_name, schema_name, business_name_tr, columns:[…]}.
 
     columns: [{name, data_type, is_nullable, semantic_type, business_name_tr, description_tr}]
-    Hard-cap _MAX_COLUMNS_PER_TABLE per table.
+    v3.75.0: per-tablo kolon cap kaldırıldı — tablonun TÜM kolonları döner.
 
     v3.38.0: `scope` (AccessScope) verilirse ve admin değilse, table_id'den çözülen
     (schema, object_name) bu kapsamda erişilebilir değilse `None` döner (kolon sızıntısı
@@ -2071,7 +2073,7 @@ def _fetch_table_columns(
             }
 
     columns: List[Dict[str, Any]] = []
-    for c in (obj_columns_json or [])[:_MAX_COLUMNS_PER_TABLE]:
+    for c in (obj_columns_json or []):
         col_name = c.get("name") or c.get("column_name") or ""
         meta = enrich_map.get(col_name.lower(), {})
         columns.append({
@@ -2136,8 +2138,8 @@ def list_columns_multi(
 
     Filter step master-detail UI'sı için: primary + join tabloların kolonlarını
     tek round-trip'te döner. Sıra `table_ids` CSV order'ına sadıktır
-    (UI tablo grup başlıklarını bu sıra ile render eder). Per-tablo
-    `_MAX_COLUMNS_PER_TABLE=50` cap (R-4 payload guard).
+    (UI tablo grup başlıklarını bu sıra ile render eder). v3.75.0: per-tablo
+    kolon cap kaldırıldı — geniş tablolarda tüm kolonlar döner.
 
     Response:
       {

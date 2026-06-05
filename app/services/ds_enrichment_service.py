@@ -105,9 +105,38 @@ def enrich_table(vyra_conn, source_id: int, company_id: int,
             columns, llm_result.get("columns", {})
         )
 
-    logger.info("[DSEnrich] Tablo enrich edildi: %s.%s → '%s' (skor: %.2f, admin: %s)",
+    # v3.75.0 (G2): kolon-enrichment TOPTAN başarısızlığını yüzeye çıkar. Geniş tabloda LLM
+    # yolu (ana+fallback+chunk) tümden çökünce kolonlar ""/"other" yazılıp tablo "yapılmış"
+    # gibi görünüyordu (kullanıcı bulgusu: "312 LLM BEKLEYEN", hepsi "—"). Tabloda kolon VAR
+    # ama HİÇBİRİ etiketlenmemişse → Hata İzleme'ye net kayıt (yutulan hata yok) +
+    # "Yeniden Öğren" sinyali. Boş placeholder maskelemesi kırılır.
+    # v3.75.0 code-review: GERÇEK eşleşen kolon sayısı — LLM'in döndürdüğü HAM anahtar sayısı
+    # DEĞİL. Model uydurma/eşleşmeyen anahtar dönerse (case-insensitive gerçek kolonla eşleşmeyen),
+    # ham sayı >0 olur ama hiçbir gerçek kolon etiketlenmemiştir → surfacing yanlışlıkla susardı.
+    _col_meta = llm_result.get("columns") if isinstance(llm_result, dict) else None
+    _real_names = {str(c.get("name", "")).strip().lower() for c in columns if isinstance(c, dict)}
+    columns_enriched = sum(
+        1 for k in (_col_meta or {})
+        if isinstance(k, str) and k.strip().lower() in _real_names
+    ) if isinstance(_col_meta, dict) else 0
+    if columns and columns_enriched == 0:
+        logger.warning("[DSEnrich] %s.%s: %d kolonun HİÇBİRİ etiketlenemedi (LLM yolu çöktü)",
+                       schema, table, len(columns))
+        try:
+            from app.services.logging_service import log_system_event
+            log_system_event(
+                level="WARNING",
+                message=(f"[DSEnrich] source={source_id} {schema}.{table}: {len(columns)} kolonun "
+                         f"HİÇBİRİ LLM ile etiketlenemedi (ana+fallback+chunk çağrıları başarısız) → "
+                         f"kolonlar '—' kaldı. 'Yeniden Öğren' gerekir veya LLM sağlığını kontrol edin."),
+                module="ds_enrichment",
+            )
+        except Exception:
+            pass
+
+    logger.info("[DSEnrich] Tablo enrich edildi: %s.%s → '%s' (skor: %.2f, kolon: %d/%d, admin: %s)",
                 schema, table, llm_result.get("business_name_tr", "?"),
-                enrichment_score, admin_required)
+                enrichment_score, columns_enriched, len(columns) if columns else 0, admin_required)
 
     return {
         "enrichment_id": enrichment_id,
@@ -115,6 +144,7 @@ def enrich_table(vyra_conn, source_id: int, company_id: int,
         "business_name_tr": llm_result.get("business_name_tr", ""),
         "description_tr": llm_result.get("description_tr", ""),
         "category": llm_result.get("category", ""),
+        "columns_enriched": columns_enriched,
         "admin_required": admin_required,
         "skipped": False
     }
@@ -250,8 +280,16 @@ def enrich_tables_batch(vyra_conn, source_id: int, company_id: int,
 # düşüyordu). Asıl sorun (LLM timeout) artık ENRICH_LLM_TIMEOUT ile çözülüyor (aşağıda).
 MAX_ENRICH_COLUMNS = 100
 # v3.66.0: cap'i AŞAN kolonlar CHUNK'lı enrich edilir (kalan kolonlar parça parça LLM'e, merge).
-_COL_CHUNK_SIZE = 80
-_MAX_TOTAL_ENRICH_COLUMNS = 500
+# v3.75.0 (code-review): 80→40. KÖK neden: 80 kolonun JSON çıktısı (her kolon için iş adı +
+# açıklama + semantic + synonyms) call_llm_api max_tokens=4096'yı AŞIP TRUNCATE oluyordu →
+# parse-fail → kolonlar "—" (312-kolon "BEKLEYEN" bulgusunun asıl kaynağı). 40 kolon ~güvenli
+# tek-yanıt sığar. Daha çok chunk ama her biri eksiksiz döner (güvenilirlik > çağrı sayısı).
+_COL_CHUNK_SIZE = 40
+# v3.75.0 (kullanıcı direktifi "ne kadar varsa öğren"): 500→2000. Geniş tablo (312 kolon)
+# zaten <500 idi (bu raise onu ETKİLEMEZ — _fill_missing_columns davranışı AYNEN korunur);
+# 500-2000 kolonlu tabloları da TAM enrich eder. 2000 güvenlik tavanı: chunk başına LLM çağrısı
+# → çok-yüksek kolonda maliyet/perf backstop (aşılırsa _enrich_overflow_columns WARNING loglar).
+_MAX_TOTAL_ENRICH_COLUMNS = 2000
 # v3.71.0: enrichment LLM çağrılarına özel UZUN timeout (config'in kısa 60sn'si geniş tablo
 # prompt'unda timeout→retry-loop→"—" yaratıyordu). 100/80 kolonluk prompt tek seferde bitsin.
 ENRICH_LLM_TIMEOUT = 150
@@ -285,16 +323,28 @@ def _llm_enrich_columns_only(table_name: str, cols_chunk: list) -> dict:
         {"role": "system", "content": "Sen bir veritabanı analiz uzmanısın. Sadece istenen JSON'u döndür."},
         {"role": "user", "content": prompt},
     ]
-    try:
-        resp = call_llm_api(messages, timeout_override=ENRICH_LLM_TIMEOUT)
-        if not resp:
-            return {}
-        parsed = _parse_llm_analysis(resp)
-        cols = (parsed or {}).get("columns")
-        return cols if isinstance(cols, dict) else {}
-    except Exception as e:
-        logger.warning("[DSEnrich] kolon-chunk enrich hatası (%s): %s", table_name, str(e)[:150])
-        return {}
+    # v3.75.0 (G2 + code-review): call_llm_api ZATEN 5xx/429/timeout için iç-retry yapar
+    # (max_retries, exponential backoff — app/core/llm.py). Bu yüzden transport hatasında
+    # TEKRAR denemeyiz (çift-sarmal = chunk başına 6 çağrı). Yalnız "geçerli yanıt ama JSON
+    # parse boş" (model çıktıyı kesmiş/format bozmuş — iç-retry bunu ELE ALMAZ) durumunda
+    # 1 kez daha deneriz. Sağlıklı provider'da ilk deneme başarılı → retry tetiklenmez.
+    last_err = None
+    for _attempt in range(2):
+        try:
+            resp = call_llm_api(messages, timeout_override=ENRICH_LLM_TIMEOUT)
+        except Exception as e:
+            last_err = e
+            break  # iç-retry zaten tükendi → dış-retry double-wrap olur
+        if resp:
+            parsed = _parse_llm_analysis(resp)
+            cols = (parsed or {}).get("columns")
+            if isinstance(cols, dict) and cols:
+                return cols
+        # boş/parse-fail → 1 kez daha dene (model JSON'u kesmiş olabilir; transport sağlam)
+    if last_err is not None:
+        logger.warning("[DSEnrich] kolon-chunk enrich hatası (%s): %s",
+                       table_name, str(last_err)[:150])
+    return {}
 
 
 def _enrich_overflow_columns(table_name: str, columns: list, parsed: dict,

@@ -623,3 +623,21 @@ FE uyarısı (#10 ile aynı export yüzeyi).
 **15) (P3) Fallback (LLM down) WHERE/ORDER BY uygulamaz.** `_build_fallback_sql` = `SELECT *` (filtresiz);
 route artık rationale'da UYARIR ama deterministik uygulamaz. `_build_fallback_sql`'e filters/order_by
 deterministik inject (`inline_binds` + dialect-quote) eklenebilir (rare path; filtre güvenlik sınırı değil).
+
+## RB-v3.75.0 — code-review altitude (kolon-budget politikası + FK denylist config)
+
+Kapsam: v3.75.0 geniş-tablo TAM öğrenme + FK gürültü PR'ı (code-review medium). 2 altitude maddesi (bug DEĞİL — çalışan çözüm doğru ama dağınık; kalıcı altyapı sonraki sprint):
+
+**1) (P2 — altitude) 5 dağınık per-tablo kolon-kapağı tek politikaya çıkarılmalı.** Aynı ürün politikası
+("ne kadar varsa öğren + güvenlik tavanı") şu an 5 ayrı magic number / 5 dosyada: `MAX_SCHEMA_COLUMNS_PER_TABLE=500`
+(llm_generate_report.py), `_MAX_TOTAL_ENRICH_COLUMNS=2000` (ds_enrichment_service.py), collect_samples 500
+(ds_learning_service.py), format_schema_for_llm göster-kapağı 150 (text_to_sql.py), db_smart listing (cap kaldırıldı).
+Risk: kullanıcı "hâlâ yetmiyor / çok pahalı" derse maintainer 5'ini ayrı bulup güncellemeli, bazısını kaçırır
+(150<500≤2000 ilişkisi örtük). Çözüm: tek `ColumnBudget` modülü (.ui/.enrich/.sample/.sql_prompt görünümleri) —
+ilişki açık + tek yerden değişir.
+
+**2) (P3 — altitude) FK `NON_FK_COLUMN_NAMES` / `_SELF_REF_ROOTS` hardcoded frozenset → per-source config.**
+`{gcrecid, recid}` (fk_inference_service.py) ONEDESKPG/MS-Dynamics'e özgü; sonraki kurumsal kaynak farklı framework
+audit kolonu (objversion/rowguid/sys_id) ile aynı 93-sahte-uyarı sorununu üretip kod-edit+deploy ister.
+`_SELF_REF_ROOTS={parent}` İngilizce/tek-token (üst/ana/manager kaçar). Çözüm: per-source DB-driven denylist +
+çok-dilli self-ref kökleri (config tablosu veya source meta). Not: v3.75.0'da bilinçli ertelendi (PR şişmesin).

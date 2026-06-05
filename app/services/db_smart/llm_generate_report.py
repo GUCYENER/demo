@@ -50,9 +50,12 @@ logger = logging.getLogger(__name__)
 MAX_REPORT_COLUMNS = 50
 MAX_FK_LINES = 50
 MAX_USER_NOTE_LEN = 2000
-# v3.55.0: LLM'e tablo başına verilecek GERÇEK kolon sayısı capi (token bütçesi —
-# büyük tablolarda prompt'u şişirmemek için). Kolon grounding (halüsinasyon önleme).
-MAX_SCHEMA_COLUMNS_PER_TABLE = 80
+# v3.55.0: LLM'e tablo başına verilecek GERÇEK kolon sayısı capi (kolon grounding —
+# halüsinasyon önleme: LLM yalnız GERÇEK kolonları görsün, uydurmasın).
+# v3.75.0 (kullanıcı direktifi "ne kadar varsa öğren"): 80→500 — geniş tablo (312 kolon)
+# SQL-gen'de TAM görünür; 500 güvenlik tavanı pathological >500-kolon prompt token-patlamasını
+# önler. Anti-halüsinasyon (_check_column_hallucination) tam kolon setiyle çalışır → korunur.
+MAX_SCHEMA_COLUMNS_PER_TABLE = 500
 
 # Whole-word DML/DDL blocklist — kept in sync with safe_sql_executor.BLOCKED_KEYWORDS
 # but applied here as a fast pre-filter so we don't waste an execution attempt.

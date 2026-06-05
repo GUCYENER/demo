@@ -1092,9 +1092,12 @@ def format_schema_for_llm(schema_context: Dict[str, Any], query: str = "") -> st
         date_cols = []
 
         # v3.14.0: Kolon pruning — çok kolonlu tablolarda sadece ilgili kolonları göster
+        # v3.75.0 (kullanıcı direktifi): TÜM kolonlar relevance-kontrol edilir (eski cols[:80]
+        # geniş tabloda 81+ kolonu LLM'e HİÇ göstermiyordu → kolon #200 sorguda "keşfedilemiyor").
+        # Relevance-pruning + token-bütçesi (aşağıdaki göster-kapağı + "...N kolon daha") KORUNUR.
         relevant_cols = []
         other_cols = []
-        for c in cols[:80]:  # Max 80 kolon kontrol edilir
+        for c in cols:
             # v3.57.0 defansif: bozuk/eski columns_json kaydı (non-dict veya name/data_type
             # eksik) KeyError ile format_schema_for_llm'i çökertip text_to_sql'i ŞEMASIZ
             # bırakmasın → guard + .get. Halüsinasyon yasağı şemaya dayandığından şema kaybı kritik.
@@ -1104,6 +1107,14 @@ def format_schema_for_llm(schema_context: Dict[str, Any], query: str = "") -> st
             if not col_name:
                 continue
             col_dtype = c.get('data_type') or ''
+            # v3.75.0 code-review: PK/tarih kolonlarını DÖNGÜ İÇİNDE topla. Eskiden döngü SONRASI
+            # stale `c` ile (yalnız son kolon, yalnız >=5-relevant dalında) doluyordu → PK/tarih
+            # grounding satırları geniş tabloda yanlış/boş kalıyordu. Artık TÜM kolonlar doğru.
+            if c.get("is_pk"):
+                pk_cols.append(col_name)
+            if col_dtype.lower() in ("timestamp", "timestamptz", "datetime", "date",
+                                      "timestamp without time zone", "timestamp with time zone"):
+                date_cols.append(col_name)
             enr = col_enrichments.get(col_name, {})
             bname_col = enr.get("business_name_tr", "")
             synonyms = enr.get("synonyms", [])
@@ -1142,20 +1153,21 @@ def format_schema_for_llm(schema_context: Dict[str, Any], query: str = "") -> st
                 other_cols.append(col_str)
 
         # İlgili kolonlar az ise geri kalanı da ekle (min 5 kolon garanti)
+        # v3.75.0: göster-kapağı 50→150 (geniş tabloda daha çok GERÇEK kolon LLM'e ground'lanır,
+        # halüsinasyon ↓); ilgisiz kolonlar yine "... ve N kolon daha" ile özetlenir (token bütçesi).
+        # Dar tablo (≤50 kolon) çıktısı AYNEN kalır (≤50 ≤ 150) → behavior parity.
         if len(relevant_cols) < 5:
-            relevant_cols.extend(other_cols[:50 - len(relevant_cols)])
+            _shown = other_cols[:150 - len(relevant_cols)]
+            relevant_cols.extend(_shown)
+            # v3.75.0 code-review: bu dalda da gizlenen kolon sayısını LLM'e bildir (eskiden yoktu →
+            # kolon 151+ "yok" sanılıyordu); böylece "tüm alanlar" niyeti doğru anlaşılır.
+            if len(other_cols) > len(_shown):
+                relevant_cols.append(f"... ve {len(other_cols) - len(_shown)} kolon daha")
             col_names = relevant_cols
         else:
-            col_names = relevant_cols[:50]
+            col_names = relevant_cols[:150]
             if other_cols:
                 col_names.append(f"... ve {len(other_cols)} kolon daha")
-            if c.get("is_pk"):
-                pk_cols.append(col_name)
-            if c.get("data_type", "").lower() in (
-                "timestamp", "timestamptz", "datetime", "date",
-                "timestamp without time zone", "timestamp with time zone"
-            ):
-                date_cols.append(col_name)
 
         # 🆕 v3.1.0: Enrichment bilgilerini LLM context'e dahil et
         bname = t.get("admin_label_tr") or t.get("business_name_tr") or ""
@@ -1169,7 +1181,7 @@ def format_schema_for_llm(schema_context: Dict[str, Any], query: str = "") -> st
             parts.append(f"   Açıklama: {desc}")
         if pk_cols:
             parts.append(f"   PK: {', '.join(pk_cols)}")
-        parts.append(f"   Sütunlar: {', '.join(col_names[:50])}")
+        parts.append(f"   Sütunlar: {', '.join(col_names)}")
         if date_cols:
             parts.append(f"   Tarih sütunları: {', '.join(date_cols)}")
         parts.append("")

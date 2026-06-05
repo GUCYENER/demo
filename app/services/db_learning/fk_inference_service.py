@@ -57,6 +57,16 @@ DEFAULT_PK_COL_NAMES = ("id", "pk", "uuid")
 # kabul edilmesi için min uzunluk — kısa parça false-positive'lerini keser (node↛ode).
 MIN_SUFFIX_TOKEN_LEN = 4
 
+# v3.75.0: Framework/audit "satır-kimliği" kolonları — kurumsal şemalarda (ör. MS Dynamics
+# RecId sınıfı) HER tabloda bulunur, gerçek FK DEĞİLdir (merkezi bir hedef tabloya işaret
+# etmez). FK adayı sayılmaz + tanılama-uyarısı üretmez (ONEDESKPG: GCRecId tek başına 93
+# sahte uyarı). Lowercased exact-match; gerekirse genişletilebilir.
+NON_FK_COLUMN_NAMES = frozenset({"gcrecid", "recid"})
+
+# v3.75.0: Self-reference kökleri — kolon kökü bunlardan biriyse ve adlı bir hedef tablo
+# bulunamazsa hedef = kolonun KENDİ tablosu (org-chart/hiyerarşi: parent_id → own PK).
+_SELF_REF_ROOTS = frozenset({"parent"})
+
 
 # ─────────────────────────────────────────────────────────────
 # Naming pattern parser
@@ -117,8 +127,11 @@ def _head_noun_from_name(col_name: str) -> Optional[str]:
     return tok
 
 # v3.60.0: tanılama amaçlı — kolon adı bir referans/FK'ya benziyor mu (kalıba uymasa bile)?
-# 'PARTYID'/'STATUS_CODE'/'OWNERREF' gibi adları Hata İzleme'de yüzeye çıkarmak için (kök neden).
-_REF_ISH_SUFFIXES = ("id", "ref", "code", "key", "no", "fk")
+# 'PARTYID'/'OWNERREF' gibi adları Hata İzleme'de yüzeye çıkarmak için (kök neden).
+# v3.75.0: 'code'/'key'/'no' çıkarıldı — Code/ApiKey/ConsumerKey/MethodNo gibi DEĞER kolonları
+# "FK-benzeri" sayılıp 154 sahte 'no_pattern_match' uyarısı üretiyordu. Gerçek by-code FK tespiti
+# ayrı bir tier (faz-2) işidir; tanılama yalnız gerçek FK son-eklerinde (_id/Id/_ref/fk).
+_REF_ISH_SUFFIXES = ("id", "ref", "fk")
 
 
 def _looks_reference_ish(col_name: str) -> bool:
@@ -431,6 +444,10 @@ def _iter_fk_candidates(
             col_name = col.get("name") or ""
             if not col_name:
                 continue
+            # v3.75.0: framework satır-kimliği kolonları (GCRecId/RecId) — gerçek FK değil,
+            # adaylıktan VE tanılama-uyarısından muaf (her tabloda var → 93 sahte uyarı kaynağı).
+            if col_name.strip().lower() in NON_FK_COLUMN_NAMES:
+                continue
             # Skip PKs (auto-generated id columns aren't FKs to themselves).
             # v3.56.0: is_pk öncelik (columns_json key'i), is_primary_key eski-fallback.
             if col.get("is_pk") or col.get("is_primary_key"):
@@ -496,6 +513,12 @@ def _iter_fk_candidates(
                 target_tbl = cand_tbl
                 match_kind = tier_kind
                 break
+            # v3.75.0: parent_id/ParentId → self-reference (hiyerarşi/org-chart). Adlı 'parent'
+            # tablosu yoktur; hedef = KENDİ tablosu (PK çözümü aşağıda declared/konvansiyon PK'dan).
+            # Tip-uyumu (ParentId == own PK tipi) downstream _type_compatible'da doğrulanır.
+            if target_tbl is None and root in _SELF_REF_ROOTS:
+                target_tbl = t
+                match_kind = "self"
             if target_tbl is None:
                 # Tanılama: root/head çıktı ama hedef tablo bulunamadı (prefix/adlandırma uyumsuzluğu).
                 if diag is not None:
@@ -518,7 +541,10 @@ def _iter_fk_candidates(
             _ttoks = [x for x in str(target_tbl.norm_name).split("_") if x]
             ent_tok = _ttoks[-1] if _ttoks else str(target_tbl.norm_name)
             pk_name_cands: List[str] = [pc for pc in target_tbl.pk_columns if pc]
-            pk_name_cands.append(col_name)
+            # v3.75.0: self-ref'te FK kolonunu (ParentId) hedef PK adayı YAPMA → kolonun kendine
+            # işaret ettiği geçersiz döngüyü önle (child→parent aynı-ad deseni yalnız FARKLI tabloda geçerli).
+            if match_kind != "self":
+                pk_name_cands.append(col_name)
             if ent_tok:
                 pk_name_cands += [f"{ent_tok}_id", f"{ent_tok}id", ent_tok]
             if root:
