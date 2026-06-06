@@ -9,7 +9,7 @@ window.ErrorMonitorModule = (function () {
 
     const ENDPOINT = '/system/errors';
     const PAGE = 100;
-    const state = { level: '', since: '24', q: '', expanded: new Set(), items: [], total: 0 };
+    const state = { level: '', since: '24', q: '', expanded: new Set(), selected: new Set(), items: [], total: 0 };
     let _seq = 0;        // race guard — eski yanıtları yok say
     let _searchTimer = null;
 
@@ -68,6 +68,7 @@ window.ErrorMonitorModule = (function () {
         const lvlCls = _lvlClass(it.level);
         const head = `
             <div class="em-row-head" data-emid="${id}" role="button" tabindex="0" aria-expanded="${open}">
+                <input type="checkbox" class="em-check" data-rowid="${id}" ${state.selected.has(id) ? 'checked' : ''} aria-label="Bu kaydı dışa aktarım için seç">
                 <span class="em-badge ${lvlCls}">${_esc(it.level)}</span>
                 <span class="em-time">${_esc(_fmtTime(it.ts))}</span>
                 <span class="em-method">${_esc(it.request_method || '')}</span>
@@ -94,6 +95,7 @@ window.ErrorMonitorModule = (function () {
         if (!list) return;
         if (!state.items.length) {
             list.innerHTML = '<div class="em-empty"><i class="fa-solid fa-circle-check"></i> Bu filtrede hata kaydı yok.</div>';
+            _updateExportBar();
             return;
         }
         const shown = state.items.length;
@@ -105,6 +107,7 @@ window.ErrorMonitorModule = (function () {
             + (more ? `<div class="em-more-wrap">${more}</div>` : '');
         const moreBtn = document.getElementById('errMonMore');
         if (moreBtn) moreBtn.addEventListener('click', () => _load(true));
+        _updateExportBar();
     }
 
     async function _load(append) {
@@ -128,6 +131,7 @@ window.ErrorMonitorModule = (function () {
             // sadece mevcut id'ler için expanded tut
             const present = new Set(state.items.map(i => i.id));
             Array.from(state.expanded).forEach(id => { if (!present.has(id)) state.expanded.delete(id); });
+            Array.from(state.selected).forEach(id => { if (!present.has(id)) state.selected.delete(id); });
             _renderAll();
             if (!append) _loadStats();
         } catch (e) {
@@ -165,15 +169,89 @@ window.ErrorMonitorModule = (function () {
         }
     }
 
+    function _updateExportBar() {
+        const n = state.selected.size;
+        const btn = document.getElementById('errMonExport');
+        if (btn) {
+            btn.disabled = n === 0;
+            btn.innerHTML = `<i class="fa-solid fa-file-excel"></i> Seçilenleri İndir${n ? ` (${n})` : ''}`;
+        }
+        const all = document.getElementById('errMonSelectAll');
+        if (all) {
+            const total = state.items.length;
+            all.checked = total > 0 && n >= total;
+            all.indeterminate = n > 0 && n < total;
+        }
+    }
+
+    // Seçili logları MEVCUT /api/db/export/excel altyapısıyla .xlsx indir (yeni backend YOK).
+    // Admin zaten bu admin-only ekranda veriyi görüyor → istemci-elindeki seçili satırları formatlatır.
+    async function _exportSelected() {
+        const chosen = state.items.filter(i => state.selected.has(i.id));
+        if (!chosen.length) {
+            if (typeof window.showToast === 'function') window.showToast('Önce dışa aktarılacak kayıtları seçin', 'info');
+            return;
+        }
+        const columns = ['Tarih', 'Seviye', 'Modül', 'Mesaj', 'Path', 'Method', 'HTTP', 'Kullanıcı', 'Request-ID', 'Traceback'];
+        const rows = chosen.map(it => ({
+            'Tarih': _fmtTime(it.ts),
+            'Seviye': it.level || '',
+            'Modül': it.module || '',
+            'Mesaj': it.message || '',
+            'Path': it.request_path || '',
+            'Method': it.request_method || '',
+            'HTTP': (it.response_status != null ? it.response_status : ''),
+            'Kullanıcı': (it.user_id != null ? it.user_id : ''),
+            'Request-ID': it.request_id || '',
+            'Traceback': it.traceback || '',
+        }));
+        const token = localStorage.getItem('access_token')
+            || localStorage.getItem('vyra_access_token')
+            || localStorage.getItem('token') || '';
+        const btn = document.getElementById('errMonExport');
+        try {
+            if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Hazırlanıyor…'; }
+            const resp = await fetch('/api/db/export/excel', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                body: JSON.stringify({ columns, rows, title: 'Hata Izleme Loglari' }),
+            });
+            if (!resp.ok) {
+                let detail = 'HTTP ' + resp.status;
+                try { const j = await resp.json(); detail = (j && (j.detail || j.message)) || detail; } catch (_) { /* blob yanıtı */ }
+                throw new Error(detail);
+            }
+            const blob = await resp.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = 'hata_izleme_' + Date.now() + '.xlsx';
+            document.body.appendChild(a); a.click();
+            setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 2000);
+            if (typeof window.showToast === 'function') window.showToast(chosen.length + ' kayıt Excel olarak indirildi', 'success');
+        } catch (e) {
+            if (typeof window.showToast === 'function') window.showToast('Dışa aktarma başarısız: ' + ((e && e.message) || ''), 'error');
+        } finally {
+            if (btn) _updateExportBar();   // label + disabled durumunu seçime göre geri yükle
+        }
+    }
+
     function _bind() {
         const list = document.getElementById('errorMonitorList');
         if (list && !list._emBound) {
             list._emBound = true;
             list.addEventListener('click', (e) => {
+                if (e.target.closest('.em-check')) return;   // seçim kutusu: 'change'te işlenir, satır toggle YOK
                 const copyBtn = e.target.closest('[data-emcopy]');
                 if (copyBtn) { e.stopPropagation(); _copyRid(copyBtn.dataset.emcopy); return; }
                 const head = e.target.closest('.em-row-head');
                 if (head && head.dataset.emid) _toggle(head.dataset.emid);
+            });
+            list.addEventListener('change', (e) => {
+                const chk = e.target.closest('.em-check');
+                if (!chk) return;
+                const id = parseInt(chk.dataset.rowid, 10);
+                if (chk.checked) state.selected.add(id); else state.selected.delete(id);
+                _updateExportBar();
             });
             list.addEventListener('keydown', (e) => {
                 const head = e.target.closest && e.target.closest('.em-row-head');
@@ -205,6 +283,13 @@ window.ErrorMonitorModule = (function () {
             state.q = '';
             _load(false);
         });
+        bindOnce('errMonSelectAll', 'change', () => {
+            const all = document.getElementById('errMonSelectAll');
+            if (all && all.checked) state.items.forEach(i => state.selected.add(i.id));
+            else state.selected.clear();
+            _renderAll();   // satır kutularını + export bar'ı tazele
+        });
+        bindOnce('errMonExport', 'click', _exportSelected);
     }
 
     function load() {

@@ -1,6 +1,11 @@
 /* VYRA Error Monitor (v3.38.3) — Sistem Parametreleri "Hata İzleme" sekmesi */
 .error-monitor { padding: 16px 18px 24px; }
 .error-monitor-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:12px; }
+.error-monitor-actions { display:flex; gap:8px; align-items:center; flex-shrink:0; }
+.error-monitor-selectall { display:flex; align-items:center; gap:6px; font-size:12px; opacity:.8; cursor:pointer; user-select:none; white-space:nowrap; }
+.error-monitor-selectall input { width:15px; height:15px; margin:0; cursor:pointer; accent-color:#e0a800; }
+#errMonExport:disabled { opacity:.45; cursor:not-allowed; }
+#errMonExport i { color:#1d8348; }
 .error-monitor-title { margin:0 0 4px; font-size:18px; }
 .error-monitor-title i { color:#e0a800; margin-right:6px; }
 
@@ -29,7 +34,8 @@
 
 .em-row { border:1px solid rgba(255,255,255,0.08); border-radius:8px; overflow:hidden; background:rgba(255,255,255,0.02); }
 .em-row.is-open { border-color:rgba(255,255,255,0.18); }
-.em-row-head { display:grid; grid-template-columns:84px 150px 50px minmax(120px,1fr) 46px minmax(160px,2fr) 20px; gap:10px; align-items:center; padding:9px 12px; cursor:pointer; font-size:13px; }
+.em-row-head { display:grid; grid-template-columns:22px 84px 150px 50px minmax(120px,1fr) 46px minmax(160px,2fr) 20px; gap:10px; align-items:center; padding:9px 12px; cursor:pointer; font-size:13px; }
+.em-check { width:15px; height:15px; margin:0; cursor:pointer; accent-color:#e0a800; }
 .em-row-head:hover { background:rgba(255,255,255,0.04); }
 .em-badge { font-size:10px; font-weight:700; padding:3px 7px; border-radius:5px; text-align:center; }
 .em-badge.em-lvl-critical { background:rgba(255,107,107,.18); color:#ff6b6b; }
@@ -53,6 +59,6 @@
 .em-more { width:100%; }
 
 @media (max-width:900px){
-    .em-row-head { grid-template-columns:70px 1fr 40px 18px; }
+    .em-row-head { grid-template-columns:22px 70px 1fr 40px 18px; }
     .em-time, .em-method, .em-status { display:none; }
 }

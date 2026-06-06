@@ -813,6 +813,14 @@
     color: var(--text-1);
 }
 .ds-search-clear[hidden] { display: none; }
+/* v3.76.2 GERÇEK KÖK-NEDEN (görsel kanıtlı): _tooltip.css `[data-tooltip]{position:relative}`
+   bundle'da data_sources.css'ten SONRA + EŞİT specificity (1 attr vs 1 class) → `.ds-search-clear`
+   `position:absolute`'unu EZİYORDU. Sonuç: X normal akışa düşüp tam-genişlik input'un ALTINA/sola
+   kayıyor (right:8px+left:auto relative box'ta computed left:-8px). Şema+Yetki+Perm aramalarında AYNI.
+   v3.73.0 `left`'i düzeltmeye çalışmıştı — asıl sorun `position`. Fix: attribute ile specificity'yi
+   (0,2,0 > 0,1,0) yükselt → absolute geri kazanılır; tooltip ::after çalışır (absolute eleman da
+   konumlu ata = containing block). Sadece data-tooltip'li clear'ları hedefler, diğerini bozmaz. */
+.ds-search-clear[data-tooltip] { position: absolute; }
 .ds-perm-search input,
 .ds-scope-search .ds-scope-search-input { padding-right: 34px; }
 

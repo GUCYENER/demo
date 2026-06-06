@@ -915,7 +915,10 @@
                     <h3 class="error-monitor-title"><i class="fa-solid fa-triangle-exclamation"></i> Hata İzleme</h3>
                     <p class="form-hint">Sunucu hataları (500/exception) tam traceback + request context ile tek yerde. Bir hatayı görmek için satıra tıklayın.</p>
                 </div>
-                <button id="errMonRefresh" class="btn-secondary" type="button"><i class="fa-solid fa-rotate"></i> Yenile</button>
+                <div class="error-monitor-actions">
+                    <button id="errMonExport" class="btn-secondary" type="button" disabled><i class="fa-solid fa-file-excel"></i> Seçilenleri İndir</button>
+                    <button id="errMonRefresh" class="btn-secondary" type="button"><i class="fa-solid fa-rotate"></i> Yenile</button>
+                </div>
             </div>
             <div id="errorMonitorStats" class="error-monitor-stats"></div>
             <div class="error-monitor-toolbar">
@@ -938,6 +941,7 @@
                     <input id="errMonSearch" type="text" placeholder="mesaj / path / traceback ara…" aria-label="Hata ara">
                     <button id="errMonSearchClear" class="error-monitor-search-clear" type="button" title="Temizle" aria-label="Aramayı temizle"><i class="fa-solid fa-xmark"></i></button>
                 </div>
+                <label class="error-monitor-selectall"><input type="checkbox" id="errMonSelectAll"> Tümünü seç</label>
             </div>
             <div id="errorMonitorList" class="error-monitor-list" aria-live="polite"></div>
         </div>
