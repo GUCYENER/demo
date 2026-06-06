@@ -4,9 +4,13 @@ VYRA L1 Support API - System Management Routes
 Sistem yönetimi endpoint'leri (reset, maintenance vb.)
 """
 
+import io
+import re
+from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.api.routes.auth import get_current_user
@@ -1135,20 +1139,9 @@ async def set_maturity_threshold(threshold: int = Query(..., ge=0, le=100), curr
 # (error_detail) + request_id ile döner. "Hata İzleme" UI sekmesi ve show_errors.py
 # CLI bunu kullanır. Admin-only.
 
-@router.get("/errors")
-async def list_errors(
-    level: Optional[str] = Query(None, description="ERROR | CRITICAL | WARNING | ALL"),
-    q: Optional[str] = Query(None, description="message / path / traceback içinde ara"),
-    request_id: Optional[str] = Query(None, description="X-Request-ID ile tek kayıt"),
-    since_hours: Optional[int] = Query(None, ge=1, le=720),
-    limit: int = Query(50, ge=1, le=500),
-    offset: int = Query(0, ge=0),
-    current_user: dict = Depends(get_current_user),
-):
-    """Son hataları TAM traceback ile listeler (system_logs). Admin-only."""
-    if not current_user.get("is_admin"):
-        raise HTTPException(status_code=403, detail="Bu işlem için admin yetkisi gerekli")
-
+def _build_errors_where(level, q, request_id, since_hours):
+    """system_logs filtre WHERE'ini kur — list + export AYNI mantığı paylaşır (filtreler senkron kalır).
+    Döner: (where_sql, params). TÜM değerler parametreli (%s) — SQL injection yok."""
     where: List[str] = []
     params: list = []
     lvl = (level or "").upper()
@@ -1163,7 +1156,24 @@ async def list_errors(
     if q:
         where.append("(message ILIKE %s OR request_path ILIKE %s OR error_detail ILIKE %s)")
         like = f"%{q}%"; params.extend([like, like, like])
-    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+    return (" WHERE " + " AND ".join(where)) if where else "", params
+
+
+@router.get("/errors")
+async def list_errors(
+    level: Optional[str] = Query(None, description="ERROR | CRITICAL | WARNING | ALL"),
+    q: Optional[str] = Query(None, description="message / path / traceback içinde ara"),
+    request_id: Optional[str] = Query(None, description="X-Request-ID ile tek kayıt"),
+    since_hours: Optional[int] = Query(None, ge=1, le=720),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    current_user: dict = Depends(get_current_user),
+):
+    """Son hataları TAM traceback ile listeler (system_logs). Admin-only."""
+    if not current_user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Bu işlem için admin yetkisi gerekli")
+
+    where_sql, params = _build_errors_where(level, q, request_id, since_hours)
 
     conn = get_db_conn()
     try:
@@ -1226,4 +1236,149 @@ async def error_stats(
     finally:
         conn.close()
     return {"success": True, "since_hours": since_hours, "by_level": by_level, "top_paths": top_paths}
+
+
+# ─────────────────────────────────────────────────────────────
+# v3.76.5: Hata İzleme .xlsx export — FİLTREYE UYAN TÜM kayıtlar (liste 100-cap'i değil) + TAM detay
+# ─────────────────────────────────────────────────────────────
+_XLSX_CELL_MAX = 32767               # Excel hücre içerik limiti
+MAX_ERROR_EXPORT_ROWS = 50000        # full-detail traceback'li dosya/bellek backstop'u
+# openpyxl XML'e yazılamayan kontrol karakterleri (traceback'te olabilir) → IllegalCharacterError guard
+_ILLEGAL_XLSX_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+_EXPORT_COLUMNS = ["ID", "Tarih", "Seviye", "Modül", "Mesaj", "Path", "Method",
+                   "HTTP Durum", "Kullanıcı", "Request-ID", "Traceback / Detay"]
+
+
+class ErrorExportRequest(BaseModel):
+    """Hata İzleme .xlsx export. ids verilirse YALNIZ o kayıtlar; verilmezse filtreye uyan TÜM kayıtlar."""
+    level: Optional[str] = None
+    q: Optional[str] = None
+    request_id: Optional[str] = None
+    since_hours: Optional[int] = Field(default=None, ge=1, le=720)
+    ids: Optional[List[int]] = None
+
+
+def _xlsx_cell(v):
+    if v is None:
+        return ""
+    if isinstance(v, (int, float)):
+        return v                       # ID / HTTP / user_id sayı kalsın (Excel'de metin değil → sıralanır)
+    s = _ILLEGAL_XLSX_RE.sub("", str(v))
+    return s[:_XLSX_CELL_MAX] if len(s) > _XLSX_CELL_MAX else s
+
+
+def _build_errors_xlsx(records: list, scope_desc: str, capped: bool) -> io.BytesIO:
+    """records (system_logs dict satırları) → biçimli .xlsx (io.BytesIO). DB/FastAPI'siz test edilebilir.
+    Her satır arayüzdeki detay panelinin TÜM alanlarını içerir (full traceback dahil)."""
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Hata Izleme"
+    ws.cell(row=1, column=1, value="VYRA — Hata İzleme Logları").font = Font(bold=True, size=13)
+    ws.cell(row=2, column=1, value=(
+        f"Oluşturulma: {datetime.now().strftime('%d.%m.%Y %H:%M')} | {scope_desc} | {len(records)} kayıt"
+        + (f" (tavan {MAX_ERROR_EXPORT_ROWS} aşıldı — kırpıldı)" if capped else "")
+    )).font = Font(color="888888", size=9)
+
+    header_row = 4
+    header_fill = PatternFill("solid", fgColor="1E3A5F")
+    header_font = Font(color="FFFFFF", bold=True)
+    for ci, name in enumerate(_EXPORT_COLUMNS, 1):
+        c = ws.cell(row=header_row, column=ci, value=name)
+        c.fill = header_fill; c.font = header_font
+        c.alignment = Alignment(horizontal="center", vertical="center")
+
+    alt_fill = PatternFill("solid", fgColor="F0F4FA")
+    for ri, rec in enumerate(records, 1):
+        ts = rec.get("created_at")
+        vals = [
+            rec.get("id"),
+            ts.strftime("%d.%m.%Y %H:%M:%S") if hasattr(ts, "strftime") else (ts or ""),
+            rec.get("level"), rec.get("module"), rec.get("message"),
+            rec.get("request_path"), rec.get("request_method"), rec.get("response_status"),
+            rec.get("user_id"), rec.get("request_id"), rec.get("error_detail"),
+        ]
+        for ci, v in enumerate(vals, 1):
+            cell = ws.cell(row=header_row + ri, column=ci, value=_xlsx_cell(v))
+            if ri % 2 == 0:
+                cell.fill = alt_fill
+            if ci == len(_EXPORT_COLUMNS):  # traceback sütunu üstten-hiza (uzun metin)
+                cell.alignment = Alignment(vertical="top")
+
+    widths = [len(c) for c in _EXPORT_COLUMNS]
+    for rec in records[:100]:
+        sample = [rec.get("id"), "", rec.get("level"), rec.get("module"), rec.get("message"),
+                  rec.get("request_path"), rec.get("request_method"), rec.get("response_status"),
+                  rec.get("user_id"), rec.get("request_id"), rec.get("error_detail")]
+        for i, v in enumerate(sample):
+            widths[i] = max(widths[i], len(str(v if v is not None else "")))
+    for ci, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(ci)].width = min(w + 3, 80)
+    ws.row_dimensions[header_row].height = 22
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+@router.post("/errors/export")
+async def export_errors(
+    payload: ErrorExportRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Hata İzleme loglarını .xlsx indir — TAM detay (full traceback dahil). Admin-only.
+    payload.ids verilirse yalnız o kayıtlar; verilmezse FİLTREYE UYAN TÜM kayıtlar (liste 100-cap'i
+    DEĞİL — DB'deki tüm filtreli kayıtlar, MAX_ERROR_EXPORT_ROWS tavanına kadar)."""
+    if not current_user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Bu işlem için admin yetkisi gerekli")
+    try:
+        import openpyxl  # noqa: F401 — erken yokluk kontrolü
+    except ImportError:
+        raise HTTPException(status_code=500, detail="openpyxl kütüphanesi yüklü değil.")
+
+    if payload.ids:
+        ph = ",".join(["%s"] * len(payload.ids))
+        where_sql = f" WHERE id IN ({ph})"
+        params: list = list(payload.ids)
+        scope_desc = f"{len(payload.ids)} seçili kayıt"
+    else:
+        where_sql, params = _build_errors_where(payload.level, payload.q, payload.request_id, payload.since_hours)
+        scope_desc = "filtreye uyan tüm kayıtlar"
+
+    conn = get_db_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            f"""SELECT id, created_at, level, module, message, request_path, request_method,
+                       response_status, user_id, request_id, error_detail
+                FROM system_logs{where_sql}
+                ORDER BY id DESC LIMIT %s""",
+            params + [MAX_ERROR_EXPORT_ROWS + 1],
+        )
+        records = [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+    capped = len(records) > MAX_ERROR_EXPORT_ROWS
+    if capped:
+        records = records[:MAX_ERROR_EXPORT_ROWS]
+
+    buf = _build_errors_xlsx(records, scope_desc, capped)
+    fname = f"hata_izleme_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    try:
+        log_system_event("INFO",
+                          f"Hata İzleme export: {len(records)} kayıt ({scope_desc}) user={current_user.get('id')}",
+                          "system")
+    except Exception:
+        pass
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 

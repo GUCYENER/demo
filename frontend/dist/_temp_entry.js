@@ -44897,7 +44897,7 @@ window.ErrorMonitorModule = (function () {
 
     const ENDPOINT = '/system/errors';
     const PAGE = 100;
-    const state = { level: '', since: '24', q: '', expanded: new Set(), selected: new Set(), items: [], total: 0 };
+    const state = { level: '', since: '24', q: '', expanded: new Set(), selected: new Set(), allFiltered: false, items: [], total: 0 };
     let _seq = 0;        // race guard — eski yanıtları yok say
     let _searchTimer = null;
 
@@ -44956,7 +44956,7 @@ window.ErrorMonitorModule = (function () {
         const lvlCls = _lvlClass(it.level);
         const head = `
             <div class="em-row-head" data-emid="${id}" role="button" tabindex="0" aria-expanded="${open}">
-                <input type="checkbox" class="em-check" data-rowid="${id}" ${state.selected.has(id) ? 'checked' : ''} aria-label="Bu kaydı dışa aktarım için seç">
+                <input type="checkbox" class="em-check" data-rowid="${id}" ${(state.allFiltered || state.selected.has(id)) ? 'checked' : ''} aria-label="Bu kaydı dışa aktarım için seç">
                 <span class="em-badge ${lvlCls}">${_esc(it.level)}</span>
                 <span class="em-time">${_esc(_fmtTime(it.ts))}</span>
                 <span class="em-method">${_esc(it.request_method || '')}</span>
@@ -45020,6 +45020,7 @@ window.ErrorMonitorModule = (function () {
             const present = new Set(state.items.map(i => i.id));
             Array.from(state.expanded).forEach(id => { if (!present.has(id)) state.expanded.delete(id); });
             Array.from(state.selected).forEach(id => { if (!present.has(id)) state.selected.delete(id); });
+            if (!append) { state.selected.clear(); state.allFiltered = false; }  // v3.76.5: yeni filtre/yenile → seçim sıfır
             _renderAll();
             if (!append) _loadStats();
         } catch (e) {
@@ -45058,51 +45059,56 @@ window.ErrorMonitorModule = (function () {
     }
 
     function _updateExportBar() {
-        const n = state.selected.size;
         const btn = document.getElementById('errMonExport');
         if (btn) {
-            btn.disabled = n === 0;
-            btn.innerHTML = `<i class="fa-solid fa-file-excel"></i> Seçilenleri İndir${n ? ` (${n})` : ''}`;
+            if (state.allFiltered) {
+                // "filtreli tümü" — yüklü 100 değil, DB'deki TÜM filtreli kayıt sayısı (state.total)
+                btn.disabled = !state.total;
+                btn.innerHTML = `<i class="fa-solid fa-file-excel"></i> Tümünü İndir (${state.total})`;
+            } else {
+                const n = state.selected.size;
+                btn.disabled = n === 0;
+                btn.innerHTML = `<i class="fa-solid fa-file-excel"></i> Seçilenleri İndir${n ? ` (${n})` : ''}`;
+            }
         }
         const all = document.getElementById('errMonSelectAll');
         if (all) {
-            const total = state.items.length;
-            all.checked = total > 0 && n >= total;
-            all.indeterminate = n > 0 && n < total;
+            all.checked = state.allFiltered;
+            all.indeterminate = !state.allFiltered && state.selected.size > 0;
         }
     }
 
-    // Seçili logları MEVCUT /api/db/export/excel altyapısıyla .xlsx indir (yeni backend YOK).
-    // Admin zaten bu admin-only ekranda veriyi görüyor → istemci-elindeki seçili satırları formatlatır.
+    // v3.76.5: Hata İzleme export → backend POST /api/system/errors/export (FİLTREYE UYAN TÜM kayıtlar +
+    // TAM detay/full traceback). allFiltered → filtre gönder (backend DB'den tümünü çeker, yüklü 100 değil);
+    // değilse seçili id'ler. Eski client-satır + /api/db/export/excel (500-cap, kısmi) yaklaşımı kaldırıldı.
     async function _exportSelected() {
-        const chosen = state.items.filter(i => state.selected.has(i.id));
-        if (!chosen.length) {
-            if (typeof window.showToast === 'function') window.showToast('Önce dışa aktarılacak kayıtları seçin', 'info');
-            return;
+        let body, count;
+        if (state.allFiltered) {
+            body = {
+                level: state.level || null,
+                q: state.q || null,
+                since_hours: state.since ? parseInt(state.since, 10) : null,
+            };
+            count = state.total;
+        } else {
+            const ids = Array.from(state.selected);
+            if (!ids.length) {
+                if (typeof window.showToast === 'function') window.showToast('Önce kayıt seçin ya da "Tümünü seç"', 'info');
+                return;
+            }
+            body = { ids };
+            count = ids.length;
         }
-        const columns = ['Tarih', 'Seviye', 'Modül', 'Mesaj', 'Path', 'Method', 'HTTP', 'Kullanıcı', 'Request-ID', 'Traceback'];
-        const rows = chosen.map(it => ({
-            'Tarih': _fmtTime(it.ts),
-            'Seviye': it.level || '',
-            'Modül': it.module || '',
-            'Mesaj': it.message || '',
-            'Path': it.request_path || '',
-            'Method': it.request_method || '',
-            'HTTP': (it.response_status != null ? it.response_status : ''),
-            'Kullanıcı': (it.user_id != null ? it.user_id : ''),
-            'Request-ID': it.request_id || '',
-            'Traceback': it.traceback || '',
-        }));
         const token = localStorage.getItem('access_token')
             || localStorage.getItem('vyra_access_token')
             || localStorage.getItem('token') || '';
         const btn = document.getElementById('errMonExport');
         try {
             if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Hazırlanıyor…'; }
-            const resp = await fetch('/api/db/export/excel', {
+            const resp = await fetch('/api/system/errors/export', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-                body: JSON.stringify({ columns, rows, title: 'Hata Izleme Loglari' }),
+                body: JSON.stringify(body),
             });
             if (!resp.ok) {
                 let detail = 'HTTP ' + resp.status;
@@ -45115,7 +45121,7 @@ window.ErrorMonitorModule = (function () {
             a.href = url; a.download = 'hata_izleme_' + Date.now() + '.xlsx';
             document.body.appendChild(a); a.click();
             setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 2000);
-            if (typeof window.showToast === 'function') window.showToast(chosen.length + ' kayıt Excel olarak indirildi', 'success');
+            if (typeof window.showToast === 'function') window.showToast((count || '') + ' kayıt Excel olarak indirildi', 'success');
         } catch (e) {
             if (typeof window.showToast === 'function') window.showToast('Dışa aktarma başarısız: ' + ((e && e.message) || ''), 'error');
         } finally {
@@ -45137,8 +45143,17 @@ window.ErrorMonitorModule = (function () {
             list.addEventListener('change', (e) => {
                 const chk = e.target.closest('.em-check');
                 if (!chk) return;
-                const id = parseInt(chk.dataset.rowid, 10);
-                if (chk.checked) state.selected.add(id); else state.selected.delete(id);
+                if (state.allFiltered) {
+                    // v3.76.5: "filtreli tümü" modundan çık → görünür kutuların güncel haline geç (tek satır oynanınca)
+                    state.allFiltered = false;
+                    state.selected = new Set(
+                        Array.from(list.querySelectorAll('.em-check'))
+                            .filter(c => c.checked).map(c => parseInt(c.dataset.rowid, 10))
+                    );
+                } else {
+                    const id = parseInt(chk.dataset.rowid, 10);
+                    if (chk.checked) state.selected.add(id); else state.selected.delete(id);
+                }
                 _updateExportBar();
             });
             list.addEventListener('keydown', (e) => {
@@ -45173,8 +45188,9 @@ window.ErrorMonitorModule = (function () {
         });
         bindOnce('errMonSelectAll', 'change', () => {
             const all = document.getElementById('errMonSelectAll');
-            if (all && all.checked) state.items.forEach(i => state.selected.add(i.id));
-            else state.selected.clear();
+            // v3.76.5: "Tümünü seç" = FİLTREYE UYAN TÜM kayıtlar (yalnız yüklü 100 değil) → indirme DB'den tümünü çeker
+            state.allFiltered = !!(all && all.checked);
+            state.selected.clear();
             _renderAll();   // satır kutularını + export bar'ı tazele
         });
         bindOnce('errMonExport', 'click', _exportSelected);
