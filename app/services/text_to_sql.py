@@ -1441,11 +1441,26 @@ def save_golden_sql(source_id: int, company_id: int, question: str,
         from app.core.db import get_db_conn
         from app.services.rag.embedding import EmbeddingManager
 
-        emb_mgr = EmbeddingManager()
-        question_emb = emb_mgr.get_embedding(question)
-
         conn = get_db_conn()
         cur = conn.cursor()
+
+        # v3.77.x (canlı bulgu): admin (company_id=None) başarılı text-to-sql → golden_sql.company_id
+        # NOT NULL ihlali → öğrenilen sorgu kaybı. Kaynağın firma bağlamından çöz (data_sources.company_id
+        # SSOT, R2 deseni). Çözülemezse NOT NULL crash yerine sessiz atla (öğrenme best-effort).
+        if company_id is None:
+            try:
+                cur.execute("SELECT company_id FROM data_sources WHERE id = %s", (source_id,))
+                _csrc = cur.fetchone()
+                company_id = (_csrc[0] if not isinstance(_csrc, dict) else _csrc.get("company_id")) if _csrc else None
+            except Exception:
+                company_id = None
+            if company_id is None:
+                log_warning("Golden SQL atlandı: company_id çözülemedi (admin + kaynak firmasız)", "text_to_sql")
+                conn.close()
+                return False
+
+        emb_mgr = EmbeddingManager()
+        question_emb = emb_mgr.get_embedding(question)
 
         # Aynı soru varsa güncelle (ON CONFLICT yok — manual check)
         cur.execute("""

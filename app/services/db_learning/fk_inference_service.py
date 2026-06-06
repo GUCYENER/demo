@@ -140,6 +140,31 @@ def _head_noun_from_name(col_name: str) -> Optional[str]:
         return None
     return tok
 
+
+def _prefix_stripped_roots(col_name: str) -> List[str]:
+    """v3.77.x: camelCase çok-kelimeli FK kolonundan baştan-kelime-atılmış TAM (bileşik) kök adayları.
+
+    `_head_noun_from_name` yalnız SON kelimeyi alır ('PrimaryOrganizationUnitId'→'unit') →
+    çok-kelimeli hedefi ('organizationunit' → T_ORG_ORGANIZATIONUNIT) KAÇIRIR. Bu helper rol-önekini
+    (Primary/Pars/Create...) atıp kalan TAM bileşik kökü dener. Tek-kelimeli/bare kolonda ([] döner —
+    head_noun zaten yeterli). Yalnız mixed-case camelCase'te bölünür (ALL-CAPS tek-entity sayılır).
+    Adaylar 'head' tier'da düşük güvenle + sample-validation arkasında değerlendirilir (false-FK yok).
+    """
+    raw = (col_name or "").strip()
+    if not raw:
+        return []
+    stem = _FK_SUFFIX_STRIP_RE.sub("", raw).strip(" _-./")
+    if not stem:
+        return []
+    words = [w for w in _CAMEL_SPLIT_RE.split(stem) if w]
+    out: List[str] = []
+    # words[1:], words[2:], ... ama SON tek-kelime hariç (o head_noun'da zaten var).
+    for i in range(1, len(words) - 1):
+        cand = "".join(words[i:]).lower()
+        if cand and cand not in DEFAULT_PK_COL_NAMES and len(cand) >= MIN_SUFFIX_TOKEN_LEN:
+            out.append(cand)
+    return out
+
 # v3.60.0: tanılama amaçlı — kolon adı bir referans/FK'ya benziyor mu (kalıba uymasa bile)?
 # 'PARTYID'/'OWNERREF' gibi adları Hata İzleme'de yüzeye çıkarmak için (kök neden).
 # v3.75.0: 'code'/'key'/'no' çıkarıldı — Code/ApiKey/ConsumerKey/MethodNo gibi DEĞER kolonları
@@ -577,8 +602,14 @@ def _iter_fk_candidates(
             if head and head != root:
                 for c in _candidates_from_root(head):
                     name_cands.append((c, "head"))
+            # v3.77.x: çok-kelimeli entity + rol-önek (PrimaryOrganizationUnitId → 'organizationunit').
+            # head-noun son-kelimeyi ('unit') alıp çok-kelimeli hedefi kaçırıyordu → bileşik kökü de dene.
+            for _ps in _prefix_stripped_roots(col_name):
+                for _c in _candidates_from_root(_ps):
+                    name_cands.append((_c, "head"))
 
             target_tbl: Optional[_TableInfo] = None
+            target_col: Optional[str] = None  # v3.77.x: name-match probe çözerse post-loop çift-çağrı yok
             match_kind = "full"
             for cand, kind in name_cands:
                 cand_norm = dialect.normalize_ident(cand)
@@ -614,12 +645,28 @@ def _iter_fk_candidates(
                 # norm_name'e göre DETERMİNİSTİK seç (dict-iterasyon sırasına bağlı kalma →
                 # re-keşif idempotent, aynı inferred FK üretilir).
                 cand_tbl = sorted(same_schema or hits, key=lambda h: h.norm_name)[0]
-                # Self-FK head/prefix eşleşme gürültüsünü ele: head 'user'/prefix-soyma + tablo kendisi
-                # ise gerçek FK değil; full/token-exact root self-FK'ya izin verir (org chart parent_id).
+                # Self-FK head/prefix eşleşme: head 'user'/prefix-soyma + tablo kendisi.
+                # full/token-exact root self-FK'ya zaten izin var (org chart parent_id).
                 if tier_kind in ("head", "prefix") and dialect.normalize_ident(cand_tbl.name) == dialect.normalize_ident(t.name):
+                    # v3.77.x: ROL-ÖNEKLİ self-ref (ManagerId/CreateUserId/ParsUserId → kendi USER tablosu)
+                    # GERÇEK FK'dir (audit/hiyerarşi). Önek VARSA (head != root) izin ver → self PK çözümü
+                    # (type-compat + sample-validation + admin onayı kalkanı). Önek YOKSA (bare UserId/PartyId
+                    # = PK-benzeri self gürültüsü) eskisi gibi atla.
+                    if head and head != root:
+                        target_tbl = cand_tbl
+                        match_kind = "self"
+                        break
+                    continue
+                # v3.77.x: PK-FARKINDA seçim — aday hedefin PK'sı çözülmüyorsa (ör. PK'sız VIEW:
+                # PROBLEMID→NFN_VW_BULLETIN_DATA_PROBLEM) bu adayı ATLA, sonraki isim-adayına geç →
+                # gerçek PK'lı tabloyu tercih et. Eskiden ilk-isim-eşleşmesi seçilip PK'da dead-end
+                # (target_pk_not_found) oluyordu. Self-ref ve _SELF_REF_ROOTS yolu kendi PK'sını kullanır.
+                _tc_probe, _ = _resolve_target_pk(cand_tbl, col_name, root, tier_kind, dialect)
+                if _tc_probe is None:
                     continue
                 target_tbl = cand_tbl
                 match_kind = tier_kind
+                target_col = _tc_probe  # v3.77.x: probe sonucu yeniden kullanılır (aşağıda re-resolve yok)
                 break
             # v3.75.0: parent_id/ParentId → self-reference (hiyerarşi/org-chart). Adlı 'parent'
             # tablosu yoktur; hedef = KENDİ tablosu (PK çözümü aşağıda declared/konvansiyon PK'dan).
@@ -648,7 +695,11 @@ def _iter_fk_candidates(
             # Self-FK is allowed (org chart parent_id → org.id). v3.76.0: ESNEK PK çözümü ortak
             # helper'da (_resolve_target_pk — naming + fuzzy aynı mantığı paylaşır, kod tekrarı yok).
             # Sıra: declared PK > FK-col-adı (self hariç) > entity-token > root > id/pk/uuid.
-            target_col, tried_pks = _resolve_target_pk(target_tbl, col_name, root, match_kind, dialect)
+            # v3.77.x: name-match probe'da target_col zaten çözüldü → çift-çağrı yok. Yalnız self-yolları
+            # (rol-önekli self + _SELF_REF_ROOTS) probe'suz geldi (target_col=None) → burada çöz.
+            tried_pks: List[str] = []
+            if target_col is None:
+                target_col, tried_pks = _resolve_target_pk(target_tbl, col_name, root, match_kind, dialect)
             if target_col is None:
                 # Tanılama: hedef tablo bulundu ama hiçbir PK adayı kolon olarak yok.
                 if diag is not None:

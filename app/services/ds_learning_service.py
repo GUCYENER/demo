@@ -1723,16 +1723,42 @@ def collect_samples(source: dict, vyra_conn, max_rows: int = 10, schema_filter: 
                         db_conn.rollback()
                     except Exception:
                         pass
-                    # Fallback BİLE patladı = gerçekten patolojik (lock/bloat/erişim) → Hata İzleme.
+                    # v3.77.x KÖK fix (canlı bulgu: 812-kolon T_ICT_DYNAMIC_DATA örneklenemiyor):
+                    # explicit ~500-kolon listesi (random + LIMIT) ikisi de patladıysa, büyük olasılıkla
+                    # geniş tabloda kolon-adı uyumsuzluğu/payload. SON ÇARE: SELECT * LIMIT n — kolon
+                    # listesini TAMAMEN baypas eder (queryable wide tablo kurtulur; SELECT* LIMIT 10 hızlı).
                     try:
-                        from app.services.logging_service import log_exception
-                        log_exception(fb_err, module="ds.collect_samples",
-                                      context={"source_id": source_id, "table": object_name,
-                                               "phase": "limit_fallback", "query": (fb_query or "")[:500]})
-                    except Exception:
-                        pass
+                        star_query = _build_sample_query(db_dialect, safe_schema, safe_name, ["*"],
+                                                         max_rows, randomize=False, row_count=0)
+                        if star_query:
+                            target_cur.execute(star_query)
+                            star_cols = [d[0] for d in target_cur.description] if target_cur.description else []
+                            star_data = _rows_to_sample_data(target_cur.fetchall(), star_cols)
+                            vyra_cur.execute(
+                                "INSERT INTO ds_db_samples (object_id, source_id, sample_query, sample_data, row_count) "
+                                "VALUES (%s, %s, %s, %s, %s)",
+                                (obj_id, source_id, star_query, json.dumps(star_data, default=str), len(star_data)),
+                            )
+                            total_sampled += 1
+                            _fb_ok = True
+                            logger.info("[DSLearning] %s: SELECT* son-çare ile örneklendi (%d satır)",
+                                        object_name, len(star_data))
+                    except Exception as star_err:
+                        try:
+                            db_conn.rollback()
+                        except Exception:
+                            pass
+                        # SELECT* DE patladı = gerçekten patolojik (lock/timeout/erişim) → Hata İzleme.
+                        try:
+                            from app.services.logging_service import log_exception
+                            log_exception(star_err, module="ds.collect_samples",
+                                          context={"source_id": source_id, "table": object_name,
+                                                   "phase": "star_fallback", "prev_err": str(fb_err)[:200],
+                                                   "query": (fb_query or "")[:300]})
+                        except Exception:
+                            pass
                 if not _fb_ok:
-                    failed_tables.append({"table": object_name, "error": "Veri okuma başarısız (LIMIT fallback dahil)"})
+                    failed_tables.append({"table": object_name, "error": "Veri okuma başarısız (SELECT* dahil)"})
                 continue
 
         vyra_conn.commit()
