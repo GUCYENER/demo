@@ -61,7 +61,12 @@ MIN_SUFFIX_TOKEN_LEN = 4
 # RecId sınıfı) HER tabloda bulunur, gerçek FK DEĞİLdir (merkezi bir hedef tabloya işaret
 # etmez). FK adayı sayılmaz + tanılama-uyarısı üretmez (ONEDESKPG: GCRecId tek başına 93
 # sahte uyarı). Lowercased exact-match; gerekirse genişletilebilir.
-NON_FK_COLUMN_NAMES = frozenset({"gcrecid", "recid"})
+# v3.77.x: guid/parentguid — MSSQL→PG kaynaklarda (ONEDESKPG) yaygın surrogate UID kolonları.
+# "guid" → ID-soneki soyulunca kök="gu" üretiyor → "gu"/"gus" tablosu yok → her tabloda
+# no_target_table. Kanıt (canlı log): GUID 588 + PARENTGUID 166 = 754 sahte uyarı (%27), 0
+# çözülen FK. Kimlik kolonu, FK değil → adaylıktan muaf. (Hiyerarşik PARENTGUID→GUID self-ref
+# gerekirse admin Tanılama ekranından elle kurar.)
+NON_FK_COLUMN_NAMES = frozenset({"gcrecid", "recid", "guid", "parentguid"})
 
 # v3.75.0: Self-reference kökleri — kolon kökü bunlardan biriyse ve adlı bir hedef tablo
 # bulunamazsa hedef = kolonun KENDİ tablosu (org-chart/hiyerarşi: parent_id → own PK).

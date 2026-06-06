@@ -1286,25 +1286,22 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                 _inf.get("skipped_low_confidence", 0),
                 _inf.get("unresolved_count", 0),
             )
-            # v3.60.0: FK üretilemeyen kolonları Hata İzleme'ye TABLO-ARANABİLİR yaz (kök neden).
-            # logger.* system_logs'a yazmaz → log_system_event ile tablo başına tek WARNING.
+            # v3.77.x KÖK FİX: FK üretilemeyen kolonlar artık ds_fk_diagnostics'e (Tanılama ekranı +
+            # onayla/reddet UI, v3.77.0 — endpoint persist_fk_diagnostics) KALICI yazılıyor. Eskiden
+            # (v3.60.0) burada TABLO BAŞINA bir WARNING system_logs'a yazılıyordu → 1500+ tablolu
+            # kaynakta Hata İzleme'yi SEL basıyordu (1523 uyarı; çift-yazım). Artık tek ÖZET INFO;
+            # tablo/kolon kırılımı + kök-neden Tanılama ekranında.
             try:
                 from app.services.logging_service import log_system_event
                 _unresolved = _inf.get("unresolved") or []
-                _by_tbl = {}
-                for _u in _unresolved:
-                    _by_tbl.setdefault((_u.get("schema") or "", _u.get("table") or ""), []).append(_u)
-                for (_sch, _tbl), _items in _by_tbl.items():
-                    _cols = "; ".join(
-                        f"{_it.get('column')}({_it.get('reason')}"
-                        + (f"→{_it.get('root')}" if _it.get('root') else "") + ")"
-                        for _it in _items[:25]
-                    )
+                if _unresolved:
+                    _n_tbl = len({(_u.get("schema") or "", _u.get("table") or "") for _u in _unresolved})
                     log_system_event(
-                        level="WARNING",
-                        message=f"[FK Inference] {_sch}.{_tbl}: {len(_items)} kolon icin FK uretilemedi -> {_cols}",
+                        level="INFO",
+                        message=(f"[FK Inference] source={source_id}: {_n_tbl} tablo / "
+                                 f"{len(_unresolved)} kolon icin FK uretilemedi "
+                                 f"→ detay Tanılama ekranında (ds_fk_diagnostics)."),
                         module="ds_learning.fk_inference",
-                        error_detail=json.dumps(_items[:50], ensure_ascii=False, default=str),
                     )
                 if _inf.get("persisted", 0) == 0:
                     log_system_event(

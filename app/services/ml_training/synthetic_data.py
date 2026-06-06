@@ -116,7 +116,13 @@ class SyntheticDataGenerator:
         chunks = self._fetch_chunks()
         
         if not chunks:
-            log_system_event("WARNING", "Sentetik veri üretimi: DB'de chunk bulunamadı", "ml_training")
+            log_system_event(
+                "WARNING",
+                "Sentetik eğitim verisi üretilemedi: bilgi tabanında doküman (rag_chunks) yok. "
+                "L1 model eğitimi için bilgi dokümanı yükleyip indeksleyin. "
+                "(NOT: DB tablo 'Örnek Veri Topla' işlemiyle ilgisizdir — ayrı sistem.)",
+                "ml_training",
+            )
             return []
         
         training_data = []

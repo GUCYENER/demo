@@ -265,8 +265,10 @@ class ContinuousLearningService:
                     training_data = real_feedback + training_data
                 
                 if not training_data:
-                    self._update_cl_job(job_id, "failed", start_time, error="Eğitim verisi üretilemedi")
-                    log_system_event("WARNING", "Eğitim verisi üretilemedi", "ml_training")
+                    _msg = ("Eğitim verisi üretilemedi: bilgi tabanı boş (sentetik chunk + gerçek "
+                            "feedback ikisi de yok). L1 eğitimi için bilgi dokümanı yükleyin.")
+                    self._update_cl_job(job_id, "failed", start_time, error=_msg)
+                    log_system_event("WARNING", _msg, "ml_training")
                     return
                 
                 # 2. Feature çıkar ve eğit
