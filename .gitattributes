@@ -8,3 +8,8 @@
 # bayt-bozulmuştu (gömülü NUL 0x00 → git "binary/data" sanıyordu, ayraç bug'ı + PG 500).
 *.js    text eol=lf
 *.mjs   text eol=lf
+
+# Python kaynakları LF — v3.76.1: Windows'ta Python text-mode yazan bump/patch scriptleri
+# (io.open(...,"w")) config.py'yi tüm-dosya CRLF'e çevirip 273-satır sahte diff + bozuk blame
+# üretiyordu. Tüm tracked .py LF; bu kural her commit'te normalize ederek tekrarı önler.
+*.py    text eol=lf

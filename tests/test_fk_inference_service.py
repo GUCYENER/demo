@@ -572,3 +572,38 @@ def test_infer_fuzzy_opt_in_default_off():
     assert res.get("fuzzy_resolved", 0) == 0
     assert res.get("fuzzy_attempted", 0) == 0
     assert any(u.get("column") == "product_id" for u in res.get("unresolved", []))
+
+
+# ─────────────────────────────────────────────────────────────
+# v3.76.1 (code-review P2) — self-ref hedef PK = FK kolonunun KENDİSİ olamaz
+# (root-türevli f"{root}_id"='parent_id' geri gelip parent_id→parent_id çöp self-FK üretiyordu)
+# ─────────────────────────────────────────────────────────────
+def _selfref_tables(with_pk: bool):
+    cols = [{"name": "parent_id", "type": "integer", "is_pk": False},
+            {"name": "name", "type": "varchar", "is_pk": False}]
+    pk = []
+    if with_pk:
+        cols.insert(0, {"name": "id", "type": "integer", "is_pk": True})
+        pk = ["id"]
+    ti = svc._TableInfo("public", "CATEGORY", "category", cols, pk)
+    return {("public", "category"): ti}
+
+
+def test_self_ref_resolves_to_real_pk():
+    """parent_id + gerçek 'id' PK → self-FK parent_id→category.id (mevcut self-ref davranışı korunur)."""
+    pg = svc.get_dialect("postgresql")
+    cands = list(svc._iter_fk_candidates(_selfref_tables(with_pk=True), pg, enable_fuzzy=False))
+    sr = [c for c in cands if c[1]["name"] == "parent_id"]
+    assert sr, f"parent_id self-ref çözülmeli: {cands}"
+    # hedef = KENDİ tablosu, PK = id (parent_id'nin KENDİSİ DEĞİL)
+    assert sr[0][4].name == "CATEGORY" and sr[0][5]["name"] == "id" and sr[0][3] == "self"
+
+
+def test_self_ref_no_pk_drops_garbage_self_fk():
+    """v3.76.1: PK-siz hiyerarşi tablosunda parent_id KENDİNE çözülmez (parent_id→parent_id çöp FK YOK).
+    Kök-neden tanılamada görünür (target_pk_not_found) — sessiz düşme yok."""
+    pg = svc.get_dialect("postgresql")
+    diag = []
+    cands = list(svc._iter_fk_candidates(_selfref_tables(with_pk=False), pg, diag=diag, enable_fuzzy=False))
+    assert not any(c[1]["name"] == "parent_id" for c in cands), f"çöp self-FK üretilmemeli: {cands}"
+    assert any(u.get("column") == "parent_id" and u["reason"] == "target_pk_not_found" for u in diag), diag

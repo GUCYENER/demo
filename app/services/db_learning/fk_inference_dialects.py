@@ -111,8 +111,8 @@ class PostgresDialect:
             f"  SELECT DISTINCT {fc} AS v FROM {fs}.{ft} "
             f"  WHERE {fc} IS NOT NULL LIMIT %s"
             f") "
-            f"SELECT COUNT(*) AS distinct_from, "
-            f"       COUNT(t.{tc}) AS covered "
+            f"SELECT COUNT(DISTINCT s.v) AS distinct_from, "
+            f"       COUNT(DISTINCT CASE WHEN t.{tc} IS NOT NULL THEN s.v END) AS covered "
             f"  FROM s LEFT JOIN {ts}.{tt} t ON t.{tc} = s.v"
         )
         return sql, (sample_rows,)
@@ -174,8 +174,8 @@ class OracleDialect:
             f"    SELECT DISTINCT {fc} AS v FROM {fs}.{ft} WHERE {fc} IS NOT NULL"
             f"  ) WHERE ROWNUM <= :1"
             f") "
-            f"SELECT COUNT(*) AS distinct_from, "
-            f"       COUNT(t.{tc}) AS covered "
+            f"SELECT COUNT(DISTINCT s.v) AS distinct_from, "
+            f"       COUNT(DISTINCT CASE WHEN t.{tc} IS NOT NULL THEN s.v END) AS covered "
             f"  FROM s LEFT JOIN {ts}.{tt} t ON t.{tc} = s.v"
         )
         return sql, (sample_rows,)
@@ -236,8 +236,8 @@ class MSSQLDialect:
             f"    SELECT DISTINCT {fc} AS v FROM {fs}.{ft} WHERE {fc} IS NOT NULL"
             f"  ) d"
             f") "
-            f"SELECT COUNT(*) AS distinct_from, "
-            f"       COUNT(t.{tc}) AS covered "
+            f"SELECT COUNT(DISTINCT s.v) AS distinct_from, "
+            f"       COUNT(DISTINCT CASE WHEN t.{tc} IS NOT NULL THEN s.v END) AS covered "
             f"  FROM s LEFT JOIN {ts}.{tt} t ON t.{tc} = s.v"
         )
         return sql, (sample_rows,)
@@ -301,8 +301,8 @@ class MySQLDialect:
             f"    SELECT DISTINCT {fc} AS v FROM {fs}.{ft} WHERE {fc} IS NOT NULL"
             f"  ) d LIMIT %s"
             f") "
-            f"SELECT COUNT(*) AS distinct_from, "
-            f"       COUNT(t.{tc}) AS covered "
+            f"SELECT COUNT(DISTINCT s.v) AS distinct_from, "
+            f"       COUNT(DISTINCT CASE WHEN t.{tc} IS NOT NULL THEN s.v END) AS covered "
             f"  FROM s LEFT JOIN {ts}.{tt} t ON t.{tc} = s.v"
         )
         return sql, (sample_rows,)

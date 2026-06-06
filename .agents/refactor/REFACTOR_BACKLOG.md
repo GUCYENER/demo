@@ -658,3 +658,52 @@ ile birleşir: alias deterministik+açıklanabilir, fuzzy global istatistiksel t
 sample-probe sınırı yok → çok çözülemeyen kolonlu kaynakta (Oracle CSN ~dozens) 8×N probe. v3.76.0 Oracle
 call_timeout=3s ekledi (her probe sınırlı) ama global probe budget (ör. max 500/infer) düşünülebilir. Şimdilik
 opt-in + per-probe timeout yeterli; yüksek-hacim kaynakta gözden geçir.
+
+## RB-v3.76.1 — gstack /review INFORMATIONAL bulguları (P2 fix sonrası kalan, altitude)
+
+Kapsam: v3.76.1 gstack code-review. 3 P2 commit'lendi (self-ref guard, fuzzy coverage fan-out-immune,
+.py EOL). Aşağıdakiler doğrulandı ama **bilinçli ertelendi** (regresyon değil; çoğu kullanıcının seçtiği
+cap-kaldırma direktifinin doğal sonucu). Kök-neden + fix hazır.
+
+**1) (P2) Kısmi chunk-kaybı sessiz — `_llm_enrich_columns_only` (ds_enrichment_service.py).** Model yanıt
+verip JSON parse boş dönerse `{}` döner, `last_err=None` → log YOK. `enrich_table` yüzeylemesi yalnız TÜM
+kolonlar çökünce (`columns_enriched==0`) tetiklenir → kısmi kayıp (ör. 48 chunk'tan 3'ü truncate, ~120 kolon
+"—") SESSİZ. G2 "yutulan hata yok" niyetiyle çelişir. Fix: parse-fail bayrağı tut; her iki deneme yanıt verip
+kolon üretmezse `logger.warning` + tablo-başı eksik-kolon sayacı.
+
+**2) (P2) Token-bütçesi toplam guard'ı yok.** `MAX_SCHEMA_COLUMNS_PER_TABLE=500` (llm_generate_report) +
+`150`/tablo (text_to_sql), `call_llm_api` girdi-token saymıyor → çok-geniş-tablolu rapor/sorgu prompt'u
+sağlayıcı context limitine çarpıp **4xx (retry'siz)** → üretim başarısız. 500/150 bilinçli seçildi; eksik olan
+toplam-prompt backstop'u (tablo-başı cap'i dinamik kıs, veya inline tablo sayısını sınırla).
+
+**3) (P3) `text_to_sql.format_schema_for_llm` boş-sorgu dalı "...N kolon daha" ipucunu düşürür.** query=""
+→ tüm kolon relevant → `other_cols` boş → else dalı `relevant_cols[:150]` kesip ipucu eklemiyor → geniş tabloda
+sessizce 150/300 kolon. Fix: else dalında `len(relevant_cols)>150` ise ipucu ekle (diğer dalla simetri).
+
+**4) (P3) `fuzzy_attempted` fazla sayıyor (fk_inference_service.py:803).** `type_ok==False` fuzzy adayları da
+sayılıyor ama probe açılmıyor (:764 type_ok kapısı) → etiket "sample probe açılan" ile uyumsuz. Yalnız
+gözlemlenebilirlik (kod davranışı doğru). Fix: `.add()`'i probe-çalışan dala taşı veya etiketi düzelt.
+
+**5) (P3) Cross-schema aynı `norm_name` fuzzy sırası deterministik değil (:489).** `_fuzzy_target_tables`
+yalnız `norm_name`'e sort + `[:cap]` → eşit-ad farklı-şema çakışmasında hangi tablonun düştüğü DB satır-sırasına
+bağlı. Fix: `(normalize_ident(schema), norm_name)` ile sort. RB-v3.76.0 FuzzyPolicy ile birleşir.
+
+**6) (P3) Tablo-başı enrichment fan-out toplam bütçesi yok.** `_MAX_TOTAL_ENRICH_COLUMNS=2000`/`_COL_CHUNK_SIZE=40`
+→ patolojik 2000-kolon tabloda overflow+fill ~100+ ardışık LLM çağrısı, her biri iç-retry'li. 312 (gerçek vaka)
+~22 çağrı, sorun değil. Fix: tablo-başı toplam çağrı/süre bütçesi + tek WARNING.
+
+**7) (P3) `_safe_identifier` boş → bozuk örnek-SELECT (ds_learning_service.py:1647).** Tamamen sembol-adlı kolon
+→ `""` → boş tırnak identifier → bozuk SELECT → tablo örneklemesi başarısız (loglu, sessiz değil). 50→500 cap
+maruziyeti artırır. Fix: `safe_cols`'tan falsy değerleri filtrele; hepsi boşsa `*`.
+
+**8) (P3) `list_columns_multi` table_ids sayı sınırı yok + N×3 round-trip (db_smart_api.py).** Yetkili kullanıcı
+çok-tablo×geniş-kolon tek istekte büyük payload + tablo-başı 3 sorgu (object/table-enrich/col-enrich N+1). Sızıntı
+YOK (tablo-bazlı authz var). Fix: table_ids sayısını sınırla (ör. >25 → 400); enrichment lookup'larını tek
+batch sorguya indir.
+
+**9) (P3 — altitude) `build_sample_validate_sql` 4 dialect'te ~%80 dup (fk_inference_dialects.py).** PG/Oracle/
+MSSQL/MySQL metodları yalnız iç sample-CTE'de (LIMIT/ROWNUM/TOP/LIMIT) farklı; 6-ident quoting prologue +
+`SELECT COUNT(DISTINCT s.v)... FROM s LEFT JOIN ... ON t.tc=s.v` tail AYNI 4×. v3.76.1 fan-out fix'i bu 3-satır
+SELECT'i 4 yerde elle düzenlemek zorunda kaldı → bir sonraki coverage-SQL/NULL-handling değişikliği yine 4×,
+bir kopya atlanırsa O dialect'te FK confidence sessiz sapar. Fix: base-class `_coverage_query(cte_sql, ts, tt, tc)`
+ortak tail'i üretsin; her dialect yalnız CTE fragment'ini versin (RB-v3.76.0 FuzzyPolicy + dialect-refactor ile aynı sprint).

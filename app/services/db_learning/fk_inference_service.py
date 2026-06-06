@@ -379,7 +379,11 @@ def _validate_sample(
     else:
         distinct_from = int(row[0] or 0)
         covered = int(row[1] or 0)
-    ratio = (covered / distinct_from) if distinct_from > 0 else 0.0
+    # v3.76.1 (code-review P2): coverage = DISTINCT eşleşen kaynak-değer / DISTINCT kaynak-değer
+    # (dialect SQL'i COUNT(DISTINCT)'e geçti → hedef anahtar non-unique olsa da fan-out şişirmez).
+    # min(...,1.0) ek defansif tavan: ratio matematiksel olarak ∈[0,1] ama gelecekteki SQL
+    # regresyonu skoru spekülatif şişirmesin (fuzzy'nin TEK false-positive kapısı coverage).
+    ratio = min(covered / distinct_from, 1.0) if distinct_from > 0 else 0.0
     return {
         "distinct_from": distinct_from,
         "covered": covered,
@@ -438,6 +442,15 @@ def _resolve_target_pk(
     if root:
         pk_name_cands += [f"{root}_id", f"{root}id"]
     pk_name_cands += ["id", "pk", "uuid"]
+    # v3.76.1 (code-review P2 + altitude): self-ref'te hedef PK = FK kolonunun KENDİSİ olamaz
+    # (parent_id→parent_id geçersiz döngü, sample bile gerekmeden ~0.80 persist). from_col yukarıda
+    # match_kind!="self"'te eklenmiyor AMA root-türevli f"{root}_id" onu geri getirebilir (root='parent'
+    # → 'parent_id'). İnvaryant'ı TEK yerde ifade et: aday listesi tamamlandıktan sonra from_col'u
+    # çıkar (loop'ta dağılmış ikinci-guard yok) → geçerli self-PK yoksa None döner (target_pk_not_found
+    # tanılaması), uydurma kendine-işaret-eden FK üretilmez.
+    if match_kind == "self":
+        _fn = dialect.normalize_ident(from_col_name)
+        pk_name_cands = [c for c in pk_name_cands if dialect.normalize_ident(c) != _fn]
     tried_pks: List[str] = []
     _seen_pk: Set[str] = set()
     for pkc in pk_name_cands:
