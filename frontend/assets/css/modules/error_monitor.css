@@ -3,7 +3,7 @@
 .error-monitor-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:12px; }
 .error-monitor-actions { display:flex; gap:8px; align-items:center; flex-shrink:0; }
 .error-monitor-selectall { display:flex; align-items:center; gap:6px; font-size:12px; opacity:.8; cursor:pointer; user-select:none; white-space:nowrap; }
-.error-monitor-selectall input { width:15px; height:15px; margin:0; cursor:pointer; accent-color:var(--blue, #3b82f6); }
+.error-monitor-selectall input { width:16px; height:16px; margin:0; cursor:pointer; accent-color:var(--blue, #3b82f6); }
 #errMonExport:disabled { opacity:.45; cursor:not-allowed; }
 /* v3.76.3 (design-review): modülün mevcut success-green'i (#1d8348 tek-kullanım hex yerine — em-empty ✓ ile aynı) */
 #errMonExport i { color:#4caf50; }
@@ -24,6 +24,9 @@
 .em-stat-top code { font-size:11px; }
 
 .error-monitor-toolbar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:12px; }
+/* v3.76.4 (design-review polish): "Tümünü seç" toolbar sağından LİSTE ÜSTÜNE alındı, sol-hiza
+   satır checkbox kolonuyla (padding-left:13px = em-row border+padding) → kontrol ettiği kolona görsel olarak demir atar. */
+.error-monitor-listbar { display:flex; align-items:center; padding-left:13px; margin-bottom:8px; }
 .error-monitor-select { padding:7px 10px; border-radius:8px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.12); color:inherit; font-size:13px; }
 .error-monitor-search { position:relative; display:flex; align-items:center; flex:1; min-width:220px; }
 .error-monitor-search > i { position:absolute; left:10px; opacity:.5; font-size:12px; }
@@ -39,8 +42,9 @@
 
 .em-row { border:1px solid rgba(255,255,255,0.08); border-radius:8px; overflow:hidden; background:rgba(255,255,255,0.02); }
 .em-row.is-open { border-color:rgba(255,255,255,0.18); }
-.em-row-head { display:grid; grid-template-columns:22px 84px 150px 50px minmax(120px,1fr) 46px minmax(160px,2fr) 20px; gap:10px; align-items:center; padding:9px 12px; cursor:pointer; font-size:13px; }
-.em-check { width:15px; height:15px; margin:0; cursor:pointer; accent-color:var(--blue, #3b82f6); }
+.em-row-head { display:grid; grid-template-columns:28px 84px 150px 50px minmax(120px,1fr) 46px minmax(160px,2fr) 20px; gap:10px; align-items:center; padding:9px 12px; cursor:pointer; font-size:13px; }
+/* v3.76.4 (design-review polish): checkbox kolonu 22→28px + kutu 15→16px → tıklama alanı nefes alır (touch-target). */
+.em-check { width:16px; height:16px; margin:0; cursor:pointer; accent-color:var(--blue, #3b82f6); }
 .em-row-head:hover { background:rgba(255,255,255,0.04); }
 .em-badge { font-size:10px; font-weight:700; padding:3px 7px; border-radius:5px; text-align:center; }
 .em-badge.em-lvl-critical { background:rgba(255,107,107,.18); color:#ff6b6b; }
@@ -64,6 +68,6 @@
 .em-more { width:100%; }
 
 @media (max-width:900px){
-    .em-row-head { grid-template-columns:22px 70px 1fr 40px 18px; }
+    .em-row-head { grid-template-columns:28px 70px 1fr 40px 18px; }
     .em-time, .em-method, .em-status { display:none; }
 }
