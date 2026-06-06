@@ -3,9 +3,14 @@
 .error-monitor-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:12px; }
 .error-monitor-actions { display:flex; gap:8px; align-items:center; flex-shrink:0; }
 .error-monitor-selectall { display:flex; align-items:center; gap:6px; font-size:12px; opacity:.8; cursor:pointer; user-select:none; white-space:nowrap; }
-.error-monitor-selectall input { width:15px; height:15px; margin:0; cursor:pointer; accent-color:#e0a800; }
+.error-monitor-selectall input { width:15px; height:15px; margin:0; cursor:pointer; accent-color:var(--blue, #3b82f6); }
 #errMonExport:disabled { opacity:.45; cursor:not-allowed; }
-#errMonExport i { color:#1d8348; }
+/* v3.76.3 (design-review): modülün mevcut success-green'i (#1d8348 tek-kullanım hex yerine — em-empty ✓ ile aynı) */
+#errMonExport i { color:#4caf50; }
+/* v3.76.3 (design-review a11y): yeni seçim/aksiyon kontrollerine focus-visible halkası (repo konvansiyonu — .btn-secondary'de global yok) */
+.em-check:focus-visible,
+.error-monitor-selectall input:focus-visible,
+#errMonExport:focus-visible { outline:2px solid var(--blue, #3b82f6); outline-offset:2px; }
 .error-monitor-title { margin:0 0 4px; font-size:18px; }
 .error-monitor-title i { color:#e0a800; margin-right:6px; }
 
@@ -35,7 +40,7 @@
 .em-row { border:1px solid rgba(255,255,255,0.08); border-radius:8px; overflow:hidden; background:rgba(255,255,255,0.02); }
 .em-row.is-open { border-color:rgba(255,255,255,0.18); }
 .em-row-head { display:grid; grid-template-columns:22px 84px 150px 50px minmax(120px,1fr) 46px minmax(160px,2fr) 20px; gap:10px; align-items:center; padding:9px 12px; cursor:pointer; font-size:13px; }
-.em-check { width:15px; height:15px; margin:0; cursor:pointer; accent-color:#e0a800; }
+.em-check { width:15px; height:15px; margin:0; cursor:pointer; accent-color:var(--blue, #3b82f6); }
 .em-row-head:hover { background:rgba(255,255,255,0.04); }
 .em-badge { font-size:10px; font-weight:700; padding:3px 7px; border-radius:5px; text-align:center; }
 .em-badge.em-lvl-critical { background:rgba(255,107,107,.18); color:#ff6b6b; }
