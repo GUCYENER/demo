@@ -960,6 +960,27 @@ CREATE INDEX IF NOT EXISTS idx_ds_db_rels_src_lto ON ds_db_relationships(source_
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ds_db_rels_unique
     ON ds_db_relationships(source_id, COALESCE(from_schema,''), from_table, from_column, COALESCE(to_schema,''), to_table, to_column);
 
+-- v3.77.0 (Tema-1 kapalı-döngü): FK çıkarımında ÇÖZÜLEMEYEN kolonlar (kök-neden görünürlüğü + trend).
+-- infer-fks'in 'unresolved' listesi tek-atımlık dönüş yerine burada KALICI; admin "neden FK gelmedi"yi görür.
+CREATE TABLE IF NOT EXISTS ds_fk_diagnostics (
+    id SERIAL PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES data_sources(id) ON DELETE CASCADE,
+    from_schema VARCHAR(100),
+    from_table VARCHAR(200) NOT NULL,
+    from_column VARCHAR(200) NOT NULL,
+    reason VARCHAR(40) NOT NULL,                 -- no_pattern_match | no_target_table | target_pk_not_found
+    root VARCHAR(200),
+    head VARCHAR(200),
+    evidence_json JSONB,
+    is_fixed BOOLEAN NOT NULL DEFAULT FALSE,     -- sonraki koşuda görünmedi → çözülmüş kabul
+    first_seen_at TIMESTAMP DEFAULT NOW(),
+    last_seen_at TIMESTAMP DEFAULT NOW(),
+    fixed_at TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ds_fk_diag_unique
+    ON ds_fk_diagnostics(source_id, COALESCE(from_schema,''), from_table, from_column);
+CREATE INDEX IF NOT EXISTS idx_ds_fk_diag_open ON ds_fk_diagnostics(source_id, is_fixed);
+
 -- Tablolardan Alınan Örnek Veriler
 CREATE TABLE IF NOT EXISTS ds_db_samples (
     id SERIAL PRIMARY KEY,

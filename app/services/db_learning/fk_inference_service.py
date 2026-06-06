@@ -918,6 +918,45 @@ def infer_fks_for_source(
         "skipped_existing": skipped_existing,
         "skipped_low_confidence": skipped_low,
         "unresolved_count": len(unresolved),
-        "unresolved": unresolved[:200],
+        "unresolved": unresolved,  # v3.77.0: TAM liste — endpoint ds_fk_diagnostics'e persist + client'a cap'ler
         "sample": sample_out,
     }
+
+
+def persist_fk_diagnostics(cur, source_id: int, unresolved: List[Dict[str, Any]]) -> int:
+    """v3.77.0 (Tema-1 kapalı-döngü): çözülemeyen FK kolonlarını ds_fk_diagnostics'e KALICI yaz —
+    kök-neden görünürlüğü + trend + admin 'elle FK kur'. AYRI cursor/işlemde çağrılmalı (FK persist
+    commit'ini riske atmamak için). Strateji: önce kaynağın AÇIK kayıtlarını PROVİZYON fixed işaretle,
+    sonra bu koşunun unresolved'ını UPSERT ile yeniden-aç → bu koşuda görünmeyen = çözülmüş kabul (is_fixed).
+    Döner: hâlâ-çözülemeyen (yeniden-açılan) kayıt sayısı. Tablo yoksa 0 + WARNING (eski şema güvenli)."""
+    try:
+        cur.execute(
+            "UPDATE ds_fk_diagnostics SET is_fixed = TRUE, fixed_at = NOW() "
+            "WHERE source_id = %s AND is_fixed = FALSE",
+            (source_id,),
+        )
+    except Exception as e:
+        logger.warning("[fk_inference] ds_fk_diagnostics yok/erişilemedi → diagnostics atlandı: %s", str(e)[:160])
+        return 0
+    n = 0
+    for u in unresolved or []:
+        ft = str(u.get("table") or "").strip()
+        fc = str(u.get("column") or "").strip()
+        if not ft or not fc:
+            continue
+        ev = {k: u.get(k) for k in ("hint", "root", "head") if u.get(k) is not None}
+        cur.execute(
+            """INSERT INTO ds_fk_diagnostics
+                 (source_id, from_schema, from_table, from_column, reason, root, head,
+                  evidence_json, is_fixed, first_seen_at, last_seen_at, fixed_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s, FALSE, NOW(), NOW(), NULL)
+               ON CONFLICT (source_id, COALESCE(from_schema,''), from_table, from_column)
+               DO UPDATE SET reason = EXCLUDED.reason, root = EXCLUDED.root, head = EXCLUDED.head,
+                             evidence_json = EXCLUDED.evidence_json,
+                             is_fixed = FALSE, fixed_at = NULL, last_seen_at = NOW()""",
+            (source_id, (u.get("schema") or None), ft, fc,
+             str(u.get("reason") or "unknown")[:40], u.get("root"), u.get("head"),
+             json.dumps(ev) if ev else None),
+        )
+        n += 1
+    return n

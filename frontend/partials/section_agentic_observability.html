@@ -311,7 +311,12 @@
     <div class="ao-fki-stats" id="aoFkiStatsCards"
          aria-label="FK Inference özet metrikleri"></div>
 
-    <h4 class="ao-tab-pane__subtitle">Onay Bekleyen Çıkarımlar</h4>
+    <h4 class="ao-tab-pane__subtitle">Onay Bekleyen Çıkarımlar
+      <button type="button" id="aoFkiBulkVerifyBtn" class="btn btn-secondary ao-fki-bulk" hidden
+              data-tooltip="Görünen tüm önerileri onayla (RAG'de kullanılsın)">
+        <i class="fa-solid fa-check-double"></i> Tümünü Onayla
+      </button>
+    </h4>
     <div class="ao-table-wrap">
       <table id="aoFkiPendingTable" class="ao-table"
              aria-label="Onay bekleyen FK çıkarımları">
@@ -323,7 +328,26 @@
             <th scope="col">Hedef Kolon</th>
             <th scope="col">Güven</th>
             <th scope="col">Yöntem</th>
-            <th scope="col">Tarih</th>
+            <th scope="col">İşlem</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <h4 class="ao-tab-pane__subtitle">Çözülemeyen FK'lar (Tanılama)</h4>
+    <p class="form-hint">FK çıkarımında hedefe bağlanamayan kolonlar — "neden FK gelmedi"nin kök-nedeni.
+      Her FK öğrenme koşusunda güncellenir (çözülen kayıt listeden düşer).</p>
+    <div id="aoFkiDiagReasons" class="ao-fki-diag-reasons" aria-label="Çözülemeyen FK sebep özetleri"></div>
+    <div id="aoFkiDiagEmpty" class="ao-empty" hidden>Çözülemeyen FK yok 🎉</div>
+    <div class="ao-table-wrap">
+      <table id="aoFkiDiagTable" class="ao-table" aria-label="Çözülemeyen FK kolonları">
+        <thead>
+          <tr>
+            <th scope="col">Kolon</th>
+            <th scope="col">Sebep</th>
+            <th scope="col">Kök / Head</th>
+            <th scope="col">İpucu</th>
           </tr>
         </thead>
         <tbody></tbody>

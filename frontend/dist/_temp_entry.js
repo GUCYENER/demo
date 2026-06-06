@@ -34942,29 +34942,118 @@ window.ThemePickerPopup = (function () {
         `;
     }
 
+    function _splitRef(ref) {
+        const parts = String(ref || '').split('.').filter(Boolean);
+        if (parts.length >= 2) return { table: parts.slice(0, -1).join('.'), col: parts[parts.length - 1] };
+        return { table: parts[0] || '—', col: '' };
+    }
+
     function _renderPendingTable(rows) {
         const tbody = document.querySelector('#aoFkiPendingTable tbody');
         const empty = document.getElementById('aoFkiEmpty');
+        const bulkBtn = document.getElementById('aoFkiBulkVerifyBtn');
         if (!tbody) return;
         tbody.innerHTML = '';
-        if (!rows || rows.length === 0) {
-            if (empty) empty.hidden = false;
-            return;
-        }
-        if (empty) empty.hidden = true;
+        const has = !!(rows && rows.length);
+        if (empty) empty.hidden = has;
+        if (bulkBtn) bulkBtn.hidden = !has;
+        if (!has) return;
         rows.forEach((r) => {
+            // endpoint 'from'/'to' (s.t.c) döndürür; eski from_table/.. fallback'i de tut
+            const f = _splitRef(r.from || `${r.from_table || ''}.${r.from_column || ''}`);
+            const t = _splitRef(r.to || `${r.to_table || ''}.${r.to_column || ''}`);
+            const conf = r.confidence != null ? r.confidence : r.confidence_score;
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td>${_escape(r.source_table || r.from_table || '')}</td>
-                <td class="swt-mono">${_escape(r.source_column || r.from_column || '')}</td>
-                <td>${_escape(r.target_table || r.to_table || '')}</td>
-                <td class="swt-mono">${_escape(r.target_column || r.to_column || '')}</td>
-                <td class="swt-mono">${_formatConfidence(r.confidence_score)}</td>
-                <td class="swt-mono">${_escape(r.inference_method || '—')}</td>
-                <td>${_formatDate(r.created_at || r.discovered_at)}</td>
-            `;
+                <td>${_escape(f.table)}</td>
+                <td class="swt-mono">${_escape(f.col)}</td>
+                <td>${_escape(t.table)}</td>
+                <td class="swt-mono">${_escape(t.col)}</td>
+                <td class="swt-mono">${_formatConfidence(conf)}</td>
+                <td class="swt-mono">${_escape(r.method || r.inference_method || '—')}</td>
+                <td class="ao-fki-row-actions">
+                    <button type="button" class="btn btn-xs ao-fki-verify" data-id="${_escape(r.id)}"
+                            data-tooltip="Onayla — RAG'de kullanılsın" aria-label="Onayla"><i class="fa-solid fa-check"></i></button>
+                    <button type="button" class="btn btn-xs ao-fki-reject" data-id="${_escape(r.id)}"
+                            data-tooltip="Reddet" aria-label="Reddet"><i class="fa-solid fa-xmark"></i></button>
+                </td>`;
             tbody.appendChild(tr);
         });
+    }
+
+    const _REASON_TR = {
+        no_pattern_match: 'Kalıba uymadı',
+        no_target_table: 'Hedef tablo yok',
+        target_pk_not_found: 'Hedef PK yok',
+    };
+
+    function _renderDiagnostics(data) {
+        const reasonsHost = document.getElementById('aoFkiDiagReasons');
+        const tbody = document.querySelector('#aoFkiDiagTable tbody');
+        const empty = document.getElementById('aoFkiDiagEmpty');
+        const byReason = (data && data.by_reason) || [];
+        const items = (data && data.items) || [];
+        if (reasonsHost) {
+            reasonsHost.innerHTML = byReason.map((b) =>
+                `<span class="ao-fki-diag-chip" data-reason="${_escape(b.reason)}">`
+                + `${_escape(_REASON_TR[b.reason] || b.reason)}: <strong>${_escape(b.count)}</strong></span>`
+            ).join('');
+        }
+        if (tbody) {
+            tbody.innerHTML = '';
+            items.forEach((it) => {
+                const rh = [it.root, it.head].filter(Boolean).join(' / ') || '—';
+                const hint = (it.evidence && it.evidence.hint) || '';
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td class="swt-mono">${_escape(it.column)}</td>
+                    <td>${_escape(_REASON_TR[it.reason] || it.reason)}</td>
+                    <td class="swt-mono">${_escape(rh)}</td>
+                    <td class="ao-fki-diag-hint">${_escape(hint)}</td>`;
+                tbody.appendChild(tr);
+            });
+        }
+        if (empty) empty.hidden = items.length > 0;
+    }
+
+    async function _loadDiagnostics() {
+        if (!_currentSourceId) return;
+        try {
+            const sid = encodeURIComponent(_currentSourceId);
+            const data = await _fetchJson(`/api/admin/db-learning/${sid}/fk-diagnostics?only_open=true&limit=300`);
+            _renderDiagnostics(data || {});
+        } catch (err) {
+            console.warn('[fki] diagnostics load failed:', err);
+        }
+    }
+
+    async function _verifyReject(id, action) {
+        if (!_currentSourceId || !id) return;
+        const sid = encodeURIComponent(_currentSourceId);
+        try {
+            await window.vyraFetch(`/admin/db-learning/${sid}/relationships/${id}/${action}`, { method: 'POST' });
+            _toast(action === 'verify' ? 'FK onaylandı' : 'FK reddedildi', 'success');
+            _loadStats();
+        } catch (err) {
+            _toast(`İşlem başarısız: ${(err && err.message) || ''}`, 'error');
+        }
+    }
+
+    async function _bulkVerify() {
+        if (!_currentSourceId) return;
+        const ids = Array.from(document.querySelectorAll('#aoFkiPendingTable .ao-fki-verify'))
+            .map((b) => parseInt(b.dataset.id, 10)).filter((x) => !isNaN(x));
+        if (!ids.length) return;
+        if (global.confirm && !global.confirm(`${ids.length} öneriyi onaylamak istediğine emin misin?`)) return;
+        const sid = encodeURIComponent(_currentSourceId);
+        try {
+            await window.vyraFetch(`/admin/db-learning/${sid}/relationships/bulk-verify`,
+                { method: 'POST', body: { relationship_ids: ids } });
+            _toast(`${ids.length} FK onaylandı`, 'success');
+            _loadStats();
+        } catch (err) {
+            _toast(`Toplu onay başarısız: ${(err && err.message) || ''}`, 'error');
+        }
     }
 
     async function _loadStats() {
@@ -34986,6 +35075,7 @@ window.ThemePickerPopup = (function () {
             _renderStatsCards(stats || {});
             const rows = (pending && (pending.items || pending.relationships || pending)) || [];
             _renderPendingTable(Array.isArray(rows) ? rows : []);
+            _loadDiagnostics();
         } catch (err) {
             console.warn('[fki] stats load failed:', err);
             if (empty) {
@@ -35032,6 +35122,20 @@ window.ThemePickerPopup = (function () {
         }
         const refreshBtn = document.getElementById('aoFkiRefreshBtn');
         if (refreshBtn) refreshBtn.addEventListener('click', _loadStats);
+
+        // Tema-1: pending tablo delegated verify/reject + toplu onay
+        const pendingTable = document.getElementById('aoFkiPendingTable');
+        if (pendingTable && !pendingTable._fkiBound) {
+            pendingTable._fkiBound = true;
+            pendingTable.addEventListener('click', (e) => {
+                const v = e.target.closest('.ao-fki-verify');
+                if (v) { _verifyReject(parseInt(v.dataset.id, 10), 'verify'); return; }
+                const rj = e.target.closest('.ao-fki-reject');
+                if (rj) { _verifyReject(parseInt(rj.dataset.id, 10), 'reject'); }
+            });
+        }
+        const bulkBtn = document.getElementById('aoFkiBulkVerifyBtn');
+        if (bulkBtn && !bulkBtn._fkiBound) { bulkBtn._fkiBound = true; bulkBtn.addEventListener('click', _bulkVerify); }
     }
 
     if (document.readyState !== 'loading') init();

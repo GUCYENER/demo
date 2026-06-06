@@ -746,6 +746,22 @@ def infer_fks_endpoint(
                 enable_fuzzy=(payload.fuzzy and payload.sample_validate and target_cur is not None),
             )
             conn.commit()
+            # v3.77.0 (Tema-1 kapalı-döngü): çözülemeyen FK kolonlarını ds_fk_diagnostics'e KALICI yaz.
+            # AYRI işlem (FK commit'i zaten yapıldı) → diagnostics hatası FK sonucunu riske atmaz.
+            _unresolved = res.get("unresolved") or []
+            try:
+                from app.services.db_learning.fk_inference_service import persist_fk_diagnostics
+                with get_db_context() as dconn:
+                    dcur = dconn.cursor()
+                    try:
+                        apply_company_scope(dcur, company_id=company_id)
+                        res["diagnostics_open"] = persist_fk_diagnostics(dcur, source_id, _unresolved)
+                        dconn.commit()
+                    finally:
+                        dcur.close()
+            except Exception:
+                logger.warning("[infer-fks] diagnostics persist atlandı source=%s", source_id)
+            res["unresolved"] = _unresolved[:200]  # client'a cap'li dön (gözlemlenebilirlik)
             return {"success": True, **res}
         except HTTPException:
             try:
@@ -1030,6 +1046,74 @@ def fk_inference_stats(
                     },
                 }
             return {"success": True, "source_id": source_id, "stats": stats}
+        finally:
+            cur.close()
+
+
+@router.get("/{source_id}/fk-diagnostics")
+def fk_diagnostics_endpoint(
+    source_id: int,
+    only_open: bool = Query(True, description="yalnız çözülemeyen (is_fixed=FALSE)"),
+    reason: Optional[str] = Query(None, description="no_pattern_match | no_target_table | target_pk_not_found"),
+    limit: int = Query(500, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """v3.77.0 (Tema-1): FK çıkarımında ÇÖZÜLEMEYEN kolonlar (kök-neden görünürlüğü). reason özetleri +
+    liste. infer-fks her koşuda ds_fk_diagnostics'i günceller (çözülen kayıt is_fixed=TRUE olur)."""
+    company_id = current_user.get("company_id")
+    with get_db_context() as conn:
+        cur = conn.cursor()
+        try:
+            apply_company_scope(cur, company_id=company_id)
+            _ensure_source_visible(cur, source_id)
+            # reason özet (yalnız açık) — tablo yoksa boş dön (eski şema güvenli)
+            by_reason: List[Dict[str, Any]] = []
+            try:
+                cur.execute(
+                    "SELECT reason, COUNT(*) AS cnt FROM ds_fk_diagnostics "
+                    "WHERE source_id = %s AND is_fixed = FALSE GROUP BY reason ORDER BY cnt DESC",
+                    (source_id,),
+                )
+                for r in cur.fetchall() or []:
+                    by_reason.append({
+                        "reason": (r.get("reason") if hasattr(r, "get") else r[0]),
+                        "count": int((r.get("cnt") if hasattr(r, "get") else r[1]) or 0),
+                    })
+            except Exception:
+                return {"success": True, "source_id": source_id, "by_reason": [], "items": [], "count": 0}
+
+            where = "source_id = %s"
+            args: List[Any] = [source_id]
+            if only_open:
+                where += " AND is_fixed = FALSE"
+            if reason:
+                where += " AND reason = %s"
+                args.append(reason)
+            cur.execute(
+                f"""SELECT id, from_schema, from_table, from_column, reason, root, head,
+                           evidence_json, is_fixed, first_seen_at, last_seen_at
+                      FROM ds_fk_diagnostics WHERE {where}
+                     ORDER BY is_fixed, reason, from_table, from_column
+                     LIMIT %s OFFSET %s""",
+                tuple(args + [limit, offset]),
+            )
+            items: List[Dict[str, Any]] = []
+            for r in cur.fetchall() or []:
+                def _g(k, i):
+                    return r.get(k) if hasattr(r, "get") else (r[i] if i < len(r) else None)
+                items.append({
+                    "id": _g("id", 0),
+                    "column": f"{_g('from_schema', 1) or ''}.{_g('from_table', 2) or ''}.{_g('from_column', 3) or ''}".lstrip("."),
+                    "reason": _g("reason", 4),
+                    "root": _g("root", 5),
+                    "head": _g("head", 6),
+                    "evidence": _g("evidence_json", 7),
+                    "is_fixed": bool(_g("is_fixed", 8)),
+                    "last_seen_at": str(_g("last_seen_at", 10)) if _g("last_seen_at", 10) else None,
+                })
+            return {"success": True, "source_id": source_id, "by_reason": by_reason,
+                    "items": items, "count": len(items)}
         finally:
             cur.close()
 

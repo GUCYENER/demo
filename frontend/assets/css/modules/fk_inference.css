@@ -102,6 +102,24 @@
     vertical-align: middle;
 }
 
+/* Tema-1 (v3.77.0): pending tablo verify/reject aksiyonları + toplu onay + diagnostics */
+.ao-fki-row-actions { white-space: nowrap; }
+.ao-fki-row-actions .btn { padding: 0.2rem 0.5rem; font-size: 0.85rem; line-height: 1; margin: 0 0.1rem; border-radius: 4px; cursor: pointer; }
+.ao-fki-verify { color: #2e7d32; border-color: rgba(46,125,50,.45); }
+.ao-fki-verify:hover { background: rgba(46,125,50,.14); }
+.ao-fki-reject { color: #c62828; border-color: rgba(198,40,40,.45); }
+.ao-fki-reject:hover { background: rgba(198,40,40,.14); }
+.ao-fki-bulk { margin-left: 0.75rem; font-size: 0.82rem; padding: 0.25rem 0.6rem; vertical-align: middle; }
+
+.ao-fki-diag-reasons { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.5rem 0 0.75rem; }
+.ao-fki-diag-chip {
+    padding: 0.3rem 0.7rem; border-radius: 999px; font-size: 0.82rem;
+    background: rgba(249,168,37,.14); border: 1px solid rgba(249,168,37,.4);
+    color: var(--text-primary, #5d4037);
+}
+.ao-fki-diag-chip strong { color: #c62828; }
+.ao-fki-diag-hint { font-size: 0.85rem; color: var(--text-secondary, #757575); }
+
 @media (prefers-reduced-motion: reduce) {
     .swt-deploy-banner,
     .fki-stat-card {
