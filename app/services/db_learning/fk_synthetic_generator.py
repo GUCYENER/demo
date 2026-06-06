@@ -162,8 +162,15 @@ _EXCLUDED_SCHEMAS = sorted({
 })
 
 # v3.44.0 (P0): inferred FK'ler bu confidence eşiğinin altındaysa sentetik üretime girmez
-# (declared FK'ler — is_inferred=FALSE — her zaman geçer). pg_partman naming-skoru ~0.80 → elenir.
-_MIN_INFERRED_CONFIDENCE = 0.85
+# (declared FK'ler — is_inferred=FALSE — her zaman geçer).
+# v3.77.3 (ekip kararı, canlı teşhis): 0.85→0.80. KÖK NEDEN: sample-validation'sız üretim tavanı
+# SCORE_NAMING(0.60)+SCORE_TYPE(0.20)=0.80 → ONEDESKPG gibi declared-FK'siz kaynakta TÜM inferred FK
+# 0.80'de sıkışıp 0.85 kapısına takılıyordu → synthetic HİÇ üretmiyordu (2535 FK elendi). 0.80 =
+# full-root isim + tip eşleşmesi (sağlam aday); zayıf head/fuzzy (0.45-0.65) yine girmez. GÜVENLİK:
+# generator zaten her sorguyu hedef DB'de ÇALIŞTIRIP yalnız row_count>0 döneni öğreniyor (aşağıda) →
+# yanlış FK boş/hatalı sorgu = öğrenilmez; execution VERİ-DOĞRULAMA görevini görüyor, ön-eşik gereksiz
+# koruma. pg_partman vb. system/extension şemaları ayrıca _EXCLUDED_SCHEMAS ile dışlanıyor (eşikten bağımsız).
+_MIN_INFERRED_CONFIDENCE = 0.80
 
 
 # v3.45.0 P2: AGGREGATE_STATS ölçü-kolonu seçiminde tercih edilen isim ipuçları (TR+EN).
