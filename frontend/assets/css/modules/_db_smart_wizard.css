@@ -2596,6 +2596,20 @@ body[data-dsw-locked="true"] {
     padding: 10px 12px;
 }
 
+/* v3.77.1 (Tema-1 Residual-1): fallback PROMINENT uyarı (amber) — sessiz degrade SELECT* önlenir */
+.dsw-result-fallback-banner {
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--vyra-fg-primary, #e6e8eb);
+    background: rgba(249, 168, 37, 0.12);
+    border: 1px solid rgba(249, 168, 37, 0.45);
+    border-left: 4px solid #f9a825;
+    border-radius: var(--vyra-radius-sm, 6px);
+    padding: 10px 12px;
+    margin: 0 0 12px 0;
+}
+.dsw-result-fallback-banner strong { color: #f9a825; }
+
 .dsw-result-error {
     font-size: 13px;
     color: var(--vyra-fg-primary, #e6e8eb);

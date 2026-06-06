@@ -3004,6 +3004,41 @@ def post_generate_report(
         else:
             norm_rows.append([r])
 
+    # v3.77.1 (Tema-1 Residual-2): wizard rapor OUTCOME kaydı — agentic yolunda var, wizard'da yoktu
+    # (fallback/başarısızlık trendi görünmüyordu). AYRI işlem (ana cevabı riske atmaz; meta cur yukarıdaki
+    # with-block'ta kapandı). Mevcut learning_recorder altyapısı (dbsmart_interactions, action=QueryExecuted).
+    try:
+        from app.services.db_smart import learning_recorder
+        _qok = bool(getattr(sql_result, "success", False))
+        with get_db_context() as _rconn:
+            _rcur = _rconn.cursor()
+            apply_vyra_user_context(_rcur, current_user)
+            # code-review fix: admin'de current_user.company_id None → record() event'i DÜŞÜRÜR (R2 amacı
+            # admin koşularında kör kalır). Source'un company'sine ata (RLS user_id-bazlı + null-GUC
+            # passthrough → güvenli, cross-tenant değil).
+            _rctx = current_user
+            if current_user.get("company_id") is None:
+                try:
+                    _rcur.execute("SELECT company_id FROM data_sources WHERE id = %s", (req.source_id,))
+                    _sr = _rcur.fetchone()
+                    _scid = (_sr["company_id"] if hasattr(_sr, "keys") else _sr[0]) if _sr else None
+                    if _scid is not None:
+                        _rctx = {**current_user, "company_id": _scid}
+                except Exception:
+                    pass
+            learning_recorder.record(
+                _rcur, "QueryExecuted", _rctx,
+                source_id=req.source_id, duration_ms=elapsed_ms,
+                suggestion_shown={
+                    "sql": generated_sql, "success": _qok, "fallback": bool(fallback),
+                    "row_count": row_count,
+                    "error": (None if _qok else (getattr(sql_result, "error", None) or "Sorgu başarısız.")),
+                },
+            )
+            _rconn.commit()
+    except Exception:
+        logger.warning("[generate-report] outcome record atlandı source=%s", getattr(req, "source_id", None))
+
     return GenerateReportResp(
         sql=generated_sql,
         rationale=rationale,

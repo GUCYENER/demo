@@ -2402,6 +2402,22 @@
         }
 
         if (success) {
+            // v3.77.1 (Tema-1 Residual-1): fallback PROMINENT uyarı — kullanıcı "bu istediğim rapor DEĞİL"i
+            // net görsün. Eski hali yalnız stats satırında subtle "⚠️ fallback SQL" idi → kaçırılıyor,
+            // degrade SELECT* gerçek cevap sanılıyordu. Sebep (rationale/DIAGNOSTIC) ile birlikte tepede.
+            if (fallback) {
+                const fb = document.createElement('div');
+                fb.className = 'dsw-result-fallback-banner';
+                fb.setAttribute('role', 'alert');
+                const strong = document.createElement('strong');
+                strong.textContent = '⚠ İstediğin rapor tam üretilemedi. ';
+                fb.appendChild(strong);
+                fb.appendChild(document.createTextNode(
+                    'Basit/fallback sonuç gösteriliyor'
+                    + (data.rationale ? ' — Sebep: ' + String(data.rationale) : '') + '.'
+                ));
+                body.appendChild(fb);
+            }
             // Stats line
             const stats = document.createElement('div');
             stats.className = 'dsw-result-stats';

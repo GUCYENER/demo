@@ -31321,6 +31321,13 @@ const DSEnrichmentModule = (() => {
                 const approvedAttr = item.is_approved ? 'disabled data-tt="Zaten onaylandı"' : '';
                 const rowOpacity = item.is_approved ? 'opacity: 0.7;' : '';
                 const rowHighlight = (item.enrichment_id && !item.is_approved) ? 'background:rgba(245,158,11,0.05);border-left:3px solid rgba(245,158,11,0.4);' : '';
+                // v3.77.1 (Tema-1 Residual-3): kolon-kapsama rozeti — enrichment yapıldı ama kolonlar
+                // eksik/etiketsiz → "Yeniden Öğren" sinyali (kullanıcı bulgusu "312 BEKLEYEN"). coverage
+                // bilgisi yoksa (mig 056 öncesi) rozet gizli.
+                const _ct = Number(item.columns_total || 0), _ce = Number(item.columns_enriched || 0);
+                const covBadge = (item.enrichment_id && _ct > 0 && _ce < _ct)
+                    ? ` <span class="ds-cov-badge ${_ce === 0 ? 'ds-cov-badge-fail' : 'ds-cov-badge-partial'}" data-tt-portal data-tt="Kolon etiketleme eksik — 'Yeniden Öğren' gerekebilir"><i class="fa-solid fa-triangle-exclamation"></i> ${_ce === 0 ? 'etiketlenemedi' : (_ce + '/' + _ct + ' kolon')}</span>`
+                    : '';
 
                 rows += `
                     <tr data-id="${item.id}" class="ds-enrich-data-row" style="${rowOpacity}${rowHighlight}">
@@ -31331,7 +31338,7 @@ const DSEnrichmentModule = (() => {
                             ${_escapeHtml(schemaName)}
                         </td>
                         <td class="ds-table-name-cell" data-tt-portal data-tt="${_escapeHtml(tableName)}">
-                            <strong>${_escapeHtml(tableName)}</strong>
+                            <strong>${_escapeHtml(tableName)}</strong>${covBadge}
                         </td>
                         <td>
                             ${item.business_name_tr ? _escapeHtml(item.business_name_tr) : '<em class="ds-enrich-no-label">—</em>'}
@@ -40321,6 +40328,22 @@ window.ThemePickerPopup = (function () {
         }
 
         if (success) {
+            // v3.77.1 (Tema-1 Residual-1): fallback PROMINENT uyarı — kullanıcı "bu istediğim rapor DEĞİL"i
+            // net görsün. Eski hali yalnız stats satırında subtle "⚠️ fallback SQL" idi → kaçırılıyor,
+            // degrade SELECT* gerçek cevap sanılıyordu. Sebep (rationale/DIAGNOSTIC) ile birlikte tepede.
+            if (fallback) {
+                const fb = document.createElement('div');
+                fb.className = 'dsw-result-fallback-banner';
+                fb.setAttribute('role', 'alert');
+                const strong = document.createElement('strong');
+                strong.textContent = '⚠ İstediğin rapor tam üretilemedi. ';
+                fb.appendChild(strong);
+                fb.appendChild(document.createTextNode(
+                    'Basit/fallback sonuç gösteriliyor'
+                    + (data.rationale ? ' — Sebep: ' + String(data.rationale) : '') + '.'
+                ));
+                body.appendChild(fb);
+            }
             // Stats line
             const stats = document.createElement('div');
             stats.className = 'dsw-result-stats';

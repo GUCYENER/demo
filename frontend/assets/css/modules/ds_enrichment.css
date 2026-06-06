@@ -250,6 +250,22 @@
     color: #ef4444;
 }
 
+/* v3.77.1 (Tema-1 Residual-3): kolon-kapsama rozeti — kısmi/başarısız enrichment (Yeniden Öğren sinyali) */
+.ds-cov-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    margin-left: 0.4rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 6px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+.ds-cov-badge-partial { background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.35); }
+.ds-cov-badge-fail    { background: rgba(239, 68, 68, 0.15);  color: #ef4444; border: 1px solid rgba(239,68,68,0.4); }
+
 /* ============================================
    Category Badge
    ============================================ */

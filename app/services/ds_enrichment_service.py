@@ -134,6 +134,21 @@ def enrich_table(vyra_conn, source_id: int, company_id: int,
         except Exception:
             pass
 
+    # v3.77.1 (Tema-1 Residual-3): kolon-kapsama PERSIST → UI'de "kısmi/başarısız enrichment" rozeti
+    # (Yeniden Öğren sinyali). AYRI bağlantı → enrich transaction'ını riske atmaz; kolon yoksa (mig 056
+    # uygulanmamış) sessiz geç.
+    try:
+        from app.core.db import get_db_context
+        with get_db_context() as _cconn:
+            _ccur = _cconn.cursor()
+            _ccur.execute(
+                "UPDATE ds_table_enrichments SET columns_enriched = %s, columns_total = %s WHERE id = %s",
+                (columns_enriched, len(columns) if columns else 0, enrichment_id),
+            )
+            _cconn.commit()
+    except Exception:
+        logger.warning("[DSEnrich] columns_enriched persist atlandı (mig 056 gerekli?)")
+
     logger.info("[DSEnrich] Tablo enrich edildi: %s.%s → '%s' (skor: %.2f, kolon: %d/%d, admin: %s)",
                 schema, table, llm_result.get("business_name_tr", "?"),
                 enrichment_score, columns_enriched, len(columns) if columns else 0, admin_required)
@@ -1066,6 +1081,29 @@ def get_all_tables_status(vyra_conn, source_id: int) -> list:
         d["is_approved"] = bool(d.get("admin_approved"))
         d["has_sample"] = bool(d.get("has_sample"))  # v3.69.0 Katman-2: örnek var mı (UI rozeti)
         results.append(d)
+
+    # v3.77.1 (Tema-1 Residual-3): kolon-kapsama (columns_enriched/total) — ana sorguya DOKUNMADAN ayrı
+    # merge (mig 056 yoksa try/except sessiz geç → enrichment listesi KIRILMAZ). enrichment_id → coverage.
+    try:
+        cur.execute("SELECT id, COALESCE(columns_enriched, 0) AS ce, COALESCE(columns_total, 0) AS ct "
+                    "FROM ds_table_enrichments WHERE source_id = %s", (source_id,))
+        _cov = {}
+        for r in cur.fetchall() or []:
+            _eid = r["id"] if hasattr(r, "keys") else r[0]
+            _cov[_eid] = ((r["ce"] if hasattr(r, "keys") else r[1]), (r["ct"] if hasattr(r, "keys") else r[2]))
+        for d in results:
+            c = _cov.get(d.get("enrichment_id"))
+            if c:
+                d["columns_enriched"], d["columns_total"] = c[0], c[1]
+    except Exception:
+        # code-review fix: mig 056 yok → UndefinedColumn PG transaction'ı ABORT eder. SHARED cursor'ı
+        # temizle ki sonraki caller "current transaction is aborted" almasın. get_all_tables_status
+        # read-only (yalnız SELECT) → rollback kayıpsız.
+        try:
+            vyra_conn.rollback()
+        except Exception:
+            pass
+
     return results
 
 def get_pending_approvals(vyra_conn, source_id: int = None,
