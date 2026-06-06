@@ -707,3 +707,12 @@ MSSQL/MySQL metodları yalnız iç sample-CTE'de (LIMIT/ROWNUM/TOP/LIMIT) farkl�
 SELECT'i 4 yerde elle düzenlemek zorunda kaldı → bir sonraki coverage-SQL/NULL-handling değişikliği yine 4×,
 bir kopya atlanırsa O dialect'te FK confidence sessiz sapar. Fix: base-class `_coverage_query(cte_sql, ts, tt, tc)`
 ortak tail'i üretsin; her dialect yalnız CTE fragment'ini versin (RB-v3.76.0 FuzzyPolicy + dialect-refactor ile aynı sprint).
+
+**10) (P2 — güvenlik, gstack /gstack-review adversarial v3.77.2) `_safe_identifier` denylist → defense-in-depth zayıf
+(ds_learning_service.py:~19).** `re.sub(r'[^\w\s.]','',name)` boşluk/nokta/`\s`/Unicode-harf KORUR; `collect_samples`
+SELECT* yolunun tek sanitizer'ı + çıktısı `"{c}"`/`[{c}]`/`` `{c}` `` ile interpolate ediliyor. **Bugün exploit
+edilemez** — etraftaki quote/bracket/backtick tüm breakout karakterini siler (`"`,`]`,`` ` ``,NUL doğrulandı). AMA
+güvenlik quoting'den geliyor, sanitizer'dan DEĞİL: bir gün herhangi bir dialect yolu çıktıyı TIRNAKSIZ interpolate
+ederse anında injectable (`x OR 1=1`, `tbl.secret` geçer). Fix: FK-yolundaki strict allowlist `is_safe_identifier`
+(`^[A-Za-z_][A-Za-z0-9_$]{0,127}$`) ile değiştir — uymayan adı skip/quote-reject et. İlgili: item-7 (aynı fonksiyon,
+bozuk-SELECT açısı; v3.77.2 SELECT*-fallback o semptomu kurtarıyor ama kök sanitizer zaafı sürüyor).
