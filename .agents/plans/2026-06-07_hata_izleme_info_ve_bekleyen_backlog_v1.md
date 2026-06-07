@@ -47,9 +47,9 @@ mevcut ERROR/CRITICAL/WARNING sayımıyla aynı tarama; ölçekte yavaşlarsa pr
 
 | # | İş | Kaynak plan | Tür | Efor | Durum |
 |---|---|---|---|---|---|
-| **G8** | FK provenance UI rozetleri (`fk_inference_observability.js`: 🔒declared / 🟢unique-index / 🟡çıkarım + confidence renk + join-picker "çıkarım" işareti) | fk_inference_robustness | frontend | S-M | ⏳ tek gerçek FK-bekleyeni |
+| **G8** | FK provenance UI rozetleri (`fk_inference_observability.js`: 🔒declared / 🟢unique-index / 🟡çıkarım + confidence renk + join-picker "çıkarım" işareti) | fk_inference_robustness | frontend | S-M | 🟡 KISMEN (2026-06-07 doğrulandı): declared/inferred **sayım + ort. güven** VAR (`dc58725`); KALAN: per-FK **3-tier rozet** (🔒/🟢unique-index/🟡 — unique-index tier yok) + **join-picker "çıkarım" işareti** |
 | **1.3** | Failure-lineage'i SON-KULLANICIYA göster ("sorun şu yüzden cevaplanamadı") + db_smart wizard outcome kaydı (agentic dışı yol) | smart_discovery (Tema-1 residual) | full-stack | S-M | ⏳ backend büyük oranda var (learned_query_failures/pipeline_traces), dar boşluk hedefli doğrulanmalı |
-| **1.4** | Kısmi-kayıp UI rozeti (enrichment `columns_enriched==0` + FK-eksik "Yeniden Öğren") | smart_discovery (Tema-1 residual) | frontend | S | ⏳ v3.77.1'de kısmen (kapsama rozeti) — varlığı doğrulanmalı |
+| **1.4** | Kısmi-kayıp UI rozeti (enrichment `columns_enriched==0` + FK-eksik "Yeniden Öğren") | smart_discovery (Tema-1 residual) | frontend | S | 🟡 KISMEN (2026-06-07 doğrulandı): enrichment **kapsama rozeti VAR** (`ds_enrichment_module.js`, `columns_enriched`, v3.77.1); KALAN: FK-eksik "Yeniden Öğren" tetikleyici |
 | **EL-G3..G6** | Error-log: ~110 non-cleanup `except: pass` batched triyaj + ~141 cleanup'a `# noqa: S110 — intentional` + ruff S110/S112 ratchet + doğrulama | error_logging_hardening | backend temizlik | M | ⏳ düşük-aciliyet (audit: "kriz değil, nokta-atışı") |
 | **TEMA 2** | Cevap doğruluğu: 2.1 deterministik join-path skorlama (cardinality/selectivity ile top-N FK), 2.3 belirsiz-soru clarify akışı (N aday SQL) | smart_discovery (Tema-2) | büyük | M+ | ⏳ ayrı /plan-eng-review + council; Tema-1 ölçüm aracı kurulduktan sonra veri-dayalı |
 
@@ -65,7 +65,7 @@ mevcut ERROR/CRITICAL/WARNING sayımıyla aynı tarama; ölçekte yavaşlarsa pr
 - [x] Backend compile + ruff 0
 - [x] Code-review (1 finder + enum-completeness): SQL-safety CLEAN, XSS CLEAN, filter↔stats↔list↔export ALIGNED, default ERROR+CRITICAL korundu. Kozmetik docstring INFO eklendi. Perf-not aşağıda.
 - [x] (bookkeeping) fk_inference_robustness planında G9 ✅ işaretlendi
-- [ ] Görsel teyit (canlı) + commit
+- [x] Görsel teyit (canlı — img_150430'da "360 INFO" rozeti + "Yalnız INFO" filtresi çalışıyor) + commit (`0f855cf`)
 
 ### Perf notu (code-review bulgusu, blokör değil)
 INFO en yüksek-hacim seviye (her API isteği bir INFO satırı, `main.py` log_requests) ve `system_logs` **retention'sız**
