@@ -265,6 +265,8 @@
 }
 .ds-cov-badge-partial { background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.35); }
 .ds-cov-badge-fail    { background: rgba(239, 68, 68, 0.15);  color: #ef4444; border: 1px solid rgba(239,68,68,0.4); }
+/* v3.78.2 (backlog 1.4): çözülemeyen-FK rozeti — kapsama (amber/kırmızı) ile karışmasın → mor-mavi */
+.ds-fk-badge { background: rgba(139, 92, 246, 0.15); color: #a78bfa; border: 1px solid rgba(139,92,246,0.4); }
 
 /* ============================================
    Category Badge

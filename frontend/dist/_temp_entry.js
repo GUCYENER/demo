@@ -31328,6 +31328,12 @@ const DSEnrichmentModule = (() => {
                 const covBadge = (item.enrichment_id && _ct > 0 && _ce < _ct)
                     ? ` <span class="ds-cov-badge ${_ce === 0 ? 'ds-cov-badge-fail' : 'ds-cov-badge-partial'}" data-tt-portal data-tt="Kolon etiketleme eksik — 'Yeniden Öğren' gerekebilir"><i class="fa-solid fa-triangle-exclamation"></i> ${_ce === 0 ? 'etiketlenemedi' : (_ce + '/' + _ct + ' kolon')}</span>`
                     : '';
+                // v3.78.2 (backlog 1.4): per-tablo çözülemeyen-FK rozeti (ds_fk_diagnostics → fk_missing).
+                // Aksiyon: satırdaki MEVCUT "Yeniden Öğren" butonu (FK çıkarımını da yeniden koşar).
+                const _fkm = Number(item.fk_missing || 0);
+                const fkBadge = (_fkm > 0)
+                    ? ` <span class="ds-cov-badge ds-fk-badge" data-tt-portal data-tt="${_fkm} ilişki (FK) çözülemedi — satırdaki 'Yeniden Öğren' ile tekrar keşfet"><i class="fa-solid fa-link-slash"></i> ${_fkm} FK eksik</span>`
+                    : '';
 
                 rows += `
                     <tr data-id="${item.id}" class="ds-enrich-data-row" style="${rowOpacity}${rowHighlight}">
@@ -31338,7 +31344,7 @@ const DSEnrichmentModule = (() => {
                             ${_escapeHtml(schemaName)}
                         </td>
                         <td class="ds-table-name-cell" data-tt-portal data-tt="${_escapeHtml(tableName)}">
-                            <strong>${_escapeHtml(tableName)}</strong>${covBadge}
+                            <strong>${_escapeHtml(tableName)}</strong>${covBadge}${fkBadge}
                         </td>
                         <td>
                             ${item.business_name_tr ? _escapeHtml(item.business_name_tr) : '<em class="ds-enrich-no-label">—</em>'}
@@ -34879,6 +34885,30 @@ window.ThemePickerPopup = (function () {
         return (Number(c) * 100).toFixed(0) + '%';
     }
 
+    // v3.78.2 (backlog G8a): güven seviyesi rengi (düşük/orta/yüksek) — confidence kolonu.
+    function _confClass(c) {
+        if (c == null) return '';
+        const n = Number(c);
+        return n >= 0.85 ? 'fki-conf-high' : (n >= 0.65 ? 'fki-conf-med' : 'fki-conf-low');
+    }
+
+    // v3.78.2 (backlog G8a): FK provenance rozeti — evidence_json.to_pk_source
+    // (declared 🔒 / unique_index 🟢 / inferred 🟡). evidence dict ya da JSON-string olabilir.
+    function _provenanceBadge(ev) {
+        let src = null;
+        try {
+            const e = (typeof ev === 'string') ? JSON.parse(ev) : ev;
+            src = e && e.to_pk_source;
+        } catch (_e) { /* defansif — bozuk evidence → 'inferred' varsayılır */ }
+        const M = {
+            declared:     { i: '🔒', t: 'Declared',     c: 'fki-prov-declared' },
+            unique_index: { i: '🟢', t: 'Unique-Index', c: 'fki-prov-unique' },
+            inferred:     { i: '🟡', t: 'Çıkarım',      c: 'fki-prov-inferred' },
+        };
+        const p = M[src] || M.inferred;
+        return `<span class="fki-prov-badge ${p.c}" title="Hedef PK kaynağı: ${p.t}">${p.i} ${p.t}</span>`;
+    }
+
     function _toast(msg, kind = 'info') {
         if (global.showToast) global.showToast(msg, kind);
         else console.log(`[fki:${kind}]`, msg);
@@ -34906,16 +34936,21 @@ window.ThemePickerPopup = (function () {
         }
     }
 
-    function _renderStatsCards(stats) {
+    function _renderStatsCards(resp) {
         const host = document.getElementById('aoFkiStatsCards');
         if (!host) return;
-        const total = stats.total_relationships || 0;
-        const declared = stats.declared_count || 0;
-        const inferred = stats.inferred_count || 0;
-        const verified = stats.verified_count || 0;
-        const pending = stats.pending_count || 0;
-        const rejected = stats.rejected_count || 0;
-        const avgConf = stats.avg_inferred_confidence;
+        // v3.78.2 (backlog G8a, bug fix): endpoint {success, source_id, stats:{declared,pending,
+        // verified,rejected,avg_inferred_confidence}} döndürüyor; eski kod resp.declared_count
+        // (üst-seviye, yanlış ad) okuyordu → TÜM kartlar 0/"—" görünüyordu. Nested stats'ı oku +
+        // total/inferred'i mevcut alanlardan türet (flat shape gelirse fallback ile geriye-uyumlu).
+        const s = (resp && resp.stats && typeof resp.stats === 'object') ? resp.stats : (resp || {});
+        const declared = Number(s.declared != null ? s.declared : (s.declared_count || 0));
+        const pending = Number(s.pending != null ? s.pending : (s.pending_count || 0));
+        const verified = Number(s.verified != null ? s.verified : (s.verified_count || 0));
+        const rejected = Number(s.rejected != null ? s.rejected : (s.rejected_count || 0));
+        const inferred = pending + verified + rejected;
+        const total = (s.total_relationships != null) ? Number(s.total_relationships) : (declared + inferred);
+        const avgConf = s.avg_inferred_confidence;
 
         host.innerHTML = `
             <div class="fki-stat-card">
@@ -34976,8 +35011,9 @@ window.ThemePickerPopup = (function () {
                 <td class="swt-mono">${_escape(f.col)}</td>
                 <td>${_escape(t.table)}</td>
                 <td class="swt-mono">${_escape(t.col)}</td>
-                <td class="swt-mono">${_formatConfidence(conf)}</td>
+                <td class="swt-mono ${_confClass(conf)}">${_formatConfidence(conf)}</td>
                 <td class="swt-mono">${_escape(r.method || r.inference_method || '—')}</td>
+                <td>${_provenanceBadge(r.evidence)}</td>
                 <td class="ao-fki-row-actions">
                     <button type="button" class="btn btn-xs ao-fki-verify" data-id="${_escape(r.id)}"
                             data-tooltip="Onayla — RAG'de kullanılsın" aria-label="Onayla"><i class="fa-solid fa-check"></i></button>
@@ -36844,6 +36880,11 @@ window.ThemePickerPopup = (function () {
         _state.fkById.forEach((n, tid) => {
             const checked = _state.joins.has(tid);
             const junc = n.is_junction ? ' · <em>junction</em>' : '';
+            // v3.78.2 (backlog G8b): çıkarım (tahmini FK) join'ini işaretle → kullanıcı bu join'in
+            // doğrulanmamış olduğunu görür (declared/unique-index güvenilir → işaret yok).
+            const prov = (n.provenance === 'inferred')
+                ? ' · <span class="dsw-fk-inferred" title="Çıkarım (tahmini, doğrulanmamış FK) — join beklenmedik sonuç verebilir">🟡 çıkarım</span>'
+                : '';
             const tech = (n.schema ? n.schema + '.' : '') + n.name;
             parts.push(
                 '<label class="dsw-picker-fk-row' + (checked ? ' is-checked' : '') + '" data-fk-id="' + _escape(tid) + '">' +
@@ -36851,7 +36892,7 @@ window.ThemePickerPopup = (function () {
                     (checked ? ' checked' : '') + ' aria-label="' + _escape(n.label) + ' join adayı" />' +
                   '<span class="dsw-picker-row-main">' +
                     '<span class="dsw-picker-row-title">' + _escape(n.label) + '</span>' +
-                    '<span class="dsw-picker-row-meta">' + _escape(tech) + junc + '</span>' +
+                    '<span class="dsw-picker-row-meta">' + _escape(tech) + junc + prov + '</span>' +
                   '</span>' +
                 '</label>'
             );
@@ -36957,6 +36998,7 @@ window.ThemePickerPopup = (function () {
                     name: n.table,
                     label: n.business_name_tr || n.table,
                     is_junction: !!n.is_junction,
+                    provenance: n.provenance || null,  // v3.78.2 (G8b): declared/unique_index/inferred
                 });
             });
             if (_state.primaryId === primaryId) _state.fkById = map;
@@ -38153,6 +38195,11 @@ window.ThemePickerPopup = (function () {
                 _state.suggestions = [];
                 _state._suggestionCounter = 0;
                 _state.userNote = '';
+                // v3.78.0 (review): NL-beklenti İKİ kutuda aynı alan (Step-3 userNote +
+                // Step-4 footer user_intent — Bug A). userNote temizlenip user_intent
+                // bırakılırsa, geri-nav sonrası BOŞ Step-3 kutusuyla SQL Önizle'de bayat
+                // "Talebiniz" + nihai-SQL görünürdü → ikisini SİMETRİK temizle.
+                _state.user_intent = '';
             }
         }
         // P20-D: leaving Step 4 (AST editor host) → unmount + abort in-flight fetches.
@@ -39188,6 +39235,14 @@ window.ThemePickerPopup = (function () {
               '<label for="dswUserNote">Bu rapordan ne bekliyorsunuz?</label>' +
               '<textarea id="dswUserNote" rows="3" ' +
                 'placeholder="Örn: son 3 ayın ay bazlı ürün satış artışını göster"></textarea>' +
+              // v3.78.0: Step-4'e gitmeden seçim+talep SQL'ini önizle (Step-4 footer
+              // "📄 SQL" ile aynı modalı reuse eder; baseSql burada üretilir).
+              '<div class="dsw-user-note-actions">' +
+                '<button type="button" id="dswPreviewSqlBtn" class="dsw-llm-btn dsw-llm-btn-sql" ' +
+                  'aria-label="Seçim ve talebinizden oluşacak SQL\'i önizle" ' +
+                  'data-tooltip="Seçiminizden + yorumunuzdan oluşacak SQL\'i çalıştırmadan görün">' +
+                  '📄 SQL Önizle</button>' +
+              '</div>' +
             '</div>';
 
         panel.innerHTML = intro + slotsHtml +
@@ -39216,6 +39271,9 @@ window.ThemePickerPopup = (function () {
                 _state.userNote = (e.target && e.target.value) || '';
             });
         }
+        // v3.78.0: Step-3 "📄 SQL Önizle" → baseSql üret + mevcut SQL modalını aç.
+        const previewSqlBtn = document.getElementById('dswPreviewSqlBtn');
+        if (previewSqlBtn) previewSqlBtn.addEventListener('click', _onStep3PreviewSqlClick);
 
         _renderSuggestionSlots();
         _renderReportColumns();
@@ -39952,11 +40010,7 @@ window.ThemePickerPopup = (function () {
         // P4 fix: actual object_name + schema from _selectTable, not display label.
         const wizardState = _buildWizardState();
         try {
-            const url = API_BASE + '/sessions/' + _state.sessionUid + '/preview';
-            const data = await _fetchJson(url, {
-                method: 'POST',
-                body: JSON.stringify({ wizard_state: wizardState }),
-            });
+            const data = await _postPreviewSql(wizardState);
             const sql = data.sql || '';
             // v3.36.0 F10 — save flow için son üretilen SQL'i state'e tut
             _state.lastGeneratedSql = sql || null;
@@ -40409,23 +40463,21 @@ window.ThemePickerPopup = (function () {
                 body.appendChild(rat);
             }
         } else {
-            // Error state
+            // Error state — v3.78.2 (backlog 1.3): hard-fail SEBEBİNİ öne çıkar. Eskiden
+            // "Rapor üretilemedi" görünüp gerçek neden (`data.error`/`rationale`) yalnız
+            // KAPALI "Teknik detay" <details>'inde gizliydi → kullanıcı NEDEN cevaplanmadığını
+            // görmüyordu (Bug B sınıfı sessiz-fail algısı). Backend her hata yolunda sebep
+            // döndürüyor (yetki yok / ilişki kurulamadı / sorgu başarısız …) → role=alert ile
+            // mevcut kırmızı kutuda inline göster. Başarı/fallback dalları DEĞİŞMEDİ.
+            const _reason = (errorMsg && String(errorMsg).trim())
+                || (data && data.rationale && String(data.rationale).trim()) || '';
             const err = document.createElement('div');
             err.className = 'dsw-result-error';
-            err.textContent = 'Rapor üretilemedi. ' +
-                (errorMsg ? '' : 'Lütfen yorum alanını sadeleştirip tekrar deneyin.');
+            err.setAttribute('role', 'alert');
+            err.textContent = _reason
+                ? ('⚠ Rapor üretilemedi — Sebep: ' + _reason)
+                : '⚠ Rapor üretilemedi. Lütfen yorum alanını sadeleştirip tekrar deneyin.';
             body.appendChild(err);
-            if (errorMsg) {
-                const det = document.createElement('details');
-                det.className = 'dsw-result-error-detail';
-                const sum = document.createElement('summary');
-                sum.textContent = 'Teknik detay';
-                const pre = document.createElement('pre');
-                pre.textContent = String(errorMsg);
-                det.appendChild(sum);
-                det.appendChild(pre);
-                body.appendChild(det);
-            }
         }
 
         // Footer actions
@@ -42154,6 +42206,60 @@ window.ThemePickerPopup = (function () {
             return sql;
         }
         throw new Error((data && data.error) || 'LLM nihai SQL üretemedi');
+    }
+
+    // v3.78.0 (code-review F2): /sessions/{uid}/preview POST'u tek yerde topla —
+    // _loadPreview (Step-4) + _refreshBaseSqlForPreview (Step-3) ortak kullanır →
+    // istek şekli değişirse tek noktadan güncellenir (drift yok). Tam `data` döner
+    // (caller'lar sql/explain/dialect'i kendi alır).
+    async function _postPreviewSql(wizardState) {
+        const url = API_BASE + '/sessions/' + _state.sessionUid + '/preview';
+        return await _fetchJson(url, {
+            method: 'POST', body: JSON.stringify({ wizard_state: wizardState }),
+        });
+    }
+
+    // v3.78.0: Step-3 Filtre "📄 SQL Önizle" — Step-4'e gitmeden seçim+talep SQL'ini
+    // göster. baseSql Step-4 _loadPreview'da set ediliyor; Step-3'te yok → burada
+    // /preview (deterministik assemble, LLM değil) ile TAZE üret (seçim değişmiş
+    // olabilir), sonra mevcut _onShowSqlClick modalını reuse et. Yalnız baseSql'i
+    // yazar (lastGeneratedSql'e DOKUNMAZ → save akışı etkilenmez).
+    async function _refreshBaseSqlForPreview() {
+        if (!_state.sessionUid || !_state.selectedTableId) return null;
+        const data = await _postPreviewSql(_buildWizardState());
+        const sql = (data && data.sql) || '';
+        // code-review F1: assembly başarısızsa backend yorum-SQL döndürür
+        // ('-- assembly failed: …') — bunu önizleme SANMA → null (bayat baseSql'e
+        // DÜŞME; handler uyarı verir). Gerçek sorgu (SELECT … / boş-seçim SELECT *) geçer.
+        if (!sql || /^\s*--/.test(sql)) return null;
+        _state.baseSql = sql;
+        return sql;
+    }
+
+    async function _onStep3PreviewSqlClick() {
+        const btn = document.getElementById('dswPreviewSqlBtn');
+        // review: en az bir kolon gerekli — Step3→4 nav gate ile tutarlı. Boş-seçimde
+        // backend `SELECT *` üretiyor; önizlemeyi de gate'le → net yönlendirme + aşağıdaki
+        // uyarı mesajı artık doğru (seçim hep ≥1 kolon olunca generic değil).
+        if (!Array.isArray(_state.reportColumns) || _state.reportColumns.length === 0) {
+            _notify('Önce raporda görünecek en az bir kolon seçin.', 'warning');
+            return;
+        }
+        // review: hand-rolled busy yerine ortak _llmSetBusy → disabled + aria-busy
+        // (sibling LLM butonlarıyla tutarlı, a11y + .dsw-llm-btn[aria-busy] stili).
+        _llmSetBusy(btn, true, '⏳ SQL…');
+        try {
+            const base = await _refreshBaseSqlForPreview();
+            if (!base) {
+                _notify('Seçim SQL\'i üretilemedi — seçiminizi kontrol edin veya tekrar deneyin.', 'warning');
+                return;
+            }
+            _onShowSqlClick();  // not VARSA üst=baseSql + alt=finalSql; YOKSA yalnız baseSql
+        } catch (e) {
+            _notify('SQL önizleme oluşturulamadı: ' + ((e && e.message) || 'hata'), 'error');
+        } finally {
+            _llmSetBusy(btn, false);
+        }
     }
 
     // v3.40.1: "📄 SQL" modalı — ÜST: seçimlerden oluşan SQL (deterministik),

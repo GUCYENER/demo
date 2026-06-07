@@ -1115,6 +1115,30 @@ def get_all_tables_status(vyra_conn, source_id: int) -> list:
         except Exception:
             pass
 
+    # v3.78.2 (backlog 1.4): per-tablo çözülemeyen-FK sayısı — coverage gibi AYRI merge,
+    # ana sorguya DOKUNMADAN (ds_fk_diagnostics/mig055 yoksa try/except+rollback sessiz geç →
+    # liste KIRILMAZ). Kullanıcı "FK eksik" rozetini görüp mevcut "Yeniden Öğren"i tetikler.
+    try:
+        cur.execute(
+            "SELECT COALESCE(from_schema, '') AS fs, from_table AS ft, COUNT(*) AS cnt "
+            "FROM ds_fk_diagnostics WHERE source_id = %s AND is_fixed = FALSE "
+            "GROUP BY from_schema, from_table",
+            (source_id,),
+        )
+        _fkm = {}
+        for r in cur.fetchall() or []:
+            _fs = r["fs"] if hasattr(r, "keys") else r[0]
+            _ft = r["ft"] if hasattr(r, "keys") else r[1]
+            _cnt = r["cnt"] if hasattr(r, "keys") else r[2]
+            _fkm[(_fs or "", _ft)] = _cnt
+        for d in results:
+            d["fk_missing"] = _fkm.get(((d.get("schema_name") or ""), d.get("table_name")), 0)
+    except Exception:
+        try:
+            vyra_conn.rollback()
+        except Exception:
+            pass
+
     return results
 
 def get_pending_approvals(vyra_conn, source_id: int = None,

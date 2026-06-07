@@ -227,6 +227,11 @@
                 _state.suggestions = [];
                 _state._suggestionCounter = 0;
                 _state.userNote = '';
+                // v3.78.0 (review): NL-beklenti İKİ kutuda aynı alan (Step-3 userNote +
+                // Step-4 footer user_intent — Bug A). userNote temizlenip user_intent
+                // bırakılırsa, geri-nav sonrası BOŞ Step-3 kutusuyla SQL Önizle'de bayat
+                // "Talebiniz" + nihai-SQL görünürdü → ikisini SİMETRİK temizle.
+                _state.user_intent = '';
             }
         }
         // P20-D: leaving Step 4 (AST editor host) → unmount + abort in-flight fetches.
@@ -1262,6 +1267,14 @@
               '<label for="dswUserNote">Bu rapordan ne bekliyorsunuz?</label>' +
               '<textarea id="dswUserNote" rows="3" ' +
                 'placeholder="Örn: son 3 ayın ay bazlı ürün satış artışını göster"></textarea>' +
+              // v3.78.0: Step-4'e gitmeden seçim+talep SQL'ini önizle (Step-4 footer
+              // "📄 SQL" ile aynı modalı reuse eder; baseSql burada üretilir).
+              '<div class="dsw-user-note-actions">' +
+                '<button type="button" id="dswPreviewSqlBtn" class="dsw-llm-btn dsw-llm-btn-sql" ' +
+                  'aria-label="Seçim ve talebinizden oluşacak SQL\'i önizle" ' +
+                  'data-tooltip="Seçiminizden + yorumunuzdan oluşacak SQL\'i çalıştırmadan görün">' +
+                  '📄 SQL Önizle</button>' +
+              '</div>' +
             '</div>';
 
         panel.innerHTML = intro + slotsHtml +
@@ -1290,6 +1303,9 @@
                 _state.userNote = (e.target && e.target.value) || '';
             });
         }
+        // v3.78.0: Step-3 "📄 SQL Önizle" → baseSql üret + mevcut SQL modalını aç.
+        const previewSqlBtn = document.getElementById('dswPreviewSqlBtn');
+        if (previewSqlBtn) previewSqlBtn.addEventListener('click', _onStep3PreviewSqlClick);
 
         _renderSuggestionSlots();
         _renderReportColumns();
@@ -2026,11 +2042,7 @@
         // P4 fix: actual object_name + schema from _selectTable, not display label.
         const wizardState = _buildWizardState();
         try {
-            const url = API_BASE + '/sessions/' + _state.sessionUid + '/preview';
-            const data = await _fetchJson(url, {
-                method: 'POST',
-                body: JSON.stringify({ wizard_state: wizardState }),
-            });
+            const data = await _postPreviewSql(wizardState);
             const sql = data.sql || '';
             // v3.36.0 F10 — save flow için son üretilen SQL'i state'e tut
             _state.lastGeneratedSql = sql || null;
@@ -2483,23 +2495,21 @@
                 body.appendChild(rat);
             }
         } else {
-            // Error state
+            // Error state — v3.78.2 (backlog 1.3): hard-fail SEBEBİNİ öne çıkar. Eskiden
+            // "Rapor üretilemedi" görünüp gerçek neden (`data.error`/`rationale`) yalnız
+            // KAPALI "Teknik detay" <details>'inde gizliydi → kullanıcı NEDEN cevaplanmadığını
+            // görmüyordu (Bug B sınıfı sessiz-fail algısı). Backend her hata yolunda sebep
+            // döndürüyor (yetki yok / ilişki kurulamadı / sorgu başarısız …) → role=alert ile
+            // mevcut kırmızı kutuda inline göster. Başarı/fallback dalları DEĞİŞMEDİ.
+            const _reason = (errorMsg && String(errorMsg).trim())
+                || (data && data.rationale && String(data.rationale).trim()) || '';
             const err = document.createElement('div');
             err.className = 'dsw-result-error';
-            err.textContent = 'Rapor üretilemedi. ' +
-                (errorMsg ? '' : 'Lütfen yorum alanını sadeleştirip tekrar deneyin.');
+            err.setAttribute('role', 'alert');
+            err.textContent = _reason
+                ? ('⚠ Rapor üretilemedi — Sebep: ' + _reason)
+                : '⚠ Rapor üretilemedi. Lütfen yorum alanını sadeleştirip tekrar deneyin.';
             body.appendChild(err);
-            if (errorMsg) {
-                const det = document.createElement('details');
-                det.className = 'dsw-result-error-detail';
-                const sum = document.createElement('summary');
-                sum.textContent = 'Teknik detay';
-                const pre = document.createElement('pre');
-                pre.textContent = String(errorMsg);
-                det.appendChild(sum);
-                det.appendChild(pre);
-                body.appendChild(det);
-            }
         }
 
         // Footer actions
@@ -4228,6 +4238,60 @@
             return sql;
         }
         throw new Error((data && data.error) || 'LLM nihai SQL üretemedi');
+    }
+
+    // v3.78.0 (code-review F2): /sessions/{uid}/preview POST'u tek yerde topla —
+    // _loadPreview (Step-4) + _refreshBaseSqlForPreview (Step-3) ortak kullanır →
+    // istek şekli değişirse tek noktadan güncellenir (drift yok). Tam `data` döner
+    // (caller'lar sql/explain/dialect'i kendi alır).
+    async function _postPreviewSql(wizardState) {
+        const url = API_BASE + '/sessions/' + _state.sessionUid + '/preview';
+        return await _fetchJson(url, {
+            method: 'POST', body: JSON.stringify({ wizard_state: wizardState }),
+        });
+    }
+
+    // v3.78.0: Step-3 Filtre "📄 SQL Önizle" — Step-4'e gitmeden seçim+talep SQL'ini
+    // göster. baseSql Step-4 _loadPreview'da set ediliyor; Step-3'te yok → burada
+    // /preview (deterministik assemble, LLM değil) ile TAZE üret (seçim değişmiş
+    // olabilir), sonra mevcut _onShowSqlClick modalını reuse et. Yalnız baseSql'i
+    // yazar (lastGeneratedSql'e DOKUNMAZ → save akışı etkilenmez).
+    async function _refreshBaseSqlForPreview() {
+        if (!_state.sessionUid || !_state.selectedTableId) return null;
+        const data = await _postPreviewSql(_buildWizardState());
+        const sql = (data && data.sql) || '';
+        // code-review F1: assembly başarısızsa backend yorum-SQL döndürür
+        // ('-- assembly failed: …') — bunu önizleme SANMA → null (bayat baseSql'e
+        // DÜŞME; handler uyarı verir). Gerçek sorgu (SELECT … / boş-seçim SELECT *) geçer.
+        if (!sql || /^\s*--/.test(sql)) return null;
+        _state.baseSql = sql;
+        return sql;
+    }
+
+    async function _onStep3PreviewSqlClick() {
+        const btn = document.getElementById('dswPreviewSqlBtn');
+        // review: en az bir kolon gerekli — Step3→4 nav gate ile tutarlı. Boş-seçimde
+        // backend `SELECT *` üretiyor; önizlemeyi de gate'le → net yönlendirme + aşağıdaki
+        // uyarı mesajı artık doğru (seçim hep ≥1 kolon olunca generic değil).
+        if (!Array.isArray(_state.reportColumns) || _state.reportColumns.length === 0) {
+            _notify('Önce raporda görünecek en az bir kolon seçin.', 'warning');
+            return;
+        }
+        // review: hand-rolled busy yerine ortak _llmSetBusy → disabled + aria-busy
+        // (sibling LLM butonlarıyla tutarlı, a11y + .dsw-llm-btn[aria-busy] stili).
+        _llmSetBusy(btn, true, '⏳ SQL…');
+        try {
+            const base = await _refreshBaseSqlForPreview();
+            if (!base) {
+                _notify('Seçim SQL\'i üretilemedi — seçiminizi kontrol edin veya tekrar deneyin.', 'warning');
+                return;
+            }
+            _onShowSqlClick();  // not VARSA üst=baseSql + alt=finalSql; YOKSA yalnız baseSql
+        } catch (e) {
+            _notify('SQL önizleme oluşturulamadı: ' + ((e && e.message) || 'hata'), 'error');
+        } finally {
+            _llmSetBusy(btn, false);
+        }
     }
 
     // v3.40.1: "📄 SQL" modalı — ÜST: seçimlerden oluşan SQL (deterministik),

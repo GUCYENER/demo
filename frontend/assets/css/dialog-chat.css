@@ -3418,6 +3418,10 @@
     overflow-y: auto;
     padding: 18px;
     flex: 1;
+    /* v3.78.1: flexbox-scroll fix — flex:1 + overflow:auto, min-height:0 OLMADAN
+       içeriğe büyür (max-height:80vh box'ta dikey scroll tetiklenmez, SQL kesik
+       kalırdı). min-height:0 → uzun SQL'de body dikey scroll eder (kullanıcı bulgusu). */
+    min-height: 0;
 }
 .vyra-sql-modal-code {
     font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
@@ -3428,8 +3432,10 @@
     border-radius: 8px;
     padding: 16px;
     margin: 0;
-    white-space: pre-wrap;
-    word-break: break-word;
+    /* v3.78.1: pre (pre-wrap DEĞİL) → formatter'ın satır-satır kolonları HİZALI görünür,
+       soft-wrap reflow yok; uzun satırlar overflow-x ile yatay scroll (hizayı bozmaz). */
+    white-space: pre;
+    overflow-x: auto;
     line-height: 1.6;
 }
 @keyframes fadeIn {

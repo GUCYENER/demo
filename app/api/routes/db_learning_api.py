@@ -1019,7 +1019,8 @@ def fk_inference_stats(
                     COUNT(*) FILTER (WHERE is_inferred = TRUE AND rejected_at IS NOT NULL)    AS rejected,
                     COUNT(*) FILTER (WHERE inference_method = 'naming')                       AS m_naming,
                     COUNT(*) FILTER (WHERE inference_method = 'naming+type')                  AS m_naming_type,
-                    COUNT(*) FILTER (WHERE inference_method = 'naming+type+sample')           AS m_naming_type_sample
+                    COUNT(*) FILTER (WHERE inference_method = 'naming+type+sample')           AS m_naming_type_sample,
+                    AVG(confidence_score) FILTER (WHERE is_inferred = TRUE)                   AS avg_inf_conf
                   FROM ds_db_relationships
                  WHERE source_id = %s
                 """,
@@ -1028,17 +1029,21 @@ def fk_inference_stats(
             row = cur.fetchone()
             if not row:
                 stats = {"declared": 0, "pending": 0, "verified": 0, "rejected": 0,
-                         "by_method": {}}
+                         "avg_inferred_confidence": None, "by_method": {}}
             else:
                 def _g(k, idx):
                     if hasattr(row, "get"):
                         return int(row.get(k) or 0)
                     return int(row[idx] or 0)
+                # v3.78.2 (backlog G8a): ort. çıkarım güveni — kart "—" yerine gerçek değer.
+                _avg = (row.get("avg_inf_conf") if hasattr(row, "get")
+                        else (row[7] if len(row) > 7 else None))
                 stats = {
                     "declared": _g("declared", 0),
                     "pending": _g("pending", 1),
                     "verified": _g("verified", 2),
                     "rejected": _g("rejected", 3),
+                    "avg_inferred_confidence": (float(_avg) if _avg is not None else None),
                     "by_method": {
                         "naming": _g("m_naming", 4),
                         "naming+type": _g("m_naming_type", 5),

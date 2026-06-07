@@ -47,6 +47,30 @@
         return (Number(c) * 100).toFixed(0) + '%';
     }
 
+    // v3.78.2 (backlog G8a): güven seviyesi rengi (düşük/orta/yüksek) — confidence kolonu.
+    function _confClass(c) {
+        if (c == null) return '';
+        const n = Number(c);
+        return n >= 0.85 ? 'fki-conf-high' : (n >= 0.65 ? 'fki-conf-med' : 'fki-conf-low');
+    }
+
+    // v3.78.2 (backlog G8a): FK provenance rozeti — evidence_json.to_pk_source
+    // (declared 🔒 / unique_index 🟢 / inferred 🟡). evidence dict ya da JSON-string olabilir.
+    function _provenanceBadge(ev) {
+        let src = null;
+        try {
+            const e = (typeof ev === 'string') ? JSON.parse(ev) : ev;
+            src = e && e.to_pk_source;
+        } catch (_e) { /* defansif — bozuk evidence → 'inferred' varsayılır */ }
+        const M = {
+            declared:     { i: '🔒', t: 'Declared',     c: 'fki-prov-declared' },
+            unique_index: { i: '🟢', t: 'Unique-Index', c: 'fki-prov-unique' },
+            inferred:     { i: '🟡', t: 'Çıkarım',      c: 'fki-prov-inferred' },
+        };
+        const p = M[src] || M.inferred;
+        return `<span class="fki-prov-badge ${p.c}" title="Hedef PK kaynağı: ${p.t}">${p.i} ${p.t}</span>`;
+    }
+
     function _toast(msg, kind = 'info') {
         if (global.showToast) global.showToast(msg, kind);
         else console.log(`[fki:${kind}]`, msg);
@@ -74,16 +98,21 @@
         }
     }
 
-    function _renderStatsCards(stats) {
+    function _renderStatsCards(resp) {
         const host = document.getElementById('aoFkiStatsCards');
         if (!host) return;
-        const total = stats.total_relationships || 0;
-        const declared = stats.declared_count || 0;
-        const inferred = stats.inferred_count || 0;
-        const verified = stats.verified_count || 0;
-        const pending = stats.pending_count || 0;
-        const rejected = stats.rejected_count || 0;
-        const avgConf = stats.avg_inferred_confidence;
+        // v3.78.2 (backlog G8a, bug fix): endpoint {success, source_id, stats:{declared,pending,
+        // verified,rejected,avg_inferred_confidence}} döndürüyor; eski kod resp.declared_count
+        // (üst-seviye, yanlış ad) okuyordu → TÜM kartlar 0/"—" görünüyordu. Nested stats'ı oku +
+        // total/inferred'i mevcut alanlardan türet (flat shape gelirse fallback ile geriye-uyumlu).
+        const s = (resp && resp.stats && typeof resp.stats === 'object') ? resp.stats : (resp || {});
+        const declared = Number(s.declared != null ? s.declared : (s.declared_count || 0));
+        const pending = Number(s.pending != null ? s.pending : (s.pending_count || 0));
+        const verified = Number(s.verified != null ? s.verified : (s.verified_count || 0));
+        const rejected = Number(s.rejected != null ? s.rejected : (s.rejected_count || 0));
+        const inferred = pending + verified + rejected;
+        const total = (s.total_relationships != null) ? Number(s.total_relationships) : (declared + inferred);
+        const avgConf = s.avg_inferred_confidence;
 
         host.innerHTML = `
             <div class="fki-stat-card">
@@ -144,8 +173,9 @@
                 <td class="swt-mono">${_escape(f.col)}</td>
                 <td>${_escape(t.table)}</td>
                 <td class="swt-mono">${_escape(t.col)}</td>
-                <td class="swt-mono">${_formatConfidence(conf)}</td>
+                <td class="swt-mono ${_confClass(conf)}">${_formatConfidence(conf)}</td>
                 <td class="swt-mono">${_escape(r.method || r.inference_method || '—')}</td>
+                <td>${_provenanceBadge(r.evidence)}</td>
                 <td class="ao-fki-row-actions">
                     <button type="button" class="btn btn-xs ao-fki-verify" data-id="${_escape(r.id)}"
                             data-tooltip="Onayla — RAG'de kullanılsın" aria-label="Onayla"><i class="fa-solid fa-check"></i></button>

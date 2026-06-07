@@ -307,6 +307,85 @@ def _repair_glued_keyword_garbage(sql: str) -> tuple:
 
 
 # ─────────────────────────────────────────────────────────────
+# v3.78.1: Deterministik case-insensitive METİN eşitliği (LLM-bağımsız garanti)
+# ─────────────────────────────────────────────────────────────
+# Kullanıcı kriteri 'ext02d059293' yazar ama veri 'EXT02D059293' → düz `=` 0 satır döner.
+# LLM prompt'una kural eklendi ama LLM uymayabilir → bu KATMAN garanti eder: WHERE'deki
+# "kolon" = 'literal' kalıplarını, kolon table_columns'ta METİN tipindeyse UPPER(..)=UPPER(..)
+# yapar. TÜM DİALECT: identifier quote 3 stil ("..."/`...`/[...]); UPPER PG/Oracle/MSSQL/MySQL'de
+# native (sql_dialect._FUNCTION_MAP'te remap YOK). Yalnız `=` (>=,<=,!=,<> eşleşmez), yalnız
+# string-literal RHS (JOIN ON ident=ident doğal kapsam-dışı), zaten UPPER/LOWER'lı LHS atlanır.
+_CI_TEXT_HINTS = ("char", "text", "clob", "string")
+_CI_IDENT_SEG = r'(?:"[^"]+"|`[^`]+`|\[[^\]]+\])'
+_CI_EQ_RE = re.compile(
+    r'((?:' + _CI_IDENT_SEG + r'\s*\.\s*)*(' + _CI_IDENT_SEG + r'))'
+    r'\s*=\s*'
+    r"('(?:[^']|'')*')"
+)
+
+
+def _collect_text_columns(table_columns: Dict[str, List[tuple]]) -> set:
+    """METİN tipli kolon adları (bare, lowercase). Bir ad bir tabloda metin başka
+    tabloda sayı/tarih ise AYIKLANIR (ambiguous → dokunma; yanlış kolonu UPPER'lamaktansa atla)."""
+    text_names: set = set()
+    other_names: set = set()
+    for cols in (table_columns or {}).values():
+        for entry in (cols or []):
+            try:
+                cn, dt = entry[0], entry[1]
+            except (IndexError, TypeError):
+                continue
+            key = (cn or "").strip().lower()
+            if not key:
+                continue
+            if any(h in (dt or "").lower() for h in _CI_TEXT_HINTS):
+                text_names.add(key)
+            else:
+                other_names.add(key)
+    return text_names - other_names
+
+
+def _apply_ci_text_equality(sql: str, table_columns: Dict[str, List[tuple]]) -> str:
+    """`"kolon" = 'literal'` → `UPPER("kolon") = UPPER('literal')` yalnız METİN kolonlarda.
+    code-review (alias-collision fix): NİTELİKSİZ (qualifier'sız) bir ad aynı zamanda bir
+    SELECT-list ALIAS'ı ise ATLANIR — alias sayısal bir ifadeyi gizliyor olabilir
+    (ör. `MAX("Age") AS "Username" ... HAVING "Username"='x'` → UPPER(sayı) hatası). Nitelikli
+    ("t"."kolon") ad alias OLAMAZ → daima gerçek kolon, güvenle sarılır.
+    Fail-soft — hata olursa orijinal SQL döner (ana akışı ASLA bozma)."""
+    text_cols = _collect_text_columns(table_columns)
+    if not sql or not text_cols:
+        return sql
+    # SELECT-list alias adları (AS <ident>) — niteliksiz eşleşmede bunları atla.
+    alias_names: set = set()
+    for am in re.finditer(
+        r'\bAS\s+("(?:[^"]|"")+"|`(?:[^`]|``)+`|\[(?:[^\]]|\]\])+\]|[A-Za-z_]\w*)',
+        sql, re.IGNORECASE,
+    ):
+        a = am.group(1)
+        if a and a[0] in '"`[':
+            a = a[1:-1]
+        alias_names.add(a.strip().lower())
+
+    def _repl(m):
+        full, last_seg, lit = m.group(1), m.group(2), m.group(3)
+        bare = last_seg[1:-1].strip().lower()  # tırnak/köşeli-parantez karakterini soy
+        if bare not in text_cols:
+            return m.group(0)
+        if full == last_seg and bare in alias_names:
+            return m.group(0)  # niteliksiz + alias-çakışması → atla (alias sayısal olabilir)
+        start = m.start(1)
+        if sql[max(0, start - 6):start].upper() in ("UPPER(", "LOWER("):
+            return m.group(0)  # LHS zaten sarılı → çifte-sarma yapma
+        return "UPPER(" + full + ") = UPPER(" + lit + ")"
+
+    try:
+        return _CI_EQ_RE.sub(_repl, sql)
+    except Exception as _e:  # pragma: no cover — defansif
+        logger.warning("[llm_generate_report] CI text-equality rewrite atlandı: %s", _e)
+        return sql
+
+
+# ─────────────────────────────────────────────────────────────
 # Prompt builder
 # ─────────────────────────────────────────────────────────────
 
@@ -465,7 +544,18 @@ def _build_prompt(
         'ör. PostgreSQL\'de "T_ORG_USER" tablosunu t_org_user yaparsan "relation does not exist" '
         "hatası alırsın. Yukarıdaki 'Tablo kolonları' ve tablo adlarında görünen büyük/küçük harfi "
         "AYNEN kullan ve her identifier'ı tırnakla. Tabloyu şema ile nitele, şema case'ini de koru. "
-        "Çıktı SADECE JSON: "
+        # v3.78.1 (code-review): değer-case kuralı YALNIZ kolon tipleri biliniyorsa (schema_cols_block)
+        # verilir → LLM metin/sayı ayırıp UPPER'ı yalnız metne uygular (yoksa UPPER(int) hatası riski).
+        + (("DEĞER CASE: Kullanıcının SERBEST-METİN talebinden türettiğin bir METİN kolon EŞİTLİĞİNDE, "
+            "değer veride farklı BÜYÜK/küçük harfte olabilir (ör. 'ext02d059293' ↔ 'EXT02D059293' → düz "
+            "eşitlik 0 satır döner). Böyle eşitliklerde HER İKİ tarafı UPPER() ile sarmala: "
+            "UPPER(\"Tablo\".\"Kolon\") = UPPER('değer'). Identifier tam-case+tırnaklı kalır, yalnız "
+            "karşılaştırma case-insensitive olur. UPPER'ı YALNIZ 'Tablo kolonları'nda METİN/char/varchar "
+            "tipli kolonlarda kullan (sayı/tarih/boolean'da KULLANMA). ZORUNLU WHERE chip değerlerini "
+            "AYNEN bırak (kullanıcı kesin değerle seçti). NOT: UPPER ASCII büyük/küçük harfi çözer; "
+            "Türkçe i/İ/ı/I locale-bağımlıdır, garanti etme. ")
+           if schema_cols_block else "")
+        + "Çıktı SADECE JSON: "
         '{"sql": "...", "rationale": "kısa Türkçe açıklama"}'
     )
 
@@ -734,6 +824,12 @@ def generate_report(
             "fallback": True,
             "validation_error": "diagnostic",
         }
+
+    # ── 4d. (v3.78.1) DETERMINISTIK case-insensitive metin-eşitlik (LLM-bağımsız garanti).
+    # WHERE "kolon" = 'literal' → UPPER("kolon") = UPPER('literal') (yalnız METİN kolon, tüm
+    # dialect). Prompt kuralı LLM'e yönerge; bu katman LLM uymasa da eşleşmeyi garanti eder.
+    # Validate'ten ÖNCE → çıktı SQL doğrulanır (UPPER bloklu değil, FROM'a dokunmaz).
+    sql_candidate = _apply_ci_text_equality(sql_candidate, table_columns)
 
     # ── 5. Validate SELECT-only / single-statement ──────────
     ve = _validate_select_sql(sql_candidate)

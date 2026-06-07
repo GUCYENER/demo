@@ -602,6 +602,12 @@ const DSEnrichmentModule = (() => {
                 const covBadge = (item.enrichment_id && _ct > 0 && _ce < _ct)
                     ? ` <span class="ds-cov-badge ${_ce === 0 ? 'ds-cov-badge-fail' : 'ds-cov-badge-partial'}" data-tt-portal data-tt="Kolon etiketleme eksik — 'Yeniden Öğren' gerekebilir"><i class="fa-solid fa-triangle-exclamation"></i> ${_ce === 0 ? 'etiketlenemedi' : (_ce + '/' + _ct + ' kolon')}</span>`
                     : '';
+                // v3.78.2 (backlog 1.4): per-tablo çözülemeyen-FK rozeti (ds_fk_diagnostics → fk_missing).
+                // Aksiyon: satırdaki MEVCUT "Yeniden Öğren" butonu (FK çıkarımını da yeniden koşar).
+                const _fkm = Number(item.fk_missing || 0);
+                const fkBadge = (_fkm > 0)
+                    ? ` <span class="ds-cov-badge ds-fk-badge" data-tt-portal data-tt="${_fkm} ilişki (FK) çözülemedi — satırdaki 'Yeniden Öğren' ile tekrar keşfet"><i class="fa-solid fa-link-slash"></i> ${_fkm} FK eksik</span>`
+                    : '';
 
                 rows += `
                     <tr data-id="${item.id}" class="ds-enrich-data-row" style="${rowOpacity}${rowHighlight}">
@@ -612,7 +618,7 @@ const DSEnrichmentModule = (() => {
                             ${_escapeHtml(schemaName)}
                         </td>
                         <td class="ds-table-name-cell" data-tt-portal data-tt="${_escapeHtml(tableName)}">
-                            <strong>${_escapeHtml(tableName)}</strong>${covBadge}
+                            <strong>${_escapeHtml(tableName)}</strong>${covBadge}${fkBadge}
                         </td>
                         <td>
                             ${item.business_name_tr ? _escapeHtml(item.business_name_tr) : '<em class="ds-enrich-no-label">—</em>'}

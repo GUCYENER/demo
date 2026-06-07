@@ -958,6 +958,8 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+/* v3.78.2 (backlog G8b): çıkarım (tahmini FK) join işareti — picker'da güvenilir-değil uyarısı */
+.dsw-fk-inferred { color: #f59e0b; font-weight: 600; }
 .dsw-picker-badge {
     display: inline-block;
     margin-left: 6px;
@@ -1883,6 +1885,12 @@ body[data-dsw-locked="true"] {
 .dsw-user-note textarea::placeholder {
     color: var(--vyra-fg-tertiary, #6b7280);
     opacity: 0.8;
+}
+/* v3.78.0: Step-3 "SQL Önizle" aksiyon satırı (not kutusunun altı) */
+.dsw-user-note-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 
 /* v3.36 F7 (HEBE): multi-table column catalog group headers */

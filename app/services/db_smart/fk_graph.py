@@ -422,6 +422,50 @@ def expand_with_fk(
         })
     # Daha fazla ilişkili → daha üstte
     out.sort(key=lambda x: x["via_relationship_count"], reverse=True)
+
+    # v3.78.2 (backlog G8b): her komşuya join-provenance (declared/unique_index/inferred) — AYRI
+    # additive query (build_subgraph/_fkr graph'ına DOKUNMADAN). Seed↔komşu FK edge'inin
+    # is_inferred/to_pk_source'unu oku; komşunun EN GÜVENİLİR tier'ını ata (declared>unique>inferred).
+    # FAIL-SOFT: hata → alan eklenmez, picker işaret göstermez (çalışan akış bozulmaz).
+    if out:
+        try:
+            _seed_lc = {(_norm(s[0]), _norm(s[1])) for s in seeds}
+            _scs = list({s[0] for s in _seed_lc})
+            _sts = list({s[1] for s in _seed_lc})
+            cur.execute(
+                "SELECT LOWER(COALESCE(from_schema,'')) fs, LOWER(from_table) ft, "
+                "LOWER(COALESCE(to_schema,'')) ts, LOWER(to_table) tt, "
+                "COALESCE(is_inferred, FALSE) inf, evidence_json->>'to_pk_source' pks "
+                "FROM ds_db_relationships WHERE source_id = %s AND ("
+                "(LOWER(COALESCE(from_schema,''))=ANY(%s) AND LOWER(from_table)=ANY(%s)) OR "
+                "(LOWER(COALESCE(to_schema,''))=ANY(%s) AND LOWER(to_table)=ANY(%s)))",
+                (int(source_id), _scs, _sts, _scs, _sts),
+            )
+            _rank = {"declared": 3, "unique_index": 2, "inferred": 1}
+            _best: Dict[Node, str] = {}
+            for r in cur.fetchall() or []:
+                fs, ft = _col(r, "fs", 0), _col(r, "ft", 1)
+                ts, tt = _col(r, "ts", 2), _col(r, "tt", 3)
+                inf, pks = _col(r, "inf", 4), _col(r, "pks", 5)
+                _tier = "declared" if not inf else ("unique_index" if pks == "unique_index" else "inferred")
+                for a, b in (((fs, ft), (ts, tt)), ((ts, tt), (fs, ft))):
+                    if a in _seed_lc and b not in _seed_lc:
+                        if _rank[_tier] > _rank.get(_best.get(b, ""), 0):
+                            _best[b] = _tier
+            for n in out:
+                _t = _best.get((_norm(n["schema"]), _norm(n["table"])), "inferred")
+                n["provenance"] = _t
+                n["is_inferred"] = (_t != "declared")
+        except Exception as _e:
+            # code-review: G8b query PG transaction'ı abort ederse, AYNI cur'da sonradan koşan
+            # build_subgraph "current transaction is aborted" alıp boş subgraph dönebilir →
+            # guarded rollback ile temizle (1.4/coverage merge deseniyle tutarlı, read-only kayıpsız).
+            try:
+                cur.connection.rollback()
+            except Exception:
+                pass
+            logger.debug("[db_smart.fk] G8b provenance enrich atlandı: %s", _e)
+
     # FIX10 S1: cache write (best-effort)
     if cache is not None and cache_key is not None:
         try:

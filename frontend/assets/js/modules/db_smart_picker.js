@@ -289,6 +289,11 @@
         _state.fkById.forEach((n, tid) => {
             const checked = _state.joins.has(tid);
             const junc = n.is_junction ? ' · <em>junction</em>' : '';
+            // v3.78.2 (backlog G8b): çıkarım (tahmini FK) join'ini işaretle → kullanıcı bu join'in
+            // doğrulanmamış olduğunu görür (declared/unique-index güvenilir → işaret yok).
+            const prov = (n.provenance === 'inferred')
+                ? ' · <span class="dsw-fk-inferred" title="Çıkarım (tahmini, doğrulanmamış FK) — join beklenmedik sonuç verebilir">🟡 çıkarım</span>'
+                : '';
             const tech = (n.schema ? n.schema + '.' : '') + n.name;
             parts.push(
                 '<label class="dsw-picker-fk-row' + (checked ? ' is-checked' : '') + '" data-fk-id="' + _escape(tid) + '">' +
@@ -296,7 +301,7 @@
                     (checked ? ' checked' : '') + ' aria-label="' + _escape(n.label) + ' join adayı" />' +
                   '<span class="dsw-picker-row-main">' +
                     '<span class="dsw-picker-row-title">' + _escape(n.label) + '</span>' +
-                    '<span class="dsw-picker-row-meta">' + _escape(tech) + junc + '</span>' +
+                    '<span class="dsw-picker-row-meta">' + _escape(tech) + junc + prov + '</span>' +
                   '</span>' +
                 '</label>'
             );
@@ -402,6 +407,7 @@
                     name: n.table,
                     label: n.business_name_tr || n.table,
                     is_junction: !!n.is_junction,
+                    provenance: n.provenance || null,  // v3.78.2 (G8b): declared/unique_index/inferred
                 });
             });
             if (_state.primaryId === primaryId) _state.fkById = map;
