@@ -98,6 +98,7 @@ class MessageRequest(BaseModel):
     source_id: Optional[int] = Field(None, description="DB modunda seçili data_sources.id — frontend'den gelir")
     # v4.0: DB disambiguation + rapor şablonu
     schema_hint: Optional[str] = Field(None, description="Disambiguation: 'schema.table' — kullanıcı seçilen tablo")
+    metric_hint: Optional[str] = Field(None, description="TEMA-2 Dilim-2: metrik clarify — kullanıcı seçilen ölçü (ör. 'SUM(tutar)')")
     report_template: Optional[str] = Field(None, description="Rapor yaklaşımı metni — kullanıcı seçimi")
     # v3.16.0: DB-mode follow-up — kullanıcı önceki cevap üzerinden düzenleme istiyor.
     # Backend bu ID'deki mesajdan prev_sql + columns alır ve LLM'e modifikasyon prompt'u kurar.
@@ -452,6 +453,7 @@ async def send_message_stream(
                     source_id=request.source_id,  # v3.20.0 (Faz 1): RLS scoping
                     company_id=user.get("company_id"),
                     schema_hint=request.schema_hint,
+                    metric_hint=request.metric_hint,
                     report_template=request.report_template,
                     follow_up_message_id=request.follow_up_message_id,
                 ):

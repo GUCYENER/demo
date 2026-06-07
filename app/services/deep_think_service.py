@@ -1956,7 +1956,7 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
         return None
 
 
-    def process_stream_db_only(self, query: str, user_id: int, company_id: int = None, confirm_mode: bool = False, schema_hint: str = None, report_template: str = None, follow_up_context: Optional[Dict[str, Any]] = None, source_id: int = None) -> Generator[Dict[str, Any], None, None]:
+    def process_stream_db_only(self, query: str, user_id: int, company_id: int = None, confirm_mode: bool = False, schema_hint: str = None, report_template: str = None, follow_up_context: Optional[Dict[str, Any]] = None, source_id: int = None, metric_hint: str = None) -> Generator[Dict[str, Any], None, None]:
         """
         v3.10.0: DB-only pipeline — Firma bazlı DB kaynağı filtresi + Schema Pruning + Error Sanitization.
         + FAQ/Query Cache + Confirm before execute + Self-Healing.
@@ -2457,6 +2457,39 @@ BİLGİ TABANI İÇERİĞİ ({len(rag_results)} sonuç):
                     f"  → {_rt}\n\n"
                     f"Kullanıcının orijinal isteği: {query}"
                 )
+
+            # ── 4c.5 (v3.79.0 TEMA-2 Dilim-2): METRİK belirsizliği clarify (deep_think port) ──
+            # Table çözüldü. Serbest-metin ranking sorusunda ("top 10 müşteri") metrik belirsizse
+            # ("ciro mu adet mi") LLM sessizce seçmesin → kullanıcıya sor. metric_hint geldiyse
+            # (kullanıcı seçti) SQL-gen bağlamına ekle; report_template varsa metrik orada → atla.
+            if metric_hint:
+                _mh_block = (
+                    "\nSIRALAMA/ÖLÇÜ METRİĞİ (kullanıcı seçti — sıralama AYNEN buna göre olmalı,"
+                    f" başka metrik uydurma):\n  {metric_hint}\n"
+                )
+                schema_ctx_with_ml["extra_context"] = (schema_ctx_with_ml.get("extra_context") or "") + _mh_block
+            elif not report_template and not golden_hit and not cached and not follow_up_context:
+                # adversarial-fix: golden-SQL (doğrulanmış ≥0.95) / cache-hit / follow-up varken
+                # metrik-clarify ATLANIR → kısa-devre (2549/2558) yenik düşmesin + takip-çıpası
+                # kaybolmasın (re-send follow_up_message_id taşımıyor). Çalışan fast-path korunur.
+                try:
+                    from app.services.pipeline.nodes.metric_ambiguity import detect_metric_ambiguity
+                    _md = detect_metric_ambiguity(query, schema_ctx_with_ml.get("tables", []))
+                    if _md.get("needs_clarification"):
+                        log_system_event(
+                            "INFO",
+                            f"DB-Only: metrik belirsizliği — {len(_md['candidates'])} aday metrik",
+                            "deep_think", user_id,
+                        )
+                        yield {"type": "clarification", "data": {
+                            "kind": "metric",
+                            "candidates": _md["candidates"],
+                            "query": query,
+                            "message": "Sıralama hangi ölçüye göre olsun? Lütfen birini seçin:",
+                        }}
+                        return
+                except Exception:
+                    pass  # intentional: metrik-gate best-effort; hata → normal SQL-gen (mevcut davranış)
 
             # ── 4e. v3.14.0: Value Retrieval — soruda geçen spesifik değerleri tespit et ──
             try:

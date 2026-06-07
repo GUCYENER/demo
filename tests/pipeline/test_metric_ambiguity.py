@@ -72,7 +72,7 @@ class TestDetect:
         assert d["needs_clarification"] is False and d["reason"] == "single_candidate"
 
     def test_tr_ranking_keywords(self):
-        for q in ("en çok müşteri", "en fazla sipariş", "müşterileri sırala", "top 5 sipariş"):
+        for q in ("en çok müşteri", "en fazla sipariş", "müşterileri sırala", "top 5 sipariş", "ilk 10 müşteri"):
             d = detect_metric_ambiguity(q, [TBL_MEASURE])
             assert d["needs_clarification"] is True, q
 
@@ -90,6 +90,18 @@ class TestDetect:
         for q in ("en son siparişler", "en son 10 müşteri", "son 5 sipariş"):
             d = detect_metric_ambiguity(q, [TBL_MEASURE])
             assert d["needs_clarification"] is False and d["reason"] == "recency_intent", q
+
+    def test_deep_think_shape_flexible(self):
+        # deep_think/text_to_sql şekli: {name, columns:[{name, data_type}]} (agentic'ten farklı)
+        dt_tbl = {"name": "siparisler", "business_name_tr": "Siparişler", "columns": [
+            {"name": "id", "data_type": "int", "is_pk": True},
+            {"name": "tutar", "data_type": "numeric"},
+            {"name": "tarih", "data_type": "date"},
+        ]}
+        d = detect_metric_ambiguity("top 10 müşteri", [dt_tbl])
+        assert d["needs_clarification"] is True
+        cols = {c["column"] for c in d["candidates"]}
+        assert "tutar" in cols and "id" not in cols  # SUM(tutar), PK eleme
 
     def test_count_only_not_ambiguous(self):
         # adversarial-fix #6: hepsi COUNT → tablo/grain sorusu, metrik belirsizliği değil

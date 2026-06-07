@@ -736,6 +736,22 @@ window.DialogChatModule = (function () {
                                     return;
                                 }
                                 if (streamingEl) streamingEl.remove();
+                                // TEMA-2 Dilim-2: metrik belirsizliği kartı (kind=="metric")
+                                if (eventData.kind === 'metric') {
+                                    const metricHtml = window.DialogChatUtils.renderMetricClarifyCard(
+                                        eventData.candidates, eventData.query, eventData.message,
+                                        (chosenExpr, chosenLabel) => {
+                                            if (typeof window.showToast === 'function') {
+                                                window.showToast(`✓ Metrik: ${chosenLabel}`, 'success');
+                                            }
+                                            _sendDbMessageWithHint(eventData.query, null, null, `${chosenExpr} — ${chosenLabel}`);
+                                        }
+                                    );
+                                    _insertInteractiveBlock(metricHtml);
+                                    isWaitingForResponse = false;
+                                    hideTypingIndicator();
+                                    return;
+                                }
                                 const { candidates, query: cQuery, message: cMsg } = eventData;
                                 const disambigHtml = window.DialogChatUtils.renderDisambiguationCard(
                                     candidates, cQuery, cMsg,
@@ -1400,7 +1416,7 @@ window.DialogChatModule = (function () {
      * v4.0: schema_hint veya report_template ile DB mesajını yeniden gönderir.
      * Disambiguation seçimi veya rapor şablonu seçimi sonrasında çağrılır.
      */
-    async function _sendDbMessageWithHint(query, schemaHint, reportTemplate) {
+    async function _sendDbMessageWithHint(query, schemaHint, reportTemplate, metricHint) {
         if (!currentDialogId || !query) return;
 
         hideTypingIndicator();
@@ -1427,6 +1443,7 @@ window.DialogChatModule = (function () {
         } catch (_e) { /* sessiz */ }
         if (schemaHint) body.schema_hint = schemaHint;
         if (reportTemplate) body.report_template = reportTemplate;
+        if (metricHint) body.metric_hint = metricHint;  // TEMA-2 Dilim-2: metrik clarify seçimi
 
         try {
             // v3.34.0: raw fetch — text/event-stream (vyraFetch JSON-only, body.getReader() gerekli)

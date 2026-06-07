@@ -781,6 +781,46 @@ window.DialogChatUtils = (function () {
         return html;
     }
 
+    /**
+     * v3.79.0 TEMA-2 Dilim-2: METRİK belirsizliği clarify kartı.
+     * "top 10 müşteri" → ciroya/adede/tarihe göre? Kullanıcı ölçüyü seçer.
+     * db-disambig-* class'larını reuse eder (görsel tutarlılık + yeni CSS yok). HEBE: role/aria/escape.
+     * @param {Object[]} candidates - [{label_tr, expr, agg_func, table, column}]
+     * @param {Function} onSelect - (chosenExpr, chosenLabel) => void
+     */
+    function renderMetricClarifyCard(candidates, query, message, onSelect) {
+        const id = 'metricclar_' + Date.now();
+        window[id + '_pick'] = function(idx) {
+            try {
+                const c = (candidates && candidates[idx]) || null;
+                if (c && typeof onSelect === 'function') onSelect(c.expr || '', c.label_tr || c.expr || '');
+            } finally {
+                const card = document.getElementById(id);
+                if (card) card.remove();
+            }
+        };
+
+        let html = `<div class="db-disambig-card" id="${id}" role="group" aria-label="Sıralama metriği seçimi">`;
+        html += `<div class="db-disambig-header">`;
+        html += `<span class="db-disambig-icon">📊</span>`;
+        html += `<span class="db-disambig-msg">${escapeHtml(message || 'Sıralama hangi ölçüye göre olsun?')}</span>`;
+        html += `</div>`;
+        html += `<div class="db-disambig-candidates">`;
+        (candidates || []).forEach((c, idx) => {
+            const label = escapeHtml(c.label_tr || c.expr || '');
+            const expr = escapeHtml(c.expr || '');
+            const labelAttr = label.replace(/"/g, '&quot;');  // attribute-context: escapeHtml " kaçırmaz
+            html += `<button class="db-disambig-btn" type="button" aria-label="${labelAttr}" onclick="window['${id}_pick'](${idx})">`;
+            html += `<div class="db-disambig-btn-title">📊 ${label}</div>`;
+            html += `<div class="db-disambig-btn-meta"><code>${expr}</code></div>`;
+            html += `</button>`;
+        });
+        html += `</div>`;
+        html += `<button class="db-disambig-cancel" type="button" onclick="document.getElementById('${id}').remove()">İptal</button>`;
+        html += `</div>`;
+        return html;
+    }
+
     // =========================================================================
     // v4.0: RAPOR ŞABLONU ÖNERİLERİ
     // =========================================================================
@@ -1065,6 +1105,7 @@ window.DialogChatUtils = (function () {
         // v4.0
         renderSQLResultTable,
         renderDisambiguationCard,
+        renderMetricClarifyCard,
         renderReportTemplates,
         renderFollowUpChips,
         renderExportBar,

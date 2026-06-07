@@ -26,7 +26,7 @@ from app.services.db_smart.custom_metric_parser import extract_intent_heuristic
 # Ranking/superlatif niyet (TR + EN). agg_func=None İLE birleşince belirsizlik sinyali.
 # adversarial-fix: diakritiksiz ASCII formlar da (TR kullanıcı sık böyle yazar: "en cok").
 _RANKING_RE = re.compile(
-    r"(\btop\s*\d+\b"
+    r"(\btop\s*\d+\b|\bilk\s*\d+\b"
     r"|\ben\s+(çok|cok|fazla|yüksek|yuksek|büyük|buyuk|i̇yi|iyi|az|düşük|dusuk|küçük|kucuk)\b"
     r"|\b(sırala|siralama|ranking|rank|best|worst|highest|lowest|most|least)\b)",
     re.IGNORECASE,
@@ -77,17 +77,19 @@ def enumerate_candidate_metrics(
         })
 
     for t in (selected_tables or []):
-        tname = t.get("table_name") or ""
+        # Şekil-esnek: agentic candidate (table_name/column_name) VE deep_think/text_to_sql
+        # schema_ctx (name) ikisini de destekle → detektör iki path'te de reuse edilir.
+        tname = t.get("table_name") or t.get("name") or ""
         if not tname:
             continue
-        tlabel = t.get("business_name_tr") or tname
+        tlabel = t.get("business_name_tr") or t.get("admin_label_tr") or tname
         _add("COUNT", tname, None, "COUNT(*)", f"{tlabel} adedine göre")
         for c in (t.get("columns") or []):
-            cn = c.get("column_name") or ""
+            cn = c.get("column_name") or c.get("name") or ""
             if not cn or c.get("is_pk") or c.get("is_fk"):
                 continue  # PK/FK ölçü değildir
             dt = (c.get("data_type") or "").lower()
-            bn = c.get("business_name_tr") or cn
+            bn = c.get("business_name_tr") or c.get("admin_label_tr") or cn
             hay = (cn + " " + bn).lower()
             if any(h in dt for h in _NUMERIC_TYPE_HINTS) and any(m in hay for m in _MEASURE_HINTS):
                 _add("SUM", tname, cn, f"SUM({cn})", f"toplam {bn}'e göre")

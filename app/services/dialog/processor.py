@@ -522,6 +522,7 @@ def process_user_message_stream(
     source_id: Optional[int] = None,  # v3.20.0 (Faz 1): RLS scoping — DB modunda seçili source
     company_id: int = None,  # v3.8.0: Firma bazlı DB kaynağı filtresi
     schema_hint: str = None,  # v4.0: Disambiguation — kullanıcı seçilen schema.table
+    metric_hint: str = None,  # v3.79.0 TEMA-2 Dilim-2: metrik clarify — kullanıcı seçilen ölçü
     report_template: str = None,  # v4.0: Rapor yaklaşımı şablonu
     follow_up_message_id: int = None,  # v3.16.0: DB follow-up — önceki cevabın ID'si
 ):
@@ -696,6 +697,7 @@ def process_user_message_stream(
                 search_query, user_id,
                 company_id=company_id,
                 schema_hint=schema_hint,
+                metric_hint=metric_hint,
                 report_template=report_template,
                 follow_up_context=follow_up_context,
                 source_id=source_id,  # v3.20.0 Faz 1c: RLS scope hedef kaynak
