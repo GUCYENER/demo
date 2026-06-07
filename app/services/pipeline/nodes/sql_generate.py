@@ -332,6 +332,15 @@ def sql_generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
     if retry_hint:
         context = context + "\n\nÖnceki Deneme Notu:\n  " + retry_hint
 
+    # TEMA-2 Dilim-2 (v3.79.0) — metrik clarify'da kullanıcı seçtiği metrik (additive;
+    # chosen_metric yoksa context hiç değişmez → mevcut davranış korunur).
+    chosen_metric = state.get("chosen_metric")
+    if isinstance(chosen_metric, dict) and chosen_metric.get("expr"):
+        context = context + (
+            "\n\nKULLANICI SEÇTİĞİ METRİK (sıralama/ölçü AYNEN bu olmalı, başka metrik uydurma):\n"
+            f"  {chosen_metric.get('label_tr') or ''} → {chosen_metric['expr']}"
+        )
+
     llm = state.get("_llm_callable")
     if llm is None:
         logger.warning("[sql_generate] _llm_callable yok — placeholder dönülüyor")

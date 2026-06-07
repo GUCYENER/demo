@@ -76,6 +76,10 @@ class AgenticResumeIn(BaseModel):
     state: Dict[str, Any]
     selected_indices: Optional[List[int]] = None
     selected_tables: Optional[List[Dict[str, str]]] = None
+    # TEMA-2 Dilim-2 (v3.79.0): metrik clarify resume (kind:"metric" interrupt'ı yanıtlar).
+    # FE re-run non-determinism'e karşı gerçek aday OBJESİNİ (chosen_metric) gönderir.
+    chosen_metric: Optional[Dict[str, Any]] = None
+    metric_index: Optional[int] = None
 
 
 class TrainIn(BaseModel):
@@ -342,8 +346,13 @@ def resume_agentic_query(
             {"schema_name": t.get("schema"), "table_name": t.get("table")}
             for t in body.selected_tables
         ]
+    # TEMA-2 Dilim-2: metrik clarify seçimi
+    if body.chosen_metric is not None:
+        user_choice["chosen_metric"] = body.chosen_metric
+    if body.metric_index is not None:
+        user_choice["metric_index"] = body.metric_index
     if not user_choice:
-        raise HTTPException(400, "selected_indices veya selected_tables zorunlu")
+        raise HTTPException(400, "selected_indices/selected_tables veya chosen_metric/metric_index zorunlu")
 
     with get_db_context() as conn:
         cur = conn.cursor()

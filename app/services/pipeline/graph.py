@@ -62,6 +62,13 @@ from .nodes import (
     sql_generate_node,
     validate_node,
 )
+# TEMA-2 Dilim-2 (v3.79.0) — metrik belirsizliği clarify node'ları (doğrudan modülden)
+from .nodes.metric_ambiguity_gate import (
+    METRIC_CLARIFY_ENABLED,
+    metric_ambiguity_gate_node,
+    route_after_metric_ambiguity,
+)
+from .nodes.metric_clarification import metric_clarification_node
 from .observability import (
     emit_event,
     ensure_run_id,
@@ -103,6 +110,9 @@ def build_query_graph(checkpointer=None):
     g.add_node("multi_signal_rank", instrument_node("multi_signal_rank", multi_signal_rank_node))
     g.add_node("ambiguity_gate", instrument_node("ambiguity_gate", ambiguity_gate_node))
     g.add_node("clarification", instrument_node("clarification", clarification_node))
+    # TEMA-2 Dilim-2 (v3.79.0) — metrik belirsizliği node'ları
+    g.add_node("metric_ambiguity_gate", instrument_node("metric_ambiguity_gate", metric_ambiguity_gate_node))
+    g.add_node("metric_clarification", instrument_node("metric_clarification", metric_clarification_node))
     g.add_node("sql_generate", instrument_node("sql_generate", sql_generate_node))
     g.add_node("validate", instrument_node("validate", validate_node))
     g.add_node("self_heal", instrument_node("self_heal", self_heal_node))
@@ -121,12 +131,18 @@ def build_query_graph(checkpointer=None):
     g.add_edge("retrieve", "multi_signal_rank")
     g.add_edge("multi_signal_rank", "ambiguity_gate")
 
-    # Conditional: ambiguity_gate -> clarification | sql_generate
+    # Conditional: ambiguity_gate -> clarification | metric_ambiguity_gate (auto)
     g.add_conditional_edges("ambiguity_gate", route_after_ambiguity, {
         "clarification": "clarification",
+        "sql_generate": "metric_ambiguity_gate",
+    })
+    g.add_edge("clarification", "metric_ambiguity_gate")
+    # TEMA-2 Dilim-2: metrik gate -> metric_clarification | sql_generate
+    g.add_conditional_edges("metric_ambiguity_gate", route_after_metric_ambiguity, {
+        "metric_clarification": "metric_clarification",
         "sql_generate": "sql_generate",
     })
-    g.add_edge("clarification", "sql_generate")
+    g.add_edge("metric_clarification", "sql_generate")
 
     g.add_edge("sql_generate", "validate")
 
@@ -240,6 +256,20 @@ def run_pipeline(state: Dict[str, Any], mode: str = "auto") -> Dict[str, Any]:
             emit_event(state, "interrupt", metadata={"reason": (state.get("clarification_payload") or {}).get("reason")})
             pipeline_end(state, int((_t.perf_counter() - _started) * 1000))
             return state
+
+    # --- TEMA-2 Dilim-2 (v3.79.0): metrik belirsizliği gate ---
+    # Table çözüldükten SONRA, sql_generate ÖNCESİ. Gate self-guard'lı (table-clarify
+    # aktifse / chosen_metric varsa atlar) → çalışan table-clarify'a sıfır risk.
+    state = _merge(state, instrument_node("metric_ambiguity_gate", metric_ambiguity_gate_node)(state))
+    if (route_after_metric_ambiguity(state) == "metric_clarification"
+            and mode != "force" and METRIC_CLARIFY_ENABLED):
+        # Metrik belirsiz → interrupt. resume_pipeline metric_clarification'ı çalıştırır.
+        # NOT: METRIC_CLARIFY_ENABLED=False iken bu blok ATLANIR → sql_generate'e düşer
+        # (LLM metrik seçer = mevcut davranış). FE T6 doğrulanınca flag açılır.
+        state["_interrupt"] = True
+        emit_event(state, "interrupt", metadata={"reason": "metric_ambiguous", "kind": "metric"})
+        pipeline_end(state, int((_t.perf_counter() - _started) * 1000))
+        return state
 
     # v3.27.0 G2 — AST shortcut (LLM atla, basit pattern'ler için)
     try:
@@ -588,7 +618,12 @@ def resume_pipeline(state: Dict[str, Any], user_choice: Dict[str, Any]) -> Dict[
 
     # clarification_node post-resume yolunu çalıştır.
     # _merge_state ile errors listesi korunur (state.update overwrite ediyordu).
-    state = _merge_state(state, instrument_node("clarification", clarification_node)(state))
+    # TEMA-2 Dilim-2: kind'e göre doğru node (metrik resume → metric_clarification).
+    _kind = (state.get("clarification_payload") or {}).get("kind")
+    if _kind == "metric":
+        state = _merge_state(state, instrument_node("metric_clarification", metric_clarification_node)(state))
+    else:
+        state = _merge_state(state, instrument_node("clarification", clarification_node)(state))
 
     # SQL üretim ve sonrası (self-heal aware)
     max_retries = 2

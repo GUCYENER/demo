@@ -43,6 +43,31 @@ def state_to_clarification_event(state: Dict[str, Any]) -> Dict[str, Any]:
     reason = payload.get("reason") or "below_threshold"
     candidates = payload.get("candidates") or []
 
+    # TEMA-2 Dilim-2 (v3.79.0): METRİK belirsizliği kartı (kind=="metric").
+    # Tablo-şekli değil; her aday bir agregasyon/ölçü (label_tr + expr).
+    if payload.get("kind") == "metric":
+        metric_cands = [
+            {
+                "kind": "metric",
+                "label_tr": c.get("label_tr") or "",
+                "expr": c.get("expr") or "",
+                "agg_func": c.get("agg_func") or "",
+                "table": c.get("table") or "",
+                "column": c.get("column"),
+            }
+            for c in candidates
+        ]
+        return {
+            "type": "clarification",
+            "data": {
+                "kind": "metric",
+                "candidates": metric_cands,
+                "query": payload.get("question") or state.get("question") or "",
+                "message": "Sıralama hangi ölçüye göre olsun? Lütfen birini seçin:",
+                "reason": reason,
+            },
+        }
+
     # Frontend renderDisambiguationCard uyumlu şema
     formatted_candidates = []
     for c in candidates:
