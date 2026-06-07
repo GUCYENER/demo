@@ -183,6 +183,6 @@ ama PK kolonu metadata'da yok. Self-PK'lar (ADGroupQueryId) da FK sanılıyor. *
 ## İlerleme Kaydı (v3.74.0)
 - [x] G7 — 4-dialect unique-index → is_pk cascade + provenance + test
 - [x] G7b — code-review (high) düzeltmeleri: MSSQL %%, NOT NULL, Oracle hidden_column, MySQL STATISTICS, provenance
-- [ ] G8 — UI provenance rozetleri (sonraki faz)
-- [ ] G9 — PK-hem-FK table-per-type (ertelendi, ayrı PR)
+- [ ] G8 — UI provenance rozetleri (sonraki faz) → bekleyen, bkz. 2026-06-07_hata_izleme_info_ve_bekleyen_backlog
+- [x] G9 — PK-hem-FK table-per-type → **v3.77.4 `extension` tier** ile YAPILDI (2026-06-07). `PartyId→T_ORG_PARTY` / `WFINSTANCEID→T_WF_INSTANCE` çıkarılıyor; self-PK vs cross-table-PK ayrımı `_pk_targets_own_table` + tek-kolon-PK guard + `_is_target_pk`; test edildi (`test_pk_extension_edge` case A). Code-review (4 finder + 2 adversarial geçiş).
 - [ ] Deploy: `ds_learning_service.py` + `config.py` → backend restart → **kaynağı YENİDEN KEŞFET** → FK çıkarımı

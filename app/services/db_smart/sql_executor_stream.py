@@ -149,6 +149,21 @@ def _make_stream_callable(source: Dict[str, Any], dialect: str, password: str):
                 yield {"columns": [], "rows": []}
                 return
 
+            # v3.77.x (gstack-review C1): DB-native statement timeout — runaway/ağır sorgu kaynak DB
+            # session'ını SÜRESİZ kilitlemesin (buffered SafeSQLExecutor._execute_with_timeout'ta vardı,
+            # stream'de YOKTU → DoS + takılı remote session). Cömert (stream büyük-sonuç içindir):
+            # DBSMART_REPORT_QUERY_TIMEOUT_S (yoksa 300s). MSSQL native timeout yok (buffered'da da yok).
+            try:
+                _settings = __import__("app.core.config", fromlist=["settings"]).settings
+                _stmt_ms = int(float(getattr(_settings, "DBSMART_REPORT_QUERY_TIMEOUT_S", 300)) * 1000)
+            except Exception:
+                _stmt_ms = 300_000
+            if dialect == "oracle":
+                try:
+                    conn.call_timeout = _stmt_ms  # oracledb connection-level (ms)
+                except Exception:
+                    pass
+
             # PG server-side cursor (named cursor) — psycopg2 spesifik
             if dialect == "postgresql":
                 # v3.52.0 KÖK FIX: psycopg2 named (server-side) cursor MUTLAKA bir transaction
@@ -163,6 +178,14 @@ def _make_stream_callable(source: Dict[str, Any], dialect: str, password: str):
                         conn.autocommit = False
                 except Exception:
                     pass
+                # v3.77.x (C1): statement_timeout transaction içinde set edilir (named cursor FETCH'lerine
+                # ve initial execute'a uygulanır). _stmt_ms int → f-string güvenli (kullanıcı girdisi değil).
+                try:
+                    _tcur = conn.cursor()
+                    _tcur.execute(f"SET statement_timeout = '{_stmt_ms}'")
+                    _tcur.close()
+                except Exception:
+                    pass
                 try:
                     import uuid as _uuid
                     cur_name = f"vyra_dbsmart_{_uuid.uuid4().hex[:12]}"
@@ -174,6 +197,12 @@ def _make_stream_callable(source: Dict[str, Any], dialect: str, password: str):
             else:
                 # Oracle / MSSQL / MySQL — standart cursor + fetchmany(batch_size)
                 cur = conn.cursor()
+                # v3.77.x (C1): MySQL SELECT-execution timeout (ms). Oracle call_timeout yukarıda set edildi.
+                if dialect == "mysql":
+                    try:
+                        cur.execute(f"SET SESSION MAX_EXECUTION_TIME = {_stmt_ms}")
+                    except Exception:
+                        pass
 
             # Engine-specific cursor tuning (P35). Hata → swallowed; generic
             # fetchmany(batch_size) fallback caller'da zaten mevcut.
@@ -272,6 +301,17 @@ def stream_safe_sql(
         if not is_allowed:
             yield {"type": "error", "message": f"Whitelist: {terr}"}
             return
+
+    # 2.5) v3.77.x (gstack-review C2): SQL'e dialect-uygun LIMIT ekle. Eskiden yalnız Python-tarafı
+    # max_rows kesimi vardı → PG-dışı sürücüler (named-cursor yok) TÜM sonucu belleğe alıp app OOM'a
+    # gidebiliyordu. max_rows+1 → DB en çok max_rows+1 satır materyalize eder, Python kesimi "truncated"
+    # bayrağını yine doğru kurar. apply_row_limit zaten-LIMIT'li sorguya DOKUNMAZ.
+    if max_rows and max_rows > 0:
+        try:
+            from app.services.sql_dialect import apply_row_limit
+            sql_str = apply_row_limit(sql_str, max_rows + 1, dialect)
+        except Exception:
+            pass
 
     # 3) source/dialect ön kontrolü
     if not isinstance(source, dict) or not source:

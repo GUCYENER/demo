@@ -1145,7 +1145,7 @@ def _build_errors_where(level, q, request_id, since_hours):
     where: List[str] = []
     params: list = []
     lvl = (level or "").upper()
-    if lvl in ("ERROR", "CRITICAL", "WARNING"):
+    if lvl in ("ERROR", "CRITICAL", "WARNING", "INFO"):  # v3.77.x: INFO seviyesi filtreye eklendi
         where.append("level = %s"); params.append(lvl)
     elif lvl != "ALL":
         where.append("level IN ('ERROR','CRITICAL')")  # varsayılan: yalnız hatalar
@@ -1161,7 +1161,7 @@ def _build_errors_where(level, q, request_id, since_hours):
 
 @router.get("/errors")
 async def list_errors(
-    level: Optional[str] = Query(None, description="ERROR | CRITICAL | WARNING | ALL"),
+    level: Optional[str] = Query(None, description="ERROR | CRITICAL | WARNING | INFO | ALL"),
     q: Optional[str] = Query(None, description="message / path / traceback içinde ara"),
     request_id: Optional[str] = Query(None, description="X-Request-ID ile tek kayıt"),
     since_hours: Optional[int] = Query(None, ge=1, le=720),
@@ -1225,8 +1225,8 @@ async def error_stats(
         cur = conn.cursor()
         cur.execute(
             f"""SELECT level, COUNT(*) AS cnt FROM system_logs
-                WHERE level IN ('ERROR','CRITICAL','WARNING'){time_filter}
-                GROUP BY level""", tp)
+                WHERE level IN ('ERROR','CRITICAL','WARNING','INFO'){time_filter}
+                GROUP BY level""", tp)  # v3.77.x: INFO sayımı rozete eklendi
         by_level = {r["level"]: r["cnt"] for r in cur.fetchall()}
         cur.execute(
             f"""SELECT request_path, COUNT(*) AS cnt FROM system_logs

@@ -128,7 +128,7 @@ def analyze_relationships(cur, source_id: int) -> Dict[str, int]:
     cur.execute(
         """
         SELECT id, from_schema, from_table, from_column,
-               to_schema, to_table, to_column
+               to_schema, to_table, to_column, confidence_score
         FROM ds_db_relationships
         WHERE source_id = %s
         ORDER BY id
@@ -145,6 +145,7 @@ def analyze_relationships(cur, source_id: int) -> Dict[str, int]:
                 "id": row[0],
                 "from_schema": row[1], "from_table": row[2], "from_column": row[3],
                 "to_schema": row[4], "to_table": row[5], "to_column": row[6],
+                "confidence_score": row[7],
             })
 
     # Tablo başına outgoing FK kolonları
@@ -225,6 +226,17 @@ def analyze_relationships(cur, source_id: int) -> Dict[str, int]:
         if is_junc:
             conf += 0.3
         conf = max(0.0, min(1.0, conf))
+        # v3.77.x: yapısal analiz EK kanıttır → inference (naming/extension/sample) confidence'ını
+        # DÜŞÜRME (monoton kanıt). Eski koşulsuz overwrite 0.85 extension + 0.80 naming+type FK'leri
+        # 0.70'e indirip sentetik gate'in (0.80) ALTINA düşürüyordu → sentetik üretimden siliniyordu.
+        # v3.77.7 (gstack-review F3): floor YALNIZ hedef GERÇEK PK ise (c_to=="1"). Hedef PK DEĞİLse
+        # (`to_col not in to_pk` → naming FK 'id'/'pk'/'uuid' fallback'ine düşmüş; ör. PK'sız VIEW'a
+        # veya PK-olmayan 'id' kolonuna) yapısal DEMOTE doğru sinyaldir → kazanmalı (bogus FK 0.80'de
+        # donup auto-join'e [≥0.70] girmesin; eski overwrite bunu eliyordu, monoton floor regresif
+        # olarak koruyordu). Extension + naming+type (hedef gerçek PK, c_to=="1") ETKİLENMEZ.
+        _existing = r.get("confidence_score")
+        if _existing is not None and c_to == "1":
+            conf = max(conf, float(_existing))
 
         # İstatistik
         stats["analyzed"] += 1

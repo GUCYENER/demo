@@ -47,6 +47,13 @@ logger = logging.getLogger(__name__)
 SCORE_NAMING = 0.60       # full-root tablo eşleşmesi (user_id → users)
 SCORE_NAMING_HEAD = 0.45  # v3.60.0: head-noun (rol-önekli) eşleşme (CreateUserId → user) — daha spekülatif,
                           # tek başına min_confidence(0.60) altında kalır → ancak tip uyumuyla (0.45+0.20=0.65) persist
+# v3.77.x: PK-HEM-FK uzantı (table-per-type / 1:1 shared-PK): kolon KENDİ tablosunun PK'sı VE
+# BAŞKA tablonun PK'sına isimle çözülüyor (WFINSTANCEID∈T_ICT_DYNAMIC_DATA → T_WF_INSTANCE.InstanceId).
+# İki ucu da declared PK + isim ilişkili → full-root'tan DAHA spesifik/güvenilir sinyal → 0.65 taban.
+# Tip uyumuyla 0.85 (sentetik 0.80 + sorgu 0.70 gate'lerini geçer); tip uymazsa 0.65 (yalnız yüzeyde,
+# admin onayına kadar oto-kullanılmaz). Kanıt: ONEDESKPG'nin EN çok kullanılan ilişki deseni, declared
+# FK yok + kaynak-PK FK-adaylığından eleniyordu (satır ~586) → tüm uzantı ilişkileri görünmezdi.
+SCORE_EXTENSION = 0.65
 SCORE_TYPE = 0.20
 SCORE_SAMPLE_MAX = 0.20  # multiplied by coverage_ratio
 
@@ -532,6 +539,59 @@ def _fuzzy_target_tables(
     return sorted(same or out, key=lambda h: h.norm_name)[:cap]
 
 
+def _entity_token(norm_name: str, dialect: FKInferenceDialect) -> str:
+    """Tablo entity-token'ı = norm_name'in son '_' parçası. by_entity_token indeksini kuran kuralla
+    (satır ~611-614) BİREBİR aynı olmalı → öz-PK tespiti indeks-eşleşmesiyle tutarlı kalsın."""
+    toks = [x for x in str(norm_name).split("_") if x]
+    return dialect.normalize_ident(toks[-1] if toks else str(norm_name))
+
+
+def _trailing_token_concats(norm_name: str) -> Set[str]:
+    """norm_name token'larının SONDAN-başlayan birleşimleri: 't_wf_instance' → {twfinstance, wfinstance,
+    instance}. Kök'ün TOKEN-HİZALI eşleşmesi için (düz substring'ten katı: 'order' ⊄ {workorders, orders}
+    → yanlış tiebreak hit'i yok)."""
+    toks = [x for x in str(norm_name).split("_") if x]
+    return {"".join(toks[i:]) for i in range(len(toks))}
+
+
+def _pk_targets_own_table(
+    t: "_TableInfo",
+    root: str,
+    head: Optional[str],
+    ps_roots: List[str],
+    dialect: FKInferenceDialect,
+) -> bool:
+    """v3.77.x: is_pk kolonu KENDİ tablosunun öz (surrogate) PK'sı mı, yoksa BAŞKA tabloya 1:1
+    uzantı PK'sı mı? Kolon kökü/head/önek-soyması tablonun entity-token'ıyla eşleşiyorsa öz PK'dır
+    (InstanceId∈T_WF_INSTANCE: kök 'instance' == entity 'instance' → öz PK, FK değil → True/atla).
+    Eşleşmiyorsa (WFINSTANCEID∈T_ICT_DYNAMIC_DATA: kök 'wfinstance'/'instance' ≠ entity 'data')
+    uzantı adayıdır → False. Yalnız PK kaynak kolonlarda çağrılır (non-PK akışı etkilenmez).
+    """
+    own_ent = _entity_token(t.norm_name, dialect)
+    cands = {dialect.normalize_ident(root)}
+    if head:
+        cands.add(dialect.normalize_ident(head))
+    for ps in ps_roots:
+        cands.add(dialect.normalize_ident(ps))
+    return own_ent in cands
+
+
+def _is_target_pk(
+    target_tbl: "_TableInfo",
+    target_col: Dict[str, Any],
+    dialect: FKInferenceDialect,
+) -> bool:
+    """v3.77.x: çözülen hedef kolon, hedef tablonun GERÇEK (declared) PK'sı mı? PK-hem-FK uzantı
+    boost'unu (SCORE_EXTENSION) yalnız İKİ UCU DA PK olan 1:1 uzantıya ver → sahte yükseltme yok
+    (ör. hedef PK'sız olup 'id' konvansiyonuna düşmüşse uzantı sayılmaz)."""
+    if not isinstance(target_col, dict):
+        return False
+    if target_col.get("is_pk") or target_col.get("is_primary_key"):
+        return True
+    _n = dialect.normalize_ident(target_col.get("name") or "")
+    return bool(_n) and any(dialect.normalize_ident(pc) == _n for pc in target_tbl.pk_columns)
+
+
 def _iter_fk_candidates(
     tables: Dict[Tuple[str, str], _TableInfo],
     dialect: FKInferenceDialect,
@@ -581,14 +641,18 @@ def _iter_fk_candidates(
             # adaylıktan VE tanılama-uyarısından muaf (her tabloda var → 93 sahte uyarı kaynağı).
             if col_name.strip().lower() in NON_FK_COLUMN_NAMES:
                 continue
-            # Skip PKs (auto-generated id columns aren't FKs to themselves).
-            # v3.56.0: is_pk öncelik (columns_json key'i), is_primary_key eski-fallback.
-            if col.get("is_pk") or col.get("is_primary_key"):
-                continue
+            # v3.77.x: PK kaynak kolonu artık KOŞULSUZ elenmiyor. Çoğu PK öz-surrogate'tir (FK değil)
+            # ama "PK-hem-FK" uzantı deseni (table-per-type / 1:1 shared-PK) GERÇEK ve ONEDESKPG'nin EN
+            # yaygın ilişkisidir: WFINSTANCEID∈T_ICT_DYNAMIC_DATA = T_WF_INSTANCE.InstanceId (bigint=bigint).
+            # Eski koşulsuz skip bunların TÜMÜNÜ kaçırıyordu (declared FK yok → text-to-SQL ana join'leri
+            # göremiyordu). Öz-PK ayrımı aşağıda _pk_targets_own_table ile yapılır; öz-PK ise yine atlanır
+            # (eski davranış birebir korunur). is_pk öncelik, is_primary_key eski-fallback.
+            src_is_pk = bool(col.get("is_pk") or col.get("is_primary_key"))
             root = _extract_root(col_name)
             if not root:
                 # Tanılama: kalıba uymadı ama referans-benzeri (PARTYID/STATUS_CODE) → kaydet.
-                if diag is not None and _looks_reference_ish(col_name):
+                # v3.77.x: PK kaynak (kök çıkmayan surrogate) bu tanılamayı üretmez → 70 PK için gürültü yok.
+                if diag is not None and not src_is_pk and _looks_reference_ish(col_name):
                     diag.append({
                         "schema": t.schema, "table": t.name, "column": col_name,
                         "reason": "no_pattern_match",
@@ -604,12 +668,18 @@ def _iter_fk_candidates(
                     name_cands.append((c, "head"))
             # v3.77.x: çok-kelimeli entity + rol-önek (PrimaryOrganizationUnitId → 'organizationunit').
             # head-noun son-kelimeyi ('unit') alıp çok-kelimeli hedefi kaçırıyordu → bileşik kökü de dene.
-            for _ps in _prefix_stripped_roots(col_name):
+            ps_roots = _prefix_stripped_roots(col_name)
+            for _ps in ps_roots:
                 for _c in _candidates_from_root(_ps):
                     name_cands.append((_c, "head"))
+            # v3.77.x: PK kaynak — öz surrogate PK mı (InstanceId∈T_WF_INSTANCE: kök 'instance' ==
+            # entity-token 'instance' → öz PK, FK değil → atla; eski davranış) yoksa BAŞKA tabloya uzantı
+            # PK mı (WFINSTANCEID∈T_ICT_DYNAMIC_DATA: kök 'wfinstance'/'instance' ≠ entity 'data' → çöz)?
+            if src_is_pk and _pk_targets_own_table(t, root, head, ps_roots, dialect):
+                continue
 
             target_tbl: Optional[_TableInfo] = None
-            target_col: Optional[str] = None  # v3.77.x: name-match probe çözerse post-loop çift-çağrı yok
+            target_col: Optional[Dict[str, Any]] = None  # _resolve_target_pk kolon DICT'i döner (str değil); name-match probe çözerse post-loop çift-çağrı yok
             match_kind = "full"
             for cand, kind in name_cands:
                 cand_norm = dialect.normalize_ident(cand)
@@ -644,7 +714,27 @@ def _iter_fk_candidates(
                 # v3.56.0 code-review: birden çok aday (son-token/önek çakışması) →
                 # norm_name'e göre DETERMİNİSTİK seç (dict-iterasyon sırasına bağlı kalma →
                 # re-keşif idempotent, aynı inferred FK üretilir).
-                cand_tbl = sorted(same_schema or hits, key=lambda h: h.norm_name)[0]
+                # v3.77.x: PK uzantı kaynağında birden çok entity-token eşleşmesi (T_WF_INSTANCE vs
+                # RPT_PROBLEM_RELATED_INSTANCE — ikisi de 'instance' token + InstanceId PK) → kök'ü
+                # TOKEN-HİZALI içeren hedefi tercih et: 'wfinstance' ∈ trailing-concats(t_wf_instance)
+                # {twfinstance,wfinstance,instance} ✓, ∉ rpt_problem_related_instance concats. Düz
+                # substring DEĞİL (o 'order'⊂'workorders' yanlış hit verirdi). YALNIZ PK kaynakta
+                # (non-PK seçimi BİREBİR korunur → regresyon yok); aksi halde eski norm_name sırası.
+                _pool = same_schema or hits
+                if src_is_pk and len(_pool) > 1:
+                    _rc = dialect.normalize_ident(root).replace("_", "")
+                    cand_tbl = sorted(
+                        _pool,
+                        key=lambda h: (0 if _rc and _rc in _trailing_token_concats(h.norm_name) else 1, h.norm_name),
+                    )[0]
+                else:
+                    cand_tbl = sorted(_pool, key=lambda h: h.norm_name)[0]
+                # v3.77.x: PK kaynağı kendi tablosuna işaret ediyorsa (öz PK — ön-kontrol farklı tier'da
+                # kaçırmış olabilir) extension DEĞİL → bu adayı atla, sonraki isim-adayına geç.
+                if (src_is_pk
+                        and dialect.normalize_ident(cand_tbl.name) == dialect.normalize_ident(t.name)
+                        and dialect.normalize_ident(cand_tbl.schema) == dialect.normalize_ident(t.schema)):
+                    continue
                 # Self-FK head/prefix eşleşme: head 'user'/prefix-soyma + tablo kendisi.
                 # full/token-exact root self-FK'ya zaten izin var (org chart parent_id).
                 if tier_kind in ("head", "prefix") and dialect.normalize_ident(cand_tbl.name) == dialect.normalize_ident(t.name):
@@ -711,6 +801,20 @@ def _iter_fk_candidates(
                         "hint": "hedef tablonun PK kolonu metadata'da yok (declared/FK-col-adı/konvansiyon hiçbiri eşleşmedi)",
                     })
                 continue
+            # v3.77.x: PK-HEM-FK uzantı etiketi — kaynak kolon KENDİ tablosunun (TEK-kolonlu) PK'sı VE
+            # çözülen hedef FARKLI bir tablonun GERÇEK PK'sı ise bu 1:1 uzantı (table-per-type) →
+            # 'extension' tier (SCORE_EXTENSION 0.65; tip uyumuyla 0.85). self/fuzzy hariç.
+            # v3.77.7 (gstack-review adversarial): `len(t.pk_columns) == 1` GUARD — kompozit-PK üyesi
+            # (junction-benzeri) 1:1 DEĞİLdir (o kolon from-tarafında N) → 'extension' etiketi VE
+            # cardinality '1'/'1' YANLIŞ olurdu. `src_is_pk` kolon-bazlıdır (her kompozit-PK üyesi True).
+            # Tek-kolon-PK şartı: inference (etiket + cardinality) ile cardinality_analyzer'ın
+            # ŞEKİL-FARKINDA recompute'u (`from_pk == [from_col]`) KOŞULSUZ uyuşur → sıra-bağımlı
+            # tutarsızlık biter. Kompozit-PK FK'leri yine çıkar (full/head tier), cardinality'lerini
+            # analyzer hesaplar (doğru N:1); WFINSTANCEID gibi sole-PK uzantılar etkilenmez.
+            if (src_is_pk and len(t.pk_columns) == 1 and match_kind not in ("self", "fuzzy")
+                    and dialect.normalize_ident(target_tbl.name) != dialect.normalize_ident(t.name)
+                    and _is_target_pk(target_tbl, target_col, dialect)):
+                match_kind = "extension"
             yield t, col, root, match_kind, target_tbl, target_col
 
 
@@ -726,6 +830,8 @@ def _score(
         base = SCORE_NAMING_FUZZY
     elif match_kind == "head":
         base = SCORE_NAMING_HEAD
+    elif match_kind == "extension":
+        base = SCORE_EXTENSION  # v3.77.x: PK-hem-FK 1:1 uzantı (iki uç da declared PK) → güçlü taban
     else:
         base = SCORE_NAMING
     score = base
@@ -900,21 +1006,29 @@ def infer_fks_for_source(
             # Savepoint → hata yalnız o adayı düşürür, batch devam eder + GERÇEK kök hata izole görünür.
             if _use_sp:
                 cur.execute("SAVEPOINT fk_persist_sp")
+            # v3.77.5: extension (PK-hem-FK uzantı) TANIMI GEREĞİ 1:1 (iki uç da PK) → cardinality'yi
+            # burada set et. NULL kalırsa, cardinality_analyzer henüz koşmadan sentetik üretim koşarsa
+            # `_cardinality_aware_kinds` 1:1'i tespit edemez (cf==""≠"1") → AGGREGATE_COUNT gibi 1:1'de
+            # anlamsız şablon üretir + few-shot'a zayıf örnek sızar. analyzer sonradan aynı "1"/"1"'i
+            # hesaplar (from_col=from PK, to_col=to PK) → çakışma yok. Diğer tier'lar NULL (analyzer çözer).
+            _ext_card = "1" if c.naming_pattern == "extension" else None
             cur.execute(
                 """
                 INSERT INTO ds_db_relationships
                     (source_id, from_schema, from_table, from_column,
                      to_schema, to_table, to_column, constraint_name,
                      is_inferred, inference_method, evidence_json,
-                     admin_verified, confidence_score)
+                     admin_verified, confidence_score,
+                     cardinality_from, cardinality_to)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s,
-                        TRUE, %s, %s::jsonb, FALSE, %s)
+                        TRUE, %s, %s::jsonb, FALSE, %s, %s, %s)
                 """,
                 (
                     source_id, c.from_schema, c.from_table, c.from_column,
                     c.to_schema, c.to_table, c.to_column,
                     f"inferred_{c.from_table}_{c.from_column}",
                     c.method, json.dumps(c.evidence), c.confidence,
+                    _ext_card, _ext_card,
                 ),
             )
             if _use_sp:

@@ -20,6 +20,7 @@
 .em-stat.em-lvl-critical { color:#ff6b6b; border-color:rgba(255,107,107,.35); }
 .em-stat.em-lvl-error { color:#ff924d; border-color:rgba(255,146,77,.35); }
 .em-stat.em-lvl-warning { color:#e0a800; border-color:rgba(224,168,0,.35); }
+.em-stat.em-lvl-info { color:#4da3ff; border-color:rgba(77,163,255,.35); }  /* v3.77.x: INFO mavi/nötr (hata değil) */
 .em-stat-top { font-size:12px; opacity:.75; }
 .em-stat-top code { font-size:11px; }
 
@@ -50,6 +51,7 @@
 .em-badge.em-lvl-critical { background:rgba(255,107,107,.18); color:#ff6b6b; }
 .em-badge.em-lvl-error { background:rgba(255,146,77,.18); color:#ff924d; }
 .em-badge.em-lvl-warning { background:rgba(224,168,0,.18); color:#e0a800; }
+.em-badge.em-lvl-info { background:rgba(77,163,255,.18); color:#4da3ff; }  /* v3.77.x: INFO mavi/nötr */
 .em-time { opacity:.7; font-size:12px; white-space:nowrap; }
 .em-method { font-weight:600; opacity:.85; font-size:12px; }
 .em-path { font-family:monospace; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

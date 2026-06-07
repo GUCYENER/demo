@@ -1316,6 +1316,52 @@ def detect_objects(source: dict, vyra_conn) -> dict:
                     )
             except Exception:
                 pass
+            # v3.77.6: keşfi TEK-TIKLA TAM — FK çıkarımından sonra (a) çözülemeyen-FK tanılamasını
+            # KALICI yaz + (b) cardinality/junction analizini koş. Eskiden bunları YALNIZ "FK Çıkarımını
+            # Yenile" / "Kardinalite Analizini Yenile" butonları (veya incremental entegrasyon) yapıyordu →
+            # ilk/tam keşiften sonra cardinality NULL + tanılama boş kalıyordu. AYRI scoped connection'da
+            # koşulur → herhangi bir hata keşfi VE downstream snapshot'ı BOZMAZ (vyra_conn'a dokunmaz);
+            # FK zaten yukarıda commit'li. İkisi ayrı try/except → biri patlasa diğeri yine koşar.
+            # GÜVENLİ: analyze_relationships confidence'ı DÜŞÜRMEZ (v3.77.x monoton floor), extension'lar
+            # cardinality'yi inference'ta zaten aldı (idempotent recompute).
+            try:
+                from app.core.db import get_db_context_scoped
+                with get_db_context_scoped(source_id=source_id) as _pconn:
+                    _pcur = _pconn.cursor()
+                    try:
+                        from app.services.db_learning.fk_inference_service import (
+                            persist_fk_diagnostics,
+                        )
+                        _diag_open = persist_fk_diagnostics(_pcur, source_id, _inf.get("unresolved") or [])
+                        _pconn.commit()
+                        logger.info("[DSLearning.fk_diagnostics] source=%s open=%s (keşif-içi persist)",
+                                    source_id, _diag_open)
+                    except Exception as _diag_err:
+                        try:
+                            _pconn.rollback()
+                        except Exception:
+                            pass
+                        logger.warning("[DSLearning.fk_diagnostics] persist atlandı source=%s: %s",
+                                       source_id, str(_diag_err)[:200])
+                    try:
+                        from app.services.db_learning.cardinality_analyzer import (
+                            analyze_relationships,
+                        )
+                        _card = analyze_relationships(_pcur, source_id)
+                        _pconn.commit()
+                        logger.info("[DSLearning.cardinality] source=%s analyzed=%s junctions=%s 1:1=%s (keşif-içi)",
+                                    source_id, _card.get("analyzed", 0), _card.get("junctions", 0),
+                                    _card.get("one_to_one", 0))
+                    except Exception as _card_err:
+                        try:
+                            _pconn.rollback()
+                        except Exception:
+                            pass
+                        logger.warning("[DSLearning.cardinality] analiz atlandı source=%s: %s",
+                                       source_id, str(_card_err)[:200])
+            except Exception as _post_err:
+                logger.warning("[DSLearning] keşif-içi FK post-işlem atlandı source=%s: %s",
+                               source_id, str(_post_err)[:200])
         except Exception as _fk_inf_err:
             try:
                 vyra_conn.rollback()

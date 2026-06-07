@@ -45047,6 +45047,7 @@ window.ErrorMonitorModule = (function () {
     function _lvlClass(level) {
         if (level === 'CRITICAL') return 'em-lvl-critical';
         if (level === 'WARNING') return 'em-lvl-warning';
+        if (level === 'INFO') return 'em-lvl-info';
         return 'em-lvl-error';
     }
 
@@ -45061,11 +45062,12 @@ window.ErrorMonitorModule = (function () {
         try {
             const res = await window.vyraFetch(`/system/errors/stats?_=1${_sinceParam()}`);
             const bl = (res && res.by_level) || {};
-            const crit = bl.CRITICAL || 0, err = bl.ERROR || 0, warn = bl.WARNING || 0;
+            const crit = bl.CRITICAL || 0, err = bl.ERROR || 0, warn = bl.WARNING || 0, info = bl.INFO || 0;
             const top = (res && res.top_paths) || [];
             let html = `<div class="em-stat em-lvl-critical"><span class="em-stat-n">${crit}</span> CRITICAL</div>`
                 + `<div class="em-stat em-lvl-error"><span class="em-stat-n">${err}</span> ERROR</div>`
-                + `<div class="em-stat em-lvl-warning"><span class="em-stat-n">${warn}</span> WARNING</div>`;
+                + `<div class="em-stat em-lvl-warning"><span class="em-stat-n">${warn}</span> WARNING</div>`
+                + `<div class="em-stat em-lvl-info"><span class="em-stat-n">${info}</span> INFO</div>`;
             if (top.length) {
                 html += `<div class="em-stat-top">En çok hata: `
                     + top.slice(0, 3).map(t => `<code>${_esc(t.path)}</code> (${t.count})`).join(' · ')

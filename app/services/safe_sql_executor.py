@@ -107,6 +107,18 @@ INJECTION_PATTERNS = [
     r"LOAD_FILE\s*\(",    # MySQL dosya okuma
     r"INTO\s+OUTFILE",    # MySQL dosya yazma
     r"INTO\s+DUMPFILE",   # MySQL dosya yazma
+    # v3.77.x (gstack-review C3b): PG sunucu dosya/large-object fonksiyonları. Bunlar FROM/JOIN
+    # içermediği için tablo-whitelist'ini ATLIYOR → dar-yetkili kullanıcı dosya okuyabiliyordu
+    # (superuser rolünde gerçek; ör. SELECT pg_read_file('/etc/passwd')). Salt-okuma analitiğinde
+    # meşru kullanımı YOK → blokla.
+    r"pg_read_file\s*\(",          # PG sunucu dosya okuma
+    r"pg_read_binary_file\s*\(",   # PG sunucu binary dosya okuma
+    r"pg_ls_dir\s*\(",             # PG sunucu dizin listeleme
+    r"pg_stat_file\s*\(",          # PG sunucu dosya stat
+    r"pg_ls_logdir\s*\(",
+    r"pg_ls_waldir\s*\(",
+    r"lo_import\s*\(",             # PG large-object dosya içe-aktarma
+    r"lo_export\s*\(",             # PG large-object dosya dışa-aktarma
 ]
 
 # Hassas sütun adı kalıpları (maskeleme için)

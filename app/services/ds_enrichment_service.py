@@ -946,6 +946,11 @@ def _enrich_columns(vyra_conn, source_id: int, table_enrichment_id: int,
                     is_searchable = True
 
         try:
+            # v3.77.x (gstack-review F1): kolon-başı SAVEPOINT — bir kolon INSERT'i hata verirse (ör.
+            # genişlik/encoding/constraint) psycopg2 transaction'ı ABORT olur, kalan TÜM kolonlar
+            # InFailedSqlTransaction ile düşerdi → tablo "hepsi —" görünür ("LLM çöktü" sanılan data-loss).
+            # SAVEPOINT/ROLLBACK TO ile yalnız o kolon atlanır, diğerleri yazılır.
+            cur.execute("SAVEPOINT col_enrich_sp")
             cur.execute("""
                 INSERT INTO ds_column_enrichments
                     (source_id, table_enrichment_id, column_name, data_type,
@@ -974,7 +979,13 @@ def _enrich_columns(vyra_conn, source_id: int, table_enrichment_id: int,
                 synonyms_json,
                 is_searchable
             ))
+            cur.execute("RELEASE SAVEPOINT col_enrich_sp")
         except Exception as e:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT col_enrich_sp")
+                cur.execute("RELEASE SAVEPOINT col_enrich_sp")  # stack birikmesin (her iterasyon temiz)
+            except Exception:
+                pass
             logger.warning("[DSEnrich] Sütun enrich hatası (%s): %s", col_name, str(e)[:100])
             continue
 
