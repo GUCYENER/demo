@@ -2,7 +2,7 @@
 plan_id: error_logging_hardening
 created: 2026-06-05
 branch: hira
-status: planned
+status: completed
 version_target: v3.75.0
 council_mod: 3
 hebe_gate_required: false
@@ -94,7 +94,10 @@ triyaj (gerçekten gizli-hata olan var mı), (b) S110/S112 ruff ratchet (yeni no
 ## İlerleme Kaydı
 - [x] G1 audit envanteri (bare except=0/guarded; 251 S110 = 141 cleanup/110 triyaj; ana yollar logluyor)
 - [x] G2 helper teyidi (log_exception mevcut + çalışıyor)
-- [~] G3 riskli except → log (RLS set_config + timeout sınıflandırma yapıldı; kalan ~110 batched)
-- [ ] G4 meşru yutma `# noqa: S110` etiketleme (141)
-- [ ] G5 ruff S110/S112 ratchet guard
-- [ ] G6 doğrulama (örnek hata enjekte → errors.jsonl tip+traceback)
+- [x] **G3 triyaj TAMAM (2026-06-07)** — 10 yüksek-yoğunluklu kritik-yol dosyasında 148 swallow + pipeline/graph.py 7 savepoint sitesi tek tek okundu → **SIFIR gerçek gizli-hata yutma** (hepsi cleanup/fallback/telemetry/loop-continue; gerçek hatalar zaten logger.exception/log_exception/summary.errors/HTTP-500 ile loglanıyor). Mass-logging gereksiz.
+- [⏭] **G4 ERTELENDİ** (141 `# noqa: S110` etiketleme) — kullanıcı kabulü "önerine göre ilerle" (G3+G6 değer-kısmı; süpürme şimdilik atla). Backlog'a.
+- [⏭] **G5 ERTELENDİ** (ruff S110/S112 ratchet guard) — aynı karar. Backlog'a.
+- [x] **G6 DOĞRULAMA TAMAM (2026-06-07)** — canlı `log_exception`'a örnek ValueError enjekte → `logs/errors.jsonl`'e `msg`+`exc_type=ValueError`+467-char tam traceback (_inner/_outer frame + context)+`level=ERROR` düştü; test satırı temizlendi (production log kirletilmedi). **Loglama hattı sağlam.**
+
+## Sonuç (2026-06-07)
+Objektif KARŞILANDI: error-log hattı doğrulandı (G6) + gizli-hata yutma yok (G3) + helper çalışıyor (G2). G4/G5 (annotation + ratchet) kullanıcı onayıyla ertelendi → REFACTOR_BACKLOG'a aday. Kod değişikliği YOK (doğrulama/triyaj-temelli) → sürüm bump yok, commit bağımlılığı yok. **status: completed → arşiv.**
