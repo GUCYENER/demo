@@ -84,7 +84,7 @@ cevap-doğruluğuna çapalı. Mevcut tüm tier/constant/dual-path zaten çalış
 | 2.1 | **Deterministik join-path skorlama**: cardinality/selectivity ile top-N FK sırala, LLM'i düşük-güven/cross-tenant path'ten uzak tut (`join_planner` + `fk_graph`) | M | yüksek |
 | 2.2 | **Domain synonymy/co-selection grafiği** onaylı sorgu geçmişinden → kolon-grounding (relevance-pruning'i besler) | M | orta-yüksek |
 | 2.3 | **Belirsiz-soru clarify akışı**: N aday SQL döndür, kullanıcı seçsin ("top 10 müşteri" = ciroya mı adede mi?) | M | orta |
-| 2.4 | **Case-normalization köprüsü**: enrichment case-shift → "relation does not exist" (Oracle/PG exact-case) | S | orta |
+| 2.4 | ~~Case-normalization köprüsü~~ **✅ İNCELENDİ-HANDLED (2026-06-07)**: ZATEN savunuluyor — (1) prompt quote-kuralı `text_to_sql:92` (ŞEMA/TABLO/SÜTUN DAİMA çift-tırnak exact-case, örn `"elysion"."T_ORG_USER"`), (2) self-heal case-retry `text_to_sql:671` ("büyük/küçük harf farkı olabilir"), (3) keşif `object_name`'i information_schema'dan exact-case saklıyor (kaydırmıyor), (4) `quote_identifier(name,dialect)` helper var. Canlı doğrulama: ONEDESKPG mixed-case identifier VAR (elysion: T_AD_ACCOUNTTYPE/RootCaseSetCode) + canlı meta-DB kanıt: VYRA object_name'i 2661/2672 (%99.6) mixed-case KORUMUŞ (kaydırma YOK → "case-shift" premise'i çürük) AMA `errors.jsonl`'de "does not exist" YOK → savunma çalışıyor. **İş gerekmiyor** (deterministik rewriter = regex-on-SQL B1-riski, non-bug için değmez). | S | orta |
 
 ### TEMA 3 — Keşif sağlamlığı & ölçek
 | # | Madde | Kanıt | Efor | Etki |
