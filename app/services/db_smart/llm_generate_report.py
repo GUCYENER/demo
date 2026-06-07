@@ -315,7 +315,11 @@ def _repair_glued_keyword_garbage(sql: str) -> tuple:
 # yapar. TÜM DİALECT: identifier quote 3 stil ("..."/`...`/[...]); UPPER PG/Oracle/MSSQL/MySQL'de
 # native (sql_dialect._FUNCTION_MAP'te remap YOK). Yalnız `=` (>=,<=,!=,<> eşleşmez), yalnız
 # string-literal RHS (JOIN ON ident=ident doğal kapsam-dışı), zaten UPPER/LOWER'lı LHS atlanır.
-_CI_TEXT_HINTS = ("char", "text", "clob", "string")
+_CI_TEXT_HINTS = ("char", "text", "string")
+# B1 fix (gstack-adversarial): LOB metin tipleri — UPPER() bunlarda HATA verir (Oracle CLOB/
+# NCLOB → ORA-00932; Oracle LONG; MSSQL ntext/text-MAX deprecated). "ntext" gibi tipler "text"
+# hint'ine takılır ama CI-wrap DIŞI bırakılmalı (çalışan sorguyu geçersiz SQL'e çevirmesin).
+_CI_LOB_HINTS = ("clob", "blob", "ntext", "long")
 _CI_IDENT_SEG = r'(?:"[^"]+"|`[^`]+`|\[[^\]]+\])'
 _CI_EQ_RE = re.compile(
     r'((?:' + _CI_IDENT_SEG + r'\s*\.\s*)*(' + _CI_IDENT_SEG + r'))'
@@ -329,6 +333,7 @@ def _collect_text_columns(table_columns: Dict[str, List[tuple]]) -> set:
     tabloda sayı/tarih ise AYIKLANIR (ambiguous → dokunma; yanlış kolonu UPPER'lamaktansa atla)."""
     text_names: set = set()
     other_names: set = set()
+    lob_names: set = set()
     for cols in (table_columns or {}).values():
         for entry in (cols or []):
             try:
@@ -338,11 +343,15 @@ def _collect_text_columns(table_columns: Dict[str, List[tuple]]) -> set:
             key = (cn or "").strip().lower()
             if not key:
                 continue
-            if any(h in (dt or "").lower() for h in _CI_TEXT_HINTS):
+            dtl = (dt or "").lower()
+            if any(h in dtl for h in _CI_LOB_HINTS):
+                lob_names.add(key)  # B1: LOB → UPPER() hatası, CI-wrap dışı
+            elif any(h in dtl for h in _CI_TEXT_HINTS):
                 text_names.add(key)
             else:
                 other_names.add(key)
-    return text_names - other_names
+    # LOB bir tabloda bile görülürse o ad CI-wrap dışı (ORA-00932 riskini al — kaçırma).
+    return text_names - other_names - lob_names
 
 
 def _apply_ci_text_equality(sql: str, table_columns: Dict[str, List[tuple]]) -> str:
@@ -374,8 +383,13 @@ def _apply_ci_text_equality(sql: str, table_columns: Dict[str, List[tuple]]) -> 
         if full == last_seg and bare in alias_names:
             return m.group(0)  # niteliksiz + alias-çakışması → atla (alias sayısal olabilir)
         start = m.start(1)
+        # LHS zaten UPPER(/LOWER( ile sarılıysa çifte-sarma yapma. B3 (gstack-adversarial):
+        # `SUPPER(` gibi UPPER ile biten KULLANICI fonksiyonunu eleme — wrap-prefix'ten önceki
+        # karakter identifier ise gerçek UPPER/LOWER değildir, yine sar.
         if sql[max(0, start - 6):start].upper() in ("UPPER(", "LOWER("):
-            return m.group(0)  # LHS zaten sarılı → çifte-sarma yapma
+            before = sql[start - 7] if start >= 7 else ""
+            if not (before.isalnum() or before == "_"):
+                return m.group(0)
         return "UPPER(" + full + ") = UPPER(" + lit + ")"
 
     try:
