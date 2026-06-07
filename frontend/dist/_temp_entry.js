@@ -39922,6 +39922,12 @@ window.ThemePickerPopup = (function () {
         ws.filters = _liveFilters.filter(function (f) { return f && (f.expr || f.column); });
         // Chip bar {column_name,direction} → renderer {expr,dir} (column_name/direction tanınmıyor).
         ws.order_by = _orderByToRenderer(_state.order_by);
+        // v3.77.x (Bug A): NL-beklenti ("Bu rapordan ne bekliyorsunuz?") wizard_state'e eklenir →
+        // save'de persist (saved_reports JSONB) + edit-reopen'da restore. Eskiden HİÇ kaydedilmiyordu
+        // (_buildWizardState ne user_intent ne userNote koyuyordu) → düzenle'de alan boş geliyordu.
+        // İKİ kutu var (ikisi de aynı soruyu sorar): Step-3 Filtre `#dswUserNote`→`userNote` (kullanıcının
+        // görseldeki ekranı) + Step-4 footer `#user-intent`→`user_intent`. Hangisine yazıldıysa yakala.
+        ws.user_intent = _state.user_intent || _state.userNote || '';
         return ws;
     }
 
@@ -41023,6 +41029,15 @@ window.ThemePickerPopup = (function () {
             if (Array.isArray(ws.filters)) _state.filters = ws.filters;
             // v3.42.0: kaydedilen ORDER BY'ı chip bar shape'ine geri map'le.
             if (Array.isArray(ws.order_by)) _state.order_by = _orderByToChip(ws.order_by);
+            // v3.77.x (Bug A): NL-beklenti restore — İKİ kutuya da yaz (`userNote`=Step-3 Filtre kutusu
+            // [1287], `user_intent`=Step-4 footer [4101/4131]) → hangi ekranda olursan ol metin görünür +
+            // tutarlı. Eskiden hiç restore edilmiyordu. `ws.user_intent` = save'in kanonik anahtarı.
+            // KOŞULSUZ (anahtar yoksa ''): save daima string yazar; load _resetWizardState çağırmaz
+            // (2986/"geri kalanı koru" 3335, singleton _state) → koşullu-atla olsaydı legacy rapor (alan
+            // yok) bir önceki raporun notunu TAŞIRDI (bayat-not). Koşulsuz → legacy doğru boşalır.
+            const _wsIntent = (typeof ws.user_intent === 'string') ? ws.user_intent
+                : (typeof ws.userNote === 'string' ? ws.userNote : '');
+            _state.user_intent = _wsIntent; _state.userNote = _wsIntent;
             // F21b (HEBE+ATHENA 2026-05-25): old reports may not have these top-level
             // fields — fall back to base_table for primary identity (table_id absent
             // ise picker reopen sınırlı kalır ama chip görüntüsü tutarlı olur).
@@ -41278,6 +41293,12 @@ window.ThemePickerPopup = (function () {
             // v3.42.0: kaydedilen ORDER BY'ı chip bar shape'ine geri map'le.
             if (Array.isArray(ws.order_by)) _state.order_by = _orderByToChip(ws.order_by);
             if (typeof ws.userNote === 'string') _state.userNote = ws.userNote;
+            // v3.77.x (Bug A): NL-beklenti İKİ kutuya restore (Step-3 `userNote` + Step-4 `user_intent`)
+            // → hangi ekranda olursan ol metin görünür/tutarlı. `ws.user_intent` = save kanonik anahtarı.
+            // KOŞULSUZ (anahtar yoksa '') — save ile simetrik; legacy rapor önceki notu taşımaz (bayat-not fix).
+            const _wsIntent2 = (typeof ws.user_intent === 'string') ? ws.user_intent
+                : (typeof ws.userNote === 'string' ? ws.userNote : '');
+            _state.user_intent = _wsIntent2; _state.userNote = _wsIntent2;
             if (data.last_sql) _state.lastGeneratedSql = data.last_sql;
 
             // Bulgular3 / Bulgu 1: Step 4 jump'ından ÖNCE oturum + kolon kataloğu
@@ -43433,7 +43454,17 @@ window.ThemePickerPopup = (function () {
     function _renderRunResult(mount, result) {
         _clear(mount);
         const rows = (result && (result.rows || result.data)) || [];
-        const cols = (result && result.columns) || (rows.length > 0 ? Object.keys(rows[0]) : []);
+        // v3.77.x (Bug B savunma): result.columns BOŞ DİZİ `[]` truthy → eski `||` fallback'i
+        // atlıyordu → satır gelse bile "Sonuç boş". `.length` ile gerçek-doluluk kontrolü:
+        // columns boşsa satırlardan anahtar türet (named-cursor columns-gap'i backend'de
+        // çözüldü; bu katman regresyona karşı kalkan).
+        const cols = (result && result.columns && result.columns.length)
+            ? result.columns
+            : (rows.length > 0
+                ? (Array.isArray(rows[0])
+                    ? rows[0].map(function (_v, i) { return 'Sütun ' + (i + 1); })
+                    : Object.keys(rows[0]))
+                : []);
         if (!cols || cols.length === 0) {
             const empty = document.createElement('div');
             empty.className = 'rdm-result-empty';

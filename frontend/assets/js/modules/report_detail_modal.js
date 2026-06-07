@@ -666,7 +666,17 @@
     function _renderRunResult(mount, result) {
         _clear(mount);
         const rows = (result && (result.rows || result.data)) || [];
-        const cols = (result && result.columns) || (rows.length > 0 ? Object.keys(rows[0]) : []);
+        // v3.77.x (Bug B savunma): result.columns BOŞ DİZİ `[]` truthy → eski `||` fallback'i
+        // atlıyordu → satır gelse bile "Sonuç boş". `.length` ile gerçek-doluluk kontrolü:
+        // columns boşsa satırlardan anahtar türet (named-cursor columns-gap'i backend'de
+        // çözüldü; bu katman regresyona karşı kalkan).
+        const cols = (result && result.columns && result.columns.length)
+            ? result.columns
+            : (rows.length > 0
+                ? (Array.isArray(rows[0])
+                    ? rows[0].map(function (_v, i) { return 'Sütun ' + (i + 1); })
+                    : Object.keys(rows[0]))
+                : []);
         if (!cols || cols.length === 0) {
             const empty = document.createElement('div');
             empty.className = 'rdm-result-empty';

@@ -212,13 +212,23 @@ def _make_stream_callable(source: Dict[str, Any], dialect: str, password: str):
                 logger.debug("[db_smart.stream] engine cursor config skipped: %s", exc)
 
             cur.execute(sql)
-            cols = [d[0] for d in (cur.description or [])]
-            if cols:
-                yield {"columns": cols}
-
+            # v3.77.x (Bug B KÖK FIX, repro-doğrulandı): PG server-side (named) cursor'da
+            # `cur.description` execute'tan HEMEN SONRA None'dır; ancak İLK fetch'ten sonra
+            # dolar. Eski kod description'ı fetch'ten ÖNCE okuyordu → PG'de cols=[] →
+            # `columns` event HİÇ yayılmıyordu → FE result.columns=[] → satır gelse BİLE
+            # "Sonuç boş." Oracle/MySQL/MSSQL standart cursor'da description execute sonrası
+            # hazır olduğu için etkilenmiyordu (semptom yalnız PG kaynaklı kayıtlı raporda).
+            # Çözüm: cols'u İLK fetchmany'den SONRA oku + yay (her iki cursor türü için
+            # güvenli — standart cursor'da description fetch sonrası da geçerlidir).
             total = 0
+            _cols_emitted = False
             while True:
                 rows = cur.fetchmany(batch_size)
+                if not _cols_emitted:
+                    _cols_emitted = True
+                    _cols = [d[0] for d in (cur.description or [])]
+                    if _cols:
+                        yield {"columns": _cols}
                 if not rows:
                     break
                 # Tuple → list (JSON serialize edebilelim diye)
