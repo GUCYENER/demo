@@ -10,14 +10,19 @@ Saf fonksiyon (`find_join_path`) DB'siz unit-test edilir; `load_fk_edges` ince D
 """
 from __future__ import annotations
 
-from collections import deque
+import heapq
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 # NOT: `get_db_context` lazy import edilir (load_fk_edges içinde) — saf fonksiyonlar
 # (find_join_path/render_join_hint) ağır DB/LLM stack'i yüklemeden import edilip test edilsin.
 
-# Bir join kenarı: (sol_tablo, sol_kolon, sağ_tablo, sağ_kolon) — hepsi "schema.table" lowercase
-Edge = Tuple[str, str, str, str]
+# Bir join kenarı: (sol_tablo, sol_kolon, sağ_tablo, sağ_kolon[, path_weight]) — hepsi
+# "schema.table" lowercase. Opsiyonel 5. eleman path_weight (cardinality maliyeti); yoksa
+# _DEFAULT_WEIGHT. 4-tuple (test/uniform) ve 5-tuple (load_fk_edges) ikisi de geçerli.
+Edge = Tuple  # heterojen uzunluk (4 veya 5)
+
+# v3.78.3 (TEMA-2 Dilim-1): cardinality_analyzer.path_weight default (1:N) — COALESCE(…,100) ile hizalı.
+_DEFAULT_WEIGHT = 100
 
 
 def _norm(s: Optional[str]) -> str:
@@ -41,7 +46,8 @@ def load_fk_edges(source_id: int) -> List[Edge]:
         # SELECT filtresiyle (v3.29.9) tutarlı: rejected NULL + (declared VEYA verified VEYA conf≥0.70).
         cur.execute(
             """
-            SELECT from_schema, from_table, from_column, to_schema, to_table, to_column
+            SELECT from_schema, from_table, from_column, to_schema, to_table, to_column,
+                   COALESCE(path_weight, 100) AS pw
             FROM ds_db_relationships
             WHERE source_id = %s
               AND rejected_at IS NULL
@@ -56,25 +62,32 @@ def load_fk_edges(source_id: int) -> List[Edge]:
         for r in cur.fetchall() or []:
             d = r if isinstance(r, dict) else {
                 "from_schema": r[0], "from_table": r[1], "from_column": r[2],
-                "to_schema": r[3], "to_table": r[4], "to_column": r[5],
+                "to_schema": r[3], "to_table": r[4], "to_column": r[5], "pw": r[6],
             }
             ft = _qual(d.get("from_schema"), d.get("from_table"))
             tt = _qual(d.get("to_schema"), d.get("to_table"))
             fc, tc = _norm(d.get("from_column")), _norm(d.get("to_column"))
+            try:
+                pw = int(d.get("pw")) if d.get("pw") is not None else _DEFAULT_WEIGHT
+            except (TypeError, ValueError):
+                pw = _DEFAULT_WEIGHT
             if ft and tt and fc and tc:
-                edges.append((ft, fc, tt, tc))
+                edges.append((ft, fc, tt, tc, pw))
     return edges
 
 
-def _adjacency(edges: List[Edge]) -> Dict[str, List[Tuple[str, str, str]]]:
-    """Yönsüz komşuluk: tablo -> [(komşu_tablo, bu_tablonun_kolonu, komşunun_kolonu)].
+def _adjacency(edges: List[Edge]) -> Dict[str, List[Tuple[str, str, str, float]]]:
+    """Yönsüz komşuluk: tablo -> [(komşu_tablo, bu_tablonun_kolonu, komşunun_kolonu, ağırlık)].
 
     Join iki yönlü çalışır; bu yüzden her FK kenarını çift yönlü ekleriz.
+    Ağırlık = path_weight (cardinality maliyeti); 4-tuple kenarda _DEFAULT_WEIGHT.
     """
-    adj: Dict[str, List[Tuple[str, str, str]]] = {}
-    for ft, fc, tt, tc in edges:
-        adj.setdefault(ft, []).append((tt, fc, tc))
-        adj.setdefault(tt, []).append((ft, tc, fc))
+    adj: Dict[str, List[Tuple[str, str, str, float]]] = {}
+    for e in edges:
+        ft, fc, tt, tc = e[0], e[1], e[2], e[3]
+        w = float(e[4]) if len(e) > 4 else float(_DEFAULT_WEIGHT)
+        adj.setdefault(ft, []).append((tt, fc, tc, w))
+        adj.setdefault(tt, []).append((ft, tc, fc, w))
     return adj
 
 
@@ -92,27 +105,47 @@ def _resolve_node(nodes: Set[str], name: str) -> str:
     return cands[0] if len(cands) == 1 else n
 
 
-def _shortest_path(adj, start: str, target: str) -> Optional[List[Tuple[str, str, str, str]]]:
-    """start → target en kısa join zinciri (BFS). Her adım (sol, sol_kol, sağ, sağ_kol).
+def _shortest_path(
+    adj,
+    start: str,
+    target: str,
+    in_scope: Optional[Callable[[str], bool]] = None,
+) -> Optional[List[Tuple[str, str, str, str]]]:
+    """start → target EN HAFİF join zinciri (cardinality-ağırlıklı Dijkstra).
 
-    Aynı tablo ise [] (join gerekmez). Yol yoksa None.
+    v3.78.3 (TEMA-2 Dilim-1): saf-BFS (min-hop) yerine path_weight-ağırlıklı en kısa yol.
+    Σpath_weight minimize edilir; eşitlikte AZ-HOP, sonra ekleme sırası (deterministik —
+    cache-stable). Uniform ağırlıkta (tüm kenar _DEFAULT_WEIGHT) BFS-min-hop ile ÖZDEŞ.
+
+    `in_scope` verilirse ARA (köprü) düğümler scope-içi olmalı — köprü-sızıntısını ARAMA
+    ANINDA engeller (gstack-adversarial F1 regresyon fix'i): in-scope yol VARKEN daha-hafif
+    ama scope-dışı yol SEÇİLMEZ. target her zaman erişilebilir (post-check missing_scope'u
+    yine raporlar). None ise filtresiz (diagnostic geri-dönüş yolu).
+
+    Her adım (sol, sol_kol, sağ, sağ_kol). Aynı tablo ise []. Yol yoksa None.
     """
     if start == target:
         return []
-    seen: Set[str] = {start}
-    # kuyruk: (mevcut_tablo, o ana kadarki join-adımları)
-    q: deque = deque([(start, [])])
-    while q:
-        node, path = q.popleft()
-        for nbr, left_col, right_col in adj.get(node, []):
+    # Lazy-Dijkstra: bir düğüm ilk POP edildiğinde (Σağırlık, hop, sıra) altında optimaldir.
+    # Hedef kontrolü POP'ta (push'ta DEĞİL) — daha pahalı-ama-erken-bulunan yol kazanmasın.
+    seen: Set[str] = set()
+    counter = 0
+    pq: list = [(0.0, 0, counter, start, [])]  # (Σağırlık, hop, tie-sıra, düğüm, adımlar)
+    while pq:
+        cost, hops, _, node, path = heapq.heappop(pq)
+        if node == target:
+            return path
+        if node in seen:
+            continue
+        seen.add(node)
+        for nbr, left_col, right_col, w in adj.get(node, []):
             if nbr in seen:
                 continue
+            if in_scope is not None and nbr != target and not in_scope(nbr):
+                continue  # scope-içi arama: out-of-scope köprüden geçme
+            counter += 1
             step = (node, left_col, nbr, right_col)
-            new_path = path + [step]
-            if nbr == target:
-                return new_path
-            seen.add(nbr)
-            q.append((nbr, new_path))
+            heapq.heappush(pq, (cost + w, hops + 1, counter, nbr, path + [step]))
     return None
 
 
@@ -153,7 +186,12 @@ def find_join_path(
         t = _resolve_node(_nodes, tgt)
         if not t or t == start:
             continue
-        path = _shortest_path(adj, start, t)
+        # F1 fix: ÖNCE scope-içi en hafif yol (köprü-sızıntısı yok + in-scope yol varken
+        # ağır-direkt yerine onu seç). Yoksa filtresiz ara → out-of-scope köprü post-check'te
+        # missing_scope'a düşer (diagnostic korunur, eski "köprü seç" davranışı sürer).
+        path = _shortest_path(adj, start, t, in_scope=in_scope)
+        if path is None:
+            path = _shortest_path(adj, start, t)
         if path is None:
             unreachable.append(t)
             continue
